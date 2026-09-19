@@ -47,6 +47,7 @@ export function fail(
   }
 
   if (error instanceof ZodError) {
+    const details = typeof error.flatten === "function" ? error.flatten() : error.issues;
     const body: ApiEnvelope<null> = {
       success: false,
       message: "Please check the highlighted fields.",
@@ -54,7 +55,7 @@ export function fail(
       errors: [
         {
           code: ERROR_CODES.VALIDATION_ERROR,
-          details: error.flatten(),
+          details,
         },
       ],
       requestId,

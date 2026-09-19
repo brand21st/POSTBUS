@@ -15,6 +15,7 @@ export type MeUser = {
   email: string | null;
   fullName: string | null;
   avatarUrl: string | null;
+  whatsappNumber?: string | null;
 };
 
 export type MeOrganization = {

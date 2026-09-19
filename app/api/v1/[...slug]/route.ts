@@ -113,6 +113,7 @@ async function handle(request: NextRequest, slugs: string[]) {
         email: profile?.email ?? user.email,
         fullName: profile?.full_name,
         avatarUrl: profile?.avatar_url,
+        whatsappNumber: profile?.whatsapp_number ?? null,
       },
       organization,
       role,

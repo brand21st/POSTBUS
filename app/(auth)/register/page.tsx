@@ -5,55 +5,49 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { IndiaWhatsappField } from "@/components/auth/india-whatsapp-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { createClient } from "@/lib/supabase/client";
+import {
+  registerAccountSchema,
+  type RegisterAccountInput,
+  type RegisterAccountValues,
+} from "@/lib/auth/register-schema";
+import { ApiError, api } from "@/lib/hooks/use-api";
 
-const schema = z.object({
-  name: z.string().min(2, "Enter your name."),
-  email: z.email("Enter a valid email."),
-  password: z.string().min(8, "Use at least 8 characters."),
-});
-
-type FormValues = z.infer<typeof schema>;
+type RegisterResult = {
+  userId: string | null;
+  needsEmailConfirmation: boolean;
+  whatsappNumber: string;
+};
 
 export default function RegisterPage() {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  const form = useForm<FormValues>({
-    resolver: zodResolver(schema),
-    defaultValues: { name: "", email: "", password: "" },
+  const form = useForm<RegisterAccountInput, unknown, RegisterAccountValues>({
+    resolver: zodResolver(registerAccountSchema),
+    defaultValues: { name: "", email: "", password: "", whatsapp: "" },
   });
 
-  async function onSubmit(values: FormValues) {
+  async function onSubmit(values: RegisterAccountValues) {
     setFormError(null);
     setInfo(null);
     try {
-      const supabase = createClient();
-      const { data, error } = await supabase.auth.signUp({
-        email: values.email,
-        password: values.password,
-        options: {
-          data: { full_name: values.name },
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding`,
-        },
+      const result = await api<RegisterResult>("/api/v1/auth/register", {
+        method: "POST",
+        body: JSON.stringify(values),
       });
-      if (error) {
-        setFormError(error.message);
-        return;
-      }
-      if (!data.session) {
+      if (result.needsEmailConfirmation) {
         setInfo("Check your email to confirm your account, then continue to onboarding.");
         return;
       }
       router.replace("/onboarding");
       router.refresh();
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "Could not create your account.");
+      setFormError(error instanceof ApiError ? error.message : "Could not create your account.");
     }
   }
 
@@ -77,6 +71,11 @@ export default function RegisterPage() {
             <p className="text-sm text-error">{form.formState.errors.email.message}</p>
           ) : null}
         </div>
+        <IndiaWhatsappField
+          control={form.control}
+          name="whatsapp"
+          error={form.formState.errors.whatsapp?.message}
+        />
         <div className="space-y-2">
           <Label htmlFor="password">Password</Label>
           <Input
