@@ -265,6 +265,27 @@ export type IntegrationsResponse = {
   india_post?: IntegrationCard;
 };
 
+export type ShopifyConfig = {
+  status?: IntegrationStatus | string;
+  shopDomain?: string | null;
+  shop_domain?: string | null;
+  apiKeyMasked?: string | null;
+  api_key_masked?: string | null;
+  hasApiKey?: boolean;
+  has_api_key?: boolean;
+  hasApiSecret?: boolean;
+  has_api_secret?: boolean;
+  requestedScopes?: string | null;
+  requested_scopes?: string | null;
+  webhookUrl?: string;
+  webhook_url?: string;
+  appConfigured?: boolean;
+  lastSyncAt?: string | null;
+  last_sync_at?: string | null;
+  lastError?: string | null;
+  last_error?: string | null;
+};
+
 export type IndiaPostConfig = {
   environment?: ProviderEnvironment | string;
   status?: IntegrationStatus | string;

@@ -16,7 +16,17 @@ import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { getAutomationSettings, updateAutomationSettings } from "@/modules/automation/service";
 import { hasPermission } from "@/lib/permissions/rbac";
-import { exchangeShopifyToken, newOAuthState, shopifyInstallUrl, verifyShopifyHmac } from "@/modules/shopify/oauth";
+import {
+  exchangeShopifyToken,
+  newOAuthState,
+  normalizeShopDomain,
+  resolveShopifyAppCredentials,
+  resolveShopifyWebhookSecret,
+  shopifyAppConfiguredFor,
+  shopifyInstallUrl,
+  shopifyWebhookUrl,
+  verifyShopifyHmac,
+} from "@/modules/shopify/oauth";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { WEBHOOK_EVENTS } from "@/types/domain";
 import JSZip from "jszip";
@@ -33,28 +43,32 @@ async function handle(request: NextRequest, slugs: string[]) {
   if (path === "webhooks/shopify" && method === "POST") {
     const { verifyWebhookHmac } = await import("@/modules/shopify/oauth");
     const raw = await request.text();
-    if (!verifyWebhookHmac(raw, request.headers.get("x-shopify-hmac-sha256"))) {
-      throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Shopify webhook signature.");
-    }
     const topic = request.headers.get("x-shopify-topic") || "";
     const shop = request.headers.get("x-shopify-shop-domain") || "";
+    const hmacHeader = request.headers.get("x-shopify-hmac-sha256");
     const eventId = request.headers.get("x-shopify-webhook-id") || hashSecret(raw);
     const { createAdminClient, hasAdminClient } = await import("@/lib/supabase/admin");
-    if (!hasAdminClient()) {
+    const admin = hasAdminClient() ? createAdminClient() : null;
+    const { data: connection } = admin
+      ? await admin
+          .from("shopify_connections")
+          .select("organization_id, encrypted_api_secret")
+          .eq("shop_domain", shop)
+          .maybeSingle()
+      : { data: null };
+    const webhookSecret = resolveShopifyWebhookSecret(connection);
+    if (!verifyWebhookHmac(raw, hmacHeader, webhookSecret)) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Shopify webhook signature.");
+    }
+    if (!admin) {
       return { accepted: true, queued: false };
     }
-    const admin = createAdminClient();
     const { data: existing } = await admin
       .from("idempotency_keys")
       .select("id")
       .eq("key", `shopify:${eventId}`)
       .maybeSingle();
     if (existing) return { duplicate: true };
-    const { data: connection } = await admin
-      .from("shopify_connections")
-      .select("organization_id")
-      .eq("shop_domain", shop)
-      .maybeSingle();
     if (connection) {
       await admin.from("idempotency_keys").insert({
         organization_id: connection.organization_id,
@@ -348,13 +362,14 @@ async function handle(request: NextRequest, slugs: string[]) {
       supabase.from("shopify_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("india_post_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
     ]);
+    const shopifyConfigured = shopifyAppConfiguredFor(shopify);
     return {
       shopify: {
         provider: "shopify",
-        status: isShopifyAppConfigured() ? shopify?.status ?? "NOT_CONNECTED" : "NOT_CONNECTED",
+        status: shopifyConfigured ? shopify?.status ?? "NOT_CONNECTED" : "NOT_CONNECTED",
         lastSyncAt: shopify?.last_sync_at,
         lastError: shopify?.last_error,
-        appConfigured: isShopifyAppConfigured(),
+        appConfigured: shopifyConfigured,
       },
       indiaPost: {
         provider: "india_post",
@@ -366,8 +381,8 @@ async function handle(request: NextRequest, slugs: string[]) {
         {
           provider: "shopify",
           name: "Shopify",
-          status: isShopifyAppConfigured() ? shopify?.status ?? "NOT_CONNECTED" : "NOT_CONNECTED",
-          appConfigured: isShopifyAppConfigured(),
+          status: shopifyConfigured ? shopify?.status ?? "NOT_CONNECTED" : "NOT_CONNECTED",
+          appConfigured: shopifyConfigured,
         },
         {
           provider: "india_post",
@@ -381,38 +396,128 @@ async function handle(request: NextRequest, slugs: string[]) {
     };
   }
 
+  if (key === "GET integrations/shopify") {
+    const { data } = await supabase
+      .from("shopify_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const creds = resolveShopifyAppCredentials(data);
+    const hasApiKey = Boolean(data?.encrypted_api_key);
+    return {
+      status: data?.status ?? "NOT_CONNECTED",
+      shopDomain: data?.shop_domain ?? "",
+      apiKeyMasked: hasApiKey && creds ? maskSecret(creds.apiKey) : "",
+      hasApiKey,
+      hasApiSecret: Boolean(data?.encrypted_api_secret),
+      requestedScopes: data?.requested_scopes || env.shopifyScopes,
+      webhookUrl: shopifyWebhookUrl(),
+      appConfigured: Boolean(creds),
+      lastSyncAt: data?.last_sync_at,
+      lastError: data?.last_error,
+    };
+  }
+
+  if (key === "POST integrations/shopify" || key === "PUT integrations/shopify" || key === "PATCH integrations/shopify") {
+    const body = await request.json();
+    const shopDomain = normalizeShopDomain(String(body.shopDomain ?? body.shop_domain ?? ""));
+    if (!shopDomain) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Provide a shop domain.");
+    }
+    const { data: existing } = await supabase
+      .from("shopify_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const payload: Record<string, unknown> = {
+      organization_id: ctx.organizationId,
+      shop_domain: shopDomain,
+      requested_scopes: body.requestedScopes ?? body.requested_scopes ?? existing?.requested_scopes ?? env.shopifyScopes,
+      status: existing?.status ?? "NOT_CONNECTED",
+    };
+    if (body.apiKey) payload.encrypted_api_key = encryptSecret(String(body.apiKey));
+    if (body.apiSecret) payload.encrypted_api_secret = encryptSecret(String(body.apiSecret));
+
+    const query = existing
+      ? supabase.from("shopify_connections").update(payload).eq("id", existing.id)
+      : supabase.from("shopify_connections").insert(payload);
+    const { data, error } = await query.select().single();
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "shopify.credentials_saved",
+      entity_type: "shopify_connection",
+      entity_id: data.id,
+    });
+    const creds = resolveShopifyAppCredentials(data);
+    return {
+      saved: true,
+      status: data.status,
+      shopDomain: data.shop_domain,
+      hasApiKey: Boolean(data.encrypted_api_key),
+      hasApiSecret: Boolean(data.encrypted_api_secret),
+      requestedScopes: data.requested_scopes || env.shopifyScopes,
+      webhookUrl: shopifyWebhookUrl(),
+      appConfigured: Boolean(creds),
+    };
+  }
+
   if (key === "GET integrations/shopify/connect") {
-    if (!isShopifyAppConfigured()) {
+    const { data: connection } = await supabase
+      .from("shopify_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const creds = resolveShopifyAppCredentials(connection);
+    if (!creds) {
       throw new AppError(
         ERROR_CODES.INTEGRATION_NOT_CONNECTED,
         "Shopify app credentials are not configured."
       );
     }
-    const shop = request.nextUrl.searchParams.get("shop");
+    const shop = request.nextUrl.searchParams.get("shop") || connection?.shop_domain;
     if (!shop) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Provide a shop domain.");
     }
     const state = `${ctx.organizationId}.${newOAuthState()}`;
-    return NextResponse.redirect(shopifyInstallUrl(shop, state));
+    return NextResponse.redirect(shopifyInstallUrl(shop, state, creds));
   }
 
   if (key === "GET integrations/shopify/callback") {
     const params = request.nextUrl.searchParams;
-    if (!verifyShopifyHmac(params)) {
+    const { data: connection } = await supabase
+      .from("shopify_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const creds = resolveShopifyAppCredentials(connection);
+    if (!creds) {
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        "Shopify app credentials are not configured."
+      );
+    }
+    if (!verifyShopifyHmac(params, creds.apiSecret)) {
       throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Shopify HMAC.");
     }
-    const shop = params.get("shop")!;
+    const shop = normalizeShopDomain(params.get("shop") || "");
     const code = params.get("code")!;
-    const tokens = await exchangeShopifyToken(shop, code);
-    await supabase.from("shopify_connections").upsert({
+    const tokens = await exchangeShopifyToken(shop, code, creds);
+    const record = {
       organization_id: ctx.organizationId,
       shop_domain: shop,
       encrypted_access_token: encryptSecret(tokens.access_token),
       scopes: tokens.scope,
       status: "CONNECTED",
       installed_at: new Date().toISOString(),
-    });
-    return NextResponse.redirect(`${env.appUrl}/dashboard/integrations`);
+      last_error: null,
+    };
+    const { error } = connection
+      ? await supabase.from("shopify_connections").update(record).eq("id", connection.id)
+      : await supabase.from("shopify_connections").insert(record);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    return NextResponse.redirect(`${env.appUrl}/dashboard/integrations/shopify`);
   }
 
   if (key === "POST integrations/shopify/sync") {
