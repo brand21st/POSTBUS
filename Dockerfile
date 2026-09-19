@@ -3,7 +3,7 @@ ARG NODE_VERSION=22-bookworm-slim
 FROM node:${NODE_VERSION} AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm install --no-audit --no-fund
 
 FROM node:${NODE_VERSION} AS builder
 WORKDIR /app
