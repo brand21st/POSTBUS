@@ -20,11 +20,13 @@ import {
   exchangeShopifyToken,
   newOAuthState,
   normalizeShopDomain,
+  hasStoredClientSecret,
   resolveShopifyAppCredentials,
-  resolveShopifyWebhookSecret,
+  resolveShopifyWebhookSecrets,
   shopifyAppConfiguredFor,
   shopifyInstallUrl,
   shopifyWebhookUrl,
+  storedClientId,
   verifyShopifyHmac,
 } from "@/modules/shopify/oauth";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
@@ -52,12 +54,14 @@ async function handle(request: NextRequest, slugs: string[]) {
     const { data: connection } = admin
       ? await admin
           .from("shopify_connections")
-          .select("organization_id, encrypted_api_secret")
+          .select(
+            "organization_id, client_id, encrypted_client_secret, encrypted_previous_client_secret, encrypted_api_key, encrypted_api_secret"
+          )
           .eq("shop_domain", shop)
           .maybeSingle()
       : { data: null };
-    const webhookSecret = resolveShopifyWebhookSecret(connection);
-    if (!verifyWebhookHmac(raw, hmacHeader, webhookSecret)) {
+    const webhookSecrets = resolveShopifyWebhookSecrets(connection);
+    if (!verifyWebhookHmac(raw, hmacHeader, webhookSecrets)) {
       throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Shopify webhook signature.");
     }
     if (!admin) {
@@ -403,13 +407,16 @@ async function handle(request: NextRequest, slugs: string[]) {
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     const creds = resolveShopifyAppCredentials(data);
-    const hasApiKey = Boolean(data?.encrypted_api_key);
+    const clientId = storedClientId(data);
+    const hasSecret = hasStoredClientSecret(data);
     return {
       status: data?.status ?? "NOT_CONNECTED",
       shopDomain: data?.shop_domain ?? "",
-      apiKeyMasked: hasApiKey && creds ? maskSecret(creds.apiKey) : "",
-      hasApiKey,
-      hasApiSecret: Boolean(data?.encrypted_api_secret),
+      clientId,
+      hasClientSecret: hasSecret,
+      apiKeyMasked: clientId ? maskSecret(clientId) : "",
+      hasApiKey: Boolean(clientId),
+      hasApiSecret: hasSecret,
       requestedScopes: data?.requested_scopes || env.shopifyScopes,
       webhookUrl: shopifyWebhookUrl(),
       appConfigured: Boolean(creds),
@@ -429,14 +436,26 @@ async function handle(request: NextRequest, slugs: string[]) {
       .select("*")
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
+    const clientId = String(body.clientId ?? body.client_id ?? body.apiKey ?? storedClientId(existing) ?? "").trim();
+    if (!clientId) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Provide the Shopify Client ID.");
+    }
+    const incomingSecret = String(body.clientSecret ?? body.client_secret ?? body.apiSecret ?? "").trim();
+    if (!hasStoredClientSecret(existing) && !incomingSecret) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Provide the Shopify Client secret.");
+    }
     const payload: Record<string, unknown> = {
       organization_id: ctx.organizationId,
       shop_domain: shopDomain,
+      client_id: clientId,
       requested_scopes: body.requestedScopes ?? body.requested_scopes ?? existing?.requested_scopes ?? env.shopifyScopes,
       status: existing?.status ?? "NOT_CONNECTED",
     };
-    if (body.apiKey) payload.encrypted_api_key = encryptSecret(String(body.apiKey));
-    if (body.apiSecret) payload.encrypted_api_secret = encryptSecret(String(body.apiSecret));
+    if (incomingSecret) {
+      const currentSecret = existing?.encrypted_client_secret || existing?.encrypted_api_secret;
+      if (currentSecret) payload.encrypted_previous_client_secret = currentSecret;
+      payload.encrypted_client_secret = encryptSecret(incomingSecret);
+    }
 
     const query = existing
       ? supabase.from("shopify_connections").update(payload).eq("id", existing.id)
@@ -451,12 +470,16 @@ async function handle(request: NextRequest, slugs: string[]) {
       entity_id: data.id,
     });
     const creds = resolveShopifyAppCredentials(data);
+    const savedClientId = storedClientId(data);
+    const hasSecret = hasStoredClientSecret(data);
     return {
       saved: true,
       status: data.status,
       shopDomain: data.shop_domain,
-      hasApiKey: Boolean(data.encrypted_api_key),
-      hasApiSecret: Boolean(data.encrypted_api_secret),
+      clientId: savedClientId,
+      hasClientSecret: hasSecret,
+      hasApiKey: Boolean(savedClientId),
+      hasApiSecret: hasSecret,
       requestedScopes: data.requested_scopes || env.shopifyScopes,
       webhookUrl: shopifyWebhookUrl(),
       appConfigured: Boolean(creds),
@@ -498,7 +521,7 @@ async function handle(request: NextRequest, slugs: string[]) {
         "Shopify app credentials are not configured."
       );
     }
-    if (!verifyShopifyHmac(params, creds.apiSecret)) {
+    if (!verifyShopifyHmac(params, creds.clientSecret)) {
       throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Shopify HMAC.");
     }
     const shop = normalizeShopDomain(params.get("shop") || "");

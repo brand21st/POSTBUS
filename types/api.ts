@@ -269,6 +269,10 @@ export type ShopifyConfig = {
   status?: IntegrationStatus | string;
   shopDomain?: string | null;
   shop_domain?: string | null;
+  clientId?: string | null;
+  client_id?: string | null;
+  hasClientSecret?: boolean;
+  has_client_secret?: boolean;
   apiKeyMasked?: string | null;
   api_key_masked?: string | null;
   hasApiKey?: boolean;

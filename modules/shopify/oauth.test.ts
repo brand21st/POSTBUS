@@ -4,7 +4,7 @@ import { encryptSecret } from "@/lib/security/crypto";
 import {
   normalizeShopDomain,
   resolveShopifyAppCredentials,
-  resolveShopifyWebhookSecret,
+  resolveShopifyWebhookSecrets,
   shopifyAppConfiguredFor,
   shopifyInstallUrl,
   shopifyWebhookUrl,
@@ -33,6 +33,14 @@ describe("shopify webhook hmac", () => {
     expect(verifyWebhookHmac("{}", digest, "wrong")).toBe(false);
     process.env.SHOPIFY_API_SECRET = previous;
   });
+
+  it("accepts HMAC signed with the previous client secret during rotation", () => {
+    const previous = process.env.SHOPIFY_API_SECRET;
+    process.env.SHOPIFY_API_SECRET = "";
+    const digest = createHmac("sha256", "old-secret").update("{}", "utf8").digest("base64");
+    expect(verifyWebhookHmac("{}", digest, ["new-secret", "old-secret"])).toBe(true);
+    process.env.SHOPIFY_API_SECRET = previous;
+  });
 });
 
 describe("shopify oauth hmac", () => {
@@ -54,25 +62,36 @@ describe("shopify credential helpers", () => {
     expect(normalizeShopDomain("demo.myshopify.com")).toBe("demo.myshopify.com");
   });
 
-  it("prefers encrypted org credentials over env fallbacks", () => {
+  it("prefers Client ID and encrypted Client secret from the connection row", () => {
     const row = {
-      encrypted_api_key: encryptSecret("org-key"),
-      encrypted_api_secret: encryptSecret("org-secret"),
+      client_id: "org-client-id",
+      encrypted_client_secret: encryptSecret("org-secret"),
       requested_scopes: "read_orders,write_orders",
     };
     expect(resolveShopifyAppCredentials(row)).toEqual({
-      apiKey: "org-key",
-      apiSecret: "org-secret",
+      clientId: "org-client-id",
+      clientSecret: "org-secret",
       scopes: "read_orders,write_orders",
     });
-    expect(resolveShopifyWebhookSecret(row)).toBe("org-secret");
+    expect(resolveShopifyWebhookSecrets(row)).toContain("org-secret");
     expect(shopifyAppConfiguredFor(row)).toBe(true);
+  });
+
+  it("falls back to legacy encrypted API key columns", () => {
+    const row = {
+      encrypted_api_key: encryptSecret("legacy-id"),
+      encrypted_api_secret: encryptSecret("legacy-secret"),
+    };
+    expect(resolveShopifyAppCredentials(row)).toMatchObject({
+      clientId: "legacy-id",
+      clientSecret: "legacy-secret",
+    });
   });
 
   it("builds an install URL from passed credentials", () => {
     const url = new URL(
       shopifyInstallUrl("https://demo.myshopify.com/", "state-1", {
-        apiKey: "client-id",
+        clientId: "client-id",
         scopes: "read_orders",
       })
     );

@@ -16,20 +16,20 @@ import type { ShopifyConfig } from "@/types/api";
 
 type FormState = {
   shopDomain: string;
-  apiKey: string;
-  apiSecret: string;
+  clientId: string;
+  clientSecret: string;
 };
 
 const EMPTY: FormState = {
   shopDomain: "",
-  apiKey: "",
-  apiSecret: "",
+  clientId: "",
+  clientSecret: "",
 };
 
 export default function ShopifyIntegrationPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(EMPTY);
-  const [replaceSecrets, setReplaceSecrets] = useState(false);
+  const [replaceSecret, setReplaceSecret] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   const query = useQuery({
@@ -37,7 +37,7 @@ export default function ShopifyIntegrationPage() {
     queryFn: () => api<ShopifyConfig>("/api/v1/integrations/shopify"),
   });
   const config = query.data;
-  const hasSecrets = Boolean(config?.hasApiKey ?? config?.has_api_key) && Boolean(config?.hasApiSecret ?? config?.has_api_secret);
+  const hasClientSecret = Boolean(config?.hasClientSecret ?? config?.has_client_secret ?? config?.hasApiSecret);
   const scopes = config?.requestedScopes ?? config?.requested_scopes ?? "";
   const webhookUrl = config?.webhookUrl ?? config?.webhook_url ?? "";
   const appConfigured = Boolean(config?.appConfigured);
@@ -47,8 +47,8 @@ export default function ShopifyIntegrationPage() {
     if (!config || hydrated) return;
     setForm({
       shopDomain: config.shopDomain ?? config.shop_domain ?? "",
-      apiKey: "",
-      apiSecret: "",
+      clientId: config.clientId ?? config.client_id ?? "",
+      clientSecret: "",
     });
     setHydrated(true);
   }, [config, hydrated]);
@@ -59,19 +59,19 @@ export default function ShopifyIntegrationPage() {
         method: "POST",
         body: JSON.stringify({
           shopDomain: form.shopDomain,
-          apiKey: form.apiKey || undefined,
-          apiSecret: form.apiSecret || undefined,
+          clientId: form.clientId,
+          clientSecret: form.clientSecret || undefined,
           requestedScopes: scopes || undefined,
         }),
       }),
     onSuccess: (data) => {
-      toast.success("Shopify credentials saved. Secrets are stored encrypted.");
+      toast.success("Shopify Client ID saved. Client secret is stored encrypted.");
       setForm({
         shopDomain: data.shopDomain ?? data.shop_domain ?? form.shopDomain,
-        apiKey: "",
-        apiSecret: "",
+        clientId: data.clientId ?? data.client_id ?? form.clientId,
+        clientSecret: "",
       });
-      setReplaceSecrets(false);
+      setReplaceSecret(false);
       queryClient.invalidateQueries({ queryKey: ["shopify"] });
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
     },
@@ -93,11 +93,13 @@ export default function ShopifyIntegrationPage() {
     window.location.assign(href);
   }
 
+  const canSave = Boolean(form.shopDomain && form.clientId && (hasClientSecret || form.clientSecret));
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Shopify"
-        description="Save this store’s custom app credentials. After save, secrets are never shown again."
+        description="Paste Client ID and Client secret from Shopify Dev Dashboard → Apps → Settings → Credentials."
         actions={<StatusBadge value={status} />}
       />
 
@@ -105,7 +107,15 @@ export default function ShopifyIntegrationPage() {
         <CardHeader>
           <CardTitle>App credentials</CardTitle>
           <CardDescription>
-            Use the Client ID, Client secret, and scopes from your Shopify custom app. Paste the webhook URL into the app’s webhook settings.
+            Client ID identifies the app. Client secret authorizes OAuth and signs webhooks — it is encrypted at rest and never shown again.{" "}
+            <a
+              href="https://shopify.dev/docs/apps/build/authentication-authorization/manage-credentials"
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-brand hover:underline"
+            >
+              Find credentials
+            </a>
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
@@ -119,38 +129,38 @@ export default function ShopifyIntegrationPage() {
             />
           </div>
 
-          {hasSecrets && !replaceSecrets ? (
+          <CopyField
+            id="clientId"
+            label="Client ID"
+            value={form.clientId}
+            placeholder="From Shopify Dev Dashboard → Credentials"
+            readOnly={false}
+            onChange={(value) => setForm((current) => ({ ...current, clientId: value }))}
+            onCopy={() => copyValue(form.clientId, "Client ID")}
+          />
+
+          {hasClientSecret && !replaceSecret ? (
             <div className="rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-muted">
-              API key {config?.apiKeyMasked ?? config?.api_key_masked ?? "••••"} · app secret saved.
+              Client secret saved and encrypted.
               <button
                 type="button"
                 className="ml-2 font-medium text-brand hover:underline"
-                onClick={() => setReplaceSecrets(true)}
+                onClick={() => setReplaceSecret(true)}
               >
-                Replace credentials
+                Rotate secret
               </button>
             </div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="apiKey">App API key</Label>
-                <Input
-                  id="apiKey"
-                  autoComplete="off"
-                  value={form.apiKey}
-                  onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="apiSecret">App secret</Label>
-                <Input
-                  id="apiSecret"
-                  type="password"
-                  autoComplete="new-password"
-                  value={form.apiSecret}
-                  onChange={(event) => setForm((current) => ({ ...current, apiSecret: event.target.value }))}
-                />
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="clientSecret">Client secret</Label>
+              <Input
+                id="clientSecret"
+                type="password"
+                autoComplete="new-password"
+                placeholder={hasClientSecret ? "Paste the new Client secret" : "Paste the Client secret"}
+                value={form.clientSecret}
+                onChange={(event) => setForm((current) => ({ ...current, clientSecret: event.target.value }))}
+              />
             </div>
           )}
 
@@ -168,7 +178,7 @@ export default function ShopifyIntegrationPage() {
           />
 
           <div>
-            <Button type="button" onClick={() => save.mutate()} disabled={save.isPending || !form.shopDomain}>
+            <Button type="button" onClick={() => save.mutate()} disabled={save.isPending || !canSave}>
               {save.isPending ? "Saving…" : "Save credentials"}
             </Button>
           </div>
@@ -200,17 +210,29 @@ function CopyField({
   label,
   value,
   onCopy,
+  onChange,
+  placeholder,
+  readOnly = true,
 }: {
   id: string;
   label: string;
   value: string;
   onCopy: () => void;
+  onChange?: (value: string) => void;
+  placeholder?: string;
+  readOnly?: boolean;
 }) {
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
       <div className="flex gap-2">
-        <Input id={id} readOnly value={value} />
+        <Input
+          id={id}
+          readOnly={readOnly}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange ? (event) => onChange(event.target.value) : undefined}
+        />
         <Button type="button" variant="secondary" disabled={!value} onClick={onCopy}>
           <Copy />
           Copy
