@@ -1,0 +1,590 @@
+import { createAdminClient } from "@/lib/supabase/admin";
+import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs/retry";
+import { encryptSecret } from "@/lib/security/crypto";
+import { getAutomationSettings } from "@/modules/automation/service";
+import { indiaPostFromRow } from "@/modules/india-post/provider";
+import { PDFDocument, StandardFonts } from "pdf-lib";
+import type { JobPayload } from "@/lib/queue/queues";
+import type { AutomationSettings } from "@/types/api";
+
+export async function processJob(queue: string, payload: JobPayload) {
+  const supabase = createAdminClient();
+  const jobId = payload.jobId;
+
+  await supabase
+    .from("background_jobs")
+    .update({ status: "RUNNING", started_at: new Date().toISOString() })
+    .eq("id", jobId);
+
+  try {
+    if (queue === "shipment-booking") await bookShipment(supabase, payload);
+    else if (queue === "label-generation") await generateLabel(supabase, payload);
+    else if (queue === "manifest-generation") await generateManifest(supabase, payload);
+    else if (queue === "tracking-sync") await syncTracking(supabase, payload);
+    else if (queue === "shopify-sync") await shopifySync(supabase, payload);
+    else if (queue === "shopify-fulfillment") await shopifyFulfillment();
+    else if (queue === "webhook-processing") await deliverWebhooks(supabase, payload);
+    else {
+      // notifications / cleanup / reports reserved
+    }
+
+    await supabase
+      .from("background_jobs")
+      .update({ status: "SUCCEEDED", completed_at: new Date().toISOString(), last_error: null })
+      .eq("id", jobId);
+  } catch (error) {
+    const classified = classifyProviderError(error);
+    const { data: job } = await supabase
+      .from("background_jobs")
+      .select("attempt_count, max_attempts")
+      .eq("id", jobId)
+      .single();
+    const attempt = (job?.attempt_count ?? 0) + 1;
+    const retryable = classified.retryable && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
+    await supabase.from("shipment_job_attempts").insert({
+      organization_id: payload.organizationId,
+      job_id: jobId,
+      shipment_id: payload.entityType === "shipment" ? payload.entityId : null,
+      attempt_number: attempt,
+      status: retryable ? "RETRYING" : "FAILED",
+      error: classified.message,
+      error_code: classified.code,
+      retryable,
+      finished_at: new Date().toISOString(),
+    });
+    await supabase
+      .from("background_jobs")
+      .update({
+        status: retryable ? "RETRYING" : "FAILED",
+        attempt_count: attempt,
+        last_error: classified.message,
+        last_error_code: classified.code,
+        next_attempt_at: retryable
+          ? new Date(Date.now() + delayForAttempt(attempt)).toISOString()
+          : null,
+      })
+      .eq("id", jobId);
+
+    if (payload.entityType === "shipment" && payload.entityId) {
+      await supabase
+        .from("shipments")
+        .update({
+          status: retryable ? "QUEUED" : "FAILED",
+          last_error: classified.message,
+          last_error_code: classified.code,
+        })
+        .eq("id", payload.entityId);
+      await supabase.from("notifications").insert({
+        organization_id: payload.organizationId,
+        type: retryable ? "shipment.retrying" : "shipment.failed",
+        title: retryable ? "Shipment retry scheduled" : "Shipment failed",
+        body: classified.message,
+        entity_type: "shipment",
+        entity_id: payload.entityId,
+      });
+    }
+
+    if (!retryable) throw error;
+    throw error;
+  }
+}
+
+async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const { data: shipment } = await supabase
+    .from("shipments")
+    .select("*, orders(*), customers(*), addresses:shipping_address_id(*)")
+    .eq("id", payload.entityId)
+    .single();
+  if (!shipment) throw Object.assign(new Error("Shipment not found."), { code: "VALIDATION_ERROR" });
+
+  const { data: connection } = await supabase
+    .from("india_post_connections")
+    .select("*")
+    .eq("organization_id", payload.organizationId)
+    .maybeSingle();
+
+  if (!connection || connection.status === "NOT_CONNECTED") {
+    throw Object.assign(new Error("India Post is not connected."), {
+      code: "PERMANENT_AUTH_ERROR",
+    });
+  }
+
+  const { data: range } = await supabase
+    .from("barcode_ranges")
+    .select("*")
+    .eq("organization_id", payload.organizationId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!range || range.next_number > range.end_number) {
+    throw Object.assign(new Error("No barcode range available."), { code: "INVALID_BARCODE" });
+  }
+
+  const barcode = `${range.prefix}${String(range.next_number).padStart(9, "0")}${range.suffix}`;
+  await supabase
+    .from("barcode_ranges")
+    .update({ next_number: range.next_number + 1 })
+    .eq("id", range.id);
+
+  await supabase.from("shipments").update({ status: "BOOKING", barcode }).eq("id", shipment.id);
+
+  const provider = indiaPostFromRow(connection);
+  const tokens = await provider.login();
+  await supabase
+    .from("india_post_connections")
+    .update({
+      encrypted_access_token: encryptSecret(tokens.access_token),
+      encrypted_refresh_token: tokens.refresh_token ? encryptSecret(tokens.refresh_token) : null,
+      encrypted_id_token: tokens.id_token ? encryptSecret(tokens.id_token) : null,
+      expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      refresh_expires_at: new Date(Date.now() + tokens.refresh_expires_in * 1000).toISOString(),
+      last_refreshed_at: new Date().toISOString(),
+    })
+    .eq("id", connection.id);
+
+  const address = shipment.addresses as {
+    name?: string;
+    line1?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+    phone?: string;
+  } | null;
+
+  const result = await provider.bookShipment({
+    articles: [
+      {
+        bulk_customer_id: connection.bulk_customer_id,
+        contract_id: connection.contract_id,
+        barcode_no: barcode,
+        pickup_or_dropoff: "dropoff",
+        pickup_dropoff_office_id: connection.pickup_dropoff_office_id,
+        article_type: shipment.service_code,
+        physical_weight: shipment.weight_grams,
+        sender_name: "Merchant",
+        sender_add_line_1: "Registered pickup",
+        sender_city: "NA",
+        sender_state: "NA",
+        sender_pincode: address?.pincode ?? "000000",
+        receiver_name: address?.name ?? "Customer",
+        receiver_add_line_1: address?.line1 ?? "",
+        receiver_city: address?.city ?? "",
+        receiver_state: address?.state ?? "",
+        receiver_pincode: address?.pincode ?? "",
+        sender_mobile_no: "0000000000",
+        receiver_mobile_no: address?.phone ?? "0000000000",
+      },
+    ],
+  });
+
+  const valid = result?.valid_articles?.[0];
+  if (!valid) {
+    const firstError = result?.error_articles?.[0]?.errors?.[0] || "Booking rejected.";
+    throw Object.assign(new Error(firstError), { code: "VALIDATION_ERROR" });
+  }
+
+  await supabase
+    .from("shipments")
+    .update({
+      status: "BOOKED",
+      tracking_number: barcode,
+      barcode,
+      tariff_amount: valid.calculated_tariff ?? null,
+      provider_ref: result.batch_id ?? null,
+      booked_at: new Date().toISOString(),
+    })
+    .eq("id", shipment.id);
+
+  await supabase.from("orders").update({ status: "BOOKED" }).eq("id", shipment.order_id);
+  await supabase.from("usage_events").insert({
+    organization_id: payload.organizationId,
+    metric: "shipments",
+    quantity: 1,
+  });
+
+  const automation = await loadAutomation(supabase, payload.organizationId);
+
+  const { createBackgroundJob } = await import("@/modules/jobs/service");
+  if (automation.autoLabelGeneration) {
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "label-generation",
+      entityType: "shipment",
+      entityId: shipment.id,
+    });
+  }
+  if (automation.autoTrackingSync) {
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "tracking-sync",
+      entityType: "shipment",
+      entityId: shipment.id,
+    });
+  }
+}
+
+async function loadAutomation(
+  supabase: ReturnType<typeof createAdminClient>,
+  organizationId: string
+): Promise<AutomationSettings> {
+  try {
+    return await getAutomationSettings(supabase, organizationId);
+  } catch {
+    return {
+      autoShopifySync: false,
+      autoShipmentCreation: false,
+      autoBooking: false,
+      autoLabelGeneration: true,
+      autoManifest: false,
+      autoTrackingSync: true,
+      autoShopifyFulfillment: false,
+    };
+  }
+}
+
+async function generateLabel(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const { data: shipment } = await supabase
+    .from("shipments")
+    .select("*, orders(order_number), customers(name), addresses:shipping_address_id(*)")
+    .eq("id", payload.entityId)
+    .single();
+  if (!shipment?.barcode) {
+    throw Object.assign(new Error("Shipment is not booked."), { code: "VALIDATION_ERROR" });
+  }
+
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([420, 595]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const address = shipment.addresses as { name?: string; line1?: string; city?: string; pincode?: string } | null;
+  page.drawText("PostBus / India Post Label", { x: 36, y: 540, size: 14, font });
+  page.drawText(`Barcode: ${shipment.barcode}`, { x: 36, y: 510, size: 12, font });
+  page.drawText(`Order: ${(shipment.orders as { order_number?: string } | null)?.order_number ?? ""}`, {
+    x: 36,
+    y: 490,
+    size: 11,
+    font,
+  });
+  page.drawText(address?.name ?? "", { x: 36, y: 460, size: 12, font });
+  page.drawText(address?.line1 ?? "", { x: 36, y: 444, size: 10, font });
+  page.drawText(`${address?.city ?? ""} ${address?.pincode ?? ""}`, { x: 36, y: 428, size: 10, font });
+
+  const bytes = await pdf.save();
+  const path = `${payload.organizationId}/${shipment.id}.pdf`;
+  const upload = await supabase.storage.from("labels").upload(path, bytes, {
+    contentType: "application/pdf",
+    upsert: true,
+  });
+  if (upload.error) {
+    throw Object.assign(new Error(upload.error.message), { code: "LABEL_GENERATION_FAILED" });
+  }
+  const { data: signed } = await supabase.storage.from("labels").createSignedUrl(path, 60 * 60 * 24 * 7);
+  await supabase.from("labels").insert({
+    organization_id: payload.organizationId,
+    shipment_id: shipment.id,
+    file_path: path,
+    file_url: signed?.signedUrl ?? null,
+    mime_type: "application/pdf",
+    status: "READY",
+  });
+  await supabase.from("shipments").update({ status: "LABEL_READY" }).eq("id", shipment.id);
+
+  const automation = await loadAutomation(supabase, payload.organizationId);
+  const { createBackgroundJob } = await import("@/modules/jobs/service");
+  if (automation.autoManifest) {
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "manifest-generation",
+      entityType: "shipment",
+      entityId: shipment.id,
+    });
+  }
+  if (automation.autoShopifyFulfillment) {
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "shopify-fulfillment",
+      entityType: "shipment",
+      entityId: shipment.id,
+    });
+  }
+}
+
+async function generateManifest(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const { data: shipments } = await supabase
+    .from("shipments")
+    .select("id, barcode, tracking_number, orders(order_number)")
+    .eq("organization_id", payload.organizationId)
+    .in("status", ["BOOKED", "LABEL_READY", "MANIFEST_PENDING"]);
+
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595, 842]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  page.drawText("PostBus Manifest", { x: 40, y: 800, size: 16, font });
+  (shipments ?? []).forEach((item, index) => {
+    const order = item.orders as { order_number?: string } | null;
+    page.drawText(
+      `${index + 1}. ${item.barcode ?? ""}  ${order?.order_number ?? ""}`,
+      { x: 40, y: 760 - index * 16, size: 10, font }
+    );
+  });
+  const bytes = await pdf.save();
+  const path = `${payload.organizationId}/manifest-${payload.jobId}.pdf`;
+  await supabase.storage.from("manifests").upload(path, bytes, {
+    contentType: "application/pdf",
+    upsert: true,
+  });
+  const { data: signed } = await supabase.storage
+    .from("manifests")
+    .createSignedUrl(path, 60 * 60 * 24 * 7);
+
+  const { data: manifest } = await supabase
+    .from("manifests")
+    .insert({
+      organization_id: payload.organizationId,
+      name: `Manifest ${new Date().toISOString().slice(0, 10)}`,
+      status: "READY",
+      file_path: path,
+      file_url: signed?.signedUrl ?? null,
+      shipment_count: shipments?.length ?? 0,
+    })
+    .select()
+    .single();
+
+  if (manifest && shipments?.length) {
+    await supabase.from("manifest_shipments").insert(
+      shipments.map((item) => ({
+        organization_id: payload.organizationId,
+        manifest_id: manifest.id,
+        shipment_id: item.id,
+      }))
+    );
+    await supabase
+      .from("shipments")
+      .update({ status: "MANIFEST_READY" })
+      .in(
+        "id",
+        shipments.map((item) => item.id)
+      );
+  }
+}
+
+async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const automation = await loadAutomation(supabase, payload.organizationId);
+  if (!automation.autoTrackingSync) {
+    return;
+  }
+  const { data: connection } = await supabase
+    .from("india_post_connections")
+    .select("*")
+    .eq("organization_id", payload.organizationId)
+    .maybeSingle();
+  if (!connection) {
+    throw Object.assign(new Error("India Post is not connected."), { code: "PERMANENT_AUTH_ERROR" });
+  }
+  const { data: shipments } = await supabase
+    .from("shipments")
+    .select("id, barcode")
+    .eq("organization_id", payload.organizationId)
+    .not("barcode", "is", null)
+    .in("status", ["BOOKED", "LABEL_READY", "MANIFEST_READY", "IN_TRANSIT", "OUT_FOR_DELIVERY"]);
+  const barcodes = (shipments ?? []).map((item) => item.barcode).filter(Boolean) as string[];
+  if (!barcodes.length) return;
+  const provider = indiaPostFromRow(connection);
+  const result = (await provider.trackShipment(barcodes)) as {
+    data?: Array<{
+      booking_details?: { article_number?: string };
+      tracking_details?: Array<{ event?: string; office?: string; date?: string; time?: string }>;
+      del_status?: { del_status?: string };
+    }>;
+  };
+  for (const article of result.data ?? []) {
+    const barcode = article.booking_details?.article_number;
+    const shipment = shipments?.find((item) => item.barcode === barcode);
+    if (!shipment) continue;
+    for (const event of article.tracking_details ?? []) {
+      const { error } = await supabase.from("tracking_events").insert({
+        organization_id: payload.organizationId,
+        shipment_id: shipment.id,
+        event_code: event.event ?? "EVENT",
+        event_description: event.event,
+        office_name: event.office,
+        occurred_at: event.date ?? new Date().toISOString(),
+        raw: event,
+      });
+      if (error && error.code !== "23505") throw error;
+    }
+    const delivered = article.del_status?.del_status === "delivered";
+    if (delivered) {
+      await supabase.from("shipments").update({ status: "DELIVERED" }).eq("id", shipment.id);
+    }
+  }
+}
+
+async function shopifySync(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const { data: job } = await supabase
+    .from("background_jobs")
+    .select("progress")
+    .eq("id", payload.jobId)
+    .maybeSingle();
+  const progress = (job?.progress ?? {}) as { topic?: string; manual?: boolean };
+  const automation = await loadAutomation(supabase, payload.organizationId);
+  if (progress.topic && !automation.autoShopifySync) {
+    return;
+  }
+
+  const { data: connection } = await supabase
+    .from("shopify_connections")
+    .select("*")
+    .eq("organization_id", payload.organizationId)
+    .maybeSingle();
+  if (!connection?.encrypted_access_token) {
+    throw Object.assign(new Error("Shopify is not connected."), { code: "PERMANENT_AUTH_ERROR" });
+  }
+  const { decryptSecret } = await import("@/lib/security/crypto");
+  const token = decryptSecret(connection.encrypted_access_token);
+  let imported = 0;
+  let updated = 0;
+  let pageInfo: string | null = null;
+  do {
+    const url = new URL(`https://${connection.shop_domain}/admin/api/2024-10/orders.json`);
+    url.searchParams.set("status", "any");
+    url.searchParams.set("limit", "50");
+    if (pageInfo) url.searchParams.set("page_info", pageInfo);
+    const response = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": token },
+    });
+    if (!response.ok) {
+      throw Object.assign(new Error("Shopify orders fetch failed."), { status: response.status });
+    }
+    const json = (await response.json()) as { orders?: Array<Record<string, unknown>> };
+    for (const remote of json.orders ?? []) {
+      const sourceId = String(remote.id);
+      const { data: existing } = await supabase
+        .from("external_order_references")
+        .select("order_id")
+        .eq("organization_id", payload.organizationId)
+        .eq("source", "SHOPIFY")
+        .eq("source_order_id", sourceId)
+        .maybeSingle();
+      if (existing) {
+        updated += 1;
+        continue;
+      }
+      const { createManualOrder } = await import("@/modules/orders/service");
+      const shipping = (remote.shipping_address ?? {}) as Record<string, string>;
+      const created = await createManualOrder(supabase, {
+        userId: payload.userId ?? "",
+        email: null,
+        fullName: null,
+        organizationId: payload.organizationId,
+        organizationName: "",
+        role: "OWNER",
+        permissions: [],
+      }, {
+        source: "SHOPIFY",
+        orderNumber: String(remote.order_number ?? remote.name ?? sourceId),
+        customer: {
+          name: `${shipping.first_name ?? ""} ${shipping.last_name ?? ""}`.trim() || "Shopify customer",
+          phone: shipping.phone || "0000000000",
+          email: String(remote.email ?? ""),
+        },
+        shippingAddress: {
+          name: shipping.name,
+          phone: shipping.phone,
+          line1: shipping.address1 || "Address pending",
+          line2: shipping.address2,
+          city: shipping.city || "NA",
+          state: shipping.province || "NA",
+          pincode: (shipping.zip || "000000").replace(/\D/g, "").slice(0, 6).padEnd(6, "0"),
+          country: shipping.country_code || "IN",
+        },
+        paymentStatus: remote.financial_status === "paid" ? "PAID" : "PENDING",
+        lineItems: ((remote.line_items as Array<Record<string, unknown>>) ?? []).map((item) => ({
+          title: String(item.title ?? "Item"),
+          sku: item.sku ? String(item.sku) : undefined,
+          quantity: Number(item.quantity ?? 1),
+          unitPrice: Number(item.price ?? 0),
+        })),
+      });
+      if (automation.autoShipmentCreation && created.id) {
+        const { createShipmentsForOrders } = await import("@/modules/shipments/service");
+        await createShipmentsForOrders(
+          supabase,
+          {
+            userId: payload.userId ?? "",
+            email: null,
+            fullName: null,
+            organizationId: payload.organizationId,
+            organizationName: "",
+            role: "OWNER",
+            permissions: [],
+          },
+          [created.id],
+          { enqueueBooking: Boolean(automation.autoBooking) }
+        );
+      }
+      imported += 1;
+    }
+    const link = response.headers.get("link") ?? "";
+    const next = link.match(/<[^>]+page_info=([^&>]+)[^>]*>; rel="next"/);
+    pageInfo = next?.[1] ?? null;
+  } while (pageInfo);
+
+  await supabase
+    .from("shopify_connections")
+    .update({ last_sync_at: new Date().toISOString() })
+    .eq("id", connection.id);
+  await supabase
+    .from("background_jobs")
+    .update({ progress: { imported, updated, failed: 0 } })
+    .eq("id", payload.jobId);
+}
+
+async function shopifyFulfillment() {
+  // Requires a connected store; skip silently if fulfillment API is not configured.
+}
+
+async function deliverWebhooks(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const { data: deliveries } = await supabase
+    .from("webhook_deliveries")
+    .select("*, webhook_endpoints(*)")
+    .eq("organization_id", payload.organizationId)
+    .eq("status", "PENDING")
+    .limit(20);
+
+  for (const delivery of deliveries ?? []) {
+    const endpoint = delivery.webhook_endpoints as { url?: string; secret_hash?: string } | null;
+    if (!endpoint?.url) continue;
+    const timestamp = String(Date.now());
+    const body = JSON.stringify(delivery.payload);
+    const { signWebhook } = await import("@/modules/webhooks/outgoing");
+    const signature = signWebhook(endpoint.secret_hash ?? "", timestamp, body);
+    try {
+      const response = await fetch(endpoint.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-PostBus-Timestamp": timestamp,
+          "X-PostBus-Signature": signature,
+        },
+        body,
+      });
+      await supabase
+        .from("webhook_deliveries")
+        .update({
+          status: response.ok ? "DELIVERED" : "FAILED",
+          response_code: response.status,
+          attempt_count: delivery.attempt_count + 1,
+        })
+        .eq("id", delivery.id);
+    } catch (error) {
+      await supabase
+        .from("webhook_deliveries")
+        .update({
+          status: "FAILED",
+          last_error: error instanceof Error ? error.message : "delivery failed",
+          attempt_count: delivery.attempt_count + 1,
+        })
+        .eq("id", delivery.id);
+    }
+  }
+}

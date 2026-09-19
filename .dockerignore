@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.gitignore
+*.md
+.env
+.env.*
+!.env.example
+.cursor
+coverage
+*.tsbuildinfo
+.next-env.d.ts
+docker-compose.redis.yml
+infra
+supabase
+agent-transcripts

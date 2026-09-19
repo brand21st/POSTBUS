@@ -1,0 +1,15 @@
+[Unit]
+Description=PostBus Next.js
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/postbus
+EnvironmentFile=/var/www/postbus/.env.production
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=5
+User=www-data
+
+[Install]
+WantedBy=multi-user.target
