@@ -487,6 +487,10 @@ async function handle(request: NextRequest, slugs: string[]) {
   }
 
   if (key === "GET integrations/shopify/connect") {
+    const failRedirect = (message: string) =>
+      NextResponse.redirect(
+        `${env.appUrl}/dashboard/integrations/shopify?error=${encodeURIComponent(message)}`
+      );
     const { data: connection } = await supabase
       .from("shopify_connections")
       .select("*")
@@ -494,21 +498,25 @@ async function handle(request: NextRequest, slugs: string[]) {
       .maybeSingle();
     const creds = resolveShopifyAppCredentials(connection);
     if (!creds) {
-      throw new AppError(
-        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
-        "Shopify app credentials are not configured."
-      );
+      return failRedirect("Save your Shopify Client ID and Client secret before connecting.");
     }
     const shop = request.nextUrl.searchParams.get("shop") || connection?.shop_domain;
     if (!shop) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Provide a shop domain.");
+      return failRedirect("Provide a shop domain before connecting.");
     }
     const state = `${ctx.organizationId}.${newOAuthState()}`;
     return NextResponse.redirect(shopifyInstallUrl(shop, state, creds));
   }
 
   if (key === "GET integrations/shopify/callback") {
+    const failRedirect = (message: string) =>
+      NextResponse.redirect(
+        `${env.appUrl}/dashboard/integrations/shopify?error=${encodeURIComponent(message)}`
+      );
     const params = request.nextUrl.searchParams;
+    if (params.get("error")) {
+      return failRedirect(params.get("error_description") || params.get("error") || "Shopify denied access.");
+    }
     const { data: connection } = await supabase
       .from("shopify_connections")
       .select("*")
@@ -516,31 +524,35 @@ async function handle(request: NextRequest, slugs: string[]) {
       .maybeSingle();
     const creds = resolveShopifyAppCredentials(connection);
     if (!creds) {
-      throw new AppError(
-        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
-        "Shopify app credentials are not configured."
-      );
+      return failRedirect("Save your Shopify Client ID and Client secret before connecting.");
     }
     if (!verifyShopifyHmac(params, creds.clientSecret)) {
-      throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Shopify HMAC.");
+      return failRedirect("Invalid Shopify HMAC. Check that the Client secret matches the app.");
     }
     const shop = normalizeShopDomain(params.get("shop") || "");
-    const code = params.get("code")!;
-    const tokens = await exchangeShopifyToken(shop, code, creds);
-    const record = {
-      organization_id: ctx.organizationId,
-      shop_domain: shop,
-      encrypted_access_token: encryptSecret(tokens.access_token),
-      scopes: tokens.scope,
-      status: "CONNECTED",
-      installed_at: new Date().toISOString(),
-      last_error: null,
-    };
-    const { error } = connection
-      ? await supabase.from("shopify_connections").update(record).eq("id", connection.id)
-      : await supabase.from("shopify_connections").insert(record);
-    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-    return NextResponse.redirect(`${env.appUrl}/dashboard/integrations/shopify`);
+    const code = params.get("code");
+    if (!shop || !code) {
+      return failRedirect("Shopify did not return a shop or authorization code.");
+    }
+    try {
+      const tokens = await exchangeShopifyToken(shop, code, creds);
+      const record = {
+        organization_id: ctx.organizationId,
+        shop_domain: shop,
+        encrypted_access_token: encryptSecret(tokens.access_token),
+        scopes: tokens.scope,
+        status: "CONNECTED",
+        installed_at: new Date().toISOString(),
+        last_error: null,
+      };
+      const { error } = connection
+        ? await supabase.from("shopify_connections").update(record).eq("id", connection.id)
+        : await supabase.from("shopify_connections").insert(record);
+      if (error) return failRedirect(error.message);
+      return NextResponse.redirect(`${env.appUrl}/dashboard/integrations/shopify`);
+    } catch (error) {
+      return failRedirect(error instanceof Error ? error.message : "Shopify token exchange failed.");
+    }
   }
 
   if (key === "POST integrations/shopify/sync") {
@@ -914,7 +926,7 @@ async function dispatch(request: NextRequest, context: { params: Promise<{ slug:
       method: request.method,
       latency: Date.now() - started,
     });
-    if (result instanceof NextResponse) return result;
+    if (result instanceof Response) return result;
     return ok(result, "OK", requestId);
   } catch (error) {
     logError("api.error", {
