@@ -66,16 +66,6 @@ export async function acceptIndiaPostWebhook(
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Payload too large.");
   }
 
-  const { data: connection } = await supabase
-    .from("india_post_connections")
-    .select("id, organization_id, status, environment")
-    .eq("id", input.connectionId)
-    .maybeSingle();
-
-  if (!connection) {
-    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
-  }
-
   const parsed = parseIndiaPostWebhook(input.rawBody, input.contentType, input.channel);
   const hash = payloadHash(input.rawBody);
   const storedPayload = {
@@ -87,79 +77,73 @@ export async function acceptIndiaPostWebhook(
     },
   };
 
-  const { data: existingHash } = await supabase
-    .from("provider_webhook_inbox")
-    .select("id")
-    .eq("organization_id", connection.organization_id)
-    .eq("payload_hash", hash)
-    .maybeSingle();
+  const persist = await supabase.rpc("accept_india_post_webhook", {
+    p_connection_id: input.connectionId,
+    p_channel: input.channel,
+    p_raw_payload: storedPayload,
+    p_payload_hash: hash,
+    p_tracking_number: parsed.barcode,
+    p_event_code: parsed.eventCode,
+    p_event_timestamp: parsed.eventTimestamp,
+  });
 
-  if (existingHash) {
-    logInfo("india_post.webhook.duplicate", {
-      provider: "INDIA_POST",
-      connectionId: connection.id,
-      organizationId: connection.organization_id,
-      channel: input.channel,
-      inboxEventId: existingHash.id,
-      trackingNumber: maskTrackingNumber(parsed.barcode),
-    });
-    return { accepted: true, duplicate: true, inboxEventId: existingHash.id };
-  }
-
-  const insert = await supabase
-    .from("provider_webhook_inbox")
-    .insert({
-      organization_id: connection.organization_id,
-      connection_id: connection.id,
-      provider: "INDIA_POST",
-      channel: input.channel,
-      provider_event_id: null,
-      tracking_number: parsed.barcode,
-      event_code: parsed.eventCode,
-      event_timestamp: parsed.eventTimestamp,
-      payload_hash: hash,
-      raw_payload: storedPayload,
-      process_status: "PENDING",
-    })
-    .select("id")
-    .single();
-
-  if (insert.error) {
-    if (insert.error.code === "23505") {
-      return { accepted: true, duplicate: true, inboxEventId: null };
+  if (persist.error) {
+    if (persist.error.code === "P0002" || persist.error.message?.includes("not_found")) {
+      throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
     }
     throw new AppError(ERROR_CODES.PROVIDER_ERROR, "Could not persist webhook event.");
   }
 
-  try {
-    await createBackgroundJob(supabase, {
-      organizationId: connection.organization_id,
-      jobType: "india-post-events",
-      entityType: "provider_webhook_inbox",
-      entityId: insert.data.id,
-    });
-  } catch (error) {
-    logError("india_post.webhook.enqueue_failed", {
+  const result = (persist.data ?? {}) as {
+    accepted?: boolean;
+    duplicate?: boolean;
+    inbox_event_id?: string | null;
+    organization_id?: string | null;
+  };
+  const inboxEventId = result.inbox_event_id ?? null;
+
+  if (result.duplicate) {
+    logInfo("india_post.webhook.duplicate", {
       provider: "INDIA_POST",
-      connectionId: connection.id,
-      organizationId: connection.organization_id,
-      inboxEventId: insert.data.id,
-      message: error instanceof Error ? error.message : "enqueue failed",
+      connectionId: input.connectionId,
+      organizationId: result.organization_id,
+      channel: input.channel,
+      inboxEventId,
+      trackingNumber: maskTrackingNumber(parsed.barcode),
     });
+    return { accepted: true, duplicate: true, inboxEventId };
+  }
+
+  if (inboxEventId && result.organization_id) {
+    try {
+      await createBackgroundJob(supabase, {
+        organizationId: result.organization_id,
+        jobType: "india-post-events",
+        entityType: "provider_webhook_inbox",
+        entityId: inboxEventId,
+      });
+    } catch (error) {
+      logError("india_post.webhook.enqueue_failed", {
+        provider: "INDIA_POST",
+        connectionId: input.connectionId,
+        organizationId: result.organization_id,
+        inboxEventId,
+        message: error instanceof Error ? error.message : "enqueue failed",
+      });
+    }
   }
 
   logInfo("india_post.webhook.accepted", {
     provider: "INDIA_POST",
-    connectionId: connection.id,
-    organizationId: connection.organization_id,
+    connectionId: input.connectionId,
     channel: input.channel,
     eventCode: parsed.eventCode,
     trackingNumber: maskTrackingNumber(parsed.barcode),
-    inboxEventId: insert.data.id,
+    inboxEventId,
     parseError: parsed.parseError,
   });
 
-  return { accepted: true, duplicate: false, inboxEventId: insert.data.id };
+  return { accepted: true, duplicate: false, inboxEventId };
 }
 
 export async function processIndiaPostInboxEvent(

@@ -14,3 +14,13 @@ export function createAdminClient() {
 export function hasAdminClient() {
   return Boolean(env.supabaseUrl && env.supabaseServiceRoleKey);
 }
+
+export function createWebhookInboxClient() {
+  if (hasAdminClient()) return createAdminClient();
+  if (!env.supabaseUrl || !env.supabaseAnonKey) {
+    throw new Error("Supabase is not configured.");
+  }
+  return createClient(env.supabaseUrl, env.supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}

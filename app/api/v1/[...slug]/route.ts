@@ -55,12 +55,9 @@ async function handle(request: NextRequest, slugs: string[]) {
 
   if (indiaPostWebhook && method === "POST") {
     const raw = await request.text();
-    const { createAdminClient, hasAdminClient } = await import("@/lib/supabase/admin");
-    if (!hasAdminClient()) {
-      throw new AppError(ERROR_CODES.PROVIDER_ERROR, "Webhook processing is unavailable.");
-    }
+    const { createWebhookInboxClient } = await import("@/lib/supabase/admin");
     const { acceptIndiaPostWebhook } = await import("@/modules/india-post/webhook");
-    return acceptIndiaPostWebhook(createAdminClient(), {
+    return acceptIndiaPostWebhook(createWebhookInboxClient(), {
       connectionId: indiaPostWebhook.connectionId,
       channel: indiaPostWebhook.channel,
       rawBody: raw,
