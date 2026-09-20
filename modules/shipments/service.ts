@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
 
@@ -107,9 +108,12 @@ export async function listShipments(
   if (query.status) builder = builder.eq("status", query.status);
   if (query.orderId) builder = builder.eq("order_id", query.orderId);
   if (query.q) {
-    builder = builder.or(
-      `barcode.ilike.%${query.q}%,tracking_number.ilike.%${query.q}%,id.eq.${query.q}`
-    );
+    const parts = [orIlike(["barcode", "tracking_number"], query.q)];
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(query.q)) {
+      parts.push(`id.eq.${query.q}`);
+    }
+    const filter = parts.filter(Boolean).join(",");
+    if (filter) builder = builder.or(filter);
   }
 
   const { data, error, count } = await builder;

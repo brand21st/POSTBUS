@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { createHmac } from "crypto";
 import { encryptSecret } from "@/lib/security/crypto";
 import {
+  createShopifyOAuthState,
   normalizeShopDomain,
+  oauthStateMatches,
+  parseShopifyOAuthState,
   resolveShopifyAppCredentials,
   resolveShopifyWebhookSecrets,
   shopifyAppConfiguredFor,
@@ -105,5 +108,19 @@ describe("shopify credential helpers", () => {
 
   it("returns the platform webhook URL", () => {
     expect(shopifyWebhookUrl()).toMatch(/\/api\/v1\/webhooks\/shopify$/);
+  });
+});
+
+describe("shopify oauth state", () => {
+  it("binds state to an organization and rejects mismatched cookies", () => {
+    const state = createShopifyOAuthState("org-123");
+    expect(parseShopifyOAuthState(state)).toEqual({
+      organizationId: "org-123",
+      nonce: state.slice("org-123.".length),
+    });
+    expect(oauthStateMatches(state, state)).toBe(true);
+    expect(oauthStateMatches(state, createShopifyOAuthState("org-123"))).toBe(false);
+    expect(oauthStateMatches(undefined, state)).toBe(false);
+    expect(parseShopifyOAuthState("not-a-state")).toBeNull();
   });
 });

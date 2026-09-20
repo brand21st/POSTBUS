@@ -1,9 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireTenant } from "@/lib/api/context";
-import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { apiRoute } from "@/lib/api/handler";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { hasPermission } from "@/lib/permissions/rbac";
 import { createTrackingPageSchema, updateTrackingPageSchema } from "@/modules/tracking-pages/schema";
 import {
   createTrackingPage,
@@ -11,12 +9,6 @@ import {
   updateTrackingPage,
   uploadLogo,
 } from "@/modules/tracking-pages/service";
-
-function assertCanManage(role: Parameters<typeof hasPermission>[0]) {
-  if (!hasPermission(role, "tracking.pages")) {
-    throw new AppError(ERROR_CODES.FORBIDDEN, "You do not have permission to manage the tracking page.");
-  }
-}
 
 export const GET = apiRoute(async () => {
   const ctx = await requireTenant();
@@ -26,7 +18,6 @@ export const GET = apiRoute(async () => {
 
 export const POST = apiRoute(async (request: NextRequest) => {
   const ctx = await requireTenant("tracking.pages");
-  assertCanManage(ctx.role);
   const body = await request.json().catch(() => ({}));
   const parsed = createTrackingPageSchema.parse(body);
   const supabase = await createServerSupabase();
@@ -35,7 +26,6 @@ export const POST = apiRoute(async (request: NextRequest) => {
 
 export const PATCH = apiRoute(async (request: NextRequest) => {
   const ctx = await requireTenant("tracking.pages");
-  assertCanManage(ctx.role);
   const supabase = await createServerSupabase();
   const contentType = request.headers.get("content-type") ?? "";
 

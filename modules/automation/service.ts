@@ -3,17 +3,14 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { TenantContext } from "@/lib/api/context";
 import type { AutomationSettings } from "@/types/api";
 
-const COLUMNS = [
-  "auto_shopify_sync",
-  "auto_shipment_creation",
-  "auto_booking",
-  "auto_label_generation",
-  "auto_manifest",
-  "auto_tracking_sync",
-  "auto_shopify_fulfillment",
-] as const;
-
-type Column = (typeof COLUMNS)[number];
+type Column =
+  | "auto_shopify_sync"
+  | "auto_shipment_creation"
+  | "auto_booking"
+  | "auto_label_generation"
+  | "auto_manifest"
+  | "auto_tracking_sync"
+  | "auto_shopify_fulfillment";
 
 const CAMEL_TO_COLUMN: Record<string, Column> = {
   autoShopifySync: "auto_shopify_sync",
@@ -44,7 +41,7 @@ export type AutomationRow = {
 };
 
 const DEFAULTS: Omit<AutomationRow, "organization_id"> = {
-  auto_shopify_sync: false,
+  auto_shopify_sync: true,
   auto_shipment_creation: false,
   auto_booking: false,
   auto_label_generation: true,

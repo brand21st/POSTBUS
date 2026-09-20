@@ -14,8 +14,6 @@ export const RESERVED_SUBDOMAINS = [
 
 export const SUBDOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$/;
 
-export const TRACKING_PAGE_STATUSES = ["DRAFT", "PUBLISHED", "DISABLED"] as const;
-
 export const DEFAULT_PRIMARY_COLOR = "#E11D48";
 export const DEFAULT_BACKGROUND_COLOR = "#FFFFFF";
 

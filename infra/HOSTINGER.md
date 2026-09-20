@@ -32,11 +32,12 @@ Set `NEXT_PUBLIC_APP_URL=https://postbus.vachat.in` and Supabase Auth redirect U
 ## Deploy
 
 1. Clone the repo to `/var/www/postbus`
-2. Copy production env (never commit secrets)
-3. `npm ci && npm run build`
-4. Install Redis and enable `infra/postbus-web.service` + `infra/postbus-workers.service`
-5. Use `infra/nginx.conf.example` (`server_name` includes `*.postbus.in` and `*.postbus.vachat.in`)
-6. Set Supabase Auth redirect URLs to `https://postbus.vachat.in/auth/callback` (or `https://postbus.in/auth/callback` after cutover) and Shopify callback to the matching `/api/v1/integrations/shopify/callback` URL
+2. Copy production env (never commit secrets). `INTEGRATION_ENCRYPTION_KEY` must be set; the app will not encrypt integration secrets in production without it.
+3. Apply pending files in `supabase/migrations/` to the remote Supabase project
+4. `npm ci && npm run build`
+5. Install Redis and enable `infra/postbus-web.service` + `infra/postbus-workers.service`. `npm run workers` needs `tsx`, which is a production dependency.
+6. Use `infra/nginx.conf.example` (`server_name` includes `*.postbus.in` and `*.postbus.vachat.in`)
+7. Set Supabase Auth redirect URLs to `https://postbus.vachat.in/auth/callback` (or `https://postbus.in/auth/callback` after cutover) and Shopify callback to the matching `/api/v1/integrations/shopify/callback` URL
 
 ## Wildcard tracking hosts
 
@@ -59,3 +60,9 @@ If a machine does not resolve `*.localhost`, add a hosts entry:
 ```
 
 Do not use `localhost:3000` for the customer page — that host stays the marketing site and merchant dashboard.
+
+## Release notes for operators
+
+- Recreate outgoing workspace webhook endpoints after deploy so they receive a recoverable signing secret. Existing endpoints keep delivering, but `X-PostBus-Signature` is omitted until they are rotated (`needsSecretRotation` on `GET /api/v1/webhooks`).
+- India Post inbound webhooks still authenticate only by connection UUID in the URL. Do not treat that as a completed signing contract.
+- `npm ci --omit=dev` is safe for workers because `tsx` is in `dependencies`.

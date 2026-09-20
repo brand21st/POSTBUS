@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
 import type { createOrderSchema, orderListQuery } from "@/modules/orders/schema";
@@ -37,9 +38,8 @@ export async function listOrders(
   if (query.from) builder = builder.gte("created_at", `${query.from}T00:00:00.000Z`);
   if (query.to) builder = builder.lte("created_at", `${query.to}T23:59:59.999Z`);
   if (query.q) {
-    builder = builder.or(
-      `order_number.ilike.%${query.q}%,source_order_id.ilike.%${query.q}%`
-    );
+    const filter = orIlike(["order_number", "source_order_id"], query.q);
+    if (filter) builder = builder.or(filter);
   }
 
   const { data, error, count } = await builder;

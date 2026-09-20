@@ -38,6 +38,8 @@ export type ShopifyRemoteOrder = {
   shipping_address?: Record<string, string | null> | null;
   billing_address?: Record<string, string | null> | null;
   customer?: { first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null } | null;
+  payment_gateway_names?: string[] | null;
+  gateway?: string | null;
   line_items?: Array<{
     title?: string;
     sku?: string | null;
@@ -59,7 +61,17 @@ export function shopifyReadyToSync(row?: ShopifyConnectionRow | null) {
   return Boolean(row?.shop_domain && resolveShopifyAppCredentials(row));
 }
 
-export function mapShopifyPaymentStatus(value?: string | null): PaymentStatus {
+const COD_GATEWAY = /cash[_\s-]*on[_\s-]*delivery|\bcod\b/i;
+
+export function isShopifyCodGateway(gateways?: string[] | string | null) {
+  const list = Array.isArray(gateways) ? gateways : gateways ? [gateways] : [];
+  return list.some((gateway) => COD_GATEWAY.test(gateway));
+}
+
+export function mapShopifyPaymentStatus(
+  value?: string | null,
+  gateways?: string[] | string | null
+): PaymentStatus {
   switch ((value || "").toLowerCase()) {
     case "paid":
       return "PAID";
@@ -73,6 +85,7 @@ export function mapShopifyPaymentStatus(value?: string | null): PaymentStatus {
     case "pending":
     case "authorized":
     default:
+      if (isShopifyCodGateway(gateways)) return "COD";
       return "PENDING";
   }
 }
@@ -271,7 +284,10 @@ export async function upsertShopifyOrder(
     input.remote.fulfillment_status,
     input.remote.cancelled_at
   );
-  const paymentStatus = mapShopifyPaymentStatus(input.remote.financial_status);
+  const paymentStatus = mapShopifyPaymentStatus(
+    input.remote.financial_status,
+    input.remote.payment_gateway_names ?? input.remote.gateway
+  );
   const orderStatus = input.remote.cancelled_at
     ? "CANCELLED"
     : fulfillmentStatus === "FULFILLED"

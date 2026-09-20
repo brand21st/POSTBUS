@@ -1,6 +1,6 @@
 import { env } from "@/lib/env";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { decryptSecret } from "@/lib/security/crypto";
+import { decryptSecret, safeEqual } from "@/lib/security/crypto";
 import { createHmac, randomBytes } from "crypto";
 
 export type ShopifyAppCredentials = {
@@ -129,6 +129,37 @@ export async function exchangeShopifyToken(
 
 export function newOAuthState() {
   return randomBytes(16).toString("hex");
+}
+
+export const SHOPIFY_OAUTH_STATE_COOKIE = "pb_shopify_oauth_state";
+
+export function createShopifyOAuthState(organizationId: string) {
+  return `${organizationId}.${newOAuthState()}`;
+}
+
+export function parseShopifyOAuthState(state: string | null | undefined) {
+  if (!state) return null;
+  const separator = state.indexOf(".");
+  if (separator <= 0 || separator === state.length - 1) return null;
+  return {
+    organizationId: state.slice(0, separator),
+    nonce: state.slice(separator + 1),
+  };
+}
+
+export function oauthStateMatches(expected: string | undefined, received: string | null) {
+  if (!expected || !received) return false;
+  return safeEqual(expected, received);
+}
+
+export function shopifyOAuthCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: env.appUrl.startsWith("https://"),
+    path: "/",
+    maxAge: 10 * 60,
+  };
 }
 
 export function shopifyWebhookUrl() {

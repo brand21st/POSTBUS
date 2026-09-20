@@ -41,21 +41,19 @@ export default function ShopifyIntegrationPage() {
   });
   const config = query.data;
   const hasClientSecret = Boolean(config?.hasClientSecret ?? config?.has_client_secret ?? config?.hasApiSecret);
-  const scopes = config?.requestedScopes ?? config?.requested_scopes ?? "";
-  const webhookUrl = config?.webhookUrl ?? config?.webhook_url ?? "";
-  const appConfigured = Boolean(config?.appConfigured);
-  const status = config?.status ?? "NOT_CONNECTED";
-  const connectError = searchParams.get("error");
-
-  useEffect(() => {
-    if (!config || hydrated) return;
+  if (config && !hydrated) {
+    setHydrated(true);
     setForm({
       shopDomain: config.shopDomain ?? config.shop_domain ?? "",
       clientId: config.clientId ?? config.client_id ?? "",
       clientSecret: "",
     });
-    setHydrated(true);
-  }, [config, hydrated]);
+  }
+  const scopes = config?.requestedScopes ?? config?.requested_scopes ?? "";
+  const webhookUrl = config?.webhookUrl ?? config?.webhook_url ?? "";
+  const appConfigured = Boolean(config?.appConfigured);
+  const status = config?.status ?? "NOT_CONNECTED";
+  const connectError = searchParams.get("error");
 
   useEffect(() => {
     if (!connectError) return;

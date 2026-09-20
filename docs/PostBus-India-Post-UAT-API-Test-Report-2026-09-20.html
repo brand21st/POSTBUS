@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PostBus — India Post Sandbox API Test Report</title>
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #111; margin: 28px 36px; }
+    h1 { font-size: 18pt; margin: 0 0 6px; color: #7a1f1f; }
+    h2 { font-size: 13pt; margin: 22px 0 8px; border-bottom: 1px solid #c9a227; padding-bottom: 4px; }
+    h3 { font-size: 11.5pt; margin: 14px 0 6px; }
+    .sub { color: #444; margin-bottom: 18px; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 10.5pt; }
+    th, td { border: 1px solid #ccc; padding: 6px 8px; vertical-align: top; text-align: left; }
+    th { background: #f4efe4; }
+    .pass { color: #0b6b2b; font-weight: 700; }
+    .fail { color: #b00020; font-weight: 700; }
+    .blocked { color: #9a5b00; font-weight: 700; }
+    .na { color: #555; font-weight: 700; }
+    .box { border: 1px solid #d7c38a; background: #fffaf0; padding: 10px 12px; margin: 10px 0 16px; }
+    .small { font-size: 9.5pt; color: #444; }
+    ul { margin-top: 6px; }
+    .footer { margin-top: 28px; font-size: 9.5pt; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>India Post / CEPT — Sandbox (UAT) API Test Report</h1>
+  <div class="sub">
+    <strong>Integrator:</strong> PostBus &nbsp;|&nbsp;
+    <strong>Application:</strong> https://postbus.vachat.in &nbsp;|&nbsp;
+    <strong>Date of test:</strong> 20 September 2026
+  </div>
+
+  <div class="box">
+    <strong>Purpose.</strong> Proof of sandbox API testing from the live PostBus application server, for Department of Posts production-access review.
+    No India Post production endpoints were called. Passwords, access tokens, refresh tokens and Authorization headers are not included.
+  </div>
+
+  <h2>1. Test environment</h2>
+  <table>
+    <tr><th>Item</th><th>Value</th></tr>
+    <tr><td>Integrator / product</td><td>PostBus (shipping / booking / tracking SaaS)</td></tr>
+    <tr><td>Public host</td><td>https://postbus.vachat.in</td></tr>
+    <tr><td>Application server</td><td>Hostinger KVM VPS, public IPv4 89.116.34.166 (whitelisted by CEPT)</td></tr>
+    <tr><td>Execution point</td><td>Inside the live PostBus application container (not a developer laptop)</td></tr>
+    <tr><td>OS / runtime</td><td>Ubuntu 24.04.2 LTS, Node.js v22.11.0, curl 8.5.0</td></tr>
+    <tr><td>Sandbox base URL</td><td>https://test.cept.gov.in/beextcustomer</td></tr>
+    <tr><td>Official UAT customer ID</td><td>3000064781</td></tr>
+    <tr><td>Login used for API calls</td><td>Documented CEPT sample UAT login (credentials not printed)</td></tr>
+    <tr><td>Test window</td><td>20 September 2026, approximately 04:26–04:28 UTC (connectivity, auth, tariff, pincode, tracking, events)</td></tr>
+    <tr><td>Reference</td><td>India Post External Integrations – Approach Document (updated 25.05.2026)</td></tr>
+  </table>
+
+  <h2>2. Overall result</h2>
+  <table>
+    <tr><th>Question</th><th>Result</th></tr>
+    <tr><td>Was sandbox testing performed from the live application server?</td><td class="pass">YES</td></tr>
+    <tr><td>Connectivity (DNS, TCP 443, TLS, HTTPS)</td><td class="pass">PASS</td></tr>
+    <tr><td>Authentication (login + token issue)</td><td class="pass">PASS</td></tr>
+    <tr><td>Speed Post tariff</td><td class="pass">PASS</td></tr>
+    <tr><td>Business Parcel tariff</td><td class="pass">PASS</td></tr>
+    <tr><td>Bulk tracking (documented sample article)</td><td class="pass">PASS</td></tr>
+    <tr><td>Error handling (auth / tariff validation)</td><td class="pass">PASS</td></tr>
+    <tr><td>Pin Code Search</td><td class="fail">FAIL (CEPT UAT HTTP 500)</td></tr>
+    <tr><td>Booking / bulk booking</td><td class="blocked">BLOCKED — no office IDs from pincode API; office IDs were not invented</td></tr>
+    <tr><td>Event download API</td><td class="fail">FAIL (HTTP 204 empty body)</td></tr>
+    <tr><td>24 / 48 Speed Post tariff</td><td class="na">NOT TESTED — official path unpublished</td></tr>
+    <tr><td>Token refresh</td><td class="na">NOT TESTED — official refresh URL unpublished</td></tr>
+    <tr><td>Inbound event webhooks</td><td>URLs configured in sandbox portal; PostBus receive endpoint verified HTTP 200. CEPT Test POST not yet observed.</td></tr>
+  </table>
+
+  <h2>3. Connectivity</h2>
+  <table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td>DNS test.cept.gov.in</td><td class="pass">PASS — 103.244.127.150</td></tr>
+    <tr><td>TCP 443</td><td class="pass">PASS</td></tr>
+    <tr><td>TLS</td><td class="pass">PASS — TLS 1.3; certificate CN *.cept.gov.in</td></tr>
+    <tr><td>HTTPS reachability</td><td class="pass">PASS (host reachable; root path returns 404 JSON, which is not a connectivity failure)</td></tr>
+  </table>
+  <p>Login and tariff APIs returned application JSON, not IP-block pages. Server IP whitelist is working.</p>
+
+  <h2>4. Authentication</h2>
+  <p><strong>Endpoint:</strong> POST /beextcustomer/v1/access/login</p>
+  <table>
+    <tr><th>Case</th><th>HTTP</th><th>Result</th></tr>
+    <tr><td>Valid sample UAT login</td><td>200</td><td class="pass">PASS — success true; access_token received; expires_in 900 seconds; token_type Bearer. Token not printed.</td></tr>
+    <tr><td>Invalid password (one attempt)</td><td>400</td><td class="pass">Expected failure — “Invalid user credentials”</td></tr>
+    <tr><td>Token refresh</td><td>—</td><td class="na">NOT TESTED — refresh URL is unpublished in the approach document ([Link] only). Path was not guessed.</td></tr>
+  </table>
+
+  <h2>5. Speed Post tariff</h2>
+  <p><strong>Endpoint:</strong> GET /beextcustomer/v1/speed-post/tariffs &nbsp;|&nbsp; Source 400001 → destination 110001</p>
+  <table>
+    <tr><th>Case</th><th>HTTP</th><th>Product</th><th>Weight / chargeable</th><th>Final amount</th><th>Result</th></tr>
+    <tr><td>250 g document</td><td>200</td><td>SP_INLAND_DOC</td><td>250 / 250</td><td>84 INR</td><td class="pass">PASS</td></tr>
+    <tr><td>500 g document</td><td>200</td><td>SP_INLAND_DOC</td><td>500 / 500</td><td>102 INR</td><td class="pass">PASS</td></tr>
+    <tr><td>1500 g parcel</td><td>200</td><td>SP_INLAND_PARCEL</td><td>1500 / 1800 (volumetric)</td><td>166 INR</td><td class="pass">PASS</td></tr>
+  </table>
+  <p>Documented sample with INS/POD (250 g Mumbai→Delhi) also returned HTTP 200, final amount 166 INR, delivery type Inter-city, distance 1166 km.</p>
+  <p><strong>24 Speed Post tariff:</strong> <span class="na">NOT TESTED</span> — query parameters published; path unpublished; not guessed.<br>
+     <strong>48 Speed Post tariff:</strong> <span class="na">NOT TESTED</span> — same reason.</p>
+
+  <h2>6. Business Parcel tariff</h2>
+  <p><strong>Endpoint:</strong> GET /beextcustomer/v1/business-parcel-tariff/calculate</p>
+  <table>
+    <tr><th>Case</th><th>HTTP</th><th>Product</th><th>Weight / chargeable</th><th>Final amount</th><th>Result</th></tr>
+    <tr><td>Documented sample 550 g (141010 → 110057, INS 1000)</td><td>200</td><td>BUSINESS_PARCEL</td><td>550 / 550</td><td>129 INR</td><td class="pass">PASS</td></tr>
+    <tr><td>550 g (400001 → 700001)</td><td>200</td><td>BUSINESS_PARCEL</td><td>550 / 1800</td><td>118 INR</td><td class="pass">PASS</td></tr>
+    <tr><td>1 kg</td><td>200</td><td>BUSINESS_PARCEL</td><td>1000 / 1800</td><td>118 INR</td><td class="pass">PASS</td></tr>
+    <tr><td>2 kg</td><td>200</td><td>BUSINESS_PARCEL</td><td>2000 / 2000</td><td>118 INR</td><td class="pass">PASS</td></tr>
+  </table>
+
+  <h2>7. Pin Code Search — FAIL (CEPT UAT)</h2>
+  <p><strong>Endpoint:</strong> GET /beextcustomer/v1/pincode-search</p>
+  <table>
+    <tr><th>Pincode</th><th>Parameters</th><th>HTTP</th><th>Offices</th><th>Body (sanitized)</th></tr>
+    <tr><td>570001</td><td>office-type=post</td><td>500</td><td>0</td><td>{"success":false,"error":{"message":"Internal server error"}}</td></tr>
+    <tr><td>570001</td><td>none</td><td>500</td><td>0</td><td>same</td></tr>
+    <tr><td>400001</td><td>office-type=post / none</td><td>500</td><td>0</td><td>same</td></tr>
+    <tr><td>110001</td><td>office-type=post / none</td><td>500</td><td>0</td><td>same</td></tr>
+  </table>
+  <p>Documented alternate path GET /beextcustomer/v1/details?pincode=570001&amp;limit=50&amp;office-type=post returned HTTP <strong>404</strong> “Route not found”.</p>
+  <p>No office_id, office_type_code or delivery_office_flag was returned. Pickup/drop-off office IDs were <strong>not invented</strong>.</p>
+
+  <h2>8. Booking — BLOCKED</h2>
+  <p>Booking requires a pickup/drop-off office that satisfies delivery_office_flag = true and office_type_code != BPO. That data was not available from UAT pincode APIs.</p>
+  <ul>
+    <li>POST /process-articles/{customerId} was <strong>not called</strong>.</li>
+    <li>Bulk booking was <strong>not called</strong>.</li>
+    <li>UAT AWB range ET21433001XIN–ET21434000XIN was <strong>not used</strong>.</li>
+    <li>No real or production shipment was created.</li>
+  </ul>
+
+  <h2>9. Tracking</h2>
+  <table>
+    <tr><th>Path</th><th>HTTP</th><th>Result</th></tr>
+    <tr><td>POST /beextcustomer/tracking/bulk</td><td>404</td><td>Route not found</td></tr>
+    <tr><td>POST /beextcustomer/v1/tracking/bulk</td><td>200</td><td class="pass">PASS — documented sample article RK775227016IN; del_status delivered; 9 tracking events</td></tr>
+  </table>
+  <p>This sample is not a PostBus-created article. End-to-end tracking of a PostBus UAT booking is blocked until booking is possible.</p>
+
+  <h2>10. Event download API</h2>
+  <p>Documented test body: Cust_Id 0000000000, Event_Code IB, Event_Date 01032026.</p>
+  <table>
+    <tr><th>Path</th><th>HTTP</th><th>Result</th></tr>
+    <tr><td>POST /beextcustomer/event/download</td><td>404</td><td>Route not found</td></tr>
+    <tr><td>POST /beextcustomer/v1/event/download</td><td>204</td><td class="fail">Empty body — not XML; no event fields</td></tr>
+  </table>
+
+  <h2>11. Error handling (non-destructive)</h2>
+  <table>
+    <tr><th>Test</th><th>HTTP</th><th>Result</th></tr>
+    <tr><td>Invalid login</td><td>400</td><td>Invalid user credentials</td></tr>
+    <tr><td>Speed Post missing weight</td><td>400</td><td>Weight is required</td></tr>
+    <tr><td>Speed Post weight 0 / −10</td><td>400</td><td>Must be whole number greater than 0</td></tr>
+    <tr><td>Invalid product code</td><td>422</td><td>Product not found</td></tr>
+    <tr><td>Business Parcel weight 0</td><td>400</td><td>Weight must be 1–35000 g</td></tr>
+    <tr><td>Invalid / malformed pincode</td><td>404</td><td>Generic “page not found” (not JSON)</td></tr>
+  </table>
+
+  <h2>12. Event webhooks (sandbox portal)</h2>
+  <p>Sandbox Event Configuration is set to Webhook. PostBus inbound URLs (kerlaz workspace):</p>
+  <ul>
+    <li>Booking: https://postbus.vachat.in/api/v1/webhooks/india-post/f4a01ee7-80bb-433d-abc7-2d928fedcb07/booking</li>
+    <li>Other events: https://postbus.vachat.in/api/v1/webhooks/india-post/f4a01ee7-80bb-433d-abc7-2d928fedcb07/events</li>
+  </ul>
+  <p>Independent POST to these URLs from the integrator returned HTTP 200 with accepted=true. The sandbox portal currently shows “Events are pre-configured”. A CEPT-originated Test POST has not yet been observed in the PostBus inbox.</p>
+
+  <h2>13. Issues for CEPT / India Post (sandbox)</h2>
+  <ol>
+    <li><strong>Pin Code Search HTTP 500</strong> on /v1/pincode-search for 570001, 400001 and 110001. Blocks booking UAT because office_id cannot be obtained.</li>
+    <li><strong>GET /v1/details?pincode=…</strong> returns 404 Route not found. Please confirm the live UAT pincode path.</li>
+    <li><strong>Event download</strong> POST /v1/event/download returns 204 empty (document expects XML).</li>
+    <li><strong>Tracking path:</strong> /tracking/bulk is 404; /v1/tracking/bulk is 200. Please confirm /v1 is required on all resources.</li>
+    <li><strong>24/48 tariff and token-refresh URLs</strong> are unpublished ([Link] only) and were not guessed.</li>
+  </ol>
+
+  <h2>14. Remaining sandbox tests (after CEPT restores pincode / office IDs)</h2>
+  <ol>
+    <li>Re-test pincode search until a delivery office is returned.</li>
+    <li>One controlled UAT booking: customer 3000064781, Speed Post contract 41585456, AWB from ET21433001XIN–ET21434000XIN, office ID from API.</li>
+    <li>Smallest bulk booking (2 articles).</li>
+    <li>Track the booked article on /v1/tracking/bulk.</li>
+    <li>Event download / portal webhook Test for that article.</li>
+    <li>24/48 tariff and token refresh once paths are published.</li>
+  </ol>
+
+  <h2>15. Declaration</h2>
+  <p>I confirm that the tests above were executed against the India Post <strong>sandbox / UAT</strong> environment only, from the live PostBus server whose IP has been whitelisted, on 20 September 2026. No production India Post APIs were called. No production shipments were created. Secrets are omitted from this report.</p>
+  <table>
+    <tr><th>Organisation</th><td>PostBus</td></tr>
+    <tr><th>Application URL</th><td>https://postbus.vachat.in</td></tr>
+    <tr><th>Server IP</th><td>89.116.34.166</td></tr>
+    <tr><th>Report date</th><td>20 September 2026</td></tr>
+  </table>
+
+  <p class="footer">Document: PostBus-India-Post-UAT-API-Test-Report-2026-09-20. Prepared from live-container test logs. Tokens and passwords redacted.</p>
+</body>
+</html>

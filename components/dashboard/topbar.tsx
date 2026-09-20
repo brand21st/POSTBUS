@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, ChevronRight, Menu, Search } from "lucide-react";
 import { toast } from "sonner";
 import { CommandSearch } from "@/components/dashboard/command-search";
@@ -18,13 +18,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { breadcrumbs } from "@/lib/dashboard/nav";
-import { asList } from "@/lib/dashboard/records";
 import { formatRelative, initials } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { membershipsFromMe } from "@/lib/hooks/use-me";
+import { useNotifications } from "@/lib/hooks/use-notifications";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { MeResponse, NotificationRecord } from "@/types/api";
+import type { MeResponse } from "@/types/api";
 
 export function Topbar({
   me,
@@ -39,6 +39,9 @@ export function Topbar({
   const crumbs = useMemo(() => breadcrumbs(pathname), [pathname]);
   const [searchOpen, setSearchOpen] = useState(false);
   const workspaces = membershipsFromMe(me);
+  const notifications = useNotifications();
+  const items = notifications.items;
+  const unread = notifications.unread;
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -50,14 +53,6 @@ export function Topbar({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  const notifications = useQuery({
-    queryKey: ["notifications"],
-    queryFn: () => api<NotificationRecord[] | { items: NotificationRecord[] }>("/api/v1/notifications"),
-  });
-
-  const items = asList<NotificationRecord>(notifications.data);
-  const unread = items.filter((item) => !item.readAt && !item.read_at).length;
 
   const switchWorkspace = useMutation({
     mutationFn: (organizationId: string) =>

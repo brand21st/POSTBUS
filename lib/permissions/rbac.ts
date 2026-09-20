@@ -64,11 +64,3 @@ export function permissionsFor(role: MemberRole): Permission[] {
 export function hasPermission(role: MemberRole, permission: Permission) {
   return ROLE_PERMISSIONS[role].includes(permission);
 }
-
-export function assertPermission(role: MemberRole, permission: Permission) {
-  if (!hasPermission(role, permission)) {
-    const error = new Error("You do not have permission to perform this action.");
-    error.name = "ForbiddenError";
-    throw error;
-  }
-}

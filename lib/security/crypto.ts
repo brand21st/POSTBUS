@@ -2,10 +2,18 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, 
 import { env } from "@/lib/env";
 
 const ALGO = "aes-256-gcm";
+const DEV_FALLBACK_KEY = "dev-only-change-me-32-bytes-min!!";
+
+function encryptionSecret() {
+  if (env.encryptionKey) return env.encryptionKey;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("INTEGRATION_ENCRYPTION_KEY is required in production.");
+  }
+  return DEV_FALLBACK_KEY;
+}
 
 function keyBytes() {
-  const secret = env.encryptionKey || "dev-only-change-me-32-bytes-min!!";
-  return scryptSync(secret, "postbus-integrations", 32);
+  return scryptSync(encryptionSecret(), "postbus-integrations", 32);
 }
 
 export function encryptSecret(plaintext: string) {

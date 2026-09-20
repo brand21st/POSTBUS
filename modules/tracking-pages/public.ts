@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { orExact } from "@/lib/api/filters";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import type { PublicTrackResult, PublicTrackingEvent } from "@/types/api";
@@ -82,11 +83,13 @@ async function loadStoredShipment(
 ): Promise<NonNullable<PublicTrackResult["shipment"]> | null> {
   if (hasAdminClient()) {
     const admin = createAdminClient();
+    const filter = orExact(["barcode", "tracking_number"], query);
+    if (!filter) return null;
     const { data: shipment } = await admin
       .from("shipments")
       .select("id, barcode, tracking_number, status, order_id, shipping_address_id")
       .eq("organization_id", organizationId)
-      .or(`barcode.eq.${query},tracking_number.eq.${query}`)
+      .or(filter)
       .maybeSingle();
     if (!shipment) return null;
 

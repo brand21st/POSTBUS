@@ -1,5 +1,6 @@
 import {
   LayoutDashboard,
+  BarChart3,
   ShoppingBag,
   Truck,
   Tag,
@@ -21,6 +22,7 @@ export type NavItem = {
 
 export const sidebarNav: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   { label: "Orders", href: "/dashboard/orders", icon: ShoppingBag },
   { label: "Shipments", href: "/dashboard/shipments", icon: Truck },
   { label: "Labels", href: "/dashboard/labels", icon: Tag },

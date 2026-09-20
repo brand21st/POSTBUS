@@ -74,8 +74,45 @@ export function addressLine(address?: AddressSummary | null) {
   );
 }
 
+const ITEM_PREVIEW_LIMIT = 2;
+const BLOCKED_SHIP_STATUSES = new Set(["PROCESSING", "BOOKED", "SHIPPED", "DELIVERED", "CANCELLED"]);
+
 export function lineItems(order: { lineItems?: LineItem[]; line_items?: LineItem[] }) {
   return order.lineItems ?? order.line_items ?? [];
+}
+
+export function itemCount(order: {
+  items?: number;
+  lineItems?: LineItem[];
+  line_items?: LineItem[];
+}) {
+  if (typeof order.items === "number") return order.items;
+  return lineItems(order).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
+}
+
+export function itemNamesPreview(order: { lineItems?: LineItem[]; line_items?: LineItem[] }) {
+  const items = lineItems(order);
+  if (items.length === 0) return "";
+  const names = items.map((item) => `${item.title} ×${item.quantity}`);
+  const preview = names.slice(0, ITEM_PREVIEW_LIMIT);
+  const extra = names.length - preview.length;
+  return extra > 0 ? `${preview.join(", ")} +${extra} more` : preview.join(", ");
+}
+
+export function itemSummary(order: {
+  items?: number;
+  lineItems?: LineItem[];
+  line_items?: LineItem[];
+}) {
+  const names = itemNamesPreview(order);
+  if (!names) return "—";
+  const count = itemCount(order);
+  const label = count === 1 ? "1 item" : `${count} items`;
+  return `${label} · ${names}`;
+}
+
+export function canShipOrder(order: { status?: string | null }) {
+  return !BLOCKED_SHIP_STATUSES.has((order.status ?? "").toUpperCase());
 }
 
 export function kpiValue(source: DashboardKpis | undefined, key: keyof DashboardKpis, fallbackKeys: string[] = []) {

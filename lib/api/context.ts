@@ -1,6 +1,6 @@
 import { createServerSupabase } from "@/lib/supabase/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { hasPermission } from "@/lib/permissions/rbac";
+import { hasPermission, permissionsFor } from "@/lib/permissions/rbac";
 import type { MemberRole, Permission } from "@/types/domain";
 
 export type TenantContext = {
@@ -74,14 +74,6 @@ export async function requireTenant(permission?: Permission): Promise<TenantCont
     organizationId,
     organizationName: organization?.name ?? "Workspace",
     role,
-    permissions: [],
+    permissions: permissionsFor(role),
   };
-}
-
-export async function getOptionalUser() {
-  const supabase = await createServerSupabase();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
 }

@@ -21,7 +21,6 @@ export const env = {
   indiaPostProdBaseUrl: optional(process.env.INDIA_POST_PROD_BASE_URL),
   stripeSecretKey: optional(process.env.STRIPE_SECRET_KEY),
   stripeWebhookSecret: optional(process.env.STRIPE_WEBHOOK_SECRET),
-  webhookSigningSecret: optional(process.env.WEBHOOK_SIGNING_SECRET),
 };
 
 export function isShopifyAppConfigured() {

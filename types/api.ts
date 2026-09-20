@@ -87,6 +87,46 @@ export type DashboardPipeline = {
   items?: PipelineStage[];
 };
 
+export type AnalyticsRange = "today" | "month" | "year";
+
+export type AnalyticsPeriodKpi = {
+  shipments: number;
+  revenue: number;
+  orders: number;
+  codOrders: number;
+  codAmount: number;
+};
+
+export type AnalyticsSeriesPoint = {
+  key: string;
+  label: string;
+  revenue: number;
+  shipments: number;
+  orders: number;
+  cod: number;
+  prepaid: number;
+};
+
+export type AnalyticsSourceShare = {
+  source: string;
+  label: string;
+  orders: number;
+  revenue: number;
+  share: number;
+};
+
+export type DashboardAnalytics = {
+  timezone: string;
+  generatedAt: string;
+  truncated: boolean;
+  today: AnalyticsPeriodKpi;
+  month: AnalyticsPeriodKpi;
+  year: AnalyticsPeriodKpi;
+  topSource: AnalyticsSourceShare | null;
+  sources: Record<AnalyticsRange, AnalyticsSourceShare[]>;
+  series: Record<AnalyticsRange, AnalyticsSeriesPoint[]>;
+};
+
 export type CustomerSummary = {
   id?: string;
   name?: string | null;
@@ -136,6 +176,8 @@ export type OrderRecord = {
   billingAddress?: AddressSummary | null;
   lineItems?: LineItem[];
   line_items?: LineItem[];
+  items?: number;
+  shipment?: ShipmentRecord | null;
   createdAt?: string;
   created_at?: string;
   updatedAt?: string;

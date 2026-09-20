@@ -51,17 +51,18 @@ export async function getPipeline(
   from: string,
   to: string
 ) {
-  const stages = [];
-  for (const stage of PIPELINE) {
-    const { count } = await supabase
-      .from("orders")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", ctx.organizationId)
-      .eq("status", stage.key)
-      .gte("created_at", `${from}T00:00:00.000Z`)
-      .lte("created_at", `${to}T23:59:59.999Z`);
-    stages.push({ key: stage.key, label: stage.label, count: count ?? 0 });
-  }
+  const stages = await Promise.all(
+    PIPELINE.map(async (stage) => {
+      const { count } = await supabase
+        .from("orders")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", ctx.organizationId)
+        .eq("status", stage.key)
+        .gte("created_at", `${from}T00:00:00.000Z`)
+        .lte("created_at", `${to}T23:59:59.999Z`);
+      return { key: stage.key, label: stage.label, count: count ?? 0 };
+    })
+  );
   return { stages };
 }
 
