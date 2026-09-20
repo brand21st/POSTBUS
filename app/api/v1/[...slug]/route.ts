@@ -690,7 +690,7 @@ async function handle(request: NextRequest, slugs: string[]) {
     if (body.password) payload.encrypted_password = encryptSecret(body.password);
     const { data, error } = await supabase
       .from("india_post_connections")
-      .upsert(payload)
+      .upsert(payload, { onConflict: "organization_id" })
       .select()
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
