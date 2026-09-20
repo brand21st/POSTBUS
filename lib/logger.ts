@@ -15,6 +15,7 @@ const SECRET_KEYS = [
   "refresh_token",
   "id_token",
   "credential",
+  "webhook_secret",
 ];
 
 export function redact(value: unknown): unknown {

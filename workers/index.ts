@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import { getRedis } from "@/lib/queue/connection";
 import { QUEUE_NAMES } from "@/lib/queue/queues";
 import { processJob } from "@/workers/processor";
+import { delayForAttempt } from "@/lib/jobs/retry";
 import { logError, logInfo } from "@/lib/logger";
 
 const names = Object.values(QUEUE_NAMES);
@@ -16,6 +17,9 @@ for (const name of names) {
     {
       connection: getRedis(),
       concurrency: name === "shipment-booking" ? 4 : 2,
+      settings: {
+        backoffStrategy: (attemptsMade: number) => delayForAttempt(attemptsMade),
+      },
     }
   );
 

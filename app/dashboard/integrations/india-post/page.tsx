@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
+import { Copy } from "lucide-react";
 import { PROVIDER_ENVIRONMENTS } from "@/types/domain";
 import type { IndiaPostConfig } from "@/types/api";
 
@@ -192,6 +193,32 @@ export default function IndiaPostPage() {
         </CardContent>
       </Card>
 
+      {(config?.bookingWebhookUrl || config?.booking_webhook_url) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>India Post event webhooks</CardTitle>
+            <CardDescription>
+              Paste these into the India Post portal Event Configuration. Environment:{" "}
+              <StatusBadge value={config?.environment ?? "UAT"} />. Authentication is not
+              documented by CEPT yet — the connection id in the path identifies this workspace.
+              Use the portal Test buttons after deploy. Do not paste secrets here.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <CopyField
+              id="booking-webhook"
+              label="Booking Events Webhook URL"
+              value={config?.bookingWebhookUrl ?? config?.booking_webhook_url ?? ""}
+            />
+            <CopyField
+              id="events-webhook"
+              label="Other Events Webhook URL"
+              value={config?.eventsWebhookUrl ?? config?.events_webhook_url ?? ""}
+            />
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Barcode range</CardTitle>
@@ -214,6 +241,37 @@ export default function IndiaPostPage() {
         </Button>
         <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
           Test API
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function CopyField({
+  id,
+  label,
+  value,
+}: {
+  id: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="flex gap-2">
+        <Input id={id} readOnly value={value} />
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={!value}
+          onClick={async () => {
+            await navigator.clipboard.writeText(value);
+            toast.success(`${label} copied.`);
+          }}
+        >
+          <Copy />
+          Copy
         </Button>
       </div>
     </div>

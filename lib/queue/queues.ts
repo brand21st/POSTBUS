@@ -9,6 +9,7 @@ export const QUEUE_NAMES = {
   manifestGeneration: "manifest-generation",
   trackingSync: "tracking-sync",
   webhookProcessing: "webhook-processing",
+  indiaPostEvents: "india-post-events",
   notifications: "notifications",
   cleanup: "cleanup",
   reports: "reports",

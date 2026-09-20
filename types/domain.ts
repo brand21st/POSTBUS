@@ -111,6 +111,7 @@ export const JOB_TYPES = [
   "manifest-generation",
   "tracking-sync",
   "webhook-processing",
+  "india-post-events",
   "notifications",
   "cleanup",
   "reports",

@@ -24,6 +24,13 @@ export async function processJob(queue: string, payload: JobPayload) {
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
     else if (queue === "shopify-fulfillment") await shopifyFulfillment();
     else if (queue === "webhook-processing") await deliverWebhooks(supabase, payload);
+    else if (queue === "india-post-events") {
+      const { processIndiaPostInboxEvent } = await import("@/modules/india-post/webhook");
+      if (!payload.entityId) {
+        throw Object.assign(new Error("Webhook inbox id is missing."), { code: "VALIDATION_ERROR" });
+      }
+      await processIndiaPostInboxEvent(supabase, payload.entityId, payload.organizationId);
+    }
     else {
       // notifications / cleanup / reports reserved
     }
@@ -231,7 +238,7 @@ async function loadAutomation(
     return await getAutomationSettings(supabase, organizationId);
   } catch {
     return {
-      autoShopifySync: false,
+      autoShopifySync: true,
       autoShipmentCreation: false,
       autoBooking: false,
       autoLabelGeneration: true,
@@ -420,122 +427,17 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
 }
 
 async function shopifySync(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
-  const { data: job } = await supabase
-    .from("background_jobs")
-    .select("progress")
-    .eq("id", payload.jobId)
-    .maybeSingle();
-  const progress = (job?.progress ?? {}) as { topic?: string; manual?: boolean };
-  const automation = await loadAutomation(supabase, payload.organizationId);
-  if (progress.topic && !automation.autoShopifySync) {
-    return;
-  }
-
-  const { data: connection } = await supabase
-    .from("shopify_connections")
-    .select("*")
-    .eq("organization_id", payload.organizationId)
-    .maybeSingle();
-  if (!connection?.encrypted_access_token) {
+  const { syncUnfulfilledShopifyOrders } = await import("@/modules/shopify/orders");
+  const result = await syncUnfulfilledShopifyOrders(supabase, {
+    organizationId: payload.organizationId,
+    userId: payload.userId,
+  });
+  if (!result.connected) {
     throw Object.assign(new Error("Shopify is not connected."), { code: "PERMANENT_AUTH_ERROR" });
   }
-  const { decryptSecret } = await import("@/lib/security/crypto");
-  const token = decryptSecret(connection.encrypted_access_token);
-  let imported = 0;
-  let updated = 0;
-  let pageInfo: string | null = null;
-  do {
-    const url = new URL(`https://${connection.shop_domain}/admin/api/2024-10/orders.json`);
-    url.searchParams.set("status", "any");
-    url.searchParams.set("limit", "50");
-    if (pageInfo) url.searchParams.set("page_info", pageInfo);
-    const response = await fetch(url, {
-      headers: { "X-Shopify-Access-Token": token },
-    });
-    if (!response.ok) {
-      throw Object.assign(new Error("Shopify orders fetch failed."), { status: response.status });
-    }
-    const json = (await response.json()) as { orders?: Array<Record<string, unknown>> };
-    for (const remote of json.orders ?? []) {
-      const sourceId = String(remote.id);
-      const { data: existing } = await supabase
-        .from("external_order_references")
-        .select("order_id")
-        .eq("organization_id", payload.organizationId)
-        .eq("source", "SHOPIFY")
-        .eq("source_order_id", sourceId)
-        .maybeSingle();
-      if (existing) {
-        updated += 1;
-        continue;
-      }
-      const { createManualOrder } = await import("@/modules/orders/service");
-      const shipping = (remote.shipping_address ?? {}) as Record<string, string>;
-      const created = await createManualOrder(supabase, {
-        userId: payload.userId ?? "",
-        email: null,
-        fullName: null,
-        organizationId: payload.organizationId,
-        organizationName: "",
-        role: "OWNER",
-        permissions: [],
-      }, {
-        source: "SHOPIFY",
-        orderNumber: String(remote.order_number ?? remote.name ?? sourceId),
-        customer: {
-          name: `${shipping.first_name ?? ""} ${shipping.last_name ?? ""}`.trim() || "Shopify customer",
-          phone: shipping.phone || "0000000000",
-          email: String(remote.email ?? ""),
-        },
-        shippingAddress: {
-          name: shipping.name,
-          phone: shipping.phone,
-          line1: shipping.address1 || "Address pending",
-          line2: shipping.address2,
-          city: shipping.city || "NA",
-          state: shipping.province || "NA",
-          pincode: (shipping.zip || "000000").replace(/\D/g, "").slice(0, 6).padEnd(6, "0"),
-          country: shipping.country_code || "IN",
-        },
-        paymentStatus: remote.financial_status === "paid" ? "PAID" : "PENDING",
-        lineItems: ((remote.line_items as Array<Record<string, unknown>>) ?? []).map((item) => ({
-          title: String(item.title ?? "Item"),
-          sku: item.sku ? String(item.sku) : undefined,
-          quantity: Number(item.quantity ?? 1),
-          unitPrice: Number(item.price ?? 0),
-        })),
-      });
-      if (automation.autoShipmentCreation && created.id) {
-        const { createShipmentsForOrders } = await import("@/modules/shipments/service");
-        await createShipmentsForOrders(
-          supabase,
-          {
-            userId: payload.userId ?? "",
-            email: null,
-            fullName: null,
-            organizationId: payload.organizationId,
-            organizationName: "",
-            role: "OWNER",
-            permissions: [],
-          },
-          [created.id],
-          { enqueueBooking: Boolean(automation.autoBooking) }
-        );
-      }
-      imported += 1;
-    }
-    const link = response.headers.get("link") ?? "";
-    const next = link.match(/<[^>]+page_info=([^&>]+)[^>]*>; rel="next"/);
-    pageInfo = next?.[1] ?? null;
-  } while (pageInfo);
-
-  await supabase
-    .from("shopify_connections")
-    .update({ last_sync_at: new Date().toISOString() })
-    .eq("id", connection.id);
   await supabase
     .from("background_jobs")
-    .update({ progress: { imported, updated, failed: 0 } })
+    .update({ progress: { imported: result.imported, updated: result.updated, skipped: result.skipped } })
     .eq("id", payload.jobId);
 }
 

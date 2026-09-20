@@ -29,7 +29,14 @@ import {
   storedClientId,
   verifyShopifyHmac,
 } from "@/modules/shopify/oauth";
+import {
+  importShopifyWebhookOrder,
+  shopifyReadyToSync,
+  syncUnfulfilledShopifyOrders,
+  type ShopifyRemoteOrder,
+} from "@/modules/shopify/orders";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
+import { indiaPostWebhookUrls, parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { WEBHOOK_EVENTS } from "@/types/domain";
 import JSZip from "jszip";
 
@@ -37,9 +44,29 @@ async function handle(request: NextRequest, slugs: string[]) {
   const path = slugs.join("/");
   const method = request.method;
   const key = `${method} ${path}`;
-  const limited = rateLimit(`${request.headers.get("x-forwarded-for") ?? "local"}:${path}`);
+  const indiaPostWebhook = parseIndiaPostWebhookPath(path);
+  const limited = rateLimit(
+    `${request.headers.get("x-forwarded-for") ?? "local"}:${path}`,
+    indiaPostWebhook ? 180 : 60
+  );
   if (!limited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
+  }
+
+  if (indiaPostWebhook && method === "POST") {
+    const raw = await request.text();
+    const { createAdminClient, hasAdminClient } = await import("@/lib/supabase/admin");
+    if (!hasAdminClient()) {
+      throw new AppError(ERROR_CODES.PROVIDER_ERROR, "Webhook processing is unavailable.");
+    }
+    const { acceptIndiaPostWebhook } = await import("@/modules/india-post/webhook");
+    return acceptIndiaPostWebhook(createAdminClient(), {
+      connectionId: indiaPostWebhook.connectionId,
+      channel: indiaPostWebhook.channel,
+      rawBody: raw,
+      contentType: request.headers.get("content-type"),
+      headers: request.headers,
+    });
   }
 
   if (path === "webhooks/shopify" && method === "POST") {
@@ -84,6 +111,23 @@ async function handle(request: NextRequest, slugs: string[]) {
           .from("shopify_connections")
           .update({ status: "DISCONNECTED", encrypted_access_token: null })
           .eq("organization_id", connection.organization_id);
+      } else if (topic.startsWith("orders/")) {
+        try {
+          const remote = JSON.parse(raw) as ShopifyRemoteOrder;
+          await importShopifyWebhookOrder(admin, {
+            organizationId: connection.organization_id,
+            shopDomain: shop,
+            topic,
+            remote,
+          });
+        } catch (error) {
+          logError("shopify.webhook_order_import_failed", {
+            topic,
+            shop,
+            message: error instanceof Error ? error.message : "import failed",
+          });
+          throw error;
+        }
       } else {
         await createBackgroundJob(admin, {
           organizationId: connection.organization_id,
@@ -367,13 +411,16 @@ async function handle(request: NextRequest, slugs: string[]) {
       supabase.from("india_post_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
     ]);
     const shopifyConfigured = shopifyAppConfiguredFor(shopify);
+    const shopifySyncReady = shopifyReadyToSync(shopify);
     return {
       shopify: {
         provider: "shopify",
         status: shopifyConfigured ? shopify?.status ?? "NOT_CONNECTED" : "NOT_CONNECTED",
+        shopDomain: shopify?.shop_domain ?? "",
         lastSyncAt: shopify?.last_sync_at,
         lastError: shopify?.last_error,
         appConfigured: shopifyConfigured,
+        readyToSync: shopifySyncReady,
       },
       indiaPost: {
         provider: "india_post",
@@ -387,6 +434,7 @@ async function handle(request: NextRequest, slugs: string[]) {
           name: "Shopify",
           status: shopifyConfigured ? shopify?.status ?? "NOT_CONNECTED" : "NOT_CONNECTED",
           appConfigured: shopifyConfigured,
+          readyToSync: shopifySyncReady,
         },
         {
           provider: "india_post",
@@ -420,6 +468,7 @@ async function handle(request: NextRequest, slugs: string[]) {
       requestedScopes: data?.requested_scopes || env.shopifyScopes,
       webhookUrl: shopifyWebhookUrl(),
       appConfigured: Boolean(creds),
+      readyToSync: shopifyReadyToSync(data),
       lastSyncAt: data?.last_sync_at,
       lastError: data?.last_error,
     };
@@ -472,6 +521,16 @@ async function handle(request: NextRequest, slugs: string[]) {
     const creds = resolveShopifyAppCredentials(data);
     const savedClientId = storedClientId(data);
     const hasSecret = hasStoredClientSecret(data);
+    if (shopifyReadyToSync(data)) {
+      void syncUnfulfilledShopifyOrders(supabase, {
+        organizationId: ctx.organizationId,
+        userId: ctx.userId,
+      }).catch((error) => {
+        logError("shopify.sync_after_save_failed", {
+          message: error instanceof Error ? error.message : "sync failed",
+        });
+      });
+    }
     return {
       saved: true,
       status: data.status,
@@ -549,6 +608,14 @@ async function handle(request: NextRequest, slugs: string[]) {
         ? await supabase.from("shopify_connections").update(record).eq("id", connection.id)
         : await supabase.from("shopify_connections").insert(record);
       if (error) return failRedirect(error.message);
+      void syncUnfulfilledShopifyOrders(supabase, {
+        organizationId: ctx.organizationId,
+        userId: ctx.userId,
+      }).catch((syncError) => {
+        logError("shopify.sync_after_connect_failed", {
+          message: syncError instanceof Error ? syncError.message : "sync failed",
+        });
+      });
       return NextResponse.redirect(`${env.appUrl}/dashboard/integrations/shopify`);
     } catch (error) {
       return failRedirect(error instanceof Error ? error.message : "Shopify token exchange failed.");
@@ -558,20 +625,23 @@ async function handle(request: NextRequest, slugs: string[]) {
   if (key === "POST integrations/shopify/sync") {
     const { data: connection } = await supabase
       .from("shopify_connections")
-      .select("id, status")
+      .select("*")
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
-    if (!connection || connection.status !== "CONNECTED") {
+    if (!shopifyReadyToSync(connection) && connection?.status !== "CONNECTED") {
       throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Shopify is not connected.");
     }
-    const job = await createBackgroundJob(supabase, {
+    const result = await syncUnfulfilledShopifyOrders(supabase, {
       organizationId: ctx.organizationId,
-      jobType: "shopify-sync",
-      entityType: "shopify_connection",
-      entityId: connection.id,
       userId: ctx.userId,
     });
-    return { queued: true, jobId: job.id };
+    if (!result.connected) {
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        "Could not authenticate with Shopify. Check Client ID and Client secret."
+      );
+    }
+    return result;
   }
 
   if (key === "GET integrations/india-post") {
@@ -596,6 +666,7 @@ async function handle(request: NextRequest, slugs: string[]) {
       hasPassword: Boolean(data?.encrypted_password),
       lastVerifiedAt: data?.last_verified_at,
       lastError: data?.last_error,
+      ...(data?.id ? indiaPostWebhookUrls(data.id) : {}),
       barcodeRange: range
         ? {
             prefix: range.prefix,
@@ -706,7 +777,19 @@ async function handle(request: NextRequest, slugs: string[]) {
       .eq("organization_id", ctx.organizationId)
       .order("created_at", { ascending: false })
       .limit(30);
-    return { items: data ?? [] };
+    return {
+      items: (data ?? []).map((item) => ({
+        ...item,
+        entityId: item.entity_id,
+        entityType: item.entity_type,
+        readAt: item.read_at,
+        createdAt: item.created_at,
+        href:
+          item.entity_type === "order" && item.entity_id
+            ? `/dashboard/orders/${item.entity_id}`
+            : null,
+      })),
+    };
   }
 
   if (key === "GET members") {

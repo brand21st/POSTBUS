@@ -255,6 +255,8 @@ export type IntegrationCard = {
   comingLater?: boolean;
   coming_later?: boolean;
   appConfigured?: boolean;
+  readyToSync?: boolean;
+  shopDomain?: string | null;
 };
 
 export type IntegrationsResponse = {
@@ -284,6 +286,7 @@ export type ShopifyConfig = {
   webhookUrl?: string;
   webhook_url?: string;
   appConfigured?: boolean;
+  readyToSync?: boolean;
   lastSyncAt?: string | null;
   last_sync_at?: string | null;
   lastError?: string | null;
@@ -307,6 +310,10 @@ export type IndiaPostConfig = {
   last_verified_at?: string | null;
   lastError?: string | null;
   last_error?: string | null;
+  bookingWebhookUrl?: string;
+  booking_webhook_url?: string;
+  eventsWebhookUrl?: string;
+  events_webhook_url?: string;
   barcodeRange?: {
     prefix?: string;
     suffix?: string;
@@ -366,6 +373,10 @@ export type NotificationRecord = {
   title: string;
   body?: string | null;
   type?: string;
+  entityId?: string | null;
+  entity_id?: string | null;
+  entityType?: string | null;
+  entity_type?: string | null;
   readAt?: string | null;
   read_at?: string | null;
   createdAt?: string;
