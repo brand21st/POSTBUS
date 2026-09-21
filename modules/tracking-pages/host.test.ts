@@ -20,6 +20,7 @@ describe("parseTrackingSubdomain", () => {
 
   it("reads merchant labels from postbus and localhost hosts", () => {
     expect(parseTrackingSubdomain("priya-stores.postbus.in")).toBe("priya-stores");
+    expect(parseTrackingSubdomain("priya.postbus.in")).toBe("priya");
     expect(parseTrackingSubdomain("priya-stores.postbus.vachat.in")).toBe("priya-stores");
     expect(parseTrackingSubdomain("priya-stores.localhost:3000")).toBe("priya-stores");
   });

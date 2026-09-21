@@ -3,6 +3,7 @@ import {
   PRODUCTION_APEX_HOST,
   RESERVED_SUBDOMAINS,
   SUBDOMAIN_PATTERN,
+  TEMP_APEX_HOST,
   TRACKING_PARENT_HOSTS,
 } from "./constants";
 
@@ -15,7 +16,11 @@ export function publicApexHost() {
   try {
     const hostname = new URL(appUrl).hostname.toLowerCase();
     if (hostname === "localhost" || hostname === "127.0.0.1") return "localhost";
-    return hostname.startsWith("www.") ? hostname.slice(4) : hostname;
+    const apex = hostname.startsWith("www.") ? hostname.slice(4) : hostname;
+    if (apex === TEMP_APEX_HOST || apex.endsWith(`.${TEMP_APEX_HOST}`)) {
+      return PRODUCTION_APEX_HOST;
+    }
+    return apex;
   } catch {
     return PRODUCTION_APEX_HOST;
   }
@@ -69,6 +74,9 @@ export function trackingPagePublicUrl(subdomain: string) {
       return `http://${subdomain}.localhost:${port}`;
     }
     const apex = hostname.startsWith("www.") ? hostname.slice(4) : hostname;
+    if (apex === TEMP_APEX_HOST || apex.endsWith(`.${TEMP_APEX_HOST}`)) {
+      return `https://${subdomain}.${PRODUCTION_APEX_HOST}`;
+    }
     return `https://${subdomain}.${apex}`;
   } catch {
     return `https://${subdomain}.${PRODUCTION_APEX_HOST}`;
