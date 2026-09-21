@@ -164,22 +164,53 @@ export class IndiaPostProvider implements ShippingProvider {
     return json;
   }
 
+  async searchPostOffices(pincode: string) {
+    const pin = pincode.replace(/\D/g, "").slice(0, 6);
+    if (!/^\d{6}$/.test(pin)) return [];
+    const token = await this.token();
+    const response = await fetch(
+      `${this.sessionUrl("/pincode-search")}?pincode=${pin}&office-type=post`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const json = await response.json().catch(() => ({}));
+    return Array.isArray(json?.data) ? json.data : [];
+  }
+
   async generateLabel(input: Record<string, unknown>) {
     const token = await this.token();
+    const articles = Array.isArray(input)
+      ? input
+      : Array.isArray(input.payload)
+        ? input.payload
+        : [input.payload ?? input];
     const response = await fetch(this.sessionUrl("/label/create/domestic"), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(input.payload ?? input),
+      body: JSON.stringify(articles),
     });
-    if (!response.ok) {
-      const error = new Error("India Post label generation failed.");
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const isPdf = bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+    if (!response.ok || !isPdf) {
+      const text = new TextDecoder().decode(bytes);
+      let json: { message?: string; error?: { message?: string; field_errors?: Array<{ message?: string }> } } = {};
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = {};
+      }
+      const fieldError = json.error?.field_errors?.[0]?.message;
+      const error = new Error(
+        fieldError || json.error?.message || json.message || "India Post label generation failed."
+      );
       (error as { status?: number }).status = response.status;
+      (error as { code?: string }).code = "LABEL_GENERATION_FAILED";
       throw error;
     }
-    return response.arrayBuffer();
+    return buffer;
   }
 
   async createManifest() {

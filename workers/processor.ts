@@ -6,7 +6,10 @@ import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { formatBarcode } from "@/modules/india-post/barcode";
 import {
   indiaPostBookingArticleType,
+  indiaPostDomesticLabelPayload,
+  indiaPostFindOffice,
   indiaPostMobile,
+  indiaPostPickDeliveryOffice,
   indiaPostShapeOfArticle,
 } from "@/modules/india-post/endpoints";
 import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
@@ -330,30 +333,118 @@ async function loadAutomation(
 async function generateLabel(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
   const { data: shipment } = await supabase
     .from("shipments")
-    .select("*, orders(order_number), customers(name), addresses:shipping_address_id(*)")
+    .select("*, orders(order_number), customers(name, phone), addresses:shipping_address_id(*)")
     .eq("id", payload.entityId)
     .single();
   if (!shipment?.barcode) {
     throw Object.assign(new Error("Shipment is not booked."), { code: "VALIDATION_ERROR" });
   }
 
-  const pdf = await PDFDocument.create();
-  const page = pdf.addPage([420, 595]);
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const address = shipment.addresses as { name?: string; line1?: string; city?: string; pincode?: string } | null;
-  page.drawText("PostBus / India Post Label", { x: 36, y: 540, size: 14, font });
-  page.drawText(`Barcode: ${shipment.barcode}`, { x: 36, y: 510, size: 12, font });
-  page.drawText(`Order: ${(shipment.orders as { order_number?: string } | null)?.order_number ?? ""}`, {
-    x: 36,
-    y: 490,
-    size: 11,
-    font,
-  });
-  page.drawText(address?.name ?? "", { x: 36, y: 460, size: 12, font });
-  page.drawText(address?.line1 ?? "", { x: 36, y: 444, size: 10, font });
-  page.drawText(`${address?.city ?? ""} ${address?.pincode ?? ""}`, { x: 36, y: 428, size: 10, font });
+  const { data: connection } = await supabase
+    .from("india_post_connections")
+    .select("*")
+    .eq("organization_id", payload.organizationId)
+    .maybeSingle();
+  if (!connection) {
+    throw Object.assign(new Error("India Post is not connected."), { code: "PERMANENT_AUTH_ERROR" });
+  }
 
-  const bytes = await pdf.save();
+  const address = shipment.addresses as {
+    name?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+    phone?: string;
+  } | null;
+  const destPin = address?.pincode ?? "";
+  if (!/^\d{6}$/.test(destPin) || !address?.line1 || !address?.name) {
+    throw Object.assign(new Error("Receiver name, address and 6-digit pincode are required for the India Post label."), {
+      code: "VALIDATION_ERROR",
+    });
+  }
+
+  const { data: pickup } = await supabase
+    .from("pickup_locations")
+    .select("*")
+    .eq("organization_id", payload.organizationId)
+    .order("is_default", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", payload.organizationId)
+    .maybeSingle();
+  const { data: shop } = await supabase
+    .from("shopify_stores")
+    .select("shop_name")
+    .eq("organization_id", payload.organizationId)
+    .maybeSingle();
+
+  const provider = indiaPostFromRow(connection);
+  const destOffices = await provider.searchPostOffices(destPin);
+  const originPin = typeof pickup?.pincode === "string" ? pickup.pincode : "";
+  const originOffices = originPin && originPin !== destPin ? await provider.searchPostOffices(originPin) : [];
+  const allOffices = [...originOffices, ...destOffices];
+  const bookingOffice =
+    indiaPostFindOffice(allOffices, connection.pickup_dropoff_office_id) ||
+    indiaPostPickDeliveryOffice(originOffices) ||
+    indiaPostPickDeliveryOffice(destOffices);
+  const deliveryOffice = indiaPostPickDeliveryOffice(destOffices) || bookingOffice;
+  const bookingOfficePin = String(bookingOffice?.pincode ?? originPin ?? destPin);
+  const bookingOfficeName = String(bookingOffice?.office_name ?? pickup?.name ?? "").trim();
+  if (!bookingOfficeName || !/^\d{6}$/.test(bookingOfficePin)) {
+    throw Object.assign(
+      new Error(
+        "Add a pickup location with your India Post booking-office pincode so the official label can print Kolenchery (or your allotted office)."
+      ),
+      { code: "LABEL_GENERATION_FAILED" }
+    );
+  }
+
+  const receiverMobile =
+    indiaPostMobile(address.phone) ||
+    indiaPostMobile((shipment.customers as { phone?: string } | null)?.phone);
+  const senderMobile = indiaPostMobile(pickup?.phone) || receiverMobile;
+  const senderName =
+    pickup?.contact_name || pickup?.name || shop?.shop_name || org?.name || "Merchant";
+
+  const pdf = await provider.generateLabel({
+    payload: [
+      indiaPostDomesticLabelPayload({
+        customerId: String(connection.bulk_customer_id ?? ""),
+        barcode: String(shipment.barcode),
+        serviceCode: String(shipment.service_code || DEFAULT_INDIA_POST_SERVICE),
+        bookedAt: shipment.booked_at as string | null,
+        weightGrams: Number(shipment.weight_grams) || 100,
+        lengthCm: Number(shipment.length_cm) || 0,
+        widthCm: Number(shipment.width_cm) || 0,
+        heightCm: Number(shipment.height_cm) || 0,
+        tariff: shipment.tariff_amount as string | number | null,
+        bkgRefId: shipment.provider_ref as string | null,
+        recipientName: address.name,
+        recipientMobile: receiverMobile,
+        recipientLine1: address.line1,
+        recipientLine2: address.line2,
+        recipientCity: address.city ?? "",
+        recipientState: address.state ?? "",
+        recipientPin: destPin,
+        senderName: String(senderName),
+        senderMobile,
+        senderLine1: pickup?.line1 || "Registered pickup",
+        senderCity: pickup?.city || String(bookingOffice?.office_name ?? ""),
+        senderState: pickup?.state || "",
+        senderPin: originPin || bookingOfficePin,
+        deliveryOfficeName: deliveryOffice?.office_name,
+        bookingOfficeName,
+        bookingOfficePin,
+      }),
+    ],
+  });
+
+  const bytes = Buffer.from(pdf);
   const path = `${payload.organizationId}/${shipment.id}.pdf`;
   const upload = await supabase.storage.from("labels").upload(path, bytes, {
     contentType: "application/pdf",

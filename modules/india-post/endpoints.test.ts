@@ -3,9 +3,12 @@ import {
   indiaPostApiRoot,
   indiaPostBookingArticleType,
   indiaPostBookingUrl,
+  indiaPostDomesticLabelPayload,
   indiaPostMobile,
   indiaPostSessionUrl,
   indiaPostShapeOfArticle,
+  indiaPostTransmissionMode,
+  indiaPostVolumetricWeightGrams,
 } from "@/modules/india-post/endpoints";
 
 describe("indiaPostApiRoot", () => {
@@ -78,5 +81,52 @@ describe("indiaPostMobile", () => {
   it("rejects numbers that do not start with 6-9", () => {
     expect(indiaPostMobile("0000000000")).toBeNull();
     expect(indiaPostMobile("")).toBeNull();
+  });
+});
+
+describe("indiaPost domestic label payload", () => {
+  it("builds the CEPT label/create/domestic fields for Business Parcel", () => {
+    const payload = indiaPostDomesticLabelPayload({
+      customerId: "1788590988",
+      barcode: "ET000000003IN",
+      serviceCode: "BUSINESS_PARCEL",
+      bookedAt: "2026-09-21T10:32:12.759Z",
+      weightGrams: 500,
+      lengthCm: 30,
+      widthCm: 20,
+      heightCm: 4,
+      tariff: "40.00",
+      bkgRefId: "batch_1788590988_test",
+      recipientName: "Vishnu Priya",
+      recipientMobile: "9944388249",
+      recipientLine1: "Sulakkarai",
+      recipientCity: "Kurakkundu",
+      recipientState: "Tamil Nadu",
+      recipientPin: "626003",
+      senderName: "Khelon Lifestyle",
+      senderPin: "682311",
+      deliveryOfficeName: "Virudhunagar HO",
+      bookingOfficeName: "Kolenchery SO",
+      bookingOfficePin: "682311",
+    });
+    expect(payload.channel_type).toBe("E");
+    expect(payload.user_type).toBe("R");
+    expect(payload.booking_type).toBe("COMMERCIAL");
+    expect(payload.identifier).toBe("Domestic");
+    expect(payload.size).toBe("A6");
+    expect(payload.payment_mode).toBe("CO");
+    expect(payload.payment_status).toBe("PC");
+    expect(payload.service_type).toBe("BP");
+    expect(payload.transmission_mode).toBe("S");
+    expect(payload.volumetric_weight).toBe(480);
+    expect(payload.charged_weight).toBe(500);
+    expect(payload.barcode_no).toBe("ET000000003IN");
+    expect(payload.booking_office_name).toBe("Kolenchery SO");
+    expect(payload.booking_office_pin).toBe("682311");
+  });
+
+  it("uses Speed Post air transmission", () => {
+    expect(indiaPostTransmissionMode("SP_INLAND_DOC")).toBe("A");
+    expect(indiaPostVolumetricWeightGrams(10, 10, 10)).toBe(200);
   });
 });
