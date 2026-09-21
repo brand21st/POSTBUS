@@ -1,7 +1,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs/retry";
 import { encryptSecret } from "@/lib/security/crypto";
-import { getAutomationSettings } from "@/modules/automation/service";
+import {
+  AUTOMATION_DEFAULTS,
+  getAutomationSettings,
+  isAutoShopifySyncEnabled,
+  mapAutomationSettings,
+} from "@/modules/automation/service";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { formatBarcode, indiaPostAcceptedArticleId, isCeptUatTestSeries } from "@/modules/india-post/barcode";
 import {
@@ -417,15 +422,7 @@ async function loadAutomation(
   try {
     return await getAutomationSettings(supabase, organizationId);
   } catch {
-    return {
-      autoShopifySync: true,
-      autoShipmentCreation: false,
-      autoBooking: false,
-      autoLabelGeneration: true,
-      autoManifest: true,
-      autoTrackingSync: true,
-      autoShopifyFulfillment: true,
-    };
+    return mapAutomationSettings({ organization_id: organizationId, ...AUTOMATION_DEFAULTS });
   }
 }
 
@@ -728,6 +725,7 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
 }
 
 async function shopifySync(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  if (!(await isAutoShopifySyncEnabled(supabase, payload.organizationId))) return;
   const { syncUnfulfilledShopifyOrders } = await import("@/modules/shopify/orders");
   const result = await syncUnfulfilledShopifyOrders(supabase, {
     organizationId: payload.organizationId,

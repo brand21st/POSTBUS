@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptSecret } from "@/lib/security/crypto";
-import { getAutomationSettings } from "@/modules/automation/service";
+import { AUTOMATION_DEFAULTS, getAutomationSettings } from "@/modules/automation/service";
 import {
   normalizeShopDomain,
   resolveShopifyAppCredentials,
@@ -457,6 +457,7 @@ export async function upsertShopifyOrder(
     shopDomain: string;
     remote: ShopifyRemoteOrder;
     createShipment?: boolean;
+    enqueueBooking?: boolean;
   }
 ) {
   const sourceId = String(input.remote.id || "");
@@ -628,7 +629,8 @@ export async function upsertShopifyOrder(
           role: "OWNER",
           permissions: [],
         },
-        [order.id]
+        [order.id],
+        { enqueueBooking: input.enqueueBooking !== false }
       );
     } catch {
       // Order import should still succeed if shipment automation fails.
@@ -638,6 +640,23 @@ export async function upsertShopifyOrder(
   return { imported: true, updated: false, skipped: false, orderId: order.id as string };
 }
 
+async function shopifyOrderAutomation(supabase: SupabaseClient, organizationId: string) {
+  try {
+    const automation = await getAutomationSettings(supabase, organizationId);
+    return {
+      autoShopifySync: Boolean(automation.autoShopifySync),
+      createShipment: Boolean(automation.autoShipmentCreation),
+      enqueueBooking: Boolean(automation.autoBooking),
+    };
+  } catch {
+    return {
+      autoShopifySync: AUTOMATION_DEFAULTS.auto_shopify_sync,
+      createShipment: AUTOMATION_DEFAULTS.auto_shipment_creation,
+      enqueueBooking: AUTOMATION_DEFAULTS.auto_booking,
+    };
+  }
+}
+
 export async function importShopifyWebhookOrder(
   supabase: SupabaseClient,
   input: { organizationId: string; shopDomain: string; topic: string; remote: ShopifyRemoteOrder }
@@ -645,18 +664,16 @@ export async function importShopifyWebhookOrder(
   if (!input.topic.startsWith("orders/")) {
     return { imported: false, updated: false, skipped: true, orderId: null as string | null };
   }
-  let createShipment = false;
-  try {
-    const automation = await getAutomationSettings(supabase, input.organizationId);
-    createShipment = Boolean(automation.autoShipmentCreation);
-  } catch {
-    createShipment = false;
+  const automation = await shopifyOrderAutomation(supabase, input.organizationId);
+  if (!automation.autoShopifySync) {
+    return { imported: false, updated: false, skipped: true, orderId: null as string | null };
   }
   return upsertShopifyOrder(supabase, {
     organizationId: input.organizationId,
     shopDomain: input.shopDomain,
     remote: input.remote,
-    createShipment,
+    createShipment: automation.createShipment,
+    enqueueBooking: automation.enqueueBooking,
   });
 }
 
@@ -711,13 +728,7 @@ export async function syncUnfulfilledShopifyOrders(
     // Polling on /dashboard/orders still imports when webhook registration is blocked.
   }
 
-  let createShipment = false;
-  try {
-    const automation = await getAutomationSettings(supabase, input.organizationId);
-    createShipment = Boolean(automation.autoShipmentCreation);
-  } catch {
-    createShipment = false;
-  }
+  const automation = await shopifyOrderAutomation(supabase, input.organizationId);
 
   const result: ShopifySyncResult = {
     imported: 0,
@@ -736,7 +747,8 @@ export async function syncUnfulfilledShopifyOrders(
         userId: input.userId,
         shopDomain: connection.shop_domain,
         remote,
-        createShipment,
+        createShipment: automation.createShipment,
+        enqueueBooking: automation.enqueueBooking,
       });
       if (upserted.imported) result.imported += 1;
       else if (upserted.updated) result.updated += 1;

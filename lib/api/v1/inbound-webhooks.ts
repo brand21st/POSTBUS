@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import { hashSecret } from "@/lib/security/crypto";
+import { isAutoShopifySyncEnabled } from "@/modules/automation/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { resolveShopifyWebhookSecrets, verifyWebhookHmac } from "@/modules/shopify/oauth";
@@ -89,7 +90,7 @@ export async function handleInboundWebhook(request: NextRequest, path: string) {
           });
           throw error;
         }
-      } else {
+      } else if (await isAutoShopifySyncEnabled(admin, connection.organization_id)) {
         await createBackgroundJob(admin, {
           organizationId: connection.organization_id,
           jobType: "shopify-sync",

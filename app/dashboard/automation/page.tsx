@@ -10,7 +10,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { boolField } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
+import { useMe } from "@/lib/hooks/use-me";
+import { hasPermission } from "@/lib/permissions/rbac";
 import type { AutomationSettings } from "@/types/api";
+import type { MemberRole } from "@/types/domain";
 
 const TOGGLES = [
   {
@@ -60,6 +63,8 @@ const TOGGLES = [
 
 export default function AutomationPage() {
   const queryClient = useQueryClient();
+  const me = useMe();
+  const canManage = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "automation.manage");
 
   const query = useQuery({
     queryKey: ["automation"],
@@ -125,7 +130,7 @@ export default function AutomationPage() {
                   </div>
                   <Switch
                     checked={checked}
-                    disabled={mutation.isPending}
+                    disabled={!canManage || mutation.isPending}
                     onCheckedChange={(value) => mutation.mutate({ [item.camel]: value })}
                   />
                 </CardHeader>

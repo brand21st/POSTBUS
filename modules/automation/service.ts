@@ -40,7 +40,7 @@ export type AutomationRow = {
   auto_shopify_fulfillment: boolean;
 };
 
-const DEFAULTS: Omit<AutomationRow, "organization_id"> = {
+export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
   auto_shopify_sync: true,
   auto_shipment_creation: false,
   auto_booking: false,
@@ -90,7 +90,7 @@ export async function getAutomationSettings(
 
   const { data: created, error: insertError } = await supabase
     .from("automation_settings")
-    .insert({ organization_id: organizationId, ...DEFAULTS })
+    .insert({ organization_id: organizationId, ...AUTOMATION_DEFAULTS })
     .select("*")
     .single();
 
@@ -102,6 +102,18 @@ export async function getAutomationSettings(
   }
 
   return mapAutomationSettings(created as AutomationRow);
+}
+
+export async function isAutoShopifySyncEnabled(
+  supabase: SupabaseClient,
+  organizationId: string
+): Promise<boolean> {
+  try {
+    const settings = await getAutomationSettings(supabase, organizationId);
+    return Boolean(settings.autoShopifySync);
+  } catch {
+    return AUTOMATION_DEFAULTS.auto_shopify_sync;
+  }
 }
 
 export async function updateAutomationSettings(
