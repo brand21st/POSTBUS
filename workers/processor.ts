@@ -3,7 +3,7 @@ import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs
 import { encryptSecret } from "@/lib/security/crypto";
 import { getAutomationSettings } from "@/modules/automation/service";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
-import { formatBarcode, isCeptUatTestSeries } from "@/modules/india-post/barcode";
+import { formatBarcode, indiaPostAcceptedArticleId, isCeptUatTestSeries } from "@/modules/india-post/barcode";
 import {
   indiaPostBookingArticle,
   indiaPostDomesticLabelPayload,
@@ -352,12 +352,14 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     throw Object.assign(new Error(firstError), { code: "VALIDATION_ERROR" });
   }
 
+  const articleId = indiaPostAcceptedArticleId(valid, barcode);
+
   await supabase
     .from("shipments")
     .update({
       status: "BOOKED",
-      tracking_number: barcode,
-      barcode,
+      tracking_number: articleId,
+      barcode: articleId,
       tariff_amount: valid.calculated_tariff ?? null,
       provider_ref: result.batch_id ?? null,
       booked_at: new Date().toISOString(),
@@ -390,11 +392,7 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       entityId: shipment.id,
     });
   }
-  if (
-    automation.autoShopifyFulfillment &&
-    !automation.autoLabelGeneration &&
-    !automation.autoManifest
-  ) {
+  if (automation.autoShopifyFulfillment) {
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
       jobType: "shopify-fulfillment",
@@ -555,13 +553,6 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
       jobType: "manifest-generation",
-      entityType: "shipment",
-      entityId: shipment.id,
-    });
-  } else if (automation.autoShopifyFulfillment) {
-    await createBackgroundJob(supabase, {
-      organizationId: payload.organizationId,
-      jobType: "shopify-fulfillment",
       entityType: "shipment",
       entityId: shipment.id,
     });

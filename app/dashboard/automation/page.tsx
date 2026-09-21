@@ -54,7 +54,7 @@ const TOGGLES = [
     snake: "auto_shopify_fulfillment",
     title: "Auto Shopify fulfillment",
     description:
-      "After booking, label, and today's pickup manifest, mark the Shopify order fulfilled and send the India Post tracking number.",
+      "As soon as India Post returns an article ID, fulfill the Shopify order and set the tracking number and tracking link.",
   },
 ] as const;
 

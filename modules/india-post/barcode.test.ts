@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatBarcode, isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
+import {
+  formatBarcode,
+  indiaPostAcceptedArticleId,
+  indiaPostPublicTrackingUrl,
+  isCeptUatTestSeries,
+  parseBarcodeRange,
+} from "@/modules/india-post/barcode";
 
 describe("formatBarcode", () => {
   it("builds a 13 character S10 article number with check digit", () => {
@@ -75,5 +81,19 @@ describe("isCeptUatTestSeries", () => {
     expect(isCeptUatTestSeries("ET", 21433001, 21434000)).toBe(true);
     expect(isCeptUatTestSeries("CL", 21433001, 21434000)).toBe(true);
     expect(isCeptUatTestSeries("CL", 55697399, 55697499)).toBe(false);
+  });
+});
+
+describe("india post public tracking", () => {
+  it("uses the article number India Post accepted on booking", () => {
+    expect(
+      indiaPostAcceptedArticleId({ article_number: "cl556974704in" }, "CL000000001IN")
+    ).toBe("CL556974704IN");
+  });
+
+  it("builds the India Post consignment tracking URL", () => {
+    expect(indiaPostPublicTrackingUrl("CL556974704IN")).toBe(
+      "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=CL556974704IN"
+    );
   });
 });

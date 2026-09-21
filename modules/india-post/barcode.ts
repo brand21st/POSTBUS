@@ -101,3 +101,39 @@ export function isCeptUatTestSeries(prefix: string, startNumber: number, endNumb
   void prefix;
   return startNumber === 21433001 && endNumber === 21434000;
 }
+
+const S10_ARTICLE = /^[A-Z]{2}[0-9]{9}[A-Z]{2}$/;
+
+export function normalizeIndiaPostArticleId(value?: unknown) {
+  const article = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+  return S10_ARTICLE.test(article) ? article : "";
+}
+
+/** Prefer the article India Post accepted on booking; otherwise the S10 we submitted. */
+export function indiaPostAcceptedArticleId(
+  valid?: {
+    article_number?: unknown;
+    barcode_no?: unknown;
+    barcode?: unknown;
+    consignment_number?: unknown;
+  } | null,
+  fallback = ""
+) {
+  const fromBooking = [
+    valid?.article_number,
+    valid?.barcode_no,
+    valid?.barcode,
+    valid?.consignment_number,
+  ]
+    .map(normalizeIndiaPostArticleId)
+    .find(Boolean);
+  return fromBooking || normalizeIndiaPostArticleId(fallback) || fallback;
+}
+
+export function indiaPostPublicTrackingUrl(articleId: string) {
+  const article = normalizeIndiaPostArticleId(articleId) || articleId.trim().toUpperCase();
+  return `https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=${encodeURIComponent(article)}`;
+}

@@ -65,6 +65,7 @@ describe("shopify order mapping", () => {
     expect(payload.fulfillment.tracking_info).toEqual({
       company: "India Post",
       number: "CL556974704IN",
+      url: "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=CL556974704IN",
     });
     expect(payload.fulfillment.notify_customer).toBe(true);
   });

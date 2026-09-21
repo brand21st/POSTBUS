@@ -7,6 +7,7 @@ import {
   shopifyWebhookUrl,
   type ShopifyCredentialRow,
 } from "@/modules/shopify/oauth";
+import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
 import type { FulfillmentStatus, PaymentStatus } from "@/types/domain";
 
 export const SHOPIFY_API_VERSION = "2025-01";
@@ -229,6 +230,14 @@ function asRecord<T extends object>(value: T | T[] | null | undefined): T | null
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
+export function shopifyTrackingInfo(articleId: string) {
+  return {
+    company: INDIA_POST_CARRIER,
+    number: articleId,
+    url: indiaPostPublicTrackingUrl(articleId),
+  };
+}
+
 export function shopifyFulfillmentPayload(input: {
   fulfillmentOrders: ShopifyFulfillmentOrder[];
   trackingNumber: string;
@@ -245,13 +254,40 @@ export function shopifyFulfillmentPayload(input: {
   return {
     fulfillment: {
       line_items_by_fulfillment_order: lineItemsByFulfillmentOrder,
-      tracking_info: {
-        company: INDIA_POST_CARRIER,
-        number: input.trackingNumber,
-      },
+      tracking_info: shopifyTrackingInfo(input.trackingNumber),
       notify_customer: input.notifyCustomer !== false,
     },
   };
+}
+
+async function updateExistingShopifyTracking(
+  shop: string,
+  token: string,
+  sourceOrderId: string,
+  articleId: string
+) {
+  const listRes = await shopifyRequest(
+    shop,
+    token,
+    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillments.json`
+  );
+  if (!listRes.ok) return false;
+  const json = (await listRes.json()) as { fulfillments?: Array<{ id?: number | string }> };
+  const latest = [...(json.fulfillments ?? [])]
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+    .sort((a, b) => b - a)[0];
+  if (!latest) return false;
+  const updateRes = await shopifyRequest(shop, token, `/fulfillments/${latest}/update_tracking.json`, {
+    method: "POST",
+    body: JSON.stringify({
+      fulfillment: {
+        notify_customer: true,
+        tracking_info: shopifyTrackingInfo(articleId),
+      },
+    }),
+  });
+  return updateRes.ok;
 }
 
 async function markOrderFulfilled(supabase: SupabaseClient, orderId: string) {
@@ -288,10 +324,6 @@ export async function fulfillShopifyShipment(
 
   const tracking = String(shipment.barcode || shipment.tracking_number || "").trim();
   if (!tracking) return { skipped: true, reason: "no_barcode" };
-
-  if ((order.fulfillment_status || "").toUpperCase() === "FULFILLED") {
-    return { skipped: true, reason: "already_fulfilled", fulfilled: true };
-  }
 
   let sourceOrderId = order.source_order_id ? String(order.source_order_id).trim() : "";
   if (!sourceOrderId) {
@@ -335,8 +367,11 @@ export async function fulfillShopifyShipment(
   });
 
   if (!payload.fulfillment.line_items_by_fulfillment_order.length) {
+    const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
     await markOrderFulfilled(supabase, order.id);
-    return { skipped: true, reason: "no_open_fulfillment_orders", fulfilled: true };
+    return updated
+      ? { skipped: false, fulfilled: true }
+      : { skipped: true, reason: "no_open_fulfillment_orders", fulfilled: true };
   }
 
   const createRes = await shopifyRequest(shop, token, "/fulfillments.json", {
@@ -346,8 +381,11 @@ export async function fulfillShopifyShipment(
   if (!createRes.ok) {
     const body = await createRes.text();
     if (createRes.status === 422 && /already fulfilled|closed|no remaining/i.test(body)) {
+      const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
       await markOrderFulfilled(supabase, order.id);
-      return { skipped: true, reason: "already_fulfilled_remote", fulfilled: true };
+      return updated
+        ? { skipped: false, fulfilled: true }
+        : { skipped: true, reason: "already_fulfilled_remote", fulfilled: true };
     }
     throw Object.assign(new Error(`Shopify fulfillment failed (${createRes.status}).`), {
       code: "PROVIDER_ERROR",
