@@ -1,6 +1,10 @@
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/proxy";
 import { parseTrackingSubdomain } from "@/modules/tracking-pages/host";
+
+function requestHostname(hostHeader: string | null) {
+  return hostHeader?.split(":")[0]?.toLowerCase() ?? "";
+}
 
 function shouldRewriteToTrack(pathname: string) {
   return (
@@ -12,8 +16,18 @@ function shouldRewriteToTrack(pathname: string) {
 }
 
 export async function proxy(request: NextRequest) {
-  const host = request.headers.get("host");
-  const subdomain = parseTrackingSubdomain(host);
+  const hostHeader = request.headers.get("host");
+  const canonicalHost = requestHostname(hostHeader) || request.nextUrl.hostname.toLowerCase();
+  // Keep auth cookies on one host so confirmation links do not lose the session.
+  if (canonicalHost === "postbus.in") {
+    const url = request.nextUrl.clone();
+    url.protocol = "https:";
+    url.hostname = "www.postbus.in";
+    url.port = "";
+    return NextResponse.redirect(url, 308);
+  }
+
+  const subdomain = parseTrackingSubdomain(hostHeader);
   const extraHeaders = new Headers(request.headers);
 
   if (subdomain) {

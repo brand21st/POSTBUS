@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { registerAccountSchema } from "@/lib/auth/register-schema";
+import { authCallbackUrl } from "@/lib/auth/urls";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { fail, ok } from "@/lib/api/response";
 import { rateLimit } from "@/lib/security/rate-limit";
@@ -16,7 +17,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null);
     const values = registerAccountSchema.parse(body ?? {});
     const supabase = await createServerSupabase();
-    const origin = request.nextUrl.origin;
 
     const { data, error } = await supabase.auth.signUp({
       email: values.email,
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
           full_name: values.name,
           whatsapp_number: values.whatsapp,
         },
-        emailRedirectTo: `${origin}/auth/callback?next=/onboarding`,
+        emailRedirectTo: authCallbackUrl("/dashboard"),
       },
     });
 
@@ -57,7 +57,9 @@ export async function POST(request: NextRequest) {
         needsEmailConfirmation: !data.session,
         whatsappNumber: values.whatsapp,
       },
-      data.session ? "Account created." : "Check your email to confirm your account, then continue to onboarding."
+      data.session
+        ? "Account created."
+        : "Check your email and click the confirmation link. After it is verified you will land on your dashboard."
     );
   } catch (error) {
     return fail(error);

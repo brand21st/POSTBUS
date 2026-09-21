@@ -70,6 +70,7 @@ describe("POST /api/v1/auth/register", () => {
             full_name: "Priya Stores",
             whatsapp_number: "+919876543210",
           },
+          emailRedirectTo: expect.stringMatching(/\/auth\/callback\?next=%2Fdashboard$/),
         }),
       })
     );

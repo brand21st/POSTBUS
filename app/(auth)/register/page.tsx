@@ -41,10 +41,12 @@ export default function RegisterPage() {
         body: JSON.stringify(values),
       });
       if (result.needsEmailConfirmation) {
-        setInfo("Check your email to confirm your account, then continue to onboarding.");
+        setInfo(
+          "Check your email and click the confirmation link. After it is verified you will land on your dashboard."
+        );
         return;
       }
-      router.replace("/onboarding");
+      router.replace("/dashboard");
       router.refresh();
     } catch (error) {
       setFormError(error instanceof ApiError ? error.message : "Could not create your account.");

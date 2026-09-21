@@ -18,11 +18,23 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
+function authQueryError(code: string | null) {
+  if (code === "auth_callback_failed") {
+    return "That confirmation link could not be verified. Sign in, or open the latest email we sent.";
+  }
+  if (code === "auth_callback_missing") {
+    return "The confirmation link was incomplete. Open the latest email we sent.";
+  }
+  return null;
+}
+
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") || "/dashboard";
-  const [formError, setFormError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(() =>
+    authQueryError(searchParams.get("error"))
+  );
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
