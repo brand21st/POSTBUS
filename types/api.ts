@@ -352,6 +352,8 @@ export type IndiaPostConfig = {
   last_verified_at?: string | null;
   lastError?: string | null;
   last_error?: string | null;
+  uatConfigured?: boolean;
+  prodConfigured?: boolean;
   bookingWebhookUrl?: string;
   booking_webhook_url?: string;
   eventsWebhookUrl?: string;

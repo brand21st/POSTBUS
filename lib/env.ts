@@ -39,3 +39,7 @@ export function indiaPostBaseUrl(environment: "UAT" | "PRODUCTION") {
     ? env.indiaPostProdBaseUrl
     : env.indiaPostUatBaseUrl;
 }
+
+export function isIndiaPostEnvironmentConfigured(environment: "UAT" | "PRODUCTION") {
+  return Boolean(indiaPostBaseUrl(environment));
+}

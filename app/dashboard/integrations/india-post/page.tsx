@@ -62,6 +62,8 @@ export default function IndiaPostPage() {
   const hasSecrets = Boolean(
     config?.hasPassword ?? config?.has_password ?? config?.usernameMasked ?? config?.username_masked
   );
+  const prodConfigured = Boolean(config?.prodConfigured);
+  const productionBlocked = form.environment === "PRODUCTION" && !prodConfigured;
 
   if (config && !hydrated) {
     setHydrated(true);
@@ -92,6 +94,11 @@ export default function IndiaPostPage() {
   const save = useMutation({
     mutationFn: () => {
       const customerId = form.customerId.trim();
+      if (productionBlocked) {
+        throw new Error(
+          "Production API URL is not set yet. Use UAT (sandbox) — CEPT must share the live base URL first."
+        );
+      }
       if (!customerId && !hasSecrets) {
         throw new Error("Enter your India Post customer ID.");
       }
@@ -181,6 +188,12 @@ export default function IndiaPostPage() {
                 ))}
               </SelectContent>
             </Select>
+            {productionBlocked ? (
+              <p className="text-sm text-muted">
+                Production is not available yet — CEPT has not shared the live API base URL.
+                Keep <strong>UAT (sandbox)</strong> selected. Your customer ID and password work there.
+              </p>
+            ) : null}
           </div>
 
           <Field

@@ -30,11 +30,14 @@ export class IndiaPostProvider implements ShippingProvider {
   constructor(private connection: Connection) {}
 
   private baseUrl() {
-    const url = indiaPostBaseUrl(this.connection.environment);
+    const environment = this.connection.environment;
+    const url = indiaPostBaseUrl(environment);
     if (!url) {
       throw new AppError(
         ERROR_CODES.INTEGRATION_NOT_CONNECTED,
-        "India Post API base URL is not configured."
+        environment === "PRODUCTION"
+          ? "India Post production API URL is not configured yet. Use UAT (sandbox) until CEPT shares the live base URL (INDIA_POST_PROD_BASE_URL)."
+          : "India Post UAT API base URL is not configured."
       );
     }
     return url.replace(/\/$/, "");

@@ -305,6 +305,8 @@ export async function handleIntegrationRoutes(
       hasPassword: Boolean(data?.encrypted_password),
       lastVerifiedAt: data?.last_verified_at,
       lastError: data?.last_error,
+      uatConfigured: Boolean(env.indiaPostUatBaseUrl),
+      prodConfigured: Boolean(env.indiaPostProdBaseUrl),
       ...(data?.id ? indiaPostWebhookUrls(data.id) : {}),
       barcodeRange: range
         ? {
