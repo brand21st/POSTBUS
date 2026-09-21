@@ -47,7 +47,7 @@ const DEFAULTS: Omit<AutomationRow, "organization_id"> = {
   auto_label_generation: true,
   auto_manifest: true,
   auto_tracking_sync: true,
-  auto_shopify_fulfillment: false,
+  auto_shopify_fulfillment: true,
 };
 
 export function mapAutomationSettings(row: AutomationRow): AutomationSettings {

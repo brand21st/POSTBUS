@@ -32,7 +32,7 @@ export async function processJob(queue: string, payload: JobPayload) {
     else if (queue === "manifest-generation") await generateManifest(supabase, payload);
     else if (queue === "tracking-sync") await syncTracking(supabase, payload);
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
-    else if (queue === "shopify-fulfillment") await shopifyFulfillment();
+    else if (queue === "shopify-fulfillment") await shopifyFulfillment(supabase, payload);
     else if (queue === "webhook-processing") await deliverWebhooks(supabase, payload);
     else if (queue === "india-post-events") {
       const { processIndiaPostInboxEvent } = await import("@/modules/india-post/webhook");
@@ -390,6 +390,18 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       entityId: shipment.id,
     });
   }
+  if (
+    automation.autoShopifyFulfillment &&
+    !automation.autoLabelGeneration &&
+    !automation.autoManifest
+  ) {
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "shopify-fulfillment",
+      entityType: "shipment",
+      entityId: shipment.id,
+    });
+  }
   if (automation.autoTrackingSync) {
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
@@ -414,7 +426,7 @@ async function loadAutomation(
       autoLabelGeneration: true,
       autoManifest: true,
       autoTrackingSync: true,
-      autoShopifyFulfillment: false,
+      autoShopifyFulfillment: true,
     };
   }
 }
@@ -546,8 +558,7 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
       entityType: "shipment",
       entityId: shipment.id,
     });
-  }
-  if (automation.autoShopifyFulfillment) {
+  } else if (automation.autoShopifyFulfillment) {
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
       jobType: "shopify-fulfillment",
@@ -658,6 +669,19 @@ async function generateManifest(supabase: ReturnType<typeof createAdminClient>, 
       "id",
       shipments.map((item) => item.id)
     );
+
+  const automation = await loadAutomation(supabase, payload.organizationId);
+  if (automation.autoShopifyFulfillment) {
+    const { createBackgroundJob } = await import("@/modules/jobs/service");
+    for (const item of shipments) {
+      await createBackgroundJob(supabase, {
+        organizationId: payload.organizationId,
+        jobType: "shopify-fulfillment",
+        entityType: "shipment",
+        entityId: item.id,
+      });
+    }
+  }
 }
 
 async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
@@ -727,8 +751,24 @@ async function shopifySync(supabase: ReturnType<typeof createAdminClient>, paylo
     .eq("id", payload.jobId);
 }
 
-async function shopifyFulfillment() {
-  // Requires a connected store; skip silently if fulfillment API is not configured.
+async function shopifyFulfillment(
+  supabase: ReturnType<typeof createAdminClient>,
+  payload: JobPayload
+) {
+  const automation = await loadAutomation(supabase, payload.organizationId);
+  if (!automation.autoShopifyFulfillment) return;
+  if (!payload.entityId) {
+    throw Object.assign(new Error("Shipment id is missing."), { code: "VALIDATION_ERROR" });
+  }
+  const { fulfillShopifyShipment } = await import("@/modules/shopify/orders");
+  const result = await fulfillShopifyShipment(supabase, {
+    organizationId: payload.organizationId,
+    shipmentId: payload.entityId,
+  });
+  await supabase
+    .from("background_jobs")
+    .update({ progress: result })
+    .eq("id", payload.jobId);
 }
 
 async function deliverWebhooks(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {

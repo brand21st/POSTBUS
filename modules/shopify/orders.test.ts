@@ -5,6 +5,7 @@ import {
   mapShopifyFulfillmentStatus,
   mapShopifyPaymentStatus,
   shopifyCustomerName,
+  shopifyFulfillmentPayload,
   shopifyOrderNumber,
   shopifyPhone,
   shopifyPincode,
@@ -46,6 +47,26 @@ describe("shopify order mapping", () => {
     expect(shopifyPhone("")).toBe("0000000000");
     expect(shopifyPincode("560001")).toBe("560001");
     expect(shopifyPincode("12")).toBe("120000");
+  });
+
+  it("builds a Shopify fulfillment payload from open fulfillment orders", () => {
+    const payload = shopifyFulfillmentPayload({
+      fulfillmentOrders: [
+        { id: 11, status: "open" },
+        { id: 12, status: "closed" },
+        { id: 13, status: "in_progress" },
+      ],
+      trackingNumber: "CL556974704IN",
+    });
+    expect(payload.fulfillment.line_items_by_fulfillment_order).toEqual([
+      { fulfillment_order_id: 11 },
+      { fulfillment_order_id: 13 },
+    ]);
+    expect(payload.fulfillment.tracking_info).toEqual({
+      company: "India Post",
+      number: "CL556974704IN",
+    });
+    expect(payload.fulfillment.notify_customer).toBe(true);
   });
 
   it("is ready to sync when shop domain and app credentials exist", () => {

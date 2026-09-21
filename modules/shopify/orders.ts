@@ -206,6 +206,158 @@ export async function markShopifyConnected(
     .eq("id", connection.id);
 }
 
+export const INDIA_POST_CARRIER = "India Post";
+
+export type ShopifyFulfillmentOrder = {
+  id: number | string;
+  status?: string | null;
+  line_items?: Array<{
+    id?: number | string;
+    remaining_quantity?: number | string | null;
+    quantity?: number | string | null;
+  }>;
+};
+
+export type ShopifyFulfillmentResult = {
+  skipped: boolean;
+  reason?: string;
+  fulfilled?: boolean;
+};
+
+function asRecord<T extends object>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
+export function shopifyFulfillmentPayload(input: {
+  fulfillmentOrders: ShopifyFulfillmentOrder[];
+  trackingNumber: string;
+  notifyCustomer?: boolean;
+}) {
+  const lineItemsByFulfillmentOrder = input.fulfillmentOrders
+    .filter((order) => {
+      const status = (order.status || "open").toLowerCase();
+      return status === "open" || status === "in_progress";
+    })
+    .map((order) => ({ fulfillment_order_id: Number(order.id) }))
+    .filter((row) => Number.isFinite(row.fulfillment_order_id) && row.fulfillment_order_id > 0);
+
+  return {
+    fulfillment: {
+      line_items_by_fulfillment_order: lineItemsByFulfillmentOrder,
+      tracking_info: {
+        company: INDIA_POST_CARRIER,
+        number: input.trackingNumber,
+      },
+      notify_customer: input.notifyCustomer !== false,
+    },
+  };
+}
+
+async function markOrderFulfilled(supabase: SupabaseClient, orderId: string) {
+  await supabase
+    .from("orders")
+    .update({ fulfillment_status: "FULFILLED", status: "SHIPPED" })
+    .eq("id", orderId);
+}
+
+export async function fulfillShopifyShipment(
+  supabase: SupabaseClient,
+  input: { organizationId: string; shipmentId: string }
+): Promise<ShopifyFulfillmentResult> {
+  const { data: shipment, error } = await supabase
+    .from("shipments")
+    .select("id, barcode, tracking_number, order_id, orders(id, source, source_order_id, fulfillment_status)")
+    .eq("id", input.shipmentId)
+    .eq("organization_id", input.organizationId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!shipment) return { skipped: true, reason: "shipment_missing" };
+
+  type ShopifyLinkedOrder = {
+    id: string;
+    source?: string | null;
+    source_order_id?: string | null;
+    fulfillment_status?: string | null;
+  };
+  const order = asRecord(shipment.orders as ShopifyLinkedOrder | ShopifyLinkedOrder[] | null);
+  if (!order?.id) return { skipped: true, reason: "no_order" };
+  if ((order.source || "").toUpperCase() !== "SHOPIFY") {
+    return { skipped: true, reason: "not_shopify" };
+  }
+
+  const tracking = String(shipment.barcode || shipment.tracking_number || "").trim();
+  if (!tracking) return { skipped: true, reason: "no_barcode" };
+
+  if ((order.fulfillment_status || "").toUpperCase() === "FULFILLED") {
+    return { skipped: true, reason: "already_fulfilled", fulfilled: true };
+  }
+
+  let sourceOrderId = order.source_order_id ? String(order.source_order_id).trim() : "";
+  if (!sourceOrderId) {
+    const { data: ref } = await supabase
+      .from("external_order_references")
+      .select("source_order_id")
+      .eq("organization_id", input.organizationId)
+      .eq("order_id", order.id)
+      .eq("source", "SHOPIFY")
+      .maybeSingle();
+    sourceOrderId = ref?.source_order_id ? String(ref.source_order_id).trim() : "";
+  }
+  if (!sourceOrderId) return { skipped: true, reason: "no_shopify_order_id" };
+
+  const connection = await loadShopifyConnection(supabase, input.organizationId);
+  const shop = connection?.shop_domain;
+  const token = await resolveShopifyAdminToken(connection);
+  if (!shop || !token) return { skipped: true, reason: "shopify_not_connected" };
+
+  const fulfillmentOrdersRes = await shopifyRequest(
+    shop,
+    token,
+    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillment_orders.json`
+  );
+  if (fulfillmentOrdersRes.status === 404) {
+    return { skipped: true, reason: "shopify_order_missing" };
+  }
+  if (!fulfillmentOrdersRes.ok) {
+    throw Object.assign(
+      new Error(`Shopify fulfillment orders failed (${fulfillmentOrdersRes.status}).`),
+      { code: "PROVIDER_ERROR" }
+    );
+  }
+
+  const fulfillmentOrdersJson = (await fulfillmentOrdersRes.json()) as {
+    fulfillment_orders?: ShopifyFulfillmentOrder[];
+  };
+  const payload = shopifyFulfillmentPayload({
+    fulfillmentOrders: fulfillmentOrdersJson.fulfillment_orders ?? [],
+    trackingNumber: tracking,
+  });
+
+  if (!payload.fulfillment.line_items_by_fulfillment_order.length) {
+    await markOrderFulfilled(supabase, order.id);
+    return { skipped: true, reason: "no_open_fulfillment_orders", fulfilled: true };
+  }
+
+  const createRes = await shopifyRequest(shop, token, "/fulfillments.json", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (!createRes.ok) {
+    const body = await createRes.text();
+    if (createRes.status === 422 && /already fulfilled|closed|no remaining/i.test(body)) {
+      await markOrderFulfilled(supabase, order.id);
+      return { skipped: true, reason: "already_fulfilled_remote", fulfilled: true };
+    }
+    throw Object.assign(new Error(`Shopify fulfillment failed (${createRes.status}).`), {
+      code: "PROVIDER_ERROR",
+    });
+  }
+
+  await markOrderFulfilled(supabase, order.id);
+  return { skipped: false, fulfilled: true };
+}
+
 export async function registerShopifyOrderWebhooks(shop: string, token: string) {
   const address = shopifyWebhookUrl();
   if (!address.startsWith("https://") || address.includes("localhost")) {

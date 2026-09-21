@@ -21,7 +21,7 @@ export const env = {
   shopifyApiSecret: optional(process.env.SHOPIFY_API_SECRET),
   shopifyScopes:
     optional(process.env.SHOPIFY_SCOPES) ||
-    "read_orders,write_orders,read_fulfillments,write_fulfillments,read_locations",
+    "read_orders,write_orders,read_fulfillments,write_fulfillments,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_locations",
   shopifyAppUrl: optional(process.env.SHOPIFY_APP_URL),
   // CEPT UAT is a public sandbox URL; default so production still works if Coolify env was left blank.
   indiaPostUatBaseUrl:
