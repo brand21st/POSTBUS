@@ -9,6 +9,7 @@ import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { createOrderSchema, orderListQuery } from "@/modules/orders/schema";
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders } from "@/modules/orders/service";
+import { mapLabelRow } from "@/modules/labels/map";
 import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
 
 function dateRange(request: NextRequest) {
@@ -104,7 +105,7 @@ export async function handleCommerceRoutes(
       .range(from, from + pageSize - 1);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
     return {
-      items: data ?? [],
+      items: (data ?? []).map((row) => mapLabelRow(row as Record<string, unknown>)),
       page,
       pageSize,
       total: count ?? 0,

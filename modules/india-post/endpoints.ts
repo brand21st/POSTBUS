@@ -140,6 +140,7 @@ export function indiaPostDomesticLabelPayload(input: {
   senderName: string;
   senderMobile?: string | null;
   senderLine1?: string | null;
+  senderLine2?: string | null;
   senderCity?: string | null;
   senderState?: string | null;
   senderPin?: string | null;
@@ -182,7 +183,7 @@ export function indiaPostDomesticLabelPayload(input: {
     sender_name: input.senderName,
     sender_mobile: input.senderMobile || undefined,
     sender_addressl1: input.senderLine1 || "",
-    sender_addressl2: "",
+    sender_addressl2: input.senderLine2 || "",
     sender_addressl3: "",
     sender_city: input.senderCity || "",
     sender_pin: originPin,

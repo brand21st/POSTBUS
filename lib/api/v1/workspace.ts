@@ -14,6 +14,11 @@ import {
 import { isBillingConfigured } from "@/lib/env";
 import { encryptSecret, hashSecret, randomToken } from "@/lib/security/crypto";
 import { getAutomationSettings, updateAutomationSettings } from "@/modules/automation/service";
+import {
+  mapOrganizationSettings,
+  uploadOrganizationLogo,
+  type OrganizationIdentityRow,
+} from "@/modules/organizations/branding";
 import { WEBHOOK_EVENTS } from "@/types/domain";
 
 export async function handleWorkspaceRoutes(
@@ -30,23 +35,54 @@ export async function handleWorkspaceRoutes(
       .select("*")
       .eq("id", ctx.organizationId)
       .single();
-    return data;
+    return data ? mapOrganizationSettings(data as OrganizationIdentityRow) : data;
   }
 
   if (key === "PATCH organizations") {
-    const body = updateOrganizationSchema.parse(await request.json());
+    const contentType = request.headers.get("content-type") ?? "";
+    let body: ReturnType<typeof updateOrganizationSchema.parse>;
+    let logo: File | null = null;
+    if (contentType.includes("multipart/form-data")) {
+      const form = await request.formData();
+      const file = form.get("logo");
+      logo = file instanceof File && file.size > 0 ? file : null;
+      body = updateOrganizationSchema.parse({
+        name: form.get("name") || undefined,
+        phone: form.get("phone") ?? undefined,
+        line1: form.get("line1") ?? undefined,
+        line2: form.get("line2") ?? undefined,
+        city: form.get("city") ?? undefined,
+        state: form.get("state") ?? undefined,
+        pincode: form.get("pincode") ?? undefined,
+      });
+    } else {
+      body = updateOrganizationSchema.parse(await request.json().catch(() => ({})));
+    }
+
+    const updates: Record<string, string | null> = {};
+    if (body.name !== undefined) updates.name = body.name;
+    if (body.phone !== undefined) updates.phone = body.phone ?? null;
+    if (body.line1 !== undefined) updates.line1 = body.line1 ?? null;
+    if (body.line2 !== undefined) updates.line2 = body.line2 ?? null;
+    if (body.city !== undefined) updates.city = body.city ?? null;
+    if (body.state !== undefined) updates.state = body.state ?? null;
+    if (body.pincode !== undefined) updates.pincode = body.pincode ?? null;
+    if (logo) {
+      updates.logo_path = await uploadOrganizationLogo(supabase, ctx, logo);
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "No organization fields were provided.");
+    }
+
     const { data, error } = await supabase
       .from("organizations")
-      .update({
-        name: body.name,
-        timezone: body.timezone,
-        currency: body.currency,
-      })
+      .update(updates)
       .eq("id", ctx.organizationId)
       .select()
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-    return data;
+    return mapOrganizationSettings(data as OrganizationIdentityRow);
   }
 
   if (key === "POST organizations/switch") {

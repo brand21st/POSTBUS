@@ -17,6 +17,8 @@ import {
   indiaPostPickDeliveryOffice,
   indiaPostRequiredText,
 } from "@/modules/india-post/endpoints";
+import { stampOrgLogoOnLabel } from "@/modules/labels/stamp-logo";
+import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { JobPayload } from "@/lib/queue/queues";
@@ -303,7 +305,7 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     .maybeSingle();
   const { data: org } = await supabase
     .from("organizations")
-    .select("name")
+    .select("name, phone, line1, line2, city, state, pincode")
     .eq("id", payload.organizationId)
     .maybeSingle();
   const { data: shop } = await supabase
@@ -312,12 +314,20 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     .eq("organization_id", payload.organizationId)
     .maybeSingle();
 
-  const origin = await resolveIndiaPostOrigin(provider, connection, pickup, destPincode);
-  const senderMobile = indiaPostMobile(pickup?.phone) || receiverMobile;
-  const senderName = indiaPostRequiredText(
-    pickup?.contact_name || pickup?.name || shop?.shop_name || org?.name,
-    "Merchant"
+  const sender = organizationLabelSender(org, pickup, shop?.shop_name);
+  const origin = await resolveIndiaPostOrigin(
+    provider,
+    connection,
+    {
+      ...pickup,
+      pincode: sender.pincode || pickup?.pincode,
+      city: sender.city || pickup?.city,
+      state: sender.state || pickup?.state,
+    },
+    destPincode
   );
+  const senderMobile = indiaPostMobile(sender.phone) || receiverMobile;
+  const senderName = indiaPostRequiredText(sender.name, "Merchant");
 
   const weightGrams = Number(shipment.weight_grams) || 100;
   const result = await provider.bookShipment({
@@ -334,11 +344,11 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         widthCm: Number(shipment.width_cm) || 0,
         heightCm: Number(shipment.height_cm) || 0,
         senderName,
-        senderCompany: pickup?.name || org?.name || senderName,
-        senderLine1: pickup?.line1 || "Registered pickup",
-        senderLine2: pickup?.line2,
-        senderCity: pickup?.city || origin.city,
-        senderState: pickup?.state || origin.state,
+        senderCompany: org?.name || pickup?.name || senderName,
+        senderLine1: sender.line1,
+        senderLine2: sender.line2,
+        senderCity: sender.city || origin.city,
+        senderState: sender.state || origin.state,
         senderMobile,
         receiverName: address?.name ?? "Customer",
         receiverLine1: address?.line1 ?? "",
@@ -470,7 +480,7 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
     .maybeSingle();
   const { data: org } = await supabase
     .from("organizations")
-    .select("name")
+    .select("name, phone, line1, line2, city, state, pincode, logo_path")
     .eq("id", payload.organizationId)
     .maybeSingle();
   const { data: shop } = await supabase
@@ -479,17 +489,26 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
     .eq("organization_id", payload.organizationId)
     .maybeSingle();
 
+  const sender = organizationLabelSender(org, pickup, shop?.shop_name);
   const provider = indiaPostFromRow(connection);
-  const origin = await resolveIndiaPostOrigin(provider, connection, pickup, destPin);
+  const origin = await resolveIndiaPostOrigin(
+    provider,
+    connection,
+    {
+      ...pickup,
+      pincode: sender.pincode || pickup?.pincode,
+      city: sender.city || pickup?.city,
+      state: sender.state || pickup?.state,
+    },
+    destPin
+  );
   const destOffices = await provider.searchPostOffices(destPin);
   const deliveryOffice = indiaPostPickDeliveryOffice(destOffices);
 
   const receiverMobile =
     indiaPostMobile(address.phone) ||
     indiaPostMobile((shipment.customers as { phone?: string } | null)?.phone);
-  const senderMobile = indiaPostMobile(pickup?.phone) || receiverMobile;
-  const senderName =
-    pickup?.contact_name || pickup?.name || shop?.shop_name || org?.name || "Merchant";
+  const senderMobile = indiaPostMobile(sender.phone) || receiverMobile;
 
   const pdf = await provider.generateLabel({
     payload: [
@@ -511,11 +530,12 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
         recipientCity: address.city ?? "",
         recipientState: address.state ?? "",
         recipientPin: destPin,
-        senderName: String(senderName),
+        senderName: String(sender.name),
         senderMobile,
-        senderLine1: pickup?.line1 || "Registered pickup",
-        senderCity: pickup?.city || origin.city,
-        senderState: pickup?.state || origin.state,
+        senderLine1: sender.line1,
+        senderLine2: sender.line2,
+        senderCity: sender.city || origin.city,
+        senderState: sender.state || origin.state,
         senderPin: origin.pincode,
         deliveryOfficeName: deliveryOffice?.office_name,
         bookingOfficeName: origin.name,
@@ -524,7 +544,15 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
     ],
   });
 
-  const bytes = Buffer.from(pdf);
+  let bytes = Buffer.from(pdf);
+  if (org?.logo_path) {
+    const downloaded = await supabase.storage.from("organization-assets").download(org.logo_path);
+    if (downloaded.data) {
+      const logoBytes = new Uint8Array(await downloaded.data.arrayBuffer());
+      const stamped = await stampOrgLogoOnLabel(bytes, logoBytes, downloaded.data.type || org.logo_path);
+      bytes = Buffer.from(stamped);
+    }
+  }
   const path = `${payload.organizationId}/${shipment.id}.pdf`;
   const upload = await supabase.storage.from("labels").upload(path, bytes, {
     contentType: "application/pdf",

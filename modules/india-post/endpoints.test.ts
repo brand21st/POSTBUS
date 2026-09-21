@@ -105,6 +105,8 @@ describe("indiaPost domestic label payload", () => {
       recipientState: "Tamil Nadu",
       recipientPin: "626003",
       senderName: "Khelon Lifestyle",
+      senderLine1: "NH 85",
+      senderLine2: "Near SO",
       senderPin: "682311",
       deliveryOfficeName: "Virudhunagar HO",
       bookingOfficeName: "Kolenchery SO",
@@ -121,7 +123,9 @@ describe("indiaPost domestic label payload", () => {
     expect(payload.transmission_mode).toBe("S");
     expect(payload.volumetric_weight).toBe(480);
     expect(payload.charged_weight).toBe(500);
-    expect(payload.barcode_no).toBe("ET000000003IN");
+    expect(payload.sender_name).toBe("Khelon Lifestyle");
+    expect(payload.sender_addressl1).toBe("NH 85");
+    expect(payload.sender_addressl2).toBe("Near SO");
     expect(payload.booking_office_name).toBe("Kolenchery SO");
     expect(payload.booking_office_pin).toBe("682311");
   });

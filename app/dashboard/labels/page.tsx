@@ -55,7 +55,7 @@ export default function LabelsPage() {
     {
       id: "tracking",
       header: "Tracking",
-      cell: (row) => row.trackingNumber ?? row.tracking_number ?? "—",
+      cell: (row) => row.trackingNumber ?? row.tracking_number ?? row.barcode ?? "—",
     },
     { id: "status", header: "Status", cell: (row) => <StatusBadge value={row.status} /> },
     {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -22,7 +22,8 @@ import { asList, asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
-import { MEMBER_ROLES, WEBHOOK_EVENTS } from "@/types/domain";
+import { hasPermission } from "@/lib/permissions/rbac";
+import { MEMBER_ROLES, WEBHOOK_EVENTS, type MemberRole } from "@/types/domain";
 import type {
   ApiKeyRecord,
   AuditLogRecord,
@@ -82,27 +83,56 @@ export default function SettingsPage() {
 function OrganizationSection() {
   const queryClient = useQueryClient();
   const me = useMe();
+  const canManage = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "org.manage");
   const [name, setName] = useState("");
-  const [timezone, setTimezone] = useState("Asia/Kolkata");
-  const [currency, setCurrency] = useState("INR");
+  const [phone, setPhone] = useState("");
+  const [line1, setLine1] = useState("");
+  const [line2, setLine2] = useState("");
+  const [city, setCity] = useState("");
+  const [state, setState] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
 
   const query = useQuery({
     queryKey: ["organization-settings"],
     queryFn: () => api<OrganizationSettings>("/api/v1/organizations"),
   });
 
+  useEffect(() => {
+    if (!query.data) return;
+    setName(query.data.name ?? me.data?.organization?.name ?? "");
+    setPhone(query.data.phone ?? "");
+    setLine1(query.data.line1 ?? "");
+    setLine2(query.data.line2 ?? "");
+    setCity(query.data.city ?? "");
+    setState(query.data.state ?? "");
+    setPincode(query.data.pincode ?? "");
+    if (!logoFile) {
+      setLogoPreview(query.data.logoUrl ?? query.data.logo_url ?? null);
+    }
+  }, [query.data, me.data?.organization?.name, logoFile]);
+
   const mutation = useMutation({
-    mutationFn: () =>
-      api("/api/v1/organizations", {
+    mutationFn: () => {
+      const body = new FormData();
+      body.append("name", name || query.data?.name || me.data?.organization?.name || "");
+      body.append("phone", phone);
+      body.append("line1", line1);
+      body.append("line2", line2);
+      body.append("city", city);
+      body.append("state", state);
+      body.append("pincode", pincode);
+      if (logoFile) body.append("logo", logoFile);
+      return api<OrganizationSettings>("/api/v1/organizations", {
         method: "PATCH",
-        body: JSON.stringify({
-          name: name || query.data?.name || me.data?.organization?.name,
-          timezone,
-          currency,
-        }),
-      }),
-    onSuccess: () => {
-      toast.success("Organization updated.");
+        body,
+      });
+    },
+    onSuccess: (data) => {
+      toast.success("Organization updated. New labels will use this identity.");
+      setLogoFile(null);
+      setLogoPreview(data.logoUrl ?? data.logo_url ?? logoPreview);
       queryClient.invalidateQueries({ queryKey: ["me"] });
       queryClient.invalidateQueries({ queryKey: ["organization-settings"] });
     },
@@ -113,28 +143,64 @@ function OrganizationSection() {
     <Card>
       <CardHeader>
         <CardTitle>Organization</CardTitle>
-        <CardDescription>Workspace identity used on labels, invoices, and audit events.</CardDescription>
+        <CardDescription>
+          Name, address, phone, and logo printed as the sender on India Post shipping labels.
+        </CardDescription>
       </CardHeader>
       <CardContent className="grid max-w-xl gap-4">
         <Field label="Name">
+          <Input disabled={!canManage} value={name} onChange={(event) => setName(event.target.value)} />
+        </Field>
+        <Field label="Phone number">
           <Input
-            defaultValue={query.data?.name ?? me.data?.organization?.name ?? ""}
-            onChange={(event) => setName(event.target.value)}
+            disabled={!canManage}
+            inputMode="tel"
+            placeholder="9876543210"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
           />
         </Field>
-        <Field label="Timezone">
+        <Field label="Address line 1">
+          <Input disabled={!canManage} value={line1} onChange={(event) => setLine1(event.target.value)} />
+        </Field>
+        <Field label="Address line 2">
+          <Input disabled={!canManage} value={line2} onChange={(event) => setLine2(event.target.value)} />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="City">
+            <Input disabled={!canManage} value={city} onChange={(event) => setCity(event.target.value)} />
+          </Field>
+          <Field label="State">
+            <Input disabled={!canManage} value={state} onChange={(event) => setState(event.target.value)} />
+          </Field>
+        </div>
+        <Field label="Pincode">
           <Input
-            defaultValue={query.data?.timezone ?? "Asia/Kolkata"}
-            onChange={(event) => setTimezone(event.target.value)}
+            disabled={!canManage}
+            inputMode="numeric"
+            maxLength={6}
+            placeholder="682311"
+            value={pincode}
+            onChange={(event) => setPincode(event.target.value)}
           />
         </Field>
-        <Field label="Currency">
+        <Field label="Logo">
+          {logoPreview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logoPreview} alt="Organization logo" className="h-16 w-16 rounded-lg border border-border object-contain" />
+          ) : null}
           <Input
-            defaultValue={query.data?.currency ?? "INR"}
-            onChange={(event) => setCurrency(event.target.value)}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            disabled={!canManage}
+            onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              setLogoFile(file);
+              setLogoPreview(file ? URL.createObjectURL(file) : query.data?.logoUrl ?? query.data?.logo_url ?? null);
+            }}
           />
         </Field>
-        <Button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+        <Button type="button" onClick={() => mutation.mutate()} disabled={!canManage || mutation.isPending}>
           Save organization
         </Button>
       </CardContent>

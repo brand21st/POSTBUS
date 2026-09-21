@@ -222,6 +222,7 @@ export type LabelRecord = {
   mime_type?: string | null;
   createdAt?: string;
   created_at?: string;
+  barcode?: string | null;
   trackingNumber?: string | null;
   tracking_number?: string | null;
   orderNumber?: string | null;
@@ -501,8 +502,16 @@ export type OrganizationSettings = {
   id?: string;
   name?: string;
   slug?: string | null;
-  timezone?: string;
-  currency?: string;
+  phone?: string | null;
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  logoPath?: string | null;
+  logo_path?: string | null;
+  logoUrl?: string | null;
+  logo_url?: string | null;
 };
 
 export type TrackingPageStatus = "DRAFT" | "PUBLISHED" | "DISABLED";
