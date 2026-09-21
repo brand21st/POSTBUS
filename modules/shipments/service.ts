@@ -84,7 +84,7 @@ export async function createShipmentsForOrders(
       continue;
     }
 
-    if (action === "fulfill" && alreadyBooked) {
+    if (action === "fulfill" && current && alreadyBooked) {
       await enqueueOptionalWatiNotify(supabase, ctx.organizationId, "booked", {
         orderId: order.id,
         shipmentId: current.id,
