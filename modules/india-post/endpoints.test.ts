@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   indiaPostApiRoot,
+  indiaPostBookingArticle,
   indiaPostBookingArticleType,
   indiaPostBookingUrl,
   indiaPostDomesticLabelPayload,
@@ -128,5 +129,41 @@ describe("indiaPost domestic label payload", () => {
   it("uses Speed Post air transmission", () => {
     expect(indiaPostTransmissionMode("SP_INLAND_DOC")).toBe("A");
     expect(indiaPostVolumetricWeightGrams(10, 10, 10)).toBe(200);
+  });
+});
+
+describe("indiaPostBookingArticle", () => {
+  it("sends DROPOFF with origin pin, not the receiver pin", () => {
+    const article = indiaPostBookingArticle({
+      customerId: "1788590988",
+      contractId: "41793509",
+      barcode: "ET214330016IN",
+      officeId: "22660454",
+      originPin: "682311",
+      serviceCode: "BUSINESS_PARCEL",
+      weightGrams: 500,
+      lengthCm: 20,
+      widthCm: 15,
+      heightCm: 10,
+      senderName: "kerlaz",
+      senderLine1: "Registered pickup",
+      senderCity: "Ernakulam",
+      senderState: "Kerala",
+      senderMobile: "9876543210",
+      receiverName: "Vishnu Priya",
+      receiverLine1: "Sulakkarai",
+      receiverCity: "Kurakkundu",
+      receiverState: "Tamil Nadu",
+      receiverPin: "626003",
+      receiverMobile: "9944388249",
+    });
+    expect(article.pickup_or_dropoff).toBe("DROPOFF");
+    expect(article.pickup_address_flag).toBe("FALSE");
+    expect(article.drop_off_pincode).toBe("682311");
+    expect(article.sender_pincode).toBe("682311");
+    expect(article.receiver_pincode).toBe("626003");
+    expect(article.article_type).toBe("BP");
+    expect(article.sender_city).not.toBe("NA");
+    expect(article.pickup_dropoff_office_id).toBe(22660454);
   });
 });

@@ -3,14 +3,14 @@ import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs
 import { encryptSecret } from "@/lib/security/crypto";
 import { getAutomationSettings } from "@/modules/automation/service";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
-import { formatBarcode } from "@/modules/india-post/barcode";
+import { formatBarcode, isCeptUatTestSeries } from "@/modules/india-post/barcode";
 import {
-  indiaPostBookingArticleType,
+  indiaPostBookingArticle,
   indiaPostDomesticLabelPayload,
   indiaPostFindOffice,
   indiaPostMobile,
   indiaPostPickDeliveryOffice,
-  indiaPostShapeOfArticle,
+  indiaPostRequiredText,
 } from "@/modules/india-post/endpoints";
 import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
 import { PDFDocument, StandardFonts } from "pdf-lib";
@@ -106,6 +106,58 @@ export async function processJob(queue: string, payload: JobPayload) {
   }
 }
 
+type PickupRow = {
+  name?: string | null;
+  contact_name?: string | null;
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+  phone?: string | null;
+  office_id?: string | null;
+};
+
+async function resolveIndiaPostOrigin(
+  provider: ReturnType<typeof indiaPostFromRow>,
+  connection: { pickup_dropoff_office_id?: string | null },
+  pickup: PickupRow | null,
+  destPin: string
+) {
+  const officeId = String(connection.pickup_dropoff_office_id ?? pickup?.office_id ?? "").trim();
+  const originPin = /^\d{6}$/.test(pickup?.pincode ?? "") ? String(pickup?.pincode) : "";
+  const originOffices = originPin ? await provider.searchPostOffices(originPin) : [];
+  const destOffices = destPin && destPin !== originPin ? await provider.searchPostOffices(destPin) : [];
+  const matched =
+    indiaPostFindOffice(originOffices, officeId) ||
+    indiaPostFindOffice(destOffices, officeId) ||
+    indiaPostPickDeliveryOffice(originOffices);
+  const pincode = String(matched?.pincode ?? originPin ?? "");
+  if (!officeId || officeId.length !== 8 || !/^\d{6}$/.test(pincode) || !matched?.office_name) {
+    throw Object.assign(
+      new Error(
+        "Add a pickup location with the 6-digit pincode of your India Post booking office (Kolenchery SO is 682311 for office 22660454). Drop-off pincode must be the origin office, not the receiver."
+      ),
+      { code: "VALIDATION_ERROR" }
+    );
+  }
+  if (pincode === destPin && originPin !== destPin) {
+    throw Object.assign(
+      new Error(
+        "India Post drop-off pincode was resolving to the receiver pin. Set pickup location pincode to your booking office pin."
+      ),
+      { code: "VALIDATION_ERROR" }
+    );
+  }
+  return {
+    officeId,
+    pincode,
+    name: String(matched.office_name),
+    city: String(matched.city_name ?? pickup?.city ?? "Ernakulam"),
+    state: String(matched.state_name ?? pickup?.state ?? "Kerala"),
+  };
+}
+
 async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
   const { data: shipment } = await supabase
     .from("shipments")
@@ -179,6 +231,17 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       { code: "INVALID_BARCODE" }
     );
   }
+  if (
+    connection.environment === "PRODUCTION" &&
+    isCeptUatTestSeries(String(range.prefix), Number(range.start_number), Number(range.end_number))
+  ) {
+    throw Object.assign(
+      new Error(
+        "ET21433001–21434000 is the CEPT UAT test series. India Post will not show those articles in your production dashboard. Save the CL series they allotted you (your live article CL556973995IN)."
+      ),
+      { code: "INVALID_BARCODE" }
+    );
+  }
 
   const barcode = formatBarcode(range.prefix, range.next_number, range.suffix);
   await supabase
@@ -219,49 +282,67 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     );
   }
 
-  const weightGrams = Number(shipment.weight_grams) || 100;
-  const length = Number(shipment.length_cm) || 0;
-  const width = Number(shipment.width_cm) || 0;
-  const height = Number(shipment.height_cm) || 0;
   const destPincode = address?.pincode ?? "";
-  const officeId = connection.pickup_dropoff_office_id
-    ? Number(connection.pickup_dropoff_office_id)
-    : 0;
+  if (!/^\d{6}$/.test(destPincode)) {
+    throw Object.assign(new Error("Receiver pincode must be exactly 6 digits."), {
+      code: "VALIDATION_ERROR",
+    });
+  }
 
+  const { data: pickup } = await supabase
+    .from("pickup_locations")
+    .select("*")
+    .eq("organization_id", payload.organizationId)
+    .order("is_default", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", payload.organizationId)
+    .maybeSingle();
+  const { data: shop } = await supabase
+    .from("shopify_stores")
+    .select("shop_name")
+    .eq("organization_id", payload.organizationId)
+    .maybeSingle();
+
+  const origin = await resolveIndiaPostOrigin(provider, connection, pickup, destPincode);
+  const senderMobile = indiaPostMobile(pickup?.phone) || receiverMobile;
+  const senderName = indiaPostRequiredText(
+    pickup?.contact_name || pickup?.name || shop?.shop_name || org?.name,
+    "Merchant"
+  );
+
+  const weightGrams = Number(shipment.weight_grams) || 100;
   const result = await provider.bookShipment({
     articles: [
-      {
-        bulk_customer_id: connection.bulk_customer_id,
-        contract_id: contractId,
-        barcode_no: barcode,
-        pickup_or_dropoff: "dropoff",
-        pickup_dropoff_office_id: officeId,
-        article_type: indiaPostBookingArticleType(serviceCode),
-        physical_weight: weightGrams,
-        shape_of_article: indiaPostShapeOfArticle(serviceCode, weightGrams),
-        length,
-        breadth_diameter: width,
-        height,
-        sender_name: "Merchant",
-        sender_company: "Merchant",
-        sender_add_line_1: "Registered pickup",
-        sender_city: "NA",
-        sender_state: "NA",
-        sender_pincode: destPincode,
-        receiver_name: address?.name ?? "Customer",
-        receiver_company: address?.name ?? "Customer",
-        receiver_add_line_1: address?.line1 ?? "",
-        receiver_city: address?.city ?? "",
-        receiver_state: address?.state ?? "",
-        receiver_pincode: destPincode,
-        drop_off_pincode: destPincode,
-        sender_mobile_no: receiverMobile,
-        receiver_mobile_no: receiverMobile,
-        alt_address_flag: "FALSE",
-        ack: "FALSE",
-        reg: "FALSE",
-        otp: "FALSE",
-      },
+      indiaPostBookingArticle({
+        customerId: String(connection.bulk_customer_id ?? ""),
+        contractId,
+        barcode,
+        officeId: origin.officeId,
+        originPin: origin.pincode,
+        serviceCode,
+        weightGrams,
+        lengthCm: Number(shipment.length_cm) || 0,
+        widthCm: Number(shipment.width_cm) || 0,
+        heightCm: Number(shipment.height_cm) || 0,
+        senderName,
+        senderCompany: pickup?.name || org?.name || senderName,
+        senderLine1: pickup?.line1 || "Registered pickup",
+        senderLine2: pickup?.line2,
+        senderCity: pickup?.city || origin.city,
+        senderState: pickup?.state || origin.state,
+        senderMobile,
+        receiverName: address?.name ?? "Customer",
+        receiverLine1: address?.line1 ?? "",
+        receiverLine2: (address as { line2?: string } | null)?.line2,
+        receiverCity: address?.city ?? "",
+        receiverState: address?.state ?? "",
+        receiverPin: destPincode,
+        receiverMobile,
+      }),
     ],
   });
 
@@ -384,25 +465,9 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
     .maybeSingle();
 
   const provider = indiaPostFromRow(connection);
+  const origin = await resolveIndiaPostOrigin(provider, connection, pickup, destPin);
   const destOffices = await provider.searchPostOffices(destPin);
-  const originPin = typeof pickup?.pincode === "string" ? pickup.pincode : "";
-  const originOffices = originPin && originPin !== destPin ? await provider.searchPostOffices(originPin) : [];
-  const allOffices = [...originOffices, ...destOffices];
-  const bookingOffice =
-    indiaPostFindOffice(allOffices, connection.pickup_dropoff_office_id) ||
-    indiaPostPickDeliveryOffice(originOffices) ||
-    indiaPostPickDeliveryOffice(destOffices);
-  const deliveryOffice = indiaPostPickDeliveryOffice(destOffices) || bookingOffice;
-  const bookingOfficePin = String(bookingOffice?.pincode ?? originPin ?? destPin);
-  const bookingOfficeName = String(bookingOffice?.office_name ?? pickup?.name ?? "").trim();
-  if (!bookingOfficeName || !/^\d{6}$/.test(bookingOfficePin)) {
-    throw Object.assign(
-      new Error(
-        "Add a pickup location with your India Post booking-office pincode so the official label can print Kolenchery (or your allotted office)."
-      ),
-      { code: "LABEL_GENERATION_FAILED" }
-    );
-  }
+  const deliveryOffice = indiaPostPickDeliveryOffice(destOffices);
 
   const receiverMobile =
     indiaPostMobile(address.phone) ||
@@ -434,12 +499,12 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
         senderName: String(senderName),
         senderMobile,
         senderLine1: pickup?.line1 || "Registered pickup",
-        senderCity: pickup?.city || String(bookingOffice?.office_name ?? ""),
-        senderState: pickup?.state || "",
-        senderPin: originPin || bookingOfficePin,
+        senderCity: pickup?.city || origin.city,
+        senderState: pickup?.state || origin.state,
+        senderPin: origin.pincode,
         deliveryOfficeName: deliveryOffice?.office_name,
-        bookingOfficeName,
-        bookingOfficePin,
+        bookingOfficeName: origin.name,
+        bookingOfficePin: origin.pincode,
       }),
     ],
   });

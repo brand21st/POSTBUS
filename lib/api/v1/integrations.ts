@@ -7,7 +7,7 @@ import { logError } from "@/lib/logger";
 import { encryptSecret, maskSecret } from "@/lib/security/crypto";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
-import { parseBarcodeRange } from "@/modules/india-post/barcode";
+import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
 import { listContracts, saveContracts } from "@/modules/india-post/contracts";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 import {
@@ -362,6 +362,16 @@ export async function handleIntegrationRoutes(
 
     if (body.barcodeRange) {
       const parsed = parseBarcodeRange(body.barcodeRange);
+      const environment = payload.environment ?? data.environment;
+      if (
+        environment === "PRODUCTION" &&
+        isCeptUatTestSeries(parsed.prefix, parsed.startNumber, parsed.endNumber)
+      ) {
+        throw new AppError(
+          ERROR_CODES.VALIDATION_ERROR,
+          "ET21433001–21434000 is the CEPT UAT test series. Production must use the CL series India Post allotted your contract."
+        );
+      }
 
       // Saving twice used to add a second active row, and the booking worker's
       // single-row lookup then failed. Retire the current series for this service

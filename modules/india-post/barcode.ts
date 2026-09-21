@@ -16,15 +16,33 @@ export type BarcodeRange = {
   serviceCode: string | null;
 };
 
-// India Post article numbers are 13 characters: two letters, nine digits, two letters
-// (the trailing pair is the country code, IN). Anything else is rejected at booking.
-export const BARCODE_DIGITS = 9;
+/**
+ * India Post / UPU S10 article numbers are 13 characters:
+ * two-letter prefix, eight-digit serial, one check digit, two-letter country (IN).
+ * CEPT writes allotted ranges as ET21433001XIN — the X is this check digit.
+ */
+export const BARCODE_SERIAL_DIGITS = 8;
 const PREFIX_PATTERN = /^[A-Z]{2}$/;
 const SUFFIX_PATTERN = /^[A-Z]{2}$/;
-const MAX_NUMBER = 10 ** BARCODE_DIGITS - 1;
+const MAX_NUMBER = 10 ** BARCODE_SERIAL_DIGITS - 1;
+const S10_WEIGHTS = [8, 6, 4, 2, 3, 5, 9, 7];
+
+export function indiaPostS10CheckDigit(serialEightDigits: string) {
+  const digits = serialEightDigits.replace(/\D/g, "").padStart(BARCODE_SERIAL_DIGITS, "0");
+  if (digits.length !== BARCODE_SERIAL_DIGITS) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Barcode serial must be 8 digits.");
+  }
+  const sum = S10_WEIGHTS.reduce((total, weight, index) => total + Number(digits[index]) * weight, 0);
+  const remainder = sum % 11;
+  const check = 11 - remainder;
+  if (check === 10) return 0;
+  if (check === 11) return 5;
+  return check;
+}
 
 export function formatBarcode(prefix: string, serialNumber: number, suffix: string) {
-  return `${prefix}${String(serialNumber).padStart(BARCODE_DIGITS, "0")}${suffix}`;
+  const serial = String(serialNumber).padStart(BARCODE_SERIAL_DIGITS, "0");
+  return `${prefix}${serial}${indiaPostS10CheckDigit(serial)}${suffix}`;
 }
 
 export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
@@ -34,7 +52,7 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
   if (!PREFIX_PATTERN.test(prefix)) {
     throw new AppError(
       ERROR_CODES.VALIDATION_ERROR,
-      "Barcode prefix must be the two letters India Post allotted, for example ET."
+      "Barcode prefix must be the two letters India Post allotted, for example ET or CL."
     );
   }
   if (!SUFFIX_PATTERN.test(suffix)) {
@@ -57,7 +75,7 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
     if (value > MAX_NUMBER) {
       throw new AppError(
         ERROR_CODES.VALIDATION_ERROR,
-        `${name} cannot be longer than ${BARCODE_DIGITS} digits.`
+        `${name} cannot be longer than ${BARCODE_SERIAL_DIGITS} digits.`
       );
     }
   }
@@ -76,4 +94,9 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
     endNumber,
     serviceCode: input.serviceCode?.trim() || null,
   };
+}
+
+/** CEPT UAT document series — must not be used on app.indiapost.gov.in. */
+export function isCeptUatTestSeries(prefix: string, startNumber: number, endNumber: number) {
+  return prefix.toUpperCase() === "ET" && startNumber === 21433001 && endNumber === 21434000;
 }

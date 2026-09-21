@@ -372,9 +372,10 @@ export default function IndiaPostPage() {
             <CardHeader>
               <CardTitle>Barcode range</CardTitle>
               <CardDescription>
-                The article number series India Post allotted you. Prefix and suffix are two
-                letters each, so articles read like ET021433001IN. Saving replaces the
-                current series for the selected service.
+                The article number series India Post allotted your contract. Enter the
+                two-letter prefix and the 8-digit start/end serials. PostBus adds the
+                S10 check digit, so CL 55697399 becomes CL556973995IN. Do not use the
+                CEPT UAT range ET21433001–21434000 on production.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
@@ -400,7 +401,7 @@ export default function IndiaPostPage() {
               <Field
                 label="Prefix"
                 value={form.prefix}
-                placeholder="ET"
+                placeholder="CL"
                 onChange={(value) => set("prefix", value)}
               />
               <Field label="Suffix" value={form.suffix} onChange={(value) => set("suffix", value)} />

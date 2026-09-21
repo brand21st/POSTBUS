@@ -61,7 +61,17 @@ export type IndiaPostOffice = {
   pincode?: string | number;
   office_type_code?: string;
   delivery_office_flag?: boolean;
+  city_name?: string;
+  state_name?: string;
 };
+
+export function indiaPostRequiredText(value: string | null | undefined, fallback: string) {
+  const text = (value ?? "").trim();
+  if (text.length >= 3) return text.slice(0, 80);
+  const backup = fallback.trim();
+  if (backup.length >= 3) return backup.slice(0, 80);
+  return "India Post";
+}
 
 export function indiaPostFindOffice(offices: IndiaPostOffice[], officeId?: string | null) {
   if (!officeId) return null;
@@ -190,5 +200,70 @@ export function indiaPostDomesticLabelPayload(input: {
     bkg_ref_id: input.bkgRefId || "",
     priority: false,
     registered_flag: false,
+  };
+}
+
+/** CEPT POST /process-articles/{customerId} article body. */
+export function indiaPostBookingArticle(input: {
+  customerId: string;
+  contractId: string;
+  barcode: string;
+  officeId: string | number;
+  originPin: string;
+  serviceCode: string;
+  weightGrams: number;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
+  senderName: string;
+  senderCompany?: string | null;
+  senderLine1: string;
+  senderLine2?: string | null;
+  senderCity: string;
+  senderState: string;
+  senderMobile: string;
+  receiverName: string;
+  receiverLine1: string;
+  receiverLine2?: string | null;
+  receiverCity: string;
+  receiverState: string;
+  receiverPin: string;
+  receiverMobile: string;
+}) {
+  const officeId = Number(input.officeId);
+  return {
+    bulk_customer_id: input.customerId,
+    contract_id: input.contractId,
+    barcode_no: input.barcode,
+    pickup_or_dropoff: "DROPOFF",
+    pickup_dropoff_office_id: officeId,
+    pickup_address_flag: "FALSE",
+    article_type: indiaPostBookingArticleType(input.serviceCode),
+    physical_weight: Math.max(1, Math.round(Number(input.weightGrams) || 1)),
+    shape_of_article: indiaPostShapeOfArticle(input.serviceCode, input.weightGrams),
+    length: Math.max(0, Number(input.lengthCm) || 0),
+    breadth_diameter: Math.max(0, Number(input.widthCm) || 0),
+    height: Math.max(0, Number(input.heightCm) || 0),
+    sender_name: indiaPostRequiredText(input.senderName, "Merchant"),
+    sender_company: indiaPostRequiredText(input.senderCompany, input.senderName || "Merchant"),
+    sender_add_line_1: indiaPostRequiredText(input.senderLine1, "Registered pickup"),
+    sender_add_line_2: input.senderLine2 && input.senderLine2.trim().length >= 3 ? input.senderLine2.trim().slice(0, 80) : undefined,
+    sender_city: indiaPostRequiredText(input.senderCity, "Ernakulam"),
+    sender_state: indiaPostRequiredText(input.senderState, "Kerala"),
+    sender_pincode: input.originPin,
+    sender_mobile_no: input.senderMobile,
+    receiver_name: indiaPostRequiredText(input.receiverName, "Customer"),
+    receiver_company: indiaPostRequiredText(input.receiverName, "Customer"),
+    receiver_add_line_1: indiaPostRequiredText(input.receiverLine1, "Address"),
+    receiver_add_line_2: input.receiverLine2 && input.receiverLine2.trim().length >= 3 ? input.receiverLine2.trim().slice(0, 80) : undefined,
+    receiver_city: indiaPostRequiredText(input.receiverCity, "City"),
+    receiver_state: indiaPostRequiredText(input.receiverState, "State"),
+    receiver_pincode: input.receiverPin,
+    drop_off_pincode: input.originPin,
+    receiver_mobile_no: input.receiverMobile,
+    alt_address_flag: "FALSE",
+    ack: "FALSE",
+    reg: "FALSE",
+    otp: "FALSE",
   };
 }

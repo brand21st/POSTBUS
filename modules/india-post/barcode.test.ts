@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { formatBarcode, parseBarcodeRange } from "@/modules/india-post/barcode";
+import { formatBarcode, isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
 
 describe("formatBarcode", () => {
-  it("builds a 13 character article number", () => {
+  it("builds a 13 character S10 article number with check digit", () => {
     const barcode = formatBarcode("ET", 21433001, "IN");
-    expect(barcode).toBe("ET021433001IN");
+    expect(barcode).toBe("ET214330016IN");
     expect(barcode).toHaveLength(13);
+  });
+
+  it("matches the UPU S10 example EE123456785GB", () => {
+    expect(formatBarcode("EE", 12345678, "GB")).toBe("EE123456785GB");
+  });
+
+  it("matches the live Kolenchery Business Parcel article", () => {
+    expect(formatBarcode("CL", 55697399, "IN")).toBe("CL556973995IN");
   });
 });
 
@@ -51,13 +59,20 @@ describe("parseBarcodeRange", () => {
     expect(() => parseBarcodeRange({ ...valid, endNumber: "abc" })).toThrow(/whole number/);
   });
 
-  it("rejects numbers longer than nine digits", () => {
-    expect(() => parseBarcodeRange({ ...valid, endNumber: 1_000_000_000 })).toThrow(/9 digits/);
+  it("rejects numbers longer than eight digits", () => {
+    expect(() => parseBarcodeRange({ ...valid, endNumber: 100_000_000 })).toThrow(/8 digits/);
   });
 
   it("rejects an end below the start", () => {
     expect(() => parseBarcodeRange({ ...valid, startNumber: 500, endNumber: 400 })).toThrow(
       /same as or above/
     );
+  });
+});
+
+describe("isCeptUatTestSeries", () => {
+  it("flags the documented UAT ET range", () => {
+    expect(isCeptUatTestSeries("ET", 21433001, 21434000)).toBe(true);
+    expect(isCeptUatTestSeries("CL", 55697399, 55697499)).toBe(false);
   });
 });
