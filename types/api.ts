@@ -308,6 +308,63 @@ export type IntegrationsResponse = {
   shopify?: IntegrationCard;
   indiaPost?: IntegrationCard;
   india_post?: IntegrationCard;
+  wati?: IntegrationCard;
+};
+
+export type WatiConfig = {
+  status?: IntegrationStatus | string;
+  apiBaseUrl?: string | null;
+  api_base_url?: string | null;
+  clientId?: string | null;
+  client_id?: string | null;
+  tokenMasked?: string | null;
+  token_masked?: string | null;
+  hasToken?: boolean;
+  has_token?: boolean;
+  channelId?: string | null;
+  channel_id?: string | null;
+  channelName?: string | null;
+  channel_name?: string | null;
+  channelPhone?: string | null;
+  channel_phone?: string | null;
+  orderConfirmationTemplateName?: string | null;
+  order_confirmation_template_name?: string | null;
+  processingTemplateName?: string | null;
+  processing_template_name?: string | null;
+  bookedTemplateName?: string | null;
+  booked_template_name?: string | null;
+  inTransitTemplateName?: string | null;
+  in_transit_template_name?: string | null;
+  deliveredTemplateName?: string | null;
+  delivered_template_name?: string | null;
+  lastVerifiedAt?: string | null;
+  last_verified_at?: string | null;
+  lastError?: string | null;
+  last_error?: string | null;
+  webhookId?: string | null;
+  webhook_id?: string | null;
+  webhookUrl?: string | null;
+  webhook_url?: string | null;
+  lastWebhookAt?: string | null;
+  last_webhook_at?: string | null;
+  lastWebhookEvent?: string | null;
+  last_webhook_event?: string | null;
+  lastWebhookError?: string | null;
+  last_webhook_error?: string | null;
+  canRegisterWebhook?: boolean;
+  can_register_webhook?: boolean;
+  channels?: Array<{
+    id?: string | null;
+    name?: string | null;
+    channel?: string | null;
+    platform_id?: string | null;
+  }>;
+  templates?: Array<{
+    id?: string | null;
+    name?: string;
+    status?: string | null;
+    category?: string | null;
+  }>;
 };
 
 export type ShopifyConfig = {

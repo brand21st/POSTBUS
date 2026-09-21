@@ -614,6 +614,12 @@ export async function upsertShopifyOrder(
     entity_type: "order",
     entity_id: order.id,
   });
+  try {
+    const { enqueueWatiNotify } = await import("@/modules/wati/send");
+    await enqueueWatiNotify(supabase, input.organizationId, "order_confirmation", { orderId: order.id });
+  } catch {
+    // WhatsApp confirmation is optional; the Shopify import should still succeed.
+  }
 
   if (input.createShipment) {
     try {

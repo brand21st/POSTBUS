@@ -16,9 +16,9 @@ import type { IntegrationCard, IntegrationsResponse } from "@/types/api";
 const FALLBACK: IntegrationCard[] = [
   { provider: "SHOPIFY", name: "Shopify", status: "NOT_CONNECTED" },
   { provider: "INDIA_POST", name: "India Post", status: "NOT_CONNECTED" },
+  { provider: "WATI", name: "Wati", status: "NOT_CONNECTED" },
   { provider: "WOOCOMMERCE", name: "WooCommerce", status: "NOT_CONNECTED", comingLater: true },
   { provider: "VACHAT", name: "Vachat", status: "NOT_CONNECTED", comingLater: true },
-  { provider: "WHATSAPP", name: "WhatsApp", status: "NOT_CONNECTED", comingLater: true },
 ];
 
 function cardsFromPayload(payload?: IntegrationsResponse | null): IntegrationCard[] {
@@ -30,6 +30,7 @@ function cardsFromPayload(payload?: IntegrationsResponse | null): IntegrationCar
     const india = payload.indiaPost ?? payload.india_post;
     byProvider.set("INDIA_POST", { ...india, provider: "INDIA_POST", name: "India Post" });
   }
+  if (payload.wati) byProvider.set("WATI", { ...payload.wati, provider: "WATI", name: "Wati" });
   return FALLBACK.map((item) => ({ ...item, ...byProvider.get(item.provider) }));
 }
 
@@ -45,7 +46,7 @@ export default function IntegrationsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Integrations"
-        description="Shopify and India Post are live. Everything else is reserved and stays not connected."
+        description="Shopify, India Post, and Wati WhatsApp are live. WooCommerce and Vachat stay reserved."
       />
 
       {query.isLoading ? (
@@ -69,7 +70,9 @@ export default function IntegrationsPage() {
                 ? "/dashboard/integrations/india-post"
                 : card.provider === "SHOPIFY"
                   ? "/dashboard/integrations/shopify"
-                  : undefined;
+                  : card.provider === "WATI"
+                    ? "/dashboard/integrations/wati"
+                    : undefined;
 
             return (
               <Card key={card.provider}>

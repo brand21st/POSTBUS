@@ -33,7 +33,9 @@ export function permissionForTenantRoute(
     const readable =
       key === "GET integrations" ||
       key === "GET integrations/shopify" ||
-      key === "GET integrations/india-post";
+      key === "GET integrations/india-post" ||
+      key === "GET integrations/wati" ||
+      key === "GET integrations/wati/templates";
     return readable ? undefined : "integrations.manage";
   }
 

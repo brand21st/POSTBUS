@@ -1,6 +1,6 @@
 import { Container } from "@/components/ui/container";
 
-const badges = ["SHOPIFY", "INDIA POST", "WHATSAPP", "WOOCOMMERCE"] as const;
+const badges = ["SHOPIFY", "INDIA POST", "WATI", "WOOCOMMERCE"] as const;
 
 export function TrustedIntegrations() {
   return (

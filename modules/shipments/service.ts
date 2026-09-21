@@ -87,6 +87,15 @@ export async function createShipmentsForOrders(
     }
 
     await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", order.id);
+    try {
+      const { enqueueWatiNotify } = await import("@/modules/wati/send");
+      await enqueueWatiNotify(supabase, ctx.organizationId, "processing", {
+        orderId: order.id,
+        shipmentId: shipment.id,
+      });
+    } catch {
+      // Processing WhatsApp is optional; shipment create should still succeed.
+    }
 
     if (extras?.enqueueBooking === false) {
       created.push({ ...shipment, jobId: null });

@@ -5,6 +5,7 @@ import { hashSecret } from "@/lib/security/crypto";
 import { isAutoShopifySyncEnabled } from "@/modules/automation/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
+import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
 import { resolveShopifyWebhookSecrets, verifyWebhookHmac } from "@/modules/shopify/oauth";
 import {
   importShopifyWebhookOrder,
@@ -12,7 +13,7 @@ import {
 } from "@/modules/shopify/orders";
 
 export function isInboundWebhookPath(path: string) {
-  return Boolean(parseIndiaPostWebhookPath(path) || path === "webhooks/shopify");
+  return Boolean(parseIndiaPostWebhookPath(path) || parseWatiWebhookPath(path) || path === "webhooks/shopify");
 }
 
 export async function handleInboundWebhook(request: NextRequest, path: string) {
@@ -29,6 +30,23 @@ export async function handleInboundWebhook(request: NextRequest, path: string) {
       rawBody: raw,
       contentType: request.headers.get("content-type"),
       headers: request.headers,
+    });
+  }
+
+  const watiWebhook = parseWatiWebhookPath(path);
+  if (watiWebhook && method === "GET") {
+    return { ok: true };
+  }
+  if (watiWebhook && method === "POST") {
+    const raw = await request.text();
+    const { createWebhookInboxClient, hasAdminClient } = await import("@/lib/supabase/admin");
+    if (!hasAdminClient()) {
+      throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Webhook inbox is not configured.");
+    }
+    const { acceptWatiWebhook } = await import("@/modules/wati/webhook");
+    return acceptWatiWebhook(createWebhookInboxClient(), {
+      connectionId: watiWebhook.connectionId,
+      rawBody: raw,
     });
   }
 

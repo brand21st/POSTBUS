@@ -10,15 +10,17 @@ import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
+import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
 
 export async function handleV1(request: NextRequest, slugs: string[]) {
   const path = slugs.join("/");
   const method = request.method;
   const key = `${method} ${path}`;
   const indiaPostWebhook = parseIndiaPostWebhookPath(path);
+  const watiWebhook = parseWatiWebhookPath(path);
   const limited = rateLimit(
     `${request.headers.get("x-forwarded-for") ?? "local"}:${path}`,
-    indiaPostWebhook ? 180 : 60
+    indiaPostWebhook || watiWebhook ? 180 : 60
   );
   if (!limited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");

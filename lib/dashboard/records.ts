@@ -148,7 +148,7 @@ export function integrationList(payload?: IntegrationsResponse | null) {
   if (!payload) return [];
   if (payload.items?.length) return payload.items;
   if (payload.integrations?.length) return payload.integrations;
-  return [payload.shopify, payload.indiaPost, payload.india_post].filter(Boolean);
+  return [payload.shopify, payload.indiaPost, payload.india_post, payload.wati].filter(Boolean);
 }
 
 export function flattenSearch(payload?: SearchResponse | SearchResult[] | null): SearchResult[] {

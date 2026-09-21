@@ -27,6 +27,15 @@ import {
   verifyShopifyHmac,
 } from "@/modules/shopify/oauth";
 import { shopifyReadyToSync, syncUnfulfilledShopifyOrders } from "@/modules/shopify/orders";
+import { watiClientFromRow } from "@/modules/wati/client";
+import { watiBroadcastName, watiNotifyRecipient } from "@/modules/wati/notify";
+import {
+  listWatiTemplates,
+  mapWatiConfig,
+  reconnectWati,
+  registerWatiWebhook,
+  saveWatiConnection,
+} from "@/modules/wati/service";
 
 export async function handleIntegrationRoutes(
   request: NextRequest,
@@ -35,9 +44,10 @@ export async function handleIntegrationRoutes(
   key: string
 ) {
   if (key === "GET integrations") {
-    const [{ data: shopify }, { data: indiaPost }] = await Promise.all([
+    const [{ data: shopify }, { data: indiaPost }, { data: wati }] = await Promise.all([
       supabase.from("shopify_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("india_post_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
+      supabase.from("wati_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
     ]);
     const shopifyConfigured = shopifyAppConfiguredFor(shopify);
     const shopifySyncReady = shopifyReadyToSync(shopify);
@@ -57,6 +67,12 @@ export async function handleIntegrationRoutes(
         lastVerifiedAt: indiaPost?.last_verified_at,
         lastError: indiaPost?.last_error,
       },
+      wati: {
+        provider: "wati",
+        status: wati?.status ?? "NOT_CONNECTED",
+        lastVerifiedAt: wati?.last_verified_at,
+        lastError: wati?.last_error,
+      },
       items: [
         {
           provider: "shopify",
@@ -70,9 +86,13 @@ export async function handleIntegrationRoutes(
           name: "India Post",
           status: indiaPost?.status ?? "NOT_CONNECTED",
         },
+        {
+          provider: "wati",
+          name: "Wati",
+          status: wati?.status ?? "NOT_CONNECTED",
+        },
         { provider: "woocommerce", name: "WooCommerce", status: "NOT_CONNECTED", comingLater: true },
         { provider: "vachat", name: "Vachat", status: "NOT_CONNECTED", comingLater: true },
-        { provider: "whatsapp", name: "WhatsApp", status: "NOT_CONNECTED", comingLater: true },
       ],
     };
   }
@@ -463,6 +483,126 @@ export async function handleIntegrationRoutes(
       })
       .eq("organization_id", ctx.organizationId);
     return { verified: true };
+  }
+
+  if (key === "GET integrations/wati") {
+    const { data } = await supabase
+      .from("wati_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const config = mapWatiConfig(data);
+    if (!data?.encrypted_api_token) return config;
+    try {
+      const templates = await listWatiTemplates(data);
+      return { ...config, templates };
+    } catch {
+      return config;
+    }
+  }
+
+  if (
+    key === "POST integrations/wati" ||
+    key === "PUT integrations/wati" ||
+    key === "PATCH integrations/wati"
+  ) {
+    const body = await request.json().catch(() => ({}));
+    const saved = await saveWatiConnection(supabase, ctx.organizationId, {
+      apiToken: body.apiToken ?? body.api_token ?? body.token,
+      apiBaseUrl: body.apiBaseUrl ?? body.api_base_url,
+      clientId: body.clientId ?? body.client_id,
+      orderConfirmationTemplateName:
+        body.orderConfirmationTemplateName ?? body.order_confirmation_template_name,
+      processingTemplateName: body.processingTemplateName ?? body.processing_template_name,
+      bookedTemplateName: body.bookedTemplateName ?? body.booked_template_name,
+      inTransitTemplateName: body.inTransitTemplateName ?? body.in_transit_template_name,
+      deliveredTemplateName: body.deliveredTemplateName ?? body.delivered_template_name,
+    });
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "wati.connected",
+      entity_type: "wati_connection",
+      entity_id: saved.row.id,
+    });
+    return {
+      ...mapWatiConfig(saved.row),
+      channels: saved.channels,
+      saved: true,
+    };
+  }
+
+  if (key === "POST integrations/wati/webhooks") {
+    const { data } = await supabase
+      .from("wati_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!data) {
+      throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Save a Wati API token first.");
+    }
+    const row = await registerWatiWebhook(supabase, data);
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "wati.webhook_registered",
+      entity_type: "wati_connection",
+      entity_id: row.id,
+    });
+    return { ...mapWatiConfig(row), registered: true };
+  }
+
+  if (key === "POST integrations/wati/verify") {
+    const { data } = await supabase
+      .from("wati_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!data) {
+      throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Save a Wati API token first.");
+    }
+    const verified = await reconnectWati(supabase, data);
+    return { ...mapWatiConfig(verified.row), channels: verified.channels, verified: true };
+  }
+
+  if (key === "GET integrations/wati/templates") {
+    const { data } = await supabase
+      .from("wati_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    return { items: await listWatiTemplates(data) };
+  }
+
+  if (key === "POST integrations/wati/test") {
+    const body = await request.json().catch(() => ({}));
+    const { data } = await supabase
+      .from("wati_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const templateName = String(body.templateName ?? body.template_name ?? data?.booked_template_name ?? "").trim();
+    if (!templateName) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose a Wati template to send.");
+    }
+    const recipient = watiNotifyRecipient({
+      customerName: "Test customer",
+      phone: String(body.phone ?? ""),
+      orderNumber: "TEST-001",
+      trackingNumber: "TESTTRACKIN",
+      trackingUrl: "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=TESTTRACKIN",
+    });
+    if (!recipient) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a 10-digit Indian WhatsApp number.");
+    }
+    const client = watiClientFromRow(data);
+    const result = await client.sendTemplateMessages({
+      template_name: templateName,
+      broadcast_name: watiBroadcastName("booked", "TESTTRACKIN"),
+      recipients: [recipient],
+      channel_number: data?.channel_phone ?? undefined,
+    });
+    return { sent: true, broadcastId: result.broadcast_id ?? null };
   }
 
   return null;

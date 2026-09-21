@@ -19,6 +19,10 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "integrations/shopify/sync", ["integrations", "shopify", "sync"])).toBe(
       "integrations.manage"
     );
+    expect(permissionForTenantRoute("GET", "integrations/wati", ["integrations", "wati"])).toBeUndefined();
+    expect(permissionForTenantRoute("POST", "integrations/wati", ["integrations", "wati"])).toBe(
+      "integrations.manage"
+    );
     expect(permissionForTenantRoute("GET", "members", ["members"])).toBeUndefined();
     expect(permissionForTenantRoute("POST", "members/invites", ["members", "invites"])).toBe(
       "members.manage"

@@ -41,6 +41,26 @@ export async function processJob(queue: string, payload: JobPayload) {
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
     else if (queue === "shopify-fulfillment") await shopifyFulfillment(supabase, payload);
     else if (queue === "webhook-processing") await deliverWebhooks(supabase, payload);
+    else if (queue === "wati-notify") {
+      const { sendWatiNotice, watiEventFromJobProgress, watiIdsFromJob } = await import("@/modules/wati/send");
+      const { data: job } = await supabase
+        .from("background_jobs")
+        .select("progress")
+        .eq("id", jobId)
+        .maybeSingle();
+      const ids = watiIdsFromJob(job?.progress, payload.entityId);
+      if (!ids.shipmentId && !ids.orderId) {
+        throw Object.assign(new Error("Order or shipment id is missing for Wati notify."), {
+          code: "VALIDATION_ERROR",
+        });
+      }
+      await sendWatiNotice(
+        supabase,
+        payload.organizationId,
+        watiEventFromJobProgress(job?.progress),
+        ids
+      );
+    }
     else if (queue === "india-post-events") {
       const { processIndiaPostInboxEvent } = await import("@/modules/india-post/webhook");
       if (!payload.entityId) {
@@ -423,6 +443,11 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       entityId: shipment.id,
     });
   }
+  const { enqueueWatiNotify } = await import("@/modules/wati/send");
+  await enqueueWatiNotify(supabase, payload.organizationId, "booked", {
+    shipmentId: shipment.id,
+    orderId: shipment.order_id,
+  });
 }
 
 async function loadAutomation(
@@ -715,7 +740,7 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
   }
   const { data: shipments } = await supabase
     .from("shipments")
-    .select("id, barcode")
+    .select("id, barcode, status, order_id")
     .eq("organization_id", payload.organizationId)
     .not("barcode", "is", null)
     .in("status", ["BOOKED", "LABEL_READY", "MANIFEST_READY", "IN_TRANSIT", "OUT_FOR_DELIVERY"]);
@@ -745,9 +770,22 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
       });
       if (error && error.code !== "23505") throw error;
     }
-    const delivered = article.del_status?.del_status === "delivered";
-    if (delivered) {
+    const delivered = article.del_status?.del_status?.toLowerCase() === "delivered";
+    const alreadyDelivered = shipment.status === "DELIVERED";
+    const alreadyMoving = ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"].includes(shipment.status);
+    const { enqueueWatiNotify } = await import("@/modules/wati/send");
+    if (delivered && !alreadyDelivered) {
       await supabase.from("shipments").update({ status: "DELIVERED" }).eq("id", shipment.id);
+      await enqueueWatiNotify(supabase, payload.organizationId, "delivered", {
+        shipmentId: shipment.id,
+        orderId: shipment.order_id,
+      });
+    } else if (!delivered && !alreadyMoving && (article.tracking_details?.length ?? 0) > 0) {
+      await supabase.from("shipments").update({ status: "IN_TRANSIT" }).eq("id", shipment.id);
+      await enqueueWatiNotify(supabase, payload.organizationId, "in_transit", {
+        shipmentId: shipment.id,
+        orderId: shipment.order_id,
+      });
     }
   }
 }
