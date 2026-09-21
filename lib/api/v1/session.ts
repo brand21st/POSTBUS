@@ -5,7 +5,6 @@ import {
   createOrganization,
   ensureActiveWorkspace,
   listMemberships,
-  switchOrganization,
 } from "@/modules/organizations/service";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -50,10 +49,9 @@ export async function handleSessionRoutes(
       },
       organization,
       role: ensured.role,
-      organizations: ensured.memberships.map((item) => {
-        const org = Array.isArray(item.organizations) ? item.organizations[0] : item.organizations;
-        return { id: org?.id, name: org?.name, slug: org?.slug, role: item.role };
-      }),
+      organizations: organization
+        ? [{ id: organization.id, name: organization.name, slug: organization.slug, role: ensured.role }]
+        : [],
       subscription: {
         planCode: plan?.code,
         planName: plan?.name,
@@ -72,7 +70,6 @@ export async function handleSessionRoutes(
       const org = Array.isArray(existing[0].organizations)
         ? existing[0].organizations[0]
         : existing[0].organizations;
-      await switchOrganization(supabase, user.id, existing[0].organization_id);
       return org;
     }
     const body = await request.json().catch(() => ({}));

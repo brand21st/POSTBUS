@@ -9,13 +9,11 @@ import {
   createApiKeySchema,
   createWebhookEndpointSchema,
   memberInviteSchema,
-  switchOrganizationSchema,
   updateOrganizationSchema,
 } from "@/lib/api/v1-schemas";
 import { isBillingConfigured } from "@/lib/env";
 import { encryptSecret, hashSecret, randomToken } from "@/lib/security/crypto";
 import { getAutomationSettings, updateAutomationSettings } from "@/modules/automation/service";
-import { switchOrganization } from "@/modules/organizations/service";
 import { WEBHOOK_EVENTS } from "@/types/domain";
 
 export async function handleWorkspaceRoutes(
@@ -52,8 +50,6 @@ export async function handleWorkspaceRoutes(
   }
 
   if (key === "POST organizations/switch") {
-    const body = switchOrganizationSchema.parse(await request.json());
-    await switchOrganization(supabase, ctx.userId, body.organizationId);
     return { switched: true };
   }
 

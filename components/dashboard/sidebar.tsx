@@ -11,7 +11,6 @@ import { helpNav, sidebarNav } from "@/lib/dashboard/nav";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { MeResponse } from "@/types/api";
-import { membershipsFromMe } from "@/lib/hooks/use-me";
 
 export function Sidebar({
   me,
@@ -117,9 +116,7 @@ export function Sidebar({
           </span>
           <span className={cn("min-w-0", collapsed && "sr-only")}>
             <span className="block truncate text-sm font-medium text-ink">{workspace}</span>
-            <span className="block truncate text-xs text-muted">
-              {membershipsFromMe(me).length} workspace{membershipsFromMe(me).length === 1 ? "" : "s"}
-            </span>
+            <span className="block truncate text-xs text-muted">Workspace</span>
           </span>
         </Link>
 

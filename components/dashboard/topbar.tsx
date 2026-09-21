@@ -3,9 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, ChevronRight, Menu, Search } from "lucide-react";
-import { toast } from "sonner";
+import { Bell, ChevronRight, Menu, Search } from "lucide-react";
 import { CommandSearch } from "@/components/dashboard/command-search";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -19,8 +17,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { breadcrumbs } from "@/lib/dashboard/nav";
 import { formatRelative, initials } from "@/lib/format";
-import { api } from "@/lib/hooks/use-api";
-import { membershipsFromMe } from "@/lib/hooks/use-me";
 import { useNotifications } from "@/lib/hooks/use-notifications";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -35,10 +31,8 @@ export function Topbar({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const queryClient = useQueryClient();
   const crumbs = useMemo(() => breadcrumbs(pathname), [pathname]);
   const [searchOpen, setSearchOpen] = useState(false);
-  const workspaces = membershipsFromMe(me);
   const notifications = useNotifications();
   const items = notifications.items;
   const unread = notifications.unread;
@@ -53,20 +47,6 @@ export function Topbar({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  const switchWorkspace = useMutation({
-    mutationFn: (organizationId: string) =>
-      api("/api/v1/organizations/switch", {
-        method: "POST",
-        body: JSON.stringify({ organizationId }),
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
-      toast.success("Workspace switched");
-      router.refresh();
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
 
   async function signOut() {
     try {
@@ -172,26 +152,9 @@ export function Topbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="secondary" size="sm" className="max-w-[180px]">
-              <span className="truncate">{me?.organization?.name ?? "Workspace"}</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {workspaces.map((workspace) => (
-              <DropdownMenuItem
-                key={workspace.id}
-                onClick={() => switchWorkspace.mutate(workspace.id)}
-              >
-                <span className="flex-1 truncate">{workspace.name}</span>
-                {workspace.id === me?.organization?.id ? <Check className="size-4 text-brand" /> : null}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <span className="hidden max-w-[180px] truncate rounded-lg border border-border bg-surface-soft px-3 py-1.5 text-sm font-medium text-ink sm:inline-block">
+          {me?.organization?.name ?? "Workspace"}
+        </span>
 
         <ThemeToggle />
 
