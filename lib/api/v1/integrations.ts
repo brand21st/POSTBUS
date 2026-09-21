@@ -349,6 +349,40 @@ export async function handleIntegrationRoutes(
         is_active: true,
       });
     }
+
+    // Save & connect: verify CEPT login immediately so the badge turns Connected (green).
+    let status = data.status ?? "PENDING";
+    let lastError: string | null = null;
+    try {
+      const provider = indiaPostFromRow(data);
+      const tokens = await provider.login();
+      const verifiedAt = new Date().toISOString();
+      const { data: connected, error: connectError } = await supabase
+        .from("india_post_connections")
+        .update({
+          status: "CONNECTED",
+          last_verified_at: verifiedAt,
+          last_refreshed_at: verifiedAt,
+          encrypted_access_token: encryptSecret(tokens.access_token),
+          expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+          last_error: null,
+        })
+        .eq("organization_id", ctx.organizationId)
+        .select()
+        .single();
+      if (connectError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, connectError.message);
+      status = connected?.status ?? "CONNECTED";
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : "India Post login failed.";
+      await supabase
+        .from("india_post_connections")
+        .update({ status: "PENDING", last_error: lastError })
+        .eq("organization_id", ctx.organizationId);
+      throw err instanceof AppError
+        ? err
+        : new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, lastError);
+    }
+
     await supabase.from("audit_logs").insert({
       organization_id: ctx.organizationId,
       actor_id: ctx.userId,
@@ -356,7 +390,7 @@ export async function handleIntegrationRoutes(
       entity_type: "india_post_connection",
       entity_id: data.id,
     });
-    return { saved: true, status: data.status };
+    return { saved: true, status, lastError };
   }
 
   if (key === "POST integrations/india-post/verify" || key === "POST integrations/india-post/test") {

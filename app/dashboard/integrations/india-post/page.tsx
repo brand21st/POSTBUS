@@ -127,7 +127,7 @@ export default function IndiaPostPage() {
       });
     },
     onSuccess: () => {
-      toast.success("India Post settings saved. Secrets are stored encrypted.");
+      toast.success("India Post connected. Status is Connected.");
       setForm((current) => ({ ...current, password: "" }));
       setReplaceSecrets(false);
       queryClient.invalidateQueries({ queryKey: ["india-post"] });
