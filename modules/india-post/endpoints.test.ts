@@ -1,42 +1,57 @@
 import { describe, expect, it } from "vitest";
 import {
+  indiaPostApiRoot,
   indiaPostBookingArticleType,
   indiaPostBookingUrl,
   indiaPostMobile,
-  indiaPostOrigin,
   indiaPostSessionUrl,
   indiaPostShapeOfArticle,
 } from "@/modules/india-post/endpoints";
 
-describe("indiaPostOrigin", () => {
-  it("keeps a bare host", () => {
-    expect(indiaPostOrigin("https://app.indiapost.gov.in")).toBe("https://app.indiapost.gov.in");
-  });
-
-  it("strips /beextcustomer/v1 from a session URL", () => {
-    expect(indiaPostOrigin("https://app.indiapost.gov.in/beextcustomer/v1/")).toBe(
-      "https://app.indiapost.gov.in"
+describe("indiaPostApiRoot", () => {
+  it("normalizes a host to /beextcustomer", () => {
+    expect(indiaPostApiRoot("https://app.indiapost.gov.in")).toBe(
+      "https://app.indiapost.gov.in/beextcustomer"
     );
   });
 
-  it("strips /beextcustomer from a booking URL", () => {
-    expect(indiaPostOrigin("https://test.cept.gov.in/beextcustomer")).toBe("https://test.cept.gov.in");
+  it("keeps an explicit /beextcustomer root", () => {
+    expect(indiaPostApiRoot("https://app.indiapost.gov.in/beextcustomer")).toBe(
+      "https://app.indiapost.gov.in/beextcustomer"
+    );
+  });
+
+  it("strips a trailing /v1 so login can add it back without booking inheriting it", () => {
+    expect(indiaPostApiRoot("https://app.indiapost.gov.in/beextcustomer/v1")).toBe(
+      "https://app.indiapost.gov.in/beextcustomer"
+    );
+    expect(indiaPostApiRoot("https://test.cept.gov.in/beextcustomer/v1/")).toBe(
+      "https://test.cept.gov.in/beextcustomer"
+    );
   });
 });
 
-describe("indiaPost session and booking URLs", () => {
-  it("puts login under /v1", () => {
+describe("production login and booking URLs", () => {
+  it("uses /v1 for production login", () => {
     expect(indiaPostSessionUrl("PRODUCTION", "/access/login")).toBe(
       "https://app.indiapost.gov.in/beextcustomer/v1/access/login"
     );
   });
 
-  it("puts booking outside /v1", () => {
-    expect(indiaPostBookingUrl("PRODUCTION", "1788590988")).toBe(
+  it("uses process-articles without /v1 for production booking", () => {
+    const booking = indiaPostBookingUrl("PRODUCTION", "1788590988");
+    expect(booking).toBe(
       "https://app.indiapost.gov.in/beextcustomer/process-articles/1788590988"
     );
+    expect(booking).not.toContain("/v1/process-articles/");
+  });
+
+  it("keeps UAT booking on the documented no-/v1 route", () => {
     expect(indiaPostBookingUrl("UAT", "3000064781")).toBe(
       "https://test.cept.gov.in/beextcustomer/process-articles/3000064781"
+    );
+    expect(indiaPostSessionUrl("UAT", "/access/login")).toBe(
+      "https://test.cept.gov.in/beextcustomer/v1/access/login"
     );
   });
 });

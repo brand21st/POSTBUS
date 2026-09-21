@@ -1,27 +1,36 @@
 import { indiaPostBaseUrl } from "@/lib/env";
 import type { ProviderEnvironment } from "@/types/domain";
 
-/** CEPT login, tariff, pincode, label and tracking sit under /beextcustomer/v1. */
-export function indiaPostOrigin(configured: string) {
-  return configured.trim().replace(/\/+$/, "").replace(/\/beextcustomer(?:\/v1)?$/i, "");
+/**
+ * India Post CEPT root: https://{host}/beextcustomer
+ *
+ * Login (and other session APIs) use /v1 under this root.
+ * Booking does not: POST {root}/process-articles/{customerId}
+ *
+ * Accepts a host, a /beextcustomer root, or a /beextcustomer/v1 session URL
+ * so Coolify can keep INDIA_POST_PROD_BASE_URL ending in /v1 without
+ * putting /v1 on the booking path.
+ */
+export function indiaPostApiRoot(configured: string) {
+  let url = configured.trim().replace(/\/+$/, "");
+  url = url.replace(/\/v1$/i, "");
+  if (!/\/beextcustomer$/i.test(url)) {
+    url = `${url}/beextcustomer`;
+  }
+  return url;
 }
 
-export function indiaPostSessionOrigin(environment: ProviderEnvironment) {
-  return indiaPostOrigin(indiaPostBaseUrl(environment));
+function apiRoot(environment: ProviderEnvironment) {
+  return indiaPostApiRoot(indiaPostBaseUrl(environment));
 }
 
 export function indiaPostSessionUrl(environment: ProviderEnvironment, path: string) {
   const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `${indiaPostSessionOrigin(environment)}/beextcustomer/v1${suffix}`;
+  return `${apiRoot(environment)}/v1${suffix}`;
 }
 
-/**
- * Booking is documented without /v1:
- * POST https://{host}/beextcustomer/process-articles/{customerId}
- * (UAT host test.cept.gov.in, production host app.indiapost.gov.in)
- */
 export function indiaPostBookingUrl(environment: ProviderEnvironment, customerId: string) {
-  return `${indiaPostSessionOrigin(environment)}/beextcustomer/process-articles/${encodeURIComponent(customerId)}`;
+  return `${apiRoot(environment)}/process-articles/${encodeURIComponent(customerId)}`;
 }
 
 export function indiaPostBookingArticleType(serviceCode: string) {
