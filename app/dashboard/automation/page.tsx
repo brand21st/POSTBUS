@@ -41,7 +41,7 @@ const TOGGLES = [
     camel: "autoManifest",
     snake: "auto_manifest",
     title: "Auto manifest",
-    description: "Build pickup manifests after a label is ready.",
+    description: "After a booking and label, add the article to today's pickup manifest and keep that list in sync.",
   },
   {
     camel: "autoTrackingSync",

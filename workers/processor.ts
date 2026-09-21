@@ -382,6 +382,14 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       entityId: shipment.id,
     });
   }
+  if (automation.autoManifest && !automation.autoLabelGeneration) {
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "manifest-generation",
+      entityType: "shipment",
+      entityId: shipment.id,
+    });
+  }
   if (automation.autoTrackingSync) {
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
@@ -404,7 +412,7 @@ async function loadAutomation(
       autoShipmentCreation: false,
       autoBooking: false,
       autoLabelGeneration: true,
-      autoManifest: false,
+      autoManifest: true,
       autoTrackingSync: true,
       autoShopifyFulfillment: false,
     };
@@ -550,25 +558,53 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
 }
 
 async function generateManifest(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const day = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const name = `Manifest ${day}`;
+  const dayStart = `${day}T00:00:00+05:30`;
+
   const { data: shipments } = await supabase
     .from("shipments")
-    .select("id, barcode, tracking_number, orders(order_number)")
+    .select("id, barcode, tracking_number, service_code, tariff_amount, orders(order_number)")
     .eq("organization_id", payload.organizationId)
-    .in("status", ["BOOKED", "LABEL_READY", "MANIFEST_PENDING"]);
+    .not("barcode", "is", null)
+    .not("booked_at", "is", null)
+    .gte("booked_at", dayStart)
+    .in("status", ["BOOKED", "LABEL_READY", "MANIFEST_PENDING", "MANIFEST_READY"])
+    .order("booked_at", { ascending: true });
+
+  if (!shipments?.length) {
+    return;
+  }
 
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([595, 842]);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  page.drawText("PostBus Manifest", { x: 40, y: 800, size: 16, font });
-  (shipments ?? []).forEach((item, index) => {
+  page.drawText(`PostBus pickup manifest  ${day}`, { x: 40, y: 800, size: 16, font });
+  page.drawText("Kolenchery SO drop-off  |  India Post", { x: 40, y: 780, size: 10, font });
+  shipments.forEach((item, index) => {
     const order = item.orders as { order_number?: string } | null;
     page.drawText(
-      `${index + 1}. ${item.barcode ?? ""}  ${order?.order_number ?? ""}`,
-      { x: 40, y: 760 - index * 16, size: 10, font }
+      `${index + 1}. ${item.barcode ?? ""}  ${order?.order_number ?? ""}  ${item.service_code ?? ""}`,
+      { x: 40, y: 750 - index * 16, size: 10, font }
     );
   });
   const bytes = await pdf.save();
-  const path = `${payload.organizationId}/manifest-${payload.jobId}.pdf`;
+
+  const { data: existing } = await supabase
+    .from("manifests")
+    .select("id")
+    .eq("organization_id", payload.organizationId)
+    .eq("name", name)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const path = `${payload.organizationId}/manifest-${day}.pdf`;
   await supabase.storage.from("manifests").upload(path, bytes, {
     contentType: "application/pdf",
     upsert: true,
@@ -577,35 +613,51 @@ async function generateManifest(supabase: ReturnType<typeof createAdminClient>, 
     .from("manifests")
     .createSignedUrl(path, 60 * 60 * 24 * 7);
 
-  const { data: manifest } = await supabase
-    .from("manifests")
-    .insert({
-      organization_id: payload.organizationId,
-      name: `Manifest ${new Date().toISOString().slice(0, 10)}`,
-      status: "READY",
-      file_path: path,
-      file_url: signed?.signedUrl ?? null,
-      shipment_count: shipments?.length ?? 0,
-    })
-    .select()
-    .single();
+  const fields = {
+    status: "READY",
+    file_path: path,
+    file_url: signed?.signedUrl ?? null,
+    shipment_count: shipments.length,
+    updated_at: new Date().toISOString(),
+  };
 
-  if (manifest && shipments?.length) {
-    await supabase.from("manifest_shipments").insert(
-      shipments.map((item) => ({
-        organization_id: payload.organizationId,
-        manifest_id: manifest.id,
-        shipment_id: item.id,
-      }))
-    );
-    await supabase
-      .from("shipments")
-      .update({ status: "MANIFEST_READY" })
-      .in(
-        "id",
-        shipments.map((item) => item.id)
-      );
+  const manifest = existing
+    ? (
+        await supabase.from("manifests").update(fields).eq("id", existing.id).select().single()
+      ).data
+    : (
+        await supabase
+          .from("manifests")
+          .insert({
+            organization_id: payload.organizationId,
+            name,
+            ...fields,
+          })
+          .select()
+          .single()
+      ).data;
+
+  if (!manifest) {
+    throw Object.assign(new Error("Could not save the pickup manifest."), {
+      code: "PROVIDER_ERROR",
+    });
   }
+
+  await supabase.from("manifest_shipments").delete().eq("manifest_id", manifest.id);
+  await supabase.from("manifest_shipments").insert(
+    shipments.map((item) => ({
+      organization_id: payload.organizationId,
+      manifest_id: manifest.id,
+      shipment_id: item.id,
+    }))
+  );
+  await supabase
+    .from("shipments")
+    .update({ status: "MANIFEST_READY" })
+    .in(
+      "id",
+      shipments.map((item) => item.id)
+    );
 }
 
 async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {

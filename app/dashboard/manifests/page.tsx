@@ -20,6 +20,7 @@ export default function ManifestsPage() {
   const query = useQuery({
     queryKey: ["manifests", page],
     queryFn: () => api<Paginated<ManifestRecord>>(`/api/v1/manifests?page=${page}&pageSize=20`),
+    refetchInterval: 10_000,
   });
 
   const list = asPaginated<ManifestRecord>(query.data, ["manifests", "items"]);
@@ -65,7 +66,7 @@ export default function ManifestsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Manifests"
-        description="Generate operational pickup manifests from booked shipments."
+        description="Today's pickup list is generated after each successful booking and label, then kept in sync automatically."
         actions={
           <Button type="button" onClick={() => generate.mutate()} disabled={generate.isPending}>
             <Plus className="size-4" />
@@ -79,7 +80,7 @@ export default function ManifestsPage() {
         loading={query.isLoading}
         error={query.error instanceof Error ? query.error : null}
         emptyTitle="No manifests yet"
-        emptyDescription="Generate a manifest after shipments are booked. The file is stored only when the job succeeds."
+        emptyDescription="After India Post books and labels a shipment, today's manifest appears here automatically."
         emptyAction={
           <div className="flex items-center gap-2 text-muted">
             <ClipboardList className="size-4" />

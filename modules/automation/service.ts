@@ -45,7 +45,7 @@ const DEFAULTS: Omit<AutomationRow, "organization_id"> = {
   auto_shipment_creation: false,
   auto_booking: false,
   auto_label_generation: true,
-  auto_manifest: false,
+  auto_manifest: true,
   auto_tracking_sync: true,
   auto_shopify_fulfillment: false,
 };
