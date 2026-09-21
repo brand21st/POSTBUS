@@ -30,8 +30,24 @@ export async function createShipmentsForOrders(
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   if (!orders?.length) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Orders not found.");
 
+  // A second Ship click would otherwise consume another barcode and book a
+  // second article with India Post for the same order.
+  const { data: existing } = await supabase
+    .from("shipments")
+    .select("order_id")
+    .eq("organization_id", ctx.organizationId)
+    .in("order_id", orders.map((order) => order.id))
+    .not("status", "in", "(CANCELLED,FAILED)");
+  const alreadyShipping = new Set((existing ?? []).map((row) => row.order_id as string));
+
   const created = [];
+  const skipped = [];
   for (const order of orders) {
+    if (alreadyShipping.has(order.id)) {
+      skipped.push(order.id);
+      continue;
+    }
+
     const items = (order.order_line_items as Array<{ quantity: number; weight_grams?: number }>) ?? [];
     const weight =
       extras?.weightGrams ||
@@ -78,15 +94,24 @@ export async function createShipmentsForOrders(
     created.push({ ...shipment, jobId: job.id });
   }
 
+  if (!created.length && skipped.length) {
+    throw new AppError(
+      ERROR_CODES.CONFLICT,
+      skipped.length === 1
+        ? "This order already has a shipment. Open the shipment to retry or cancel it."
+        : "Every selected order already has a shipment."
+    );
+  }
+
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organizationId,
     actor_id: ctx.userId,
     action: "shipment.created",
     entity_type: "shipment",
-    after: { count: created.length, orderIds },
+    after: { count: created.length, orderIds, skipped },
   });
 
-  return { queued: created.length, shipments: created };
+  return { queued: created.length, skipped, shipments: created };
 }
 
 export async function listShipments(

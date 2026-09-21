@@ -22,7 +22,32 @@ In Coolify, attach the same three hosts to the **PostBus** app only. Do not add 
 
 Set `NEXT_PUBLIC_APP_URL=https://postbus.vachat.in` and Supabase Auth redirect URLs to `https://postbus.vachat.in/auth/callback`. Switch to `postbus.in` when that domain is connected.
 
-## Services on the VPS
+## Background jobs on Coolify
+
+The `Dockerfile` image runs the web server only. Without a job runner, `Ship order`
+writes a `background_jobs` row that nothing ever executes, and shipments sit in
+`QUEUED` with no barcode, label or manifest. Set both:
+
+| Variable | Value |
+| --- | --- |
+| `JOB_RUNNER` | `database` |
+| `CRON_SECRET` | a long random string |
+
+Then add a **Scheduled Task** on the PostBus resource:
+
+- Command: `node scripts/drain-jobs.mjs`
+- Frequency: `* * * * *`
+- Container: the web container (it posts to `http://127.0.0.1:$PORT/api/cron/jobs`)
+
+`POST /api/cron/jobs` requires `Authorization: Bearer $CRON_SECRET` and refuses to run
+when `JOB_RUNNER=redis`. Verify with `GET /api/health`: `jobRunner` must be `database`
+and `jobs` must be `Healthy`. `jobs: "Warning"` means the scheduled task is not running.
+
+Only use `JOB_RUNNER=redis` if you also deploy Redis and a second resource running
+`npm run workers` from the same image. Never run both runners against one database —
+each would execute the same job and book the article twice.
+
+## Services on the VPS (bare-metal alternative to Coolify)
 
 - Nginx reverse proxy
 - Next.js (`npm run start`)

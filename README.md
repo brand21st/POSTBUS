@@ -10,7 +10,7 @@ Website: [postbus.in](https://postbus.in)
 - TypeScript
 - Tailwind CSS 4
 - Supabase (Auth, Postgres, Storage)
-- Redis + BullMQ workers
+- Background jobs: Postgres-backed runner by default, Redis + BullMQ optional
 - Zod, TanStack Query, pdf-lib
 
 ## Getting started
@@ -21,21 +21,38 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Workers (separate process, requires Redis):
+Open [http://localhost:3000](http://localhost:3000).
+
+## Background jobs
+
+`JOB_RUNNER` picks how rows in `background_jobs` get executed.
+
+`database` (default) needs no Redis. Something must call the drain endpoint on a schedule:
+
+```bash
+CRON_SECRET=dev-secret npm run jobs:drain
+```
+
+Each call claims due jobs with `claim_background_jobs` (`FOR UPDATE SKIP LOCKED`), so
+concurrent calls are safe and a runner that dies mid-job releases its lock after 15 minutes.
+
+`redis` hands jobs to BullMQ instead, and nothing runs until the worker process is up:
 
 ```bash
 docker compose -f docker-compose.redis.yml up -d
 npm run workers
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+`GET /api/health` reports `jobs: "Warning"` when jobs stay due for over 10 minutes,
+which is the signal that no runner is reaching the queue.
 
 ## Scripts
 
 - `npm run dev` — development server
 - `npm run build` — production build
 - `npm run start` — start production web server
-- `npm run workers` — start BullMQ workers (`tsx` is a production dependency)
+- `npm run workers` — start BullMQ workers, only for `JOB_RUNNER=redis` (`tsx` is a production dependency)
+- `npm run jobs:drain` — run due background jobs once, for `JOB_RUNNER=database`
 - `npm run lint` — ESLint
 - `npm run typecheck` — TypeScript (`tsc --noEmit`)
 - `npm run test` — Vitest
@@ -60,4 +77,4 @@ Auth and product:
 
 ## Deploy
 
-Web and workers run as separate processes. See [`infra/HOSTINGER.md`](infra/HOSTINGER.md). Apply new files in `supabase/migrations/` to the remote database before releasing API changes that depend on them.
+Coolify runs the `Dockerfile` web container plus a scheduled task for the job runner. See [`infra/HOSTINGER.md`](infra/HOSTINGER.md). Apply new files in `supabase/migrations/` to the remote database before releasing API changes that depend on them.

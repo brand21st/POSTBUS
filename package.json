@@ -9,7 +9,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "workers": "tsx workers/index.ts"
+    "workers": "tsx workers/index.ts",
+    "jobs:drain": "node scripts/drain-jobs.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

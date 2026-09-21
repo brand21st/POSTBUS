@@ -11,6 +11,12 @@ export const env = {
   supabaseServiceRoleKey: optional(process.env.SUPABASE_SERVICE_ROLE_KEY),
   encryptionKey: optional(process.env.INTEGRATION_ENCRYPTION_KEY),
   redisUrl: optional(process.env.REDIS_URL) || "redis://127.0.0.1:6379",
+  // "database" drains background_jobs from a scheduled request and needs no Redis.
+  // "redis" hands jobs to BullMQ and requires `npm run workers` to be running.
+  jobRunner: (optional(process.env.JOB_RUNNER).toLowerCase() === "redis"
+    ? "redis"
+    : "database") as "redis" | "database",
+  cronSecret: optional(process.env.CRON_SECRET),
   shopifyApiKey: optional(process.env.SHOPIFY_API_KEY),
   shopifyApiSecret: optional(process.env.SHOPIFY_API_SECRET),
   shopifyScopes:
@@ -27,6 +33,10 @@ export const env = {
   stripeSecretKey: optional(process.env.STRIPE_SECRET_KEY),
   stripeWebhookSecret: optional(process.env.STRIPE_WEBHOOK_SECRET),
 };
+
+export function usesDatabaseJobRunner() {
+  return env.jobRunner === "database";
+}
 
 export function isShopifyAppConfigured() {
   return Boolean(env.shopifyApiKey && env.shopifyApiSecret);

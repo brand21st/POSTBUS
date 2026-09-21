@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { enqueueJob } from "@/lib/queue/queues";
+import { usesDatabaseJobRunner } from "@/lib/env";
 import { logError } from "@/lib/logger";
 import type { JobType } from "@/types/domain";
 
@@ -32,6 +33,12 @@ export async function createBackgroundJob(
     throw new Error(error?.message || "Could not create background job.");
   }
 
+  // The database runner claims this row from /api/cron/jobs, so Redis is not involved.
+  // Enqueueing to BullMQ as well would let both runners execute the same job.
+  if (usesDatabaseJobRunner()) {
+    return data;
+  }
+
   try {
     await enqueueJob(input.jobType, {
       organizationId: input.organizationId,
@@ -48,7 +55,7 @@ export async function createBackgroundJob(
     await supabase
       .from("background_jobs")
       .update({
-        last_error: "Queue unavailable. Job is stored and will run when workers connect.",
+        last_error: "Redis is unreachable. Set JOB_RUNNER=database or start the BullMQ workers.",
         last_error_code: "QUEUE_UNAVAILABLE",
       })
       .eq("id", data.id);
