@@ -237,7 +237,7 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   ) {
     throw Object.assign(
       new Error(
-        "ET21433001–21434000 is the CEPT UAT test series. India Post will not show those articles in your production dashboard. Save the CL series they allotted you (your live article CL556973995IN)."
+        "21433001–21434000 is the CEPT UAT test serial range. India Post will not show those articles in your production dashboard. Save the CL series from My Bookings (for example CL556973995IN uses serial 55697399)."
       ),
       { code: "INVALID_BARCODE" }
     );

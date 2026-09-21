@@ -369,7 +369,7 @@ export async function handleIntegrationRoutes(
       ) {
         throw new AppError(
           ERROR_CODES.VALIDATION_ERROR,
-          "ET21433001–21434000 is the CEPT UAT test series. Production must use the CL series India Post allotted your contract."
+          "21433001–21434000 is the CEPT UAT test serial range. Production must use the CL series from your India Post My Bookings list (e.g. CL556973995IN)."
         );
       }
 

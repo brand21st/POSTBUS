@@ -71,8 +71,9 @@ describe("parseBarcodeRange", () => {
 });
 
 describe("isCeptUatTestSeries", () => {
-  it("flags the documented UAT ET range", () => {
+  it("flags the documented UAT serial range even if the prefix was changed to CL", () => {
     expect(isCeptUatTestSeries("ET", 21433001, 21434000)).toBe(true);
+    expect(isCeptUatTestSeries("CL", 21433001, 21434000)).toBe(true);
     expect(isCeptUatTestSeries("CL", 55697399, 55697499)).toBe(false);
   });
 });

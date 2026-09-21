@@ -96,7 +96,8 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
   };
 }
 
-/** CEPT UAT document series — must not be used on app.indiapost.gov.in. */
+/** Serials from the CEPT UAT document. Prefix ET or CL still must not be used on production. */
 export function isCeptUatTestSeries(prefix: string, startNumber: number, endNumber: number) {
-  return prefix.toUpperCase() === "ET" && startNumber === 21433001 && endNumber === 21434000;
+  void prefix;
+  return startNumber === 21433001 && endNumber === 21434000;
 }
