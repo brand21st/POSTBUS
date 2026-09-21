@@ -24,9 +24,8 @@ import type { IndiaPostConfig } from "@/types/api";
 
 type FormState = {
   environment: string;
-  username: string;
+  customerId: string;
   password: string;
-  bulkCustomerId: string;
   contractId: string;
   pickupDropoffOfficeId: string;
   prefix: string;
@@ -37,9 +36,8 @@ type FormState = {
 
 const EMPTY: FormState = {
   environment: "UAT",
-  username: "",
+  customerId: "",
   password: "",
-  bulkCustomerId: "",
   contractId: "",
   pickupDropoffOfficeId: "",
   prefix: "",
@@ -52,40 +50,78 @@ export default function IndiaPostPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [replaceSecrets, setReplaceSecrets] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
 
   const query = useQuery({
     queryKey: ["india-post"],
     queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
-    select: (data) => data,
   });
 
   const config = query.data;
-  const hasSecrets = Boolean(config?.hasPassword ?? config?.has_password ?? config?.usernameMasked ?? config?.username_masked);
+  const hasSecrets = Boolean(
+    config?.hasPassword ?? config?.has_password ?? config?.usernameMasked ?? config?.username_masked
+  );
+
+  if (config && !hydrated) {
+    setHydrated(true);
+    setForm((current) => ({
+      ...current,
+      environment: config.environment ?? "UAT",
+      customerId: String(config.bulkCustomerId ?? config.bulk_customer_id ?? ""),
+      contractId: String(config.contractId ?? config.contract_id ?? ""),
+      pickupDropoffOfficeId: String(
+        config.pickupDropoffOfficeId ?? config.pickup_dropoff_office_id ?? ""
+      ),
+      prefix: String(config.barcodeRange?.prefix ?? ""),
+      suffix: String(config.barcodeRange?.suffix ?? "IN"),
+      startNumber: config.barcodeRange?.startNumber != null ? String(config.barcodeRange.startNumber) : "",
+      endNumber: config.barcodeRange?.endNumber != null ? String(config.barcodeRange.endNumber) : "",
+    }));
+    if (
+      config.contractId ||
+      config.contract_id ||
+      config.pickupDropoffOfficeId ||
+      config.pickup_dropoff_office_id ||
+      config.barcodeRange?.prefix
+    ) {
+      setShowAdvanced(true);
+    }
+  }
 
   const save = useMutation({
-    mutationFn: () =>
-      api<IndiaPostConfig>("/api/v1/integrations/india-post", {
+    mutationFn: () => {
+      const customerId = form.customerId.trim();
+      if (!customerId && !hasSecrets) {
+        throw new Error("Enter your India Post customer ID.");
+      }
+      if (!hasSecrets && !form.password.trim()) {
+        throw new Error("Enter your India Post password.");
+      }
+      return api<IndiaPostConfig>("/api/v1/integrations/india-post", {
         method: "POST",
         body: JSON.stringify({
           environment: form.environment,
-          username: form.username || undefined,
-          password: form.password || undefined,
-          bulkCustomerId: form.bulkCustomerId,
-          contractId: form.contractId,
-          pickupDropoffOfficeId: form.pickupDropoffOfficeId,
-          barcodeRange: form.prefix
+          // CEPT login username is the customer ID; booking also uses it as bulk_customer_id.
+          username: replaceSecrets || !hasSecrets ? customerId || undefined : undefined,
+          password: replaceSecrets || !hasSecrets ? form.password || undefined : undefined,
+          bulkCustomerId: customerId || undefined,
+          contractId: form.contractId.trim() || undefined,
+          pickupDropoffOfficeId: form.pickupDropoffOfficeId.trim() || undefined,
+          barcodeRange: form.prefix.trim()
             ? {
-                prefix: form.prefix,
-                suffix: form.suffix,
+                prefix: form.prefix.trim(),
+                suffix: form.suffix.trim() || "IN",
                 startNumber: Number(form.startNumber),
                 endNumber: Number(form.endNumber),
               }
             : undefined,
         }),
-      }),
+      });
+    },
     onSuccess: () => {
       toast.success("India Post settings saved. Secrets are stored encrypted.");
-      setForm((current) => ({ ...current, username: "", password: "" }));
+      setForm((current) => ({ ...current, password: "" }));
       setReplaceSecrets(false);
       queryClient.invalidateQueries({ queryKey: ["india-post"] });
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
@@ -113,15 +149,18 @@ export default function IndiaPostPage() {
     <div className="space-y-6">
       <PageHeader
         title="India Post"
-        description="UAT or production credentials are encrypted at rest. After save, secrets are never shown again."
+        description="Connect with your customer ID and password. Extra booking fields are optional until you ship."
         actions={<StatusBadge value={config?.status ?? "NOT_CONNECTED"} />}
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>Connection</CardTitle>
+          <CardTitle>Connect</CardTitle>
           <CardDescription>
-            Last verified {formatDate(config?.lastVerifiedAt ?? config?.last_verified_at, true)}.
+            Login only needs customer ID and password.
+            {config?.lastVerifiedAt || config?.last_verified_at
+              ? ` Last verified ${formatDate(config?.lastVerifiedAt ?? config?.last_verified_at, true)}.`
+              : ""}
             {config?.lastError || config?.last_error
               ? ` Latest error: ${config.lastError ?? config.last_error}`
               : ""}
@@ -137,58 +176,43 @@ export default function IndiaPostPage() {
               <SelectContent>
                 {PROVIDER_ENVIRONMENTS.map((item) => (
                   <SelectItem key={item} value={item}>
-                    {item}
+                    {item === "UAT" ? "UAT (sandbox)" : "Production"}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
+
           <Field
-            label="Bulk customer ID"
-            value={form.bulkCustomerId || (config?.bulkCustomerId ?? config?.bulk_customer_id ?? "")}
-            onChange={(value) => set("bulkCustomerId", value)}
-          />
-          <Field
-            label="Contract ID"
-            value={form.contractId || (config?.contractId ?? config?.contract_id ?? "")}
-            onChange={(value) => set("contractId", value)}
-          />
-          <Field
-            label="Pickup / drop-off office ID"
-            value={
-              form.pickupDropoffOfficeId ||
-              (config?.pickupDropoffOfficeId ?? config?.pickup_dropoff_office_id ?? "")
-            }
-            onChange={(value) => set("pickupDropoffOfficeId", value)}
+            label="Customer ID"
+            value={form.customerId}
+            onChange={(value) => set("customerId", value)}
+            autoComplete="off"
+            placeholder="e.g. 1788590988"
           />
 
           {hasSecrets && !replaceSecrets ? (
-            <div className="col-span-full rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-muted">
-              Username {config?.usernameMasked ?? config?.username_masked ?? "••••"} · password saved.
-              <button
-                type="button"
-                className="ml-2 font-medium text-brand hover:underline"
-                onClick={() => setReplaceSecrets(true)}
-              >
-                Replace credentials
-              </button>
+            <div className="space-y-2">
+              <Label>Password</Label>
+              <div className="rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-muted">
+                Password saved encrypted.
+                <button
+                  type="button"
+                  className="ml-2 font-medium text-brand hover:underline"
+                  onClick={() => setReplaceSecrets(true)}
+                >
+                  Replace
+                </button>
+              </div>
             </div>
           ) : (
-            <>
-              <Field
-                label="Username"
-                value={form.username}
-                onChange={(value) => set("username", value)}
-                autoComplete="off"
-              />
-              <Field
-                label="Password"
-                type="password"
-                value={form.password}
-                onChange={(value) => set("password", value)}
-                autoComplete="new-password"
-              />
-            </>
+            <Field
+              label="Password"
+              type="password"
+              value={form.password}
+              onChange={(value) => set("password", value)}
+              autoComplete="new-password"
+            />
           )}
         </CardContent>
       </Card>
@@ -201,7 +225,6 @@ export default function IndiaPostPage() {
               Paste these into the India Post portal Event Configuration. Environment:{" "}
               <StatusBadge value={config?.environment ?? "UAT"} />. Authentication is not
               documented by CEPT yet — the connection id in the path identifies this workspace.
-              Use the portal Test buttons after deploy. Do not paste secrets here.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
@@ -219,25 +242,70 @@ export default function IndiaPostPage() {
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Barcode range</CardTitle>
-          <CardDescription>Used to allocate unique India Post barcodes for this workspace.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-4">
-          <Field label="Prefix" value={form.prefix} onChange={(value) => set("prefix", value)} />
-          <Field label="Suffix" value={form.suffix} onChange={(value) => set("suffix", value)} />
-          <Field label="Start number" value={form.startNumber} onChange={(value) => set("startNumber", value)} />
-          <Field label="End number" value={form.endNumber} onChange={(value) => set("endNumber", value)} />
-        </CardContent>
-      </Card>
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          className="text-sm font-medium text-brand hover:underline"
+          onClick={() => setShowAdvanced((value) => !value)}
+        >
+          {showAdvanced ? "Hide optional booking settings" : "Show optional booking settings"}
+        </button>
+      </div>
+
+      {showAdvanced ? (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Optional booking details</CardTitle>
+              <CardDescription>
+                Needed later for article booking. Not required to verify login. Leave blank for now if CEPT has not shared them yet.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <Field
+                label="Contract ID"
+                value={form.contractId}
+                onChange={(value) => set("contractId", value)}
+              />
+              <Field
+                label="Pickup / drop-off office ID"
+                value={form.pickupDropoffOfficeId}
+                onChange={(value) => set("pickupDropoffOfficeId", value)}
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Barcode range</CardTitle>
+              <CardDescription>
+                Optional. Used to allocate unique India Post barcodes for this workspace.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-4">
+              <Field label="Prefix" value={form.prefix} onChange={(value) => set("prefix", value)} />
+              <Field label="Suffix" value={form.suffix} onChange={(value) => set("suffix", value)} />
+              <Field
+                label="Start number"
+                value={form.startNumber}
+                onChange={(value) => set("startNumber", value)}
+              />
+              <Field
+                label="End number"
+                value={form.endNumber}
+                onChange={(value) => set("endNumber", value)}
+              />
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button type="button" onClick={() => save.mutate()} disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save configuration"}
+          {save.isPending ? "Saving…" : "Save & connect"}
         </Button>
         <Button type="button" variant="secondary" onClick={() => verify.mutate()} disabled={verify.isPending}>
-          Verify
+          Verify login
         </Button>
         <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
           Test API
@@ -284,12 +352,14 @@ function Field({
   onChange,
   type = "text",
   autoComplete,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   autoComplete?: string;
+  placeholder?: string;
 }) {
   return (
     <div className="space-y-2">
@@ -297,6 +367,7 @@ function Field({
       <Input
         type={type}
         value={value}
+        placeholder={placeholder}
         autoComplete={autoComplete}
         onChange={(event) => onChange(event.target.value)}
       />
