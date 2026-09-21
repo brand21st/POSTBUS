@@ -19,27 +19,39 @@ import {
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { Copy } from "lucide-react";
-import { PROVIDER_ENVIRONMENTS } from "@/types/domain";
+import {
+  DEFAULT_INDIA_POST_SERVICE,
+  INDIA_POST_SERVICES,
+  PROVIDER_ENVIRONMENTS,
+} from "@/types/domain";
 import type { IndiaPostConfig } from "@/types/api";
+
+type ContractRow = { serviceCode: string; contractId: string };
 
 type FormState = {
   environment: string;
   customerId: string;
   password: string;
-  contractId: string;
   pickupDropoffOfficeId: string;
+  contracts: ContractRow[];
+  defaultServiceCode: string;
+  rangeServiceCode: string;
   prefix: string;
   suffix: string;
   startNumber: string;
   endNumber: string;
 };
 
+const ANY_SERVICE = "ANY";
+
 const EMPTY: FormState = {
   environment: "UAT",
   customerId: "",
   password: "",
-  contractId: "",
   pickupDropoffOfficeId: "",
+  contracts: [],
+  defaultServiceCode: DEFAULT_INDIA_POST_SERVICE,
+  rangeServiceCode: ANY_SERVICE,
   prefix: "",
   suffix: "IN",
   startNumber: "",
@@ -67,22 +79,33 @@ export default function IndiaPostPage() {
 
   if (config && !hydrated) {
     setHydrated(true);
+    const legacyContract = String(config.contractId ?? config.contract_id ?? "");
+    const contracts: ContractRow[] = config.contracts?.length
+      ? config.contracts.map((contract) => ({
+          serviceCode: contract.serviceCode,
+          contractId: contract.contractId,
+        }))
+      : legacyContract
+        ? [{ serviceCode: DEFAULT_INDIA_POST_SERVICE, contractId: legacyContract }]
+        : [];
+
     setForm((current) => ({
       ...current,
       environment: config.environment ?? "UAT",
       customerId: String(config.bulkCustomerId ?? config.bulk_customer_id ?? ""),
-      contractId: String(config.contractId ?? config.contract_id ?? ""),
       pickupDropoffOfficeId: String(
         config.pickupDropoffOfficeId ?? config.pickup_dropoff_office_id ?? ""
       ),
+      contracts,
+      defaultServiceCode: config.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE,
+      rangeServiceCode: config.barcodeRange?.serviceCode ?? ANY_SERVICE,
       prefix: String(config.barcodeRange?.prefix ?? ""),
       suffix: String(config.barcodeRange?.suffix ?? "IN"),
       startNumber: config.barcodeRange?.startNumber != null ? String(config.barcodeRange.startNumber) : "",
       endNumber: config.barcodeRange?.endNumber != null ? String(config.barcodeRange.endNumber) : "",
     }));
     if (
-      config.contractId ||
-      config.contract_id ||
+      contracts.length ||
       config.pickupDropoffOfficeId ||
       config.pickup_dropoff_office_id ||
       config.barcodeRange?.prefix
@@ -90,6 +113,8 @@ export default function IndiaPostPage() {
       setShowAdvanced(true);
     }
   }
+
+  const filledContracts = form.contracts.filter((contract) => contract.contractId.trim());
 
   const save = useMutation({
     mutationFn: () => {
@@ -113,14 +138,22 @@ export default function IndiaPostPage() {
           username: replaceSecrets || !hasSecrets ? customerId || undefined : undefined,
           password: replaceSecrets || !hasSecrets ? form.password || undefined : undefined,
           bulkCustomerId: customerId || undefined,
-          contractId: form.contractId.trim() || undefined,
           pickupDropoffOfficeId: form.pickupDropoffOfficeId.trim() || undefined,
+          contracts: filledContracts.length
+            ? filledContracts.map((contract) => ({
+                serviceCode: contract.serviceCode,
+                contractId: contract.contractId.trim(),
+                isDefault: contract.serviceCode === form.defaultServiceCode,
+              }))
+            : undefined,
           barcodeRange: form.prefix.trim()
             ? {
                 prefix: form.prefix.trim(),
                 suffix: form.suffix.trim() || "IN",
                 startNumber: Number(form.startNumber),
                 endNumber: Number(form.endNumber),
+                serviceCode:
+                  form.rangeServiceCode === ANY_SERVICE ? null : form.rangeServiceCode,
               }
             : undefined,
         }),
@@ -150,6 +183,17 @@ export default function IndiaPostPage() {
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function setContract(serviceCode: string, contractId: string) {
+    setForm((current) => {
+      const contracts = current.contracts.some((item) => item.serviceCode === serviceCode)
+        ? current.contracts.map((item) =>
+            item.serviceCode === serviceCode ? { ...item, contractId } : item
+          )
+        : [...current.contracts, { serviceCode, contractId }];
+      return { ...current, contracts };
+    });
   }
 
   return (
@@ -269,17 +313,53 @@ export default function IndiaPostPage() {
         <>
           <Card>
             <CardHeader>
-              <CardTitle>Optional booking details</CardTitle>
+              <CardTitle>Service contracts</CardTitle>
               <CardDescription>
-                Needed later for article booking. Not required to verify login. Leave blank for now if CEPT has not shared them yet.
+                India Post issues a separate contract per product. Add the contract ID for
+                each service you ship, and pick the one to use by default.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              {INDIA_POST_SERVICES.map((service) => {
+                const row = form.contracts.find((item) => item.serviceCode === service.code);
+                const value = row?.contractId ?? "";
+                return (
+                  <div key={service.code} className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                    <div className="space-y-1">
+                      <Label>{service.label}</Label>
+                      <p className="text-xs text-muted">{service.description}</p>
+                    </div>
+                    <Input
+                      value={value}
+                      placeholder="Contract ID, e.g. 41448820"
+                      onChange={(event) => setContract(service.code, event.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      variant={form.defaultServiceCode === service.code ? "primary" : "secondary"}
+                      disabled={!value.trim()}
+                      onClick={() => set("defaultServiceCode", service.code)}
+                    >
+                      {form.defaultServiceCode === service.code ? "Default" : "Make default"}
+                    </Button>
+                  </div>
+                );
+              })}
+              <p className="text-sm text-muted">
+                New shipments use the default service unless you pick another one when
+                shipping. Leave a contract blank for services you do not ship.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Pickup office</CardTitle>
+              <CardDescription>
+                Required for article booking. Leave blank if CEPT has not shared it yet.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
-              <Field
-                label="Contract ID"
-                value={form.contractId}
-                onChange={(value) => set("contractId", value)}
-              />
               <Field
                 label="Pickup / drop-off office ID"
                 value={form.pickupDropoffOfficeId}
@@ -292,11 +372,37 @@ export default function IndiaPostPage() {
             <CardHeader>
               <CardTitle>Barcode range</CardTitle>
               <CardDescription>
-                Optional. Used to allocate unique India Post barcodes for this workspace.
+                The article number series India Post allotted you. Prefix and suffix are two
+                letters each, so articles read like ET021433001IN. Saving replaces the
+                current series for the selected service.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4">
-              <Field label="Prefix" value={form.prefix} onChange={(value) => set("prefix", value)} />
+              <div className="space-y-2 md:col-span-4">
+                <Label>Series applies to</Label>
+                <Select
+                  value={form.rangeServiceCode}
+                  onValueChange={(value) => set("rangeServiceCode", value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ANY_SERVICE}>Any service</SelectItem>
+                    {INDIA_POST_SERVICES.map((service) => (
+                      <SelectItem key={service.code} value={service.code}>
+                        {service.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Field
+                label="Prefix"
+                value={form.prefix}
+                placeholder="ET"
+                onChange={(value) => set("prefix", value)}
+              />
               <Field label="Suffix" value={form.suffix} onChange={(value) => set("suffix", value)} />
               <Field
                 label="Start number"

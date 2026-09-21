@@ -358,13 +358,28 @@ export type IndiaPostConfig = {
   booking_webhook_url?: string;
   eventsWebhookUrl?: string;
   events_webhook_url?: string;
-  barcodeRange?: {
-    prefix?: string;
-    suffix?: string;
-    startNumber?: number;
-    endNumber?: number;
-    nextNumber?: number;
-  } | null;
+  contracts?: IndiaPostContract[];
+  defaultServiceCode?: string;
+  barcodeRange?: IndiaPostBarcodeRange | null;
+  barcodeRanges?: IndiaPostBarcodeRange[];
+};
+
+export type IndiaPostContract = {
+  id?: string;
+  serviceCode: string;
+  contractId: string;
+  isDefault?: boolean;
+  isActive?: boolean;
+  label?: string;
+};
+
+export type IndiaPostBarcodeRange = {
+  prefix?: string;
+  suffix?: string;
+  startNumber?: number;
+  endNumber?: number;
+  nextNumber?: number;
+  serviceCode?: string | null;
 };
 
 export type BillingResponse = {

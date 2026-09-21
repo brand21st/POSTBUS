@@ -3,6 +3,8 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
+import { resolveDefaultServiceCode } from "@/modules/india-post/contracts";
+import { INDIA_POST_SERVICES } from "@/types/domain";
 
 export async function createShipmentsForOrders(
   supabase: SupabaseClient,
@@ -40,6 +42,14 @@ export async function createShipmentsForOrders(
     .not("status", "in", "(CANCELLED,FAILED)");
   const alreadyShipping = new Set((existing ?? []).map((row) => row.order_id as string));
 
+  const serviceCode = extras?.serviceCode?.trim() || (await resolveDefaultServiceCode(supabase, ctx.organizationId));
+  if (!INDIA_POST_SERVICES.some((service) => service.code === serviceCode)) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `${serviceCode} is not a service India Post accepts.`
+    );
+  }
+
   const created = [];
   const skipped = [];
   for (const order of orders) {
@@ -61,7 +71,7 @@ export async function createShipmentsForOrders(
         order_id: order.id,
         customer_id: order.customer_id,
         shipping_address_id: order.shipping_address_id,
-        service_code: extras?.serviceCode || "SP_INLAND_PARCEL",
+        service_code: serviceCode,
         payment_mode: order.payment_status === "COD" ? "COD" : "PREPAID",
         weight_grams: weight,
         length_cm: extras?.lengthCm ?? null,
@@ -117,7 +127,14 @@ export async function createShipmentsForOrders(
 export async function listShipments(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  query: { page: number; pageSize: number; q?: string; status?: string; orderId?: string }
+  query: {
+    page: number;
+    pageSize: number;
+    q?: string;
+    status?: string;
+    orderId?: string;
+    serviceCode?: string;
+  }
 ) {
   const from = (query.page - 1) * query.pageSize;
   const to = from + query.pageSize - 1;
@@ -132,6 +149,7 @@ export async function listShipments(
 
   if (query.status) builder = builder.eq("status", query.status);
   if (query.orderId) builder = builder.eq("order_id", query.orderId);
+  if (query.serviceCode) builder = builder.eq("service_code", query.serviceCode);
   if (query.q) {
     const parts = [orIlike(["barcode", "tracking_number"], query.q)];
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(query.q)) {

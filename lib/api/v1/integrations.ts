@@ -7,6 +7,9 @@ import { logError } from "@/lib/logger";
 import { encryptSecret, maskSecret } from "@/lib/security/crypto";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
+import { parseBarcodeRange } from "@/modules/india-post/barcode";
+import { listContracts, saveContracts } from "@/modules/india-post/contracts";
+import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 import {
   createShopifyOAuthState,
   exchangeShopifyToken,
@@ -289,12 +292,14 @@ export async function handleIntegrationRoutes(
       .select("*")
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
-    const { data: range } = await supabase
+    const { data: ranges } = await supabase
       .from("barcode_ranges")
       .select("*")
       .eq("organization_id", ctx.organizationId)
       .eq("is_active", true)
-      .maybeSingle();
+      .order("service_code", { nullsFirst: true });
+    const contracts = await listContracts(supabase, ctx.organizationId);
+    const range = ranges?.[0] ?? null;
     return {
       environment: data?.environment ?? "UAT",
       status: data?.status ?? "NOT_CONNECTED",
@@ -308,6 +313,9 @@ export async function handleIntegrationRoutes(
       uatConfigured: Boolean(env.indiaPostUatBaseUrl),
       prodConfigured: Boolean(env.indiaPostProdBaseUrl),
       ...(data?.id ? indiaPostWebhookUrls(data.id) : {}),
+      contracts,
+      defaultServiceCode:
+        contracts.find((contract) => contract.isDefault)?.serviceCode ?? DEFAULT_INDIA_POST_SERVICE,
       barcodeRange: range
         ? {
             prefix: range.prefix,
@@ -315,8 +323,17 @@ export async function handleIntegrationRoutes(
             startNumber: range.start_number,
             endNumber: range.end_number,
             nextNumber: range.next_number,
+            serviceCode: range.service_code ?? null,
           }
         : null,
+      barcodeRanges: (ranges ?? []).map((item) => ({
+        prefix: item.prefix,
+        suffix: item.suffix,
+        startNumber: item.start_number,
+        endNumber: item.end_number,
+        nextNumber: item.next_number,
+        serviceCode: item.service_code ?? null,
+      })),
     };
   }
 
@@ -338,16 +355,39 @@ export async function handleIntegrationRoutes(
       .select()
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+
+    if (Array.isArray(body.contracts)) {
+      await saveContracts(supabase, ctx.organizationId, body.contracts);
+    }
+
     if (body.barcodeRange) {
-      await supabase.from("barcode_ranges").upsert({
+      const parsed = parseBarcodeRange(body.barcodeRange);
+
+      // Saving twice used to add a second active row, and the booking worker's
+      // single-row lookup then failed. Retire the current series for this service
+      // first, which is also how a used-up series gets replaced.
+      let retire = supabase
+        .from("barcode_ranges")
+        .update({ is_active: false })
+        .eq("organization_id", ctx.organizationId)
+        .eq("is_active", true);
+      retire = parsed.serviceCode
+        ? retire.eq("service_code", parsed.serviceCode)
+        : retire.is("service_code", null);
+      const { error: retireError } = await retire;
+      if (retireError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, retireError.message);
+
+      const { error: rangeError } = await supabase.from("barcode_ranges").insert({
         organization_id: ctx.organizationId,
-        prefix: body.barcodeRange.prefix,
-        suffix: body.barcodeRange.suffix ?? "IN",
-        start_number: body.barcodeRange.startNumber,
-        end_number: body.barcodeRange.endNumber,
-        next_number: body.barcodeRange.nextNumber ?? body.barcodeRange.startNumber,
+        service_code: parsed.serviceCode,
+        prefix: parsed.prefix,
+        suffix: parsed.suffix,
+        start_number: parsed.startNumber,
+        end_number: parsed.endNumber,
+        next_number: body.barcodeRange.nextNumber ?? parsed.startNumber,
         is_active: true,
       });
+      if (rangeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, rangeError.message);
     }
 
     // Save & connect: verify CEPT login immediately so the badge turns Connected (green).

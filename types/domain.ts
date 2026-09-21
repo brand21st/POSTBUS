@@ -82,6 +82,35 @@ export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number];
 export const PROVIDER_ENVIRONMENTS = ["UAT", "PRODUCTION"] as const;
 export type ProviderEnvironment = (typeof PROVIDER_ENVIRONMENTS)[number];
 
+// India Post issues one contract, and usually one barcode series, per product.
+// `code` is the CEPT `article_type`; only codes confirmed against the API are listed.
+export const INDIA_POST_SERVICES = [
+  {
+    code: "SP_INLAND_PARCEL",
+    label: "Speed Post parcel",
+    description: "SP Inland Parcel",
+  },
+  {
+    code: "SP_INLAND_DOC",
+    label: "Speed Post document",
+    description: "SP Inland Doc",
+  },
+  {
+    code: "BUSINESS_PARCEL",
+    label: "Business Parcel",
+    description: "Business Parcel",
+  },
+] as const;
+
+export type IndiaPostServiceCode = (typeof INDIA_POST_SERVICES)[number]["code"];
+
+export const DEFAULT_INDIA_POST_SERVICE: IndiaPostServiceCode = "SP_INLAND_PARCEL";
+
+export function indiaPostServiceLabel(code?: string | null) {
+  if (!code) return "—";
+  return INDIA_POST_SERVICES.find((service) => service.code === code)?.label ?? code;
+}
+
 export const BILLING_PLAN_CODES = [
   "STARTER",
   "GROWTH",

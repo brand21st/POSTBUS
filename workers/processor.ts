@@ -3,6 +3,8 @@ import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs
 import { encryptSecret } from "@/lib/security/crypto";
 import { getAutomationSettings } from "@/modules/automation/service";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
+import { formatBarcode } from "@/modules/india-post/barcode";
+import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { JobPayload } from "@/lib/queue/queues";
 import type { AutomationSettings } from "@/types/api";
@@ -116,18 +118,61 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     });
   }
 
-  const { data: range } = await supabase
+  const serviceCode = (shipment.service_code as string) || DEFAULT_INDIA_POST_SERVICE;
+
+  // India Post issues one contract per product, so the shipment's service decides
+  // which contract books it. The legacy single contract stays as a fallback.
+  const { data: contract } = await supabase
+    .from("india_post_contracts")
+    .select("contract_id")
+    .eq("organization_id", payload.organizationId)
+    .eq("service_code", serviceCode)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  const contractId = (contract?.contract_id as string | undefined) || connection.contract_id;
+  if (!contractId) {
+    throw Object.assign(
+      new Error(
+        `No India Post contract is set for ${indiaPostServiceLabel(serviceCode)}. Add it on the India Post integration page.`
+      ),
+      { code: "INVALID_CONTRACT" }
+    );
+  }
+
+  // Prefer a series allotted for this service, else the workspace-wide one.
+  const { data: ranges, error: rangeError } = await supabase
     .from("barcode_ranges")
     .select("*")
     .eq("organization_id", payload.organizationId)
     .eq("is_active", true)
-    .maybeSingle();
-
-  if (!range || range.next_number > range.end_number) {
-    throw Object.assign(new Error("No barcode range available."), { code: "INVALID_BARCODE" });
+    .or(`service_code.eq.${serviceCode},service_code.is.null`);
+  if (rangeError) {
+    throw Object.assign(new Error(rangeError.message), { code: "INVALID_BARCODE" });
   }
 
-  const barcode = `${range.prefix}${String(range.next_number).padStart(9, "0")}${range.suffix}`;
+  const range =
+    (ranges ?? []).find((item) => item.service_code === serviceCode) ??
+    (ranges ?? []).find((item) => item.service_code === null);
+
+  if (!range) {
+    throw Object.assign(
+      new Error(
+        `No barcode range is set for ${indiaPostServiceLabel(serviceCode)}. Add the series India Post allotted you.`
+      ),
+      { code: "INVALID_BARCODE" }
+    );
+  }
+  if (range.next_number > range.end_number) {
+    throw Object.assign(
+      new Error(
+        `The barcode range for ${indiaPostServiceLabel(serviceCode)} is used up (ended at ${range.end_number}). Add a new series.`
+      ),
+      { code: "INVALID_BARCODE" }
+    );
+  }
+
+  const barcode = formatBarcode(range.prefix, range.next_number, range.suffix);
   await supabase
     .from("barcode_ranges")
     .update({ next_number: range.next_number + 1 })
@@ -162,11 +207,11 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     articles: [
       {
         bulk_customer_id: connection.bulk_customer_id,
-        contract_id: connection.contract_id,
+        contract_id: contractId,
         barcode_no: barcode,
         pickup_or_dropoff: "dropoff",
         pickup_dropoff_office_id: connection.pickup_dropoff_office_id,
-        article_type: shipment.service_code,
+        article_type: serviceCode,
         physical_weight: shipment.weight_grams,
         sender_name: "Merchant",
         sender_add_line_1: "Registered pickup",

@@ -18,7 +18,7 @@ import {
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
-import { SHIPMENT_STATUSES } from "@/types/domain";
+import { INDIA_POST_SERVICES, indiaPostServiceLabel, SHIPMENT_STATUSES } from "@/types/domain";
 import type { Paginated, ShipmentRecord } from "@/types/api";
 
 export default function ShipmentsPage() {
@@ -27,6 +27,7 @@ export default function ShipmentsPage() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [status, setStatus] = useState("all");
+  const [service, setService] = useState("all");
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -37,7 +38,7 @@ export default function ShipmentsPage() {
   }, [search]);
 
   const query = useQuery({
-    queryKey: ["shipments", page, debounced, status],
+    queryKey: ["shipments", page, debounced, status, service],
     queryFn: () =>
       api<Paginated<ShipmentRecord>>(
         `/api/v1/shipments?${toSearchParams({
@@ -45,6 +46,7 @@ export default function ShipmentsPage() {
           pageSize: 20,
           q: debounced,
           status: status === "all" ? undefined : status,
+          serviceCode: service === "all" ? undefined : service,
         })}`
       ),
   });
@@ -70,7 +72,7 @@ export default function ShipmentsPage() {
     {
       id: "service",
       header: "Service",
-      cell: (row) => row.serviceCode ?? row.service_code ?? "—",
+      cell: (row) => indiaPostServiceLabel(row.serviceCode ?? row.service_code),
     },
     {
       id: "error",
@@ -111,6 +113,25 @@ export default function ShipmentsPage() {
             {SHIPMENT_STATUSES.map((item) => (
               <SelectItem key={item} value={item}>
                 {item}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={service}
+          onValueChange={(value) => {
+            setService(value);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Service" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All services</SelectItem>
+            {INDIA_POST_SERVICES.map((item) => (
+              <SelectItem key={item.code} value={item.code}>
+                {item.label}
               </SelectItem>
             ))}
           </SelectContent>

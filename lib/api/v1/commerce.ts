@@ -74,6 +74,7 @@ export async function handleCommerceRoutes(
       q: request.nextUrl.searchParams.get("q") || undefined,
       status: request.nextUrl.searchParams.get("status") || undefined,
       orderId: request.nextUrl.searchParams.get("orderId") || undefined,
+      serviceCode: request.nextUrl.searchParams.get("serviceCode") || undefined,
     });
   }
 
