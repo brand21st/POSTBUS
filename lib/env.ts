@@ -17,7 +17,10 @@ export const env = {
     optional(process.env.SHOPIFY_SCOPES) ||
     "read_orders,write_orders,read_fulfillments,write_fulfillments,read_locations",
   shopifyAppUrl: optional(process.env.SHOPIFY_APP_URL),
-  indiaPostUatBaseUrl: optional(process.env.INDIA_POST_UAT_BASE_URL),
+  // CEPT UAT is a public sandbox URL; default so production still works if Coolify env was left blank.
+  indiaPostUatBaseUrl:
+    optional(process.env.INDIA_POST_UAT_BASE_URL) ||
+    "https://test.cept.gov.in/beextcustomer/v1",
   indiaPostProdBaseUrl: optional(process.env.INDIA_POST_PROD_BASE_URL),
   stripeSecretKey: optional(process.env.STRIPE_SECRET_KEY),
   stripeWebhookSecret: optional(process.env.STRIPE_WEBHOOK_SECRET),
