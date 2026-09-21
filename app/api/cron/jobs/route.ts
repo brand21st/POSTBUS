@@ -31,12 +31,9 @@ export async function POST(request: NextRequest) {
   try {
     return NextResponse.json({ success: true, data: await drainDueJobs(limit) });
   } catch (error) {
-    logError("jobs.drain_error", {
-      message: error instanceof Error ? error.message : "drain failed",
-    });
-    return NextResponse.json(
-      { success: false, message: "Could not drain background jobs." },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : "Could not drain background jobs.";
+    logError("jobs.drain_error", { message });
+    // The endpoint is gated by CRON_SECRET, so the operator running it gets the reason.
+    return NextResponse.json({ success: false, message }, { status: 500 });
   }
 }

@@ -1,4 +1,4 @@
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { logError, logInfo } from "@/lib/logger";
 import { processJob } from "@/workers/processor";
 
@@ -21,6 +21,12 @@ export type DrainResult = {
 };
 
 export async function drainDueJobs(limit = DEFAULT_DRAIN_LIMIT): Promise<DrainResult> {
+  if (!hasAdminClient()) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is not set, so background jobs cannot run. Jobs bypass RLS and need the service role."
+    );
+  }
+
   const supabase = createAdminClient();
   const { data, error } = await supabase.rpc("claim_background_jobs", { p_limit: limit });
 

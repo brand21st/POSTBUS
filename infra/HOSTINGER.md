@@ -32,6 +32,10 @@ writes a `background_jobs` row that nothing ever executes, and shipments sit in
 | --- | --- |
 | `JOB_RUNNER` | `database` |
 | `CRON_SECRET` | a long random string |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API |
+
+`SUPABASE_SERVICE_ROLE_KEY` is not optional: jobs write across tenants and bypass RLS,
+so without it every drain fails and shipments stay `QUEUED`.
 
 Then add a **Scheduled Task** on the PostBus resource:
 
