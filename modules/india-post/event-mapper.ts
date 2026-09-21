@@ -8,11 +8,6 @@ export type IndiaPostShipmentUpdate = {
   shouldUpdateStatus: boolean;
 };
 
-/**
- * CEPT documented a sample event_code of BAG_CLOSE only.
- * Portal labels (Item Booked, Item Delivered, …) are not confirmed API codes.
- * Unconfirmed codes are stored on the timeline and must not change shipment.status.
- */
 const STATUS_RANK: Record<ShipmentStatus, number> = {
   DRAFT: 10,
   VALIDATING: 20,
@@ -31,15 +26,29 @@ const STATUS_RANK: Record<ShipmentStatus, number> = {
   DELIVERED: 110,
 };
 
+function eventKey(event: { eventCode?: string | null; eventDescription?: string | null }) {
+  return `${event.eventCode ?? ""} ${event.eventDescription ?? ""}`.toLowerCase().replace(/[\s-]+/g, "_");
+}
+
 export function mapIndiaPostEventToShipmentUpdate(
   event: Pick<ParsedIndiaPostWebhook, "eventCode" | "eventDescription">
 ): IndiaPostShipmentUpdate {
   const eventCode = event.eventCode || "EVENT";
+  const key = eventKey(event);
+  const delivered = key.includes("delivered") || key.includes("item_delivered");
+  const inTransit =
+    key.includes("bag_close") ||
+    key.includes("dispatch") ||
+    key.includes("in_transit") ||
+    key.includes("item_received") ||
+    key.includes("out_for_delivery") ||
+    key.includes("ofd");
+
   return {
     eventCode,
     eventDescription: event.eventDescription,
-    shipmentStatus: null,
-    shouldUpdateStatus: false,
+    shipmentStatus: delivered ? "DELIVERED" : inTransit ? "IN_TRANSIT" : null,
+    shouldUpdateStatus: delivered || inTransit,
   };
 }
 

@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { encryptSecret } from "@/lib/security/crypto";
 import {
+  canReportShopifyFulfillmentProgress,
   importShopifyWebhookOrder,
   isUnfulfilledShopifyOrder,
   mapShopifyFulfillmentStatus,
   mapShopifyPaymentStatus,
+  nextShopifyOrderStatus,
+  parseShopifyProgressReported,
   shopifyCustomerName,
+  shopifyFulfillmentOrderGid,
   shopifyFulfillmentPayload,
   shopifyOrderNumber,
   shopifyPhone,
@@ -99,6 +103,33 @@ describe("shopify order mapping", () => {
     expect(shopifyPhone("")).toBe("0000000000");
     expect(shopifyPincode("560001")).toBe("560001");
     expect(shopifyPincode("12")).toBe("120000");
+  });
+
+  it("keeps processing and later statuses when Shopify is still unfulfilled", () => {
+    expect(
+      nextShopifyOrderStatus({ fulfillmentStatus: "UNFULFILLED", currentStatus: "PROCESSING" })
+    ).toBe("PROCESSING");
+    expect(nextShopifyOrderStatus({ fulfillmentStatus: "UNFULFILLED", currentStatus: "READY" })).toBe("READY");
+    expect(nextShopifyOrderStatus({ fulfillmentStatus: "FULFILLED", currentStatus: "PROCESSING" })).toBe("SHIPPED");
+    expect(nextShopifyOrderStatus({ fulfillmentStatus: "UNFULFILLED", cancelledAt: "2026-09-22" })).toBe(
+      "CANCELLED"
+    );
+  });
+
+  it("marks open fulfillment orders as reportable for in-progress", () => {
+    expect(canReportShopifyFulfillmentProgress("open")).toBe(true);
+    expect(canReportShopifyFulfillmentProgress("in_progress")).toBe(true);
+    expect(canReportShopifyFulfillmentProgress("closed")).toBe(false);
+    expect(shopifyFulfillmentOrderGid(5014440902678)).toBe("gid://shopify/FulfillmentOrder/5014440902678");
+  });
+
+  it("parses Shopify progress-reported webhooks", () => {
+    expect(
+      parseShopifyProgressReported({
+        fulfillment_order: { id: 9, order_id: 1042, status: "in_progress" },
+      })
+    ).toEqual({ status: "in_progress", sourceOrderId: "1042", inProgress: true });
+    expect(parseShopifyProgressReported({ order_id: 88, status: "open" }).inProgress).toBe(false);
   });
 
   it("builds a Shopify fulfillment payload from open fulfillment orders", () => {

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { canShipOrder, itemSummary } from "@/lib/dashboard/records";
+import {
+  canFulfillOrder,
+  canFulfillOrderAction,
+  canMarkDelivered,
+  canMarkInTransit,
+  canProcessOrder,
+  canProcessOrderAction,
+  canShipOrder,
+  isWatiConnected,
+  itemSummary,
+  orderActionLabel,
+} from "@/lib/dashboard/records";
 
 describe("itemSummary", () => {
   it("returns an em dash when there are no line items", () => {
@@ -31,17 +42,47 @@ describe("itemSummary", () => {
 });
 
 describe("canShipOrder", () => {
-  it("allows imported and ready orders", () => {
-    expect(canShipOrder({ status: "IMPORTED" })).toBe(true);
-    expect(canShipOrder({ status: "READY" })).toBe(true);
-    expect(canShipOrder({ status: "FAILED" })).toBe(true);
+  it("allows imported and ready orders to be fulfilled", () => {
+    expect(canFulfillOrder({ status: "IMPORTED" })).toBe(true);
+    expect(canFulfillOrder({ status: "READY" })).toBe(true);
+    expect(canFulfillOrder({ status: "PROCESSING" })).toBe(true);
+    expect(canFulfillOrder({ status: "FAILED" })).toBe(true);
   });
 
-  it("blocks queued, booked, shipped, delivered, and cancelled orders", () => {
-    expect(canShipOrder({ status: "PROCESSING" })).toBe(false);
+  it("allows processing only before a shipment is booked", () => {
+    expect(canProcessOrder({ status: "IMPORTED" })).toBe(true);
+    expect(canProcessOrder({ status: "READY" })).toBe(true);
+    expect(canProcessOrder({ status: "PROCESSING" })).toBe(false);
+    expect(canProcessOrder({ status: "BOOKED" })).toBe(false);
+  });
+
+  it("labels the action button from order status", () => {
+    expect(orderActionLabel("READY")).toBe("Ship");
+    expect(orderActionLabel("PROCESSING")).toBe("Processing");
+    expect(orderActionLabel("BOOKED")).toBe("Booked");
+    expect(orderActionLabel("IN_TRANSIT")).toBe("In transit");
+    expect(orderActionLabel("DELIVERED")).toBe("Delivered");
+  });
+
+  it("blocks booked, in transit, delivered, and cancelled orders", () => {
     expect(canShipOrder({ status: "BOOKED" })).toBe(false);
     expect(canShipOrder({ status: "SHIPPED" })).toBe(false);
+    expect(canShipOrder({ status: "IN_TRANSIT" })).toBe(false);
     expect(canShipOrder({ status: "DELIVERED" })).toBe(false);
     expect(canShipOrder({ status: "CANCELLED" })).toBe(false);
+  });
+
+  it("enables every shipment action when Wati is connected", () => {
+    expect(isWatiConnected({ wati: { provider: "wati", status: "CONNECTED" } })).toBe(true);
+    expect(isWatiConnected({ wati: { provider: "wati", status: "NOT_CONNECTED" } })).toBe(false);
+    expect(canProcessOrderAction({ status: "BOOKED" }, true)).toBe(true);
+    expect(canFulfillOrderAction({ status: "IN_TRANSIT" }, true)).toBe(true);
+    expect(canMarkInTransit({ status: "BOOKED" }, true)).toBe(true);
+    expect(canMarkInTransit({ status: "BOOKED" }, false)).toBe(false);
+    expect(canMarkInTransit({ status: "DELIVERED" }, true)).toBe(false);
+    expect(canMarkDelivered({ status: "IN_TRANSIT" }, true)).toBe(true);
+    expect(canMarkDelivered({ status: "CANCELLED" }, true)).toBe(false);
+    expect(canProcessOrderAction({ status: "CANCELLED" }, true)).toBe(false);
+    expect(canFulfillOrderAction({ status: "CANCELLED" }, true)).toBe(false);
   });
 });

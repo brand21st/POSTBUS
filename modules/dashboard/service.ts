@@ -7,6 +7,7 @@ const PIPELINE = [
   { key: "PROCESSING", label: "Booking" },
   { key: "BOOKED", label: "Booked" },
   { key: "SHIPPED", label: "Label / Manifest" },
+  { key: "IN_TRANSIT", label: "In transit" },
   { key: "DELIVERED", label: "Delivered" },
 ];
 

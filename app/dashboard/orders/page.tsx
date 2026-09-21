@@ -12,13 +12,34 @@ import { orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { asPaginated, canShipOrder, customerName, itemCount, itemNamesPreview, itemSummary, orderNumber } from "@/lib/dashboard/records";
+import { cn } from "@/lib/utils";
+import {
+  asPaginated,
+  canFulfillOrderAction,
+  canMarkDelivered,
+  canMarkInTransit,
+  canProcessOrderAction,
+  customerName,
+  isWatiConnected,
+  itemCount,
+  itemNamesPreview,
+  itemSummary,
+  orderActionButtonClass,
+  orderActionLabel,
+  orderNumber,
+} from "@/lib/dashboard/records";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
 import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES } from "@/types/domain";
@@ -50,6 +71,7 @@ export default function OrdersPage() {
   const shopify = integrations.data?.shopify;
   const shopifyStatus = (shopify?.status ?? "").toUpperCase();
   const shopifyReady = shopifyStatus === "CONNECTED" || Boolean(shopify?.readyToSync);
+  const watiConnected = isWatiConnected(integrations.data);
 
   const query = useQuery({
     queryKey: ["orders", page, debounced, status, source, payment],
@@ -122,13 +144,31 @@ export default function OrdersPage() {
   }, [shopifyReady, queryClient]);
 
   const ship = useMutation({
-    mutationFn: (orderIds: string[]) =>
-      api("/api/v1/shipments", { method: "POST", body: JSON.stringify({ orderIds }) }),
-    onSuccess: (_result, orderIds) => {
+    mutationFn: ({
+      orderIds,
+      action,
+    }: {
+      orderIds: string[];
+      action: "processing" | "fulfill" | "in_transit" | "delivered";
+    }) => api("/api/v1/shipments", { method: "POST", body: JSON.stringify({ orderIds, action }) }),
+    onSuccess: (_result, variables) => {
+      const one = variables.orderIds.length === 1;
       toast.success(
-        orderIds.length === 1
-          ? "Order queued for shipping."
-          : "Selected orders were queued for shipping."
+        variables.action === "processing"
+          ? one
+            ? "Order marked processing."
+            : "Selected orders were marked processing."
+          : variables.action === "in_transit"
+            ? one
+              ? "Order marked in transit."
+              : "Selected orders were marked in transit."
+            : variables.action === "delivered"
+              ? one
+                ? "Order marked delivered."
+                : "Selected orders were marked delivered."
+              : one
+                ? "Order queued for booking and fulfillment."
+                : "Selected orders were queued for booking and fulfillment."
       );
       queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
@@ -195,22 +235,50 @@ export default function OrdersPage() {
       id: "actions",
       header: "",
       cell: (row) => {
-        const pending = ship.isPending && (ship.variables ?? []).includes(row.id);
+        const pending = ship.isPending && (ship.variables?.orderIds ?? []).includes(row.id);
+        const cancelled = (row.status ?? "").toUpperCase() === "CANCELLED";
         return (
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="shrink-0"
-            disabled={!canShipOrder(row) || pending}
-            onClick={(event) => {
-              event.stopPropagation();
-              ship.mutate([row.id]);
-            }}
-          >
-            <Truck className="size-4" />
-            Ship
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className={cn("shrink-0", orderActionButtonClass(row.status))}
+                disabled={cancelled || pending}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Truck className="size-4" />
+                {pending ? "Working…" : orderActionLabel(row.status)}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+              <DropdownMenuItem
+                disabled={!canProcessOrderAction(row, watiConnected) || pending}
+                onSelect={() => ship.mutate({ orderIds: [row.id], action: "processing" })}
+              >
+                Processing
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canFulfillOrderAction(row, watiConnected) || pending}
+                onSelect={() => ship.mutate({ orderIds: [row.id], action: "fulfill" })}
+              >
+                Fulfill · Booked / packed
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canMarkInTransit(row, watiConnected) || pending}
+                onSelect={() => ship.mutate({ orderIds: [row.id], action: "in_transit" })}
+              >
+                In transit
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canMarkDelivered(row, watiConnected) || pending}
+                onSelect={() => ship.mutate({ orderIds: [row.id], action: "delivered" })}
+              >
+                Delivered
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         );
       },
     },
@@ -246,7 +314,7 @@ export default function OrdersPage() {
               type="button"
               variant="secondary"
               disabled={selected.length === 0 || ship.isPending}
-              onClick={() => ship.mutate(selected)}
+              onClick={() => ship.mutate({ orderIds: selected, action: "fulfill" })}
             >
               <Truck className="size-4" />
               Ship selected

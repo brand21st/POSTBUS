@@ -66,23 +66,26 @@ describe("CEPT webhook parser", () => {
 });
 
 describe("event mapper", () => {
-  it("does not change status for the documented BAG_CLOSE sample", () => {
+  it("maps BAG_CLOSE to in transit", () => {
     const mapped = mapIndiaPostEventToShipmentUpdate({
       eventCode: "BAG_CLOSE",
       eventDescription: "Bag Close",
     });
-    expect(mapped.shouldUpdateStatus).toBe(false);
-    expect(mapped.shipmentStatus).toBeNull();
+    expect(mapped.shouldUpdateStatus).toBe(true);
+    expect(mapped.shipmentStatus).toBe("IN_TRANSIT");
   });
 
-  it("does not map portal labels that CEPT did not document as codes", () => {
-    for (const eventCode of [
-      "ITEM_BOOKED",
-      "Item Booked",
-      "ITEM_DELIVERED",
-      "ITEM_RETURNED",
-      "ITEM_HOLD",
-    ]) {
+  it("maps delivered codes and descriptions", () => {
+    expect(mapIndiaPostEventToShipmentUpdate({ eventCode: "ITEM_DELIVERED", eventDescription: null })).toEqual(
+      expect.objectContaining({ shouldUpdateStatus: true, shipmentStatus: "DELIVERED" })
+    );
+    expect(
+      mapIndiaPostEventToShipmentUpdate({ eventCode: "EVENT", eventDescription: "Item Delivered" }).shipmentStatus
+    ).toBe("DELIVERED");
+  });
+
+  it("does not map booked or hold events to a new status", () => {
+    for (const eventCode of ["ITEM_BOOKED", "Item Booked", "ITEM_RETURNED", "ITEM_HOLD"]) {
       expect(mapIndiaPostEventToShipmentUpdate({ eventCode, eventDescription: null }).shouldUpdateStatus).toBe(
         false
       );

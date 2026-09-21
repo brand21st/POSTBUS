@@ -11,7 +11,21 @@ import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
 import type { FulfillmentStatus, PaymentStatus } from "@/types/domain";
 
 export const SHOPIFY_API_VERSION = "2025-01";
-export const ORDER_WEBHOOK_TOPICS = ["orders/create", "orders/updated", "orders/cancelled"] as const;
+export const SHOPIFY_GRAPHQL_API_VERSION = "2026-04";
+export const ORDER_WEBHOOK_TOPICS = [
+  "orders/create",
+  "orders/updated",
+  "orders/cancelled",
+  "fulfillment_orders/progress_reported",
+] as const;
+export const FULFILLMENT_ORDER_REPORT_PROGRESS = `
+  mutation FulfillmentOrderReportProgress($id: ID!, $progressReport: FulfillmentOrderReportProgressInput) {
+    fulfillmentOrderReportProgress(id: $id, progressReport: $progressReport) {
+      fulfillmentOrder { id status }
+      userErrors { field message }
+    }
+  }
+`;
 
 export type ShopifyConnectionRow = ShopifyCredentialRow & {
   id?: string;
@@ -91,6 +105,45 @@ export function mapShopifyPaymentStatus(
   }
 }
 
+export function nextShopifyOrderStatus(input: {
+  cancelledAt?: string | null;
+  fulfillmentStatus: FulfillmentStatus;
+  currentStatus?: string | null;
+}) {
+  if (input.cancelledAt) return "CANCELLED";
+  if (input.fulfillmentStatus === "FULFILLED") return "SHIPPED";
+  const current = (input.currentStatus ?? "").toUpperCase();
+  if (["PROCESSING", "BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"].includes(current)) {
+    return current;
+  }
+  return "READY";
+}
+
+export function shopifyFulfillmentOrderGid(id: number | string) {
+  const raw = String(id);
+  return raw.startsWith("gid://") ? raw : `gid://shopify/FulfillmentOrder/${raw}`;
+}
+
+export function canReportShopifyFulfillmentProgress(status?: string | null) {
+  const value = (status || "open").toLowerCase();
+  return value === "open" || value === "in_progress";
+}
+
+export function parseShopifyProgressReported(payload: unknown) {
+  const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  const fulfillmentOrder =
+    record.fulfillment_order && typeof record.fulfillment_order === "object"
+      ? (record.fulfillment_order as Record<string, unknown>)
+      : record;
+  const status = String(fulfillmentOrder.status ?? record.status ?? "").toLowerCase();
+  const sourceOrderId = fulfillmentOrder.order_id ?? record.order_id ?? "";
+  return {
+    status,
+    sourceOrderId: sourceOrderId ? String(sourceOrderId) : "",
+    inProgress: status === "in_progress",
+  };
+}
+
 export function mapShopifyFulfillmentStatus(value?: string | null, cancelledAt?: string | null): FulfillmentStatus {
   if (cancelledAt) return "CANCELLED";
   switch ((value || "").toLowerCase()) {
@@ -153,6 +206,30 @@ async function shopifyRequest(shop: string, token: string, path: string, init?: 
     },
   });
   return response;
+}
+
+async function shopifyGraphql<T>(
+  shop: string,
+  token: string,
+  query: string,
+  variables: Record<string, unknown>
+) {
+  const response = await fetch(
+    `https://${normalizeShopDomain(shop)}/admin/api/${SHOPIFY_GRAPHQL_API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query, variables }),
+    }
+  );
+  const json = (await response.json()) as {
+    data?: T;
+    errors?: Array<{ message?: string }>;
+  };
+  return { ok: response.ok && !json.errors?.length, json };
 }
 
 export async function resolveShopifyAdminToken(row?: ShopifyConnectionRow | null) {
@@ -291,10 +368,67 @@ async function updateExistingShopifyTracking(
 }
 
 async function markOrderFulfilled(supabase: SupabaseClient, orderId: string) {
-  await supabase
+  await supabase.from("orders").update({ fulfillment_status: "FULFILLED" }).eq("id", orderId);
+}
+
+export async function markShopifyOrderProcessing(
+  supabase: SupabaseClient,
+  input: { organizationId: string; orderId: string }
+) {
+  const { data: order } = await supabase
     .from("orders")
-    .update({ fulfillment_status: "FULFILLED", status: "SHIPPED" })
-    .eq("id", orderId);
+    .select("id, source, source_order_id")
+    .eq("id", input.orderId)
+    .eq("organization_id", input.organizationId)
+    .maybeSingle();
+  if ((order?.source || "").toUpperCase() !== "SHOPIFY") return { skipped: true, reason: "not_shopify" };
+
+  let sourceOrderId = order?.source_order_id ? String(order.source_order_id).trim() : "";
+  if (!sourceOrderId) {
+    const { data: ref } = await supabase
+      .from("external_order_references")
+      .select("source_order_id")
+      .eq("organization_id", input.organizationId)
+      .eq("order_id", input.orderId)
+      .eq("source", "SHOPIFY")
+      .maybeSingle();
+    sourceOrderId = ref?.source_order_id ? String(ref.source_order_id).trim() : "";
+  }
+  if (!sourceOrderId) return { skipped: true, reason: "no_shopify_order_id" };
+
+  const connection = await loadShopifyConnection(supabase, input.organizationId);
+  const shop = connection?.shop_domain;
+  const token = await resolveShopifyAdminToken(connection);
+  if (!shop || !token) return { skipped: true, reason: "shopify_not_connected" };
+
+  const fulfillmentOrdersRes = await shopifyRequest(
+    shop,
+    token,
+    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillment_orders.json`
+  );
+  if (!fulfillmentOrdersRes.ok) return { skipped: true, reason: "fulfillment_orders_failed" };
+  const json = (await fulfillmentOrdersRes.json()) as { fulfillment_orders?: Array<{ id?: number | string; status?: string }> };
+  let marked = 0;
+  for (const fulfillmentOrder of json.fulfillment_orders ?? []) {
+    if (!canReportShopifyFulfillmentProgress(fulfillmentOrder.status)) continue;
+    const id = fulfillmentOrder.id;
+    if (id == null || id === "") continue;
+    const result = await shopifyGraphql<{
+      fulfillmentOrderReportProgress?: {
+        fulfillmentOrder?: { status?: string | null };
+        userErrors?: Array<{ message?: string }>;
+      };
+    }>(shop, token, FULFILLMENT_ORDER_REPORT_PROGRESS, {
+      id: shopifyFulfillmentOrderGid(id),
+      progressReport: { reasonNotes: "Processing" },
+    });
+    const payload = result.json.data?.fulfillmentOrderReportProgress;
+    const status = (payload?.fulfillmentOrder?.status ?? "").toUpperCase();
+    if (result.ok && !payload?.userErrors?.length && status === "IN_PROGRESS") {
+      marked += 1;
+    }
+  }
+  return { skipped: marked === 0, marked };
 }
 
 export async function fulfillShopifyShipment(
@@ -479,11 +613,14 @@ export async function upsertShopifyOrder(
     input.remote.financial_status,
     input.remote.payment_gateway_names ?? input.remote.gateway
   );
-  const orderStatus = input.remote.cancelled_at
-    ? "CANCELLED"
-    : fulfillmentStatus === "FULFILLED"
-      ? "SHIPPED"
-      : "READY";
+  const { data: existingOrder } = existing?.order_id
+    ? await supabase.from("orders").select("status").eq("id", existing.order_id).maybeSingle()
+    : { data: null };
+  const orderStatus = nextShopifyOrderStatus({
+    cancelledAt: input.remote.cancelled_at,
+    fulfillmentStatus,
+    currentStatus: existingOrder?.status,
+  });
   const totals = {
     currency: input.remote.currency || "INR",
     subtotal: Number(input.remote.subtotal_price ?? 0),
@@ -661,6 +798,51 @@ async function shopifyOrderAutomation(supabase: SupabaseClient, organizationId: 
       enqueueBooking: AUTOMATION_DEFAULTS.auto_booking,
     };
   }
+}
+
+export async function importShopifyProgressReported(
+  supabase: SupabaseClient,
+  input: { organizationId: string; payload: unknown }
+) {
+  const parsed = parseShopifyProgressReported(input.payload);
+  if (!parsed.inProgress || !parsed.sourceOrderId) {
+    return { updated: false, skipped: true, orderId: null as string | null };
+  }
+
+  const { data: ref } = await supabase
+    .from("external_order_references")
+    .select("order_id")
+    .eq("organization_id", input.organizationId)
+    .eq("source", "SHOPIFY")
+    .eq("source_order_id", parsed.sourceOrderId)
+    .maybeSingle();
+  if (!ref?.order_id) return { updated: false, skipped: true, orderId: null as string | null };
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, status")
+    .eq("id", ref.order_id)
+    .eq("organization_id", input.organizationId)
+    .maybeSingle();
+  if (!order) return { updated: false, skipped: true, orderId: null as string | null };
+
+  const current = (order.status ?? "").toUpperCase();
+  const alreadyAdvanced = ["PROCESSING", "BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CANCELLED"].includes(
+    current
+  );
+  if (alreadyAdvanced) {
+    return { updated: false, skipped: true, orderId: order.id as string };
+  }
+
+  await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", order.id);
+  try {
+    const { enqueueWatiNotify } = await import("@/modules/wati/send");
+    await enqueueWatiNotify(supabase, input.organizationId, "processing", { orderId: order.id });
+  } catch {
+    // WhatsApp is optional; Shopify progress should still persist.
+  }
+
+  return { updated: true, skipped: false, orderId: order.id as string };
 }
 
 export async function importShopifyWebhookOrder(

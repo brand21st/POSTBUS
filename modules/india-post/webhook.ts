@@ -192,7 +192,7 @@ export async function processIndiaPostInboxEvent(
 
   const { data: byBarcode } = await supabase
     .from("shipments")
-    .select("id, organization_id, status, barcode, tracking_number")
+    .select("id, organization_id, status, barcode, tracking_number, order_id")
     .eq("organization_id", organizationId)
     .eq("barcode", parsed.barcode)
     .maybeSingle();
@@ -200,7 +200,7 @@ export async function processIndiaPostInboxEvent(
     ? { data: byBarcode }
     : await supabase
         .from("shipments")
-        .select("id, organization_id, status, barcode, tracking_number")
+        .select("id, organization_id, status, barcode, tracking_number, order_id")
         .eq("organization_id", organizationId)
         .eq("tracking_number", parsed.barcode)
         .maybeSingle();
@@ -244,6 +244,24 @@ export async function processIndiaPostInboxEvent(
       .update({ status: mapped.shipmentStatus })
       .eq("id", shipment.id)
       .eq("organization_id", organizationId);
+    if (shipment.order_id && (mapped.shipmentStatus === "IN_TRANSIT" || mapped.shipmentStatus === "DELIVERED")) {
+      await supabase
+        .from("orders")
+        .update({ status: mapped.shipmentStatus })
+        .eq("id", shipment.order_id)
+        .eq("organization_id", organizationId);
+      try {
+        const { enqueueWatiNotify } = await import("@/modules/wati/send");
+        await enqueueWatiNotify(
+          supabase,
+          organizationId,
+          mapped.shipmentStatus === "DELIVERED" ? "delivered" : "in_transit",
+          { shipmentId: shipment.id, orderId: shipment.order_id }
+        );
+      } catch {
+        // WhatsApp is optional; tracking updates should still persist.
+      }
+    }
     await supabase.from("notifications").insert({
       organization_id: organizationId,
       type: mapped.shipmentStatus === "DELIVERED" ? "shipment.delivered" : "tracking.updated",

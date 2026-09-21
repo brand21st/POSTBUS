@@ -34,6 +34,7 @@ export const ORDER_STATUSES = [
   "PROCESSING",
   "BOOKED",
   "SHIPPED",
+  "IN_TRANSIT",
   "DELIVERED",
   "FAILED",
   "CANCELLED",

@@ -8,6 +8,7 @@ import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
 import { resolveShopifyWebhookSecrets, verifyWebhookHmac } from "@/modules/shopify/oauth";
 import {
+  importShopifyProgressReported,
   importShopifyWebhookOrder,
   type ShopifyRemoteOrder,
 } from "@/modules/shopify/orders";
@@ -91,6 +92,20 @@ export async function handleInboundWebhook(request: NextRequest, path: string) {
           .from("shopify_connections")
           .update({ status: "DISCONNECTED", encrypted_access_token: null })
           .eq("organization_id", connection.organization_id);
+      } else if (topic === "fulfillment_orders/progress_reported") {
+        try {
+          await importShopifyProgressReported(admin, {
+            organizationId: connection.organization_id,
+            payload: JSON.parse(raw) as unknown,
+          });
+        } catch (error) {
+          logError("shopify.webhook_progress_failed", {
+            topic,
+            shop,
+            message: error instanceof Error ? error.message : "progress import failed",
+          });
+          throw error;
+        }
       } else if (topic.startsWith("orders/")) {
         try {
           const remote = JSON.parse(raw) as ShopifyRemoteOrder;

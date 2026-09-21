@@ -411,30 +411,18 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   const automation = await loadAutomation(supabase, payload.organizationId);
 
   const { createBackgroundJob } = await import("@/modules/jobs/service");
-  if (automation.autoLabelGeneration) {
-    await createBackgroundJob(supabase, {
-      organizationId: payload.organizationId,
-      jobType: "label-generation",
-      entityType: "shipment",
-      entityId: shipment.id,
-    });
-  }
-  if (automation.autoManifest && !automation.autoLabelGeneration) {
-    await createBackgroundJob(supabase, {
-      organizationId: payload.organizationId,
-      jobType: "manifest-generation",
-      entityType: "shipment",
-      entityId: shipment.id,
-    });
-  }
-  if (automation.autoShopifyFulfillment) {
-    await createBackgroundJob(supabase, {
-      organizationId: payload.organizationId,
-      jobType: "shopify-fulfillment",
-      entityType: "shipment",
-      entityId: shipment.id,
-    });
-  }
+  await createBackgroundJob(supabase, {
+    organizationId: payload.organizationId,
+    jobType: "label-generation",
+    entityType: "shipment",
+    entityId: shipment.id,
+  });
+  await createBackgroundJob(supabase, {
+    organizationId: payload.organizationId,
+    jobType: "shopify-fulfillment",
+    entityType: "shipment",
+    entityId: shipment.id,
+  });
   if (automation.autoTrackingSync) {
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
@@ -773,19 +761,16 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
     const delivered = article.del_status?.del_status?.toLowerCase() === "delivered";
     const alreadyDelivered = shipment.status === "DELIVERED";
     const alreadyMoving = ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"].includes(shipment.status);
-    const { enqueueWatiNotify } = await import("@/modules/wati/send");
     if (delivered && !alreadyDelivered) {
       await supabase.from("shipments").update({ status: "DELIVERED" }).eq("id", shipment.id);
-      await enqueueWatiNotify(supabase, payload.organizationId, "delivered", {
-        shipmentId: shipment.id,
-        orderId: shipment.order_id,
-      });
+      if (shipment.order_id) {
+        await supabase.from("orders").update({ status: "DELIVERED" }).eq("id", shipment.order_id);
+      }
     } else if (!delivered && !alreadyMoving && (article.tracking_details?.length ?? 0) > 0) {
       await supabase.from("shipments").update({ status: "IN_TRANSIT" }).eq("id", shipment.id);
-      await enqueueWatiNotify(supabase, payload.organizationId, "in_transit", {
-        shipmentId: shipment.id,
-        orderId: shipment.order_id,
-      });
+      if (shipment.order_id) {
+        await supabase.from("orders").update({ status: "IN_TRANSIT" }).eq("id", shipment.order_id);
+      }
     }
   }
 }
@@ -810,8 +795,6 @@ async function shopifyFulfillment(
   supabase: ReturnType<typeof createAdminClient>,
   payload: JobPayload
 ) {
-  const automation = await loadAutomation(supabase, payload.organizationId);
-  if (!automation.autoShopifyFulfillment) return;
   if (!payload.entityId) {
     throw Object.assign(new Error("Shipment id is missing."), { code: "VALIDATION_ERROR" });
   }

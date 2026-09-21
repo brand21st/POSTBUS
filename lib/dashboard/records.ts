@@ -75,7 +75,15 @@ export function addressLine(address?: AddressSummary | null) {
 }
 
 const ITEM_PREVIEW_LIMIT = 2;
-const BLOCKED_SHIP_STATUSES = new Set(["PROCESSING", "BOOKED", "SHIPPED", "DELIVERED", "CANCELLED"]);
+const BLOCKED_PROCESS_STATUSES = new Set([
+  "PROCESSING",
+  "BOOKED",
+  "SHIPPED",
+  "IN_TRANSIT",
+  "DELIVERED",
+  "CANCELLED",
+]);
+const BLOCKED_FULFILL_STATUSES = new Set(["BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CANCELLED"]);
 
 export function lineItems(order: { lineItems?: LineItem[]; line_items?: LineItem[] }) {
   return order.lineItems ?? order.line_items ?? [];
@@ -111,8 +119,83 @@ export function itemSummary(order: {
   return `${label} · ${names}`;
 }
 
+export function canProcessOrder(order: { status?: string | null }) {
+  return !BLOCKED_PROCESS_STATUSES.has((order.status ?? "").toUpperCase());
+}
+
+export function canFulfillOrder(order: { status?: string | null }) {
+  return !BLOCKED_FULFILL_STATUSES.has((order.status ?? "").toUpperCase());
+}
+
 export function canShipOrder(order: { status?: string | null }) {
-  return !BLOCKED_SHIP_STATUSES.has((order.status ?? "").toUpperCase());
+  return canFulfillOrder(order);
+}
+
+export function isWatiConnected(payload?: IntegrationsResponse | null) {
+  return (payload?.wati?.status ?? "").toUpperCase() === "CONNECTED";
+}
+
+export function canProcessOrderAction(order: { status?: string | null }, watiConnected = false) {
+  const status = (order.status ?? "").toUpperCase();
+  if (status === "CANCELLED") return false;
+  return watiConnected || canProcessOrder(order);
+}
+
+export function canFulfillOrderAction(order: { status?: string | null }, watiConnected = false) {
+  const status = (order.status ?? "").toUpperCase();
+  if (status === "CANCELLED") return false;
+  return watiConnected || canFulfillOrder(order);
+}
+
+export function canMarkInTransit(order: { status?: string | null }, watiConnected = false) {
+  if (!watiConnected) return false;
+  const status = (order.status ?? "").toUpperCase();
+  return status !== "CANCELLED" && status !== "DELIVERED";
+}
+
+export function canMarkDelivered(order: { status?: string | null }, watiConnected = false) {
+  if (!watiConnected) return false;
+  return (order.status ?? "").toUpperCase() !== "CANCELLED";
+}
+
+export function orderActionLabel(status?: string | null) {
+  switch ((status ?? "").toUpperCase()) {
+    case "PROCESSING":
+      return "Processing";
+    case "BOOKED":
+      return "Booked";
+    case "SHIPPED":
+    case "IN_TRANSIT":
+      return "In transit";
+    case "DELIVERED":
+      return "Delivered";
+    case "CANCELLED":
+      return "Cancelled";
+    case "FAILED":
+      return "Failed";
+    default:
+      return "Ship";
+  }
+}
+
+export function orderActionButtonClass(status?: string | null) {
+  switch ((status ?? "").toUpperCase()) {
+    case "PROCESSING":
+      return "border-orange-300 bg-orange-500 text-white hover:bg-orange-600 hover:border-orange-400";
+    case "BOOKED":
+      return "border-amber-300 bg-amber-400 text-amber-950 hover:bg-amber-500 hover:border-amber-400";
+    case "SHIPPED":
+    case "IN_TRANSIT":
+      return "border-indigo-300 bg-indigo-600 text-white hover:bg-indigo-700 hover:border-indigo-400";
+    case "DELIVERED":
+      return "border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-400";
+    case "CANCELLED":
+      return "border-zinc-300 bg-zinc-200 text-zinc-600 hover:bg-zinc-200";
+    case "FAILED":
+      return "border-red-300 bg-red-600 text-white hover:bg-red-700 hover:border-red-400";
+    default:
+      return "";
+  }
 }
 
 export function kpiValue(source: DashboardKpis | undefined, key: keyof DashboardKpis, fallbackKeys: string[] = []) {

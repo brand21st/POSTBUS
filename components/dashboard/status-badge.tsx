@@ -54,6 +54,7 @@ export function orderStatusRowClass(status?: string | null) {
     case "BOOKED":
       return "bg-amber-100 hover:bg-amber-200/70";
     case "SHIPPED":
+    case "IN_TRANSIT":
       return "bg-indigo-50 hover:bg-indigo-100/80";
     case "DELIVERED":
       return "bg-green-50 hover:bg-green-100/80";
