@@ -4,6 +4,11 @@ import { encryptSecret } from "@/lib/security/crypto";
 import { getAutomationSettings } from "@/modules/automation/service";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { formatBarcode } from "@/modules/india-post/barcode";
+import {
+  indiaPostBookingArticleType,
+  indiaPostMobile,
+  indiaPostShapeOfArticle,
+} from "@/modules/india-post/endpoints";
 import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { JobPayload } from "@/lib/queue/queues";
@@ -203,6 +208,23 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     phone?: string;
   } | null;
 
+  const receiverMobile = indiaPostMobile(address?.phone);
+  if (!receiverMobile) {
+    throw Object.assign(
+      new Error("Receiver mobile must be a 10-digit Indian number starting with 6, 7, 8 or 9."),
+      { code: "VALIDATION_ERROR" }
+    );
+  }
+
+  const weightGrams = Number(shipment.weight_grams) || 100;
+  const length = Number(shipment.length_cm) || 0;
+  const width = Number(shipment.width_cm) || 0;
+  const height = Number(shipment.height_cm) || 0;
+  const destPincode = address?.pincode ?? "";
+  const officeId = connection.pickup_dropoff_office_id
+    ? Number(connection.pickup_dropoff_office_id)
+    : 0;
+
   const result = await provider.bookShipment({
     articles: [
       {
@@ -210,21 +232,32 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         contract_id: contractId,
         barcode_no: barcode,
         pickup_or_dropoff: "dropoff",
-        pickup_dropoff_office_id: connection.pickup_dropoff_office_id,
-        article_type: serviceCode,
-        physical_weight: shipment.weight_grams,
+        pickup_dropoff_office_id: officeId,
+        article_type: indiaPostBookingArticleType(serviceCode),
+        physical_weight: weightGrams,
+        shape_of_article: indiaPostShapeOfArticle(serviceCode, weightGrams),
+        length,
+        breadth_diameter: width,
+        height,
         sender_name: "Merchant",
+        sender_company: "Merchant",
         sender_add_line_1: "Registered pickup",
         sender_city: "NA",
         sender_state: "NA",
-        sender_pincode: address?.pincode ?? "000000",
+        sender_pincode: destPincode,
         receiver_name: address?.name ?? "Customer",
+        receiver_company: address?.name ?? "Customer",
         receiver_add_line_1: address?.line1 ?? "",
         receiver_city: address?.city ?? "",
         receiver_state: address?.state ?? "",
-        receiver_pincode: address?.pincode ?? "",
-        sender_mobile_no: "0000000000",
-        receiver_mobile_no: address?.phone ?? "0000000000",
+        receiver_pincode: destPincode,
+        drop_off_pincode: destPincode,
+        sender_mobile_no: receiverMobile,
+        receiver_mobile_no: receiverMobile,
+        alt_address_flag: "FALSE",
+        ack: "FALSE",
+        reg: "FALSE",
+        otp: "FALSE",
       },
     ],
   });

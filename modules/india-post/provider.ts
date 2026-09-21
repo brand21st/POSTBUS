@@ -1,6 +1,6 @@
-import { indiaPostBaseUrl } from "@/lib/env";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { decryptSecret } from "@/lib/security/crypto";
+import { indiaPostBookingUrl, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
 import type { ProviderEnvironment } from "@/types/domain";
 
 export type ShippingProvider = {
@@ -29,18 +29,12 @@ type Connection = {
 export class IndiaPostProvider implements ShippingProvider {
   constructor(private connection: Connection) {}
 
-  private baseUrl() {
-    const environment = this.connection.environment;
-    const url = indiaPostBaseUrl(environment);
-    if (!url) {
-      throw new AppError(
-        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
-        environment === "PRODUCTION"
-          ? "India Post production API URL is not configured yet. Use UAT (sandbox) until CEPT shares the live base URL (INDIA_POST_PROD_BASE_URL)."
-          : "India Post UAT API base URL is not configured."
-      );
-    }
-    return url.replace(/\/$/, "");
+  private environment(): ProviderEnvironment {
+    return this.connection.environment === "PRODUCTION" ? "PRODUCTION" : "UAT";
+  }
+
+  private sessionUrl(path: string) {
+    return indiaPostSessionUrl(this.environment(), path);
   }
 
   private assertConnected() {
@@ -65,7 +59,7 @@ export class IndiaPostProvider implements ShippingProvider {
     }
     const username = decryptSecret(this.connection.encrypted_username);
     const password = decryptSecret(this.connection.encrypted_password);
-    const response = await fetch(`${this.baseUrl()}/access/login`, {
+    const response = await fetch(this.sessionUrl("/access/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -108,7 +102,7 @@ export class IndiaPostProvider implements ShippingProvider {
     }
     const token = await this.token();
     const response = await fetch(
-      `${this.baseUrl()}/details?pincode=${pincode}&limit=50&office-type=post`,
+      `${this.sessionUrl("/pincode-search")}?pincode=${pincode}&office-type=post`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     if (!response.ok) {
@@ -126,7 +120,7 @@ export class IndiaPostProvider implements ShippingProvider {
       "source-pincode": String(input.sourcePincode ?? ""),
       "destination-pincode": String(input.destinationPincode ?? ""),
     });
-    const response = await fetch(`${this.baseUrl()}/tariffs?${params}`, {
+    const response = await fetch(`${this.sessionUrl("/speed-post/tariffs")}?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {
@@ -151,7 +145,7 @@ export class IndiaPostProvider implements ShippingProvider {
     if (!customId) {
       throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post customer ID is missing.");
     }
-    const response = await fetch(`${this.baseUrl()}/process-articles/${customId}`, {
+    const response = await fetch(indiaPostBookingUrl(this.environment(), customId), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -161,7 +155,8 @@ export class IndiaPostProvider implements ShippingProvider {
     });
     const json = await response.json().catch(() => ({}));
     if (!response.ok || json.success === false) {
-      const error = new Error(json.message || "India Post booking failed.");
+      const fieldError = Array.isArray(json.errors) ? json.errors[0]?.msg : null;
+      const error = new Error(fieldError || json.message || "India Post booking failed.");
       (error as { status?: number }).status = response.status;
       (error as { details?: unknown }).details = json;
       throw error;
@@ -171,7 +166,7 @@ export class IndiaPostProvider implements ShippingProvider {
 
   async generateLabel(input: Record<string, unknown>) {
     const token = await this.token();
-    const response = await fetch(`${this.baseUrl()}/labels`, {
+    const response = await fetch(this.sessionUrl("/label/create/domestic"), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -196,7 +191,7 @@ export class IndiaPostProvider implements ShippingProvider {
 
   async trackShipment(barcodes: string[]) {
     const token = await this.token();
-    const response = await fetch(`${this.baseUrl()}/tracking/bulk`, {
+    const response = await fetch(this.sessionUrl("/tracking/bulk"), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,

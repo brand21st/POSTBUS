@@ -29,7 +29,7 @@ export const env = {
     "https://test.cept.gov.in/beextcustomer/v1",
   indiaPostProdBaseUrl:
     optional(process.env.INDIA_POST_PROD_BASE_URL) ||
-    "https://app.indiapost.gov.in/beextcustomer/v1",
+    "https://app.indiapost.gov.in",
   stripeSecretKey: optional(process.env.STRIPE_SECRET_KEY),
   stripeWebhookSecret: optional(process.env.STRIPE_WEBHOOK_SECRET),
 };
