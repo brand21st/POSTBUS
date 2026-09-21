@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/hooks/use-api";
+import { useMe } from "@/lib/hooks/use-me";
 
 const schema = z.object({
   name: z.string().min(2, "Enter a workspace name."),
@@ -19,7 +20,14 @@ type FormValues = z.infer<typeof schema>;
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const me = useMe();
   const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (me.data?.organization) {
+      router.replace("/dashboard");
+    }
+  }, [me.data?.organization, router]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),

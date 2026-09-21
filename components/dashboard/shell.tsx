@@ -8,7 +8,7 @@ import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/hooks/use-api";
-import { useMe } from "@/lib/hooks/use-me";
+import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
 
 export function DashboardShell({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -38,7 +38,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
       return;
     }
-    if (!me.data?.organization) {
+    if (!me.data?.organization && membershipsFromMe(me.data).length === 0) {
       router.replace("/onboarding");
     }
   }, [me.data, me.error, me.isLoading, pathname, router]);

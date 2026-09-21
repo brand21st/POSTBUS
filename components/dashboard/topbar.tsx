@@ -190,10 +190,6 @@ export function Topbar({
                 {workspace.id === me?.organization?.id ? <Check className="size-4 text-brand" /> : null}
               </DropdownMenuItem>
             ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => router.push("/onboarding")}>
-              Create workspace
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 

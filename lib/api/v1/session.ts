@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { NextRequest } from "next/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { createOrganization, listMemberships } from "@/modules/organizations/service";
+import {
+  createOrganization,
+  ensureActiveWorkspace,
+  listMemberships,
+  switchOrganization,
+} from "@/modules/organizations/service";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export async function handleSessionRoutes(
@@ -19,15 +24,14 @@ export async function handleSessionRoutes(
       .select("*")
       .eq("id", user.id)
       .maybeSingle();
-    const memberships = await listMemberships(supabase, user.id);
-    let organization = null;
-    let role = null;
-    if (profile?.active_organization_id) {
-      const current = memberships.find((item) => item.organization_id === profile.active_organization_id);
-      const org = Array.isArray(current?.organizations) ? current?.organizations[0] : current?.organizations;
-      organization = org ? { id: org.id, name: org.name, slug: org.slug } : null;
-      role = current?.role ?? null;
-    }
+    const ensured = await ensureActiveWorkspace(supabase, user.id, {
+      fullName: profile?.full_name ?? user.user_metadata?.full_name,
+      email: profile?.email ?? user.email,
+      activeOrganizationId: profile?.active_organization_id,
+    });
+    const organization = ensured.current
+      ? { id: ensured.current.id, name: ensured.current.name, slug: ensured.current.slug }
+      : null;
     const { data: subscription } = organization
       ? await supabase
           .from("organization_subscriptions")
@@ -45,8 +49,8 @@ export async function handleSessionRoutes(
         whatsappNumber: profile?.whatsapp_number ?? null,
       },
       organization,
-      role,
-      organizations: memberships.map((item) => {
+      role: ensured.role,
+      organizations: ensured.memberships.map((item) => {
         const org = Array.isArray(item.organizations) ? item.organizations[0] : item.organizations;
         return { id: org?.id, name: org?.name, slug: org?.slug, role: item.role };
       }),
@@ -63,6 +67,14 @@ export async function handleSessionRoutes(
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
+    const existing = await listMemberships(supabase, user.id);
+    if (existing[0]) {
+      const org = Array.isArray(existing[0].organizations)
+        ? existing[0].organizations[0]
+        : existing[0].organizations;
+      await switchOrganization(supabase, user.id, existing[0].organization_id);
+      return org;
+    }
     const body = await request.json().catch(() => ({}));
     const name = z.string().min(2).parse(body.name);
     return createOrganization(supabase, user.id, name);
