@@ -8,7 +8,7 @@ import { Download, Plus, RefreshCw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { StatusBadge } from "@/components/dashboard/status-badge";
+import { orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -325,6 +325,7 @@ export default function OrdersPage() {
         onSelectionChange={setSelected}
         onRowClick={(row) => router.push(`/dashboard/orders/${row.id}`)}
         getRowId={(row) => row.id}
+        getRowClassName={(row) => orderStatusRowClass(row.status)}
       />
     </div>
   );

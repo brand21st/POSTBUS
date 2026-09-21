@@ -45,6 +45,7 @@ export type DataTableProps<TData extends Record<string, unknown>> = {
   selectable?: boolean;
   onSelectionChange?: (ids: string[]) => void;
   onRowClick?: (row: TData) => void;
+  getRowClassName?: (row: TData) => string | undefined;
 };
 
 export function DataTable<TData extends Record<string, unknown>>({
@@ -63,6 +64,7 @@ export function DataTable<TData extends Record<string, unknown>>({
   selectable,
   onSelectionChange,
   onRowClick,
+  getRowClassName,
 }: DataTableProps<TData>) {
   const columnDefs = useMemo(() => {
     const helper = createColumnHelper<typeof features, TData>();
@@ -184,7 +186,8 @@ export function DataTable<TData extends Record<string, unknown>>({
                 <tr
                   key={row.id}
                   className={cn(
-                    "border-b border-border last:border-0 hover:bg-surface-soft/60",
+                    "border-b border-border last:border-0 transition-colors",
+                    getRowClassName?.(row.original) ?? "hover:bg-surface-soft/60",
                     onRowClick && "cursor-pointer"
                   )}
                   onClick={() => onRowClick?.(row.original)}
