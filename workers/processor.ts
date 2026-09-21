@@ -417,7 +417,7 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
     .select("*, orders(order_number), customers(name, phone), addresses:shipping_address_id(*)")
     .eq("id", payload.entityId)
     .single();
-  if (!shipment?.barcode) {
+  if (!shipment?.barcode || !shipment.booked_at) {
     throw Object.assign(new Error("Shipment is not booked."), { code: "VALIDATION_ERROR" });
   }
 
