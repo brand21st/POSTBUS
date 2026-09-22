@@ -364,6 +364,8 @@ export type WatiConfig = {
     name?: string;
     status?: string | null;
     category?: string | null;
+    body?: string | null;
+    customParams?: Array<{ name?: string | null }>;
   }>;
 };
 

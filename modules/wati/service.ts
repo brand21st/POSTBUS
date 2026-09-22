@@ -14,7 +14,7 @@ import {
   type WatiChannel,
   type WatiTemplate,
 } from "@/modules/wati/client";
-import { isApprovedWatiTemplate } from "@/modules/wati/notify";
+import { isApprovedWatiUtilityTemplate } from "@/modules/wati/notify";
 import { canRegisterWatiWebhook, watiWebhookUrl } from "@/modules/wati/webhook-urls";
 import type { WatiConfig } from "@/types/api";
 
@@ -94,6 +94,19 @@ export async function verifyWatiToken(token: string, baseUrl?: string | null) {
   return { channels: result.channels ?? [], channel };
 }
 
+function templateLanguage(template: WatiTemplate) {
+  const option = (template as WatiTemplate & { language_option?: { value?: string | null; text?: string | null } })
+    .language_option;
+  return option?.value ?? option?.text ?? null;
+}
+
+function templateParamNames(template: WatiTemplate) {
+  const names = template.custom_params ?? template.customParams ?? [];
+  return names
+    .map((param) => ({ name: param.name?.trim() || null }))
+    .filter((param) => param.name);
+}
+
 export async function listWatiChannels(row: WatiConnectionRow | null) {
   const client = watiClientFromRow(row);
   const result = await client.listChannels(1, 100);
@@ -125,14 +138,18 @@ export async function listWatiTemplates(row: WatiConnectionRow | null) {
   const channel = row?.channel_id ? watiPhoneNumber(row.channel_phone) ?? undefined : undefined;
   const result = await client.listTemplates(1, 100, channel);
   return (result.templates ?? [])
-    .filter((template) => isApprovedWatiTemplate(template.status) && template.name?.trim())
+    .filter(
+      (template) =>
+        isApprovedWatiUtilityTemplate(template.status, template.category) && template.name?.trim()
+    )
     .map((template) => ({
       id: template.id ?? null,
       name: template.name ?? "",
       status: template.status ?? null,
       category: template.category ?? null,
-      language: template.language ?? null,
+      language: template.language ?? templateLanguage(template),
       body: template.body ?? null,
+      customParams: templateParamNames(template),
     })) satisfies WatiTemplate[];
 }
 

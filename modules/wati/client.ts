@@ -26,6 +26,8 @@ export type WatiTemplate = {
   category?: string | null;
   language?: string | null;
   body?: string | null;
+  customParams?: Array<{ name?: string | null; value?: string | null }> | null;
+  custom_params?: Array<{ name?: string | null; value?: string | null }> | null;
 };
 
 export type WatiTemplateParam = { name: string; value: string };

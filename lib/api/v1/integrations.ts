@@ -586,13 +586,22 @@ export async function handleIntegrationRoutes(
     if (!templateName) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose a Wati template to send.");
     }
-    const recipient = watiNotifyRecipient({
-      customerName: "Test customer",
-      phone: String(body.phone ?? ""),
-      orderNumber: "TEST-001",
-      trackingNumber: "TESTTRACKIN",
-      trackingUrl: "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=TESTTRACKIN",
-    });
+    const templates = await listWatiTemplates(data).catch(() => []);
+    const template = templates.find((item) => item.name === templateName);
+    if (!template) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose an approved Utility template.");
+    }
+    const recipient = watiNotifyRecipient(
+      {
+        customerName: "Test customer",
+        phone: String(body.phone ?? ""),
+        orderNumber: "TEST-001",
+        trackingNumber: "TESTTRACKIN",
+        trackingUrl:
+          "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=TESTTRACKIN",
+      },
+      template
+    );
     if (!recipient) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a 10-digit Indian WhatsApp number.");
     }

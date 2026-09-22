@@ -16,12 +16,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { Copy } from "lucide-react";
 import type { WatiConfig } from "@/types/api";
 
-const NONE = "__none__";
 const WATI_WHATSAPP_NUMBER = "+917012788341";
 
 function watiNumberOption(value?: string | null) {
@@ -87,6 +87,8 @@ export default function WatiIntegrationPage() {
   const config = query.data;
   const hasToken = Boolean(config?.hasToken ?? config?.has_token);
   const templates = (config?.templates ?? []).filter((template) => template.name);
+  const templateNames = new Set(templates.map((template) => template.name));
+  const allowedSlot = (name?: string | null) => (name && templateNames.has(name) ? name : "");
 
   if (config && !hydrated) {
     setHydrated(true);
@@ -94,11 +96,11 @@ export default function WatiIntegrationPage() {
     setBaseUrl(config.apiBaseUrl ?? config.api_base_url ?? "");
     setChannelPhone(watiNumberOption(config.channelPhone ?? config.channel_phone) || WATI_WHATSAPP_NUMBER);
     setSlots({
-      orderConfirmation: config.orderConfirmationTemplateName ?? config.order_confirmation_template_name ?? "",
-      processing: config.processingTemplateName ?? config.processing_template_name ?? "",
-      booked: config.bookedTemplateName ?? config.booked_template_name ?? "",
-      inTransit: config.inTransitTemplateName ?? config.in_transit_template_name ?? "",
-      delivered: config.deliveredTemplateName ?? config.delivered_template_name ?? "",
+      orderConfirmation: allowedSlot(config.orderConfirmationTemplateName ?? config.order_confirmation_template_name),
+      processing: allowedSlot(config.processingTemplateName ?? config.processing_template_name),
+      booked: allowedSlot(config.bookedTemplateName ?? config.booked_template_name),
+      inTransit: allowedSlot(config.inTransitTemplateName ?? config.in_transit_template_name),
+      delivered: allowedSlot(config.deliveredTemplateName ?? config.delivered_template_name),
     });
   }
 
@@ -179,7 +181,7 @@ export default function WatiIntegrationPage() {
     <div className="space-y-6">
       <PageHeader
         title="Wati"
-        description="Connect WhatsApp with a Wati API V3 token. Choose an approved template for each order stage."
+        description="Connect WhatsApp with a Wati API V3 token. Choose an approved Utility template for each order stage."
         actions={<StatusBadge value={config?.status ?? "NOT_CONNECTED"} />}
       />
 
@@ -284,8 +286,9 @@ export default function WatiIntegrationPage() {
         <CardHeader>
           <CardTitle>Shipment templates</CardTitle>
           <CardDescription>
-            Only approved WhatsApp templates from Wati are listed. Parameters sent: customer_name,
-            order_number, tracking_number, tracking_url.
+            Only approved Utility templates from Wati are listed. Marketing and authentication
+            templates stay hidden. Parameters sent: customer_name, order_number, tracking_number,
+            tracking_url.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid max-w-xl gap-4">
@@ -301,7 +304,8 @@ export default function WatiIntegrationPage() {
           ))}
           {!templates.length ? (
             <p className="text-xs text-muted">
-              Save and connect to load approved templates. Pending or rejected templates stay hidden.
+              Save and connect to load approved Utility templates. Pending, rejected, marketing, and
+              authentication templates stay hidden.
             </p>
           ) : null}
           <div className="space-y-2">
@@ -409,6 +413,10 @@ function watiPhoneOptions(
   return [...options.entries()].map(([value, label]) => ({ value, label }));
 }
 
+function templatePreview(body?: string | null) {
+  return (body ?? "").replace(/\s+/g, " ").trim();
+}
+
 function TemplateSelect({
   label,
   hint,
@@ -419,13 +427,13 @@ function TemplateSelect({
   label: string;
   hint: string;
   value: string;
-  templates: Array<{ name?: string; status?: string | null }>;
+  templates: Array<{ name?: string; status?: string | null; body?: string | null }>;
   onChange: (value: string) => void;
 }) {
   const options = templates.filter((template) => template.name);
-  if (value && !options.some((template) => template.name === value)) {
-    options.unshift({ name: value, status: "APPROVED" });
-  }
+  const selectedValue = options.some((template) => template.name === value) ? value : "";
+  const selected = options.find((template) => template.name === value);
+  const preview = templatePreview(selected?.body);
 
   return (
     <div className="space-y-2">
@@ -433,19 +441,26 @@ function TemplateSelect({
         <Label>{label}</Label>
         <p className="text-xs text-muted">{hint}</p>
       </div>
-      <Select value={value || NONE} onValueChange={(next) => onChange(next === NONE ? "" : next)}>
-        <SelectTrigger>
-          <SelectValue placeholder="None" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={NONE}>None</SelectItem>
-          {options.map((template) => (
-            <SelectItem key={template.name} value={template.name ?? ""}>
-              {template.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <select
+        className={cn(
+          "flex h-11 w-full rounded-[var(--radius-input)] border border-border bg-card px-3.5 text-sm text-foreground shadow-sm",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+        )}
+        value={selectedValue}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="">None</option>
+        {options.map((template) => (
+          <option key={template.name} value={template.name}>
+            {template.name}
+          </option>
+        ))}
+      </select>
+      {preview ? (
+        <p className="whitespace-pre-wrap rounded-xl border border-border bg-surface px-3 py-2 text-xs leading-5 text-muted">
+          {selected?.body?.trim()}
+        </p>
+      ) : null}
     </div>
   );
 }

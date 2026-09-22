@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
 import { watiClientFromRow } from "@/modules/wati/client";
+import { listWatiTemplates } from "@/modules/wati/service";
 import {
   WATI_NOTIFY_EVENTS,
   watiBroadcastName,
@@ -46,15 +47,21 @@ export async function sendWatiNotice(
     .eq("id", organizationId)
     .maybeSingle();
   const trackingNumber = context.trackingNumber ?? context.barcode;
-  const recipient = watiNotifyRecipient({
-    customerName: context.customerName,
-    shopName: org?.name,
-    phone: context.phone,
-    orderNumber: context.orderNumber,
-    trackingNumber,
-    barcode: context.barcode,
-    trackingUrl: trackingNumber ? indiaPostPublicTrackingUrl(trackingNumber) : null,
-  });
+  const templates = await listWatiTemplates(connection).catch(() => []);
+  const template = templates.find((item) => item.name === templateName);
+  if (!template) return { skipped: true, reason: "not_approved_utility" };
+  const recipient = watiNotifyRecipient(
+    {
+      customerName: context.customerName,
+      shopName: org?.name,
+      phone: context.phone,
+      orderNumber: context.orderNumber,
+      trackingNumber,
+      barcode: context.barcode,
+      trackingUrl: trackingNumber ? indiaPostPublicTrackingUrl(trackingNumber) : null,
+    },
+    template
+  );
   if (!recipient) return { skipped: true, reason: "missing_phone" };
 
   const client = watiClientFromRow(connection);

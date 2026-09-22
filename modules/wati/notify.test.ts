@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   isApprovedWatiTemplate,
+  isApprovedWatiUtilityTemplate,
   watiBroadcastName,
   watiNotifyRecipient,
+  watiTemplateCustomParams,
   watiTemplateForEvent,
+  watiValuesForPlaceholders,
 } from "@/modules/wati/notify";
 
 describe("watiTemplateForEvent", () => {
@@ -29,6 +32,14 @@ describe("isApprovedWatiTemplate", () => {
     expect(isApprovedWatiTemplate("approved")).toBe(true);
     expect(isApprovedWatiTemplate("PENDING")).toBe(false);
     expect(isApprovedWatiTemplate("REJECTED")).toBe(false);
+  });
+
+  it("keeps only approved Utility templates", () => {
+    expect(isApprovedWatiUtilityTemplate("APPROVED", "UTILITY")).toBe(true);
+    expect(isApprovedWatiUtilityTemplate("approved", "utility")).toBe(true);
+    expect(isApprovedWatiUtilityTemplate("APPROVED", "MARKETING")).toBe(false);
+    expect(isApprovedWatiUtilityTemplate("APPROVED", "AUTHENTICATION")).toBe(false);
+    expect(isApprovedWatiUtilityTemplate("PENDING", "UTILITY")).toBe(false);
   });
 });
 
@@ -56,6 +67,49 @@ describe("watiNotifyRecipient", () => {
 
   it("skips shipments without a WhatsApp number", () => {
     expect(watiNotifyRecipient({ phone: "123" })).toBeNull();
+  });
+});
+
+describe("watiValuesForPlaceholders", () => {
+  const shipment = {
+    customerName: "Priya",
+    shopName: "Aurimo",
+    orderNumber: "1001",
+    trackingUrl: "https://track.example/1001",
+  };
+
+  it("fills confirmation, processing, and tracking templates in placeholder order", () => {
+    expect(
+      watiValuesForPlaceholders(
+        "Hi {{1}},\nThank you for your purchase from {{2}}.\nYour order {{3}} has been confirmed.",
+        shipment
+      )
+    ).toEqual(["Priya", "Aurimo", "1001"]);
+    expect(
+      watiValuesForPlaceholders("Hi {{1}},\nYour order {{2}} is currently being processed.", shipment)
+    ).toEqual(["Priya", "1001"]);
+    expect(
+      watiValuesForPlaceholders(
+        "Hi, {{1}},\nYour order from {{2}} has been packed.\nTrack your shipment here {{3}}",
+        shipment
+      )
+    ).toEqual(["Priya", "Aurimo", "https://track.example/1001"]);
+  });
+
+  it("sends numbered placeholders and the template parameter names", () => {
+    expect(
+      watiTemplateCustomParams(shipment, {
+        body: "Hi {{1}}, your order {{2}} is confirmed.",
+        customParams: [{ name: "customer_name" }, { name: "order_number" }],
+      })
+    ).toEqual(
+      expect.arrayContaining([
+        { name: "customer_name", value: "Priya" },
+        { name: "order_number", value: "1001" },
+        { name: "1", value: "Priya" },
+        { name: "2", value: "1001" },
+      ])
+    );
   });
 });
 
