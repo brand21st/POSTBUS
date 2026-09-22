@@ -840,9 +840,15 @@ async function shopifyFulfillment(
       job?.progress && typeof job.progress === "object"
         ? (job.progress as { orderId?: string | null; shipmentId?: string | null })
         : {};
+    const orderId = progress.orderId ?? payload.entityId;
+    if (!orderId) {
+      throw Object.assign(new Error("Order id is missing for Shopify stage sync."), {
+        code: "VALIDATION_ERROR",
+      });
+    }
     const result = await syncShopifyOrderStage(supabase, {
       organizationId: payload.organizationId,
-      orderId: progress.orderId ?? payload.entityId,
+      orderId,
       shipmentId: progress.shipmentId ?? (payload.entityType === "shipment" ? payload.entityId : null),
       stage,
     });
