@@ -63,6 +63,45 @@ export function classifySubdomain(raw: string | null | undefined) {
   return { subdomain, reason: "ok" as const };
 }
 
+function slugifyLabel(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function fitSubdomain(value: string) {
+  const trimmed = value.slice(0, 48).replace(/^-+|-+$/g, "");
+  return classifySubdomain(trimmed).reason === "ok" ? trimmed : null;
+}
+
+export function subdomainCandidates(name: string, limit = 8) {
+  const base = slugifyLabel(name) || "store";
+  const candidates: string[] = [];
+  const push = (value: string) => {
+    const fitted = fitSubdomain(value);
+    if (fitted && !candidates.includes(fitted)) candidates.push(fitted);
+  };
+
+  push(base);
+  for (let n = 2; candidates.length < limit && n < 100; n += 1) {
+    const suffix = `-${n}`;
+    const stem = base.slice(0, 48 - suffix.length).replace(/-+$/g, "") || "store";
+    push(`${stem}${suffix}`);
+  }
+  return candidates;
+}
+
+export function customerTrackingLink(publicUrl: string, trackingId: string) {
+  const url = new URL(publicUrl);
+  const id = trackingId.trim();
+  if (id) url.searchParams.set("tracking", id);
+  return url.toString();
+}
+
 export function trackingPagePublicUrl(subdomain: string) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   try {

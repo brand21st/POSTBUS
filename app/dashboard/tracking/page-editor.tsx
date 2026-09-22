@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, ExternalLink, Globe, Trash2 } from "lucide-react";
+import { Copy, ExternalLink, Globe, Pencil, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -20,7 +20,7 @@ import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { trackingHostSuffix } from "@/modules/tracking-pages/host";
-import { updateTrackingPageSchema } from "@/modules/tracking-pages/schema";
+import { subdomainSchema, updateTrackingPageSchema } from "@/modules/tracking-pages/schema";
 import type { SubdomainAvailability, TrackingPageRecord } from "@/types/api";
 import type { MemberRole } from "@/types/domain";
 
@@ -154,6 +154,13 @@ function CreateTrackingPageForm({ organizationName }: { organizationName?: strin
   );
 }
 
+const HEX_COLOR = /^#([0-9a-fA-F]{6})$/;
+
+function parseHex(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  return HEX_COLOR.test(trimmed) ? trimmed : null;
+}
+
 function toFormValues(page: TrackingPageRecord): EditorValues {
   return {
     storeName: page.storeName,
@@ -187,21 +194,80 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
   });
   // eslint-disable-next-line react-hooks/incompatible-library -- form.watch subscription
   const values = form.watch();
+  const primaryColor = values.primaryColor ?? "";
+  const backgroundColor = values.backgroundColor ?? "";
+  const [colorStatus, setColorStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const colorSaveLock = useRef(false);
+  const latestColors = useRef({ primary: primaryColor, background: backgroundColor });
+  latestColors.current = { primary: primaryColor, background: backgroundColor };
+  const livePrimaryRef = useRef(page.primaryColor);
+  const liveBackgroundRef = useRef(page.backgroundColor);
+  const parsedPrimary = parseHex(primaryColor);
+  const parsedBackground = parseHex(backgroundColor);
+  if (parsedPrimary) livePrimaryRef.current = parsedPrimary;
+  if (parsedBackground) liveBackgroundRef.current = parsedBackground;
+  const livePrimary = livePrimaryRef.current;
+  const liveBackground = liveBackgroundRef.current;
   const previewPage = useMemo(
     () => ({
       ...page,
       ...values,
       storeName: values.storeName || page.storeName,
-      primaryColor: values.primaryColor || page.primaryColor,
-      backgroundColor: values.backgroundColor || page.backgroundColor,
+      primaryColor: livePrimary,
+      backgroundColor: liveBackground,
       social: {
         instagram: values.social?.instagram || page.social.instagram,
         facebook: values.social?.facebook || page.social.facebook,
         website: values.social?.website || page.social.website,
       },
     }),
-    [page, values]
+    [liveBackground, livePrimary, page, values]
   );
+
+  useEffect(() => {
+    if (!canManage) return;
+    const primary = parseHex(primaryColor);
+    const background = parseHex(backgroundColor);
+    if (!primary || !background) return;
+    if (primary === page.primaryColor && background === page.backgroundColor) return;
+
+    async function persistColors() {
+      if (colorSaveLock.current) return;
+      const nextPrimary = parseHex(latestColors.current.primary);
+      const nextBackground = parseHex(latestColors.current.background);
+      const current = queryClient.getQueryData<TrackingPageRecord>(["tracking-page"]);
+      if (!nextPrimary || !nextBackground || !current) return;
+      if (nextPrimary === current.primaryColor && nextBackground === current.backgroundColor) return;
+
+      colorSaveLock.current = true;
+      setColorStatus("saving");
+      try {
+        const next = await api<TrackingPageRecord>("/api/v1/tracking-pages", {
+          method: "PATCH",
+          body: JSON.stringify({ primaryColor: nextPrimary, backgroundColor: nextBackground }),
+        });
+        queryClient.setQueryData(["tracking-page"], next);
+        const pendingPrimary = parseHex(latestColors.current.primary);
+        const pendingBackground = parseHex(latestColors.current.background);
+        const dirty = pendingPrimary !== next.primaryColor || pendingBackground !== next.backgroundColor;
+        colorSaveLock.current = false;
+        if (dirty && pendingPrimary && pendingBackground) {
+          await persistColors();
+          return;
+        }
+        setColorStatus("saved");
+      } catch (error) {
+        colorSaveLock.current = false;
+        setColorStatus("error");
+        toast.error(error instanceof Error ? error.message : "Could not save colors.");
+      }
+    }
+
+    const timer = window.setTimeout(() => {
+      void persistColors();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [backgroundColor, canManage, page.backgroundColor, page.primaryColor, primaryColor, queryClient]);
 
   const save = useMutation({
     mutationFn: (payload: EditorValues) =>
@@ -233,11 +299,6 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not unpublish."),
   });
-
-  async function copyUrl() {
-    await navigator.clipboard.writeText(page.publicUrl);
-    toast.success("Tracking URL copied.");
-  }
 
   async function onLogoChange(file: File | undefined) {
     if (!file) return;
@@ -288,37 +349,14 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
       <div className="space-y-6">
-        <Card>
-          <CardHeader className="flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle>Customer URL</CardTitle>
-              <CardDescription>{page.publicUrl}</CardDescription>
-            </div>
-            <StatusBadge value={page.status} />
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" onClick={copyUrl}>
-              <Copy />
-              Copy URL
-            </Button>
-            <a href={page.publicUrl} target="_blank" rel="noopener noreferrer">
-              <Button type="button" variant="secondary">
-                <ExternalLink />
-                Open
-              </Button>
-            </a>
-            {canManage && page.status === "PUBLISHED" ? (
-              <Button type="button" variant="secondary" onClick={() => unpublish.mutate()} disabled={unpublish.isPending}>
-                Unpublish
-              </Button>
-            ) : null}
-            {canManage && page.status !== "PUBLISHED" ? (
-              <Button type="button" onClick={() => publish.mutate()} disabled={publish.isPending}>
-                Publish
-              </Button>
-            ) : null}
-          </CardContent>
-        </Card>
+        <CustomerUrlCard
+          page={page}
+          canManage={canManage}
+          publishing={publish.isPending}
+          unpublishing={unpublish.isPending}
+          onPublish={() => publish.mutate()}
+          onUnpublish={() => unpublish.mutate()}
+        />
 
         <form className="space-y-6" onSubmit={form.handleSubmit((payload) => save.mutate(payload))}>
           <Card>
@@ -337,18 +375,36 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
                   <Textarea disabled={!canManage} {...form.register("about")} />
                 </Field>
               </div>
-              <Field label="Accent color">
-                <div className="flex items-center gap-2">
-                  <Input type="color" disabled={!canManage} className="h-11 w-16 p-1" {...form.register("primaryColor")} />
-                  <Input disabled={!canManage} {...form.register("primaryColor")} />
-                </div>
-              </Field>
-              <Field label="Background">
-                <div className="flex items-center gap-2">
-                  <Input type="color" disabled={!canManage} className="h-11 w-16 p-1" {...form.register("backgroundColor")} />
-                  <Input disabled={!canManage} {...form.register("backgroundColor")} />
-                </div>
-              </Field>
+              <ColorField
+                label="Accent color"
+                name="primaryColor"
+                value={primaryColor}
+                fallback={livePrimary}
+                disabled={!canManage}
+                onChange={(next) => form.setValue("primaryColor", next, { shouldDirty: true, shouldTouch: true })}
+              />
+              <ColorField
+                label="Background"
+                name="backgroundColor"
+                value={backgroundColor}
+                fallback={liveBackground}
+                disabled={!canManage}
+                onChange={(next) =>
+                  form.setValue("backgroundColor", next, { shouldDirty: true, shouldTouch: true })
+                }
+              />
+              {canManage && colorStatus !== "idle" ? (
+                <p
+                  className={`sm:col-span-2 text-xs ${colorStatus === "error" ? "text-error" : "text-muted"}`}
+                  aria-live="polite"
+                >
+                  {colorStatus === "saving"
+                    ? "Saving colors…"
+                    : colorStatus === "saved"
+                      ? "Colors saved"
+                      : "Colors could not be saved"}
+                </p>
+              ) : null}
               <div className="sm:col-span-2">
                 <Label>Logo</Label>
                 <Input
@@ -476,6 +532,197 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
         </div>
       </div>
     </div>
+  );
+}
+
+function CustomerUrlCard({
+  page,
+  canManage,
+  publishing,
+  unpublishing,
+  onPublish,
+  onUnpublish,
+}: {
+  page: TrackingPageRecord;
+  canManage: boolean;
+  publishing: boolean;
+  unpublishing: boolean;
+  onPublish: () => void;
+  onUnpublish: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [subdomain, setSubdomain] = useState(page.subdomain);
+  const [debounced, setDebounced] = useState(page.subdomain);
+  const normalized = subdomain.trim().toLowerCase();
+  const changed = normalized !== page.subdomain;
+  const parsed = subdomainSchema.safeParse(normalized);
+
+  useEffect(() => {
+    if (!editing) {
+      setSubdomain(page.subdomain);
+      setDebounced(page.subdomain);
+    }
+  }, [editing, page.subdomain]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(normalized), 300);
+    return () => window.clearTimeout(timer);
+  }, [normalized]);
+
+  const settled = debounced === normalized;
+  const availability = useQuery({
+    queryKey: ["subdomain-availability", debounced],
+    enabled: editing && changed && settled && parsed.success,
+    queryFn: () =>
+      api<SubdomainAvailability>(
+        `/api/v1/tracking-pages/subdomain-availability?subdomain=${encodeURIComponent(debounced)}`
+      ),
+  });
+
+  const save = useMutation({
+    mutationFn: () =>
+      api<TrackingPageRecord>("/api/v1/tracking-pages", {
+        method: "PATCH",
+        body: JSON.stringify({ subdomain: normalized }),
+      }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["tracking-page"], next);
+      setEditing(false);
+      toast.success("Customer URL updated.");
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Could not update the URL."),
+  });
+
+  const hint = changed && settled ? availabilityLabel(availability.data?.reason) : null;
+  const canSave =
+    changed && settled && parsed.success && availability.data?.available === true && !save.isPending;
+
+  async function copyUrl() {
+    await navigator.clipboard.writeText(page.publicUrl);
+    toast.success("Tracking URL copied.");
+  }
+
+  function cancel() {
+    setSubdomain(page.subdomain);
+    setDebounced(page.subdomain);
+    setEditing(false);
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <CardTitle>Customer URL</CardTitle>
+          {editing ? (
+            <div className="mt-3 space-y-2">
+              <Label htmlFor="customer-subdomain">Subdomain</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="customer-subdomain"
+                  value={subdomain}
+                  autoFocus
+                  onChange={(event) => setSubdomain(event.target.value)}
+                />
+                <span className="whitespace-nowrap text-sm text-muted">{trackingHostSuffix()}</span>
+              </div>
+              {changed && !parsed.success ? (
+                <p className="text-sm text-error">{parsed.error.issues[0]?.message}</p>
+              ) : null}
+              {hint ? <p className={`text-sm font-medium ${hint.className}`}>{hint.text}</p> : null}
+              <p className="text-sm text-muted">The previous address stops working after you save.</p>
+            </div>
+          ) : (
+            <CardDescription className="break-all">{page.publicUrl}</CardDescription>
+          )}
+        </div>
+        <StatusBadge value={page.status} />
+      </CardHeader>
+      <CardContent className="flex flex-wrap gap-2">
+        {editing ? (
+          <>
+            <Button type="button" onClick={() => save.mutate()} disabled={!canSave}>
+              {save.isPending ? "Saving…" : "Save URL"}
+            </Button>
+            <Button type="button" variant="secondary" onClick={cancel} disabled={save.isPending}>
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button type="button" variant="secondary" onClick={copyUrl}>
+              <Copy />
+              Copy URL
+            </Button>
+            <a href={page.publicUrl} target="_blank" rel="noopener noreferrer">
+              <Button type="button" variant="secondary">
+                <ExternalLink />
+                Open
+              </Button>
+            </a>
+            {canManage ? (
+              <Button type="button" variant="secondary" onClick={() => setEditing(true)}>
+                <Pencil />
+                Edit URL
+              </Button>
+            ) : null}
+          </>
+        )}
+        {canManage && page.status === "PUBLISHED" ? (
+          <Button type="button" variant="secondary" onClick={onUnpublish} disabled={unpublishing}>
+            Unpublish
+          </Button>
+        ) : null}
+        {canManage && page.status !== "PUBLISHED" ? (
+          <Button type="button" onClick={onPublish} disabled={publishing}>
+            Publish
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ColorField({
+  label,
+  name,
+  value,
+  fallback,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  name: "primaryColor" | "backgroundColor";
+  value: string;
+  fallback: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const valid = parseHex(value);
+  const pickerValue = valid ?? parseHex(fallback) ?? "#000000";
+
+  return (
+    <Field label={label}>
+      <div className="flex items-center gap-2">
+        <Input
+          type="color"
+          name={name}
+          aria-label={`${label} picker`}
+          disabled={disabled}
+          className="h-11 w-16 shrink-0 p-1"
+          value={pickerValue}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <Input
+          name={name}
+          aria-label={`${label} hex`}
+          spellCheck={false}
+          disabled={disabled}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </div>
+    </Field>
   );
 }
 

@@ -58,7 +58,8 @@ export default function OnboardingPage() {
           <div className="rounded-3xl border border-border bg-white p-7 shadow-[0_1px_2px_rgb(9_9_11/0.05),0_12px_40px_rgb(9_9_11/0.08)] sm:p-8 dark:bg-card">
             <h1 className="text-2xl font-semibold tracking-tight text-ink">Create your workspace</h1>
             <p className="mt-1.5 text-sm text-muted">
-              This is the merchant account your orders, shipments, and billing will belong to.
+              This is the merchant account your orders, shipments, and billing will belong to. A
+              customer tracking link is created from this name, and you can change it later.
             </p>
 
             <form className="mt-7 space-y-5" onSubmit={form.handleSubmit(onSubmit)}>

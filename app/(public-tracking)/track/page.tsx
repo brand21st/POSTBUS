@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function TrackPage({
   searchParams,
 }: {
-  searchParams: Promise<{ subdomain?: string }>;
+  searchParams: Promise<{ subdomain?: string; tracking?: string }>;
 }) {
   const headerStore = await headers();
   const query = await searchParams;
@@ -33,5 +33,5 @@ export default async function TrackPage({
   }
 
   if (!page) return <PublicTrackingPage unavailable />;
-  return <PublicTrackingPage page={page} />;
+  return <PublicTrackingPage page={page} initialQuery={query.tracking?.trim() ?? ""} />;
 }

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { logInfo } from "@/lib/logger";
+import { logError, logInfo } from "@/lib/logger";
+import { provisionTrackingPage } from "@/modules/tracking-pages/service";
 
 type MembershipRow = {
   role: string;
@@ -10,6 +11,25 @@ type MembershipRow = {
     | { id: string; name: string; slug: string; created_at?: string }[]
     | null;
 };
+
+async function ensureTrackingPage(
+  supabase: SupabaseClient,
+  userId: string,
+  organization: { id: string; name: string }
+) {
+  try {
+    await provisionTrackingPage(supabase, {
+      userId,
+      organizationId: organization.id,
+      organizationName: organization.name,
+    });
+  } catch (error) {
+    logError("tracking_page.provision_failed", {
+      organizationId: organization.id,
+      message: error instanceof Error ? error.message : "Could not create the tracking URL.",
+    });
+  }
+}
 
 function orgFromMembership(item: MembershipRow) {
   const org = Array.isArray(item.organizations) ? item.organizations[0] : item.organizations;
@@ -70,6 +90,7 @@ export async function createOrganization(
   }
 
   logInfo("organization.created", { organizationId: org.id, userId });
+  await ensureTrackingPage(supabase, userId, { id: org.id, name: org.name ?? name });
   return org;
 }
 
@@ -110,9 +131,14 @@ export async function ensureActiveWorkspace(
     await setActiveOrganization(supabase, userId, canonical.organization_id);
   }
 
+  const current = canonical ? orgFromMembership(canonical) : null;
+  if (current) {
+    await ensureTrackingPage(supabase, userId, current);
+  }
+
   return {
     memberships: canonical ? [canonical] : [],
-    current: canonical ? orgFromMembership(canonical) : null,
+    current,
     role: canonical?.role ?? null,
   };
 }

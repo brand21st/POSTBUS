@@ -153,6 +153,19 @@ describe("shopify order mapping", () => {
     expect(payload.fulfillment.notify_customer).toBe(true);
   });
 
+  it("sends the customer tracking page with the tracking id", () => {
+    const payload = shopifyFulfillmentPayload({
+      fulfillmentOrders: [{ id: 11, status: "open" }],
+      trackingNumber: "CL556974704IN",
+      trackingUrl: "https://priya.postbus.in/?tracking=CL556974704IN",
+    });
+    expect(payload.fulfillment.tracking_info).toEqual({
+      company: "India Post",
+      number: "CL556974704IN",
+      url: "https://priya.postbus.in/?tracking=CL556974704IN",
+    });
+  });
+
   it("is ready to sync when shop domain and app credentials exist", () => {
     expect(shopifyReadyToSync({ shop_domain: "demo.myshopify.com" })).toBe(false);
     expect(

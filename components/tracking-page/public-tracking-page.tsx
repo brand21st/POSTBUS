@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Radio } from "lucide-react";
 import { BannerAds } from "@/components/tracking-page/banner-ads";
 import { StoreLocationCard } from "@/components/tracking-page/store-location-card";
@@ -17,14 +17,16 @@ export function PublicTrackingPage({
   preview = false,
   lookupEnabled = true,
   compact = false,
+  initialQuery = "",
 }: {
   page?: TrackingPageRecord | null;
   unavailable?: boolean;
   preview?: boolean;
   lookupEnabled?: boolean;
   compact?: boolean;
+  initialQuery?: string;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PublicTrackResult | null>(null);
@@ -32,8 +34,7 @@ export function PublicTrackingPage({
   const accent = page?.primaryColor || "#E11D48";
   const background = page?.backgroundColor || "#FFFFFF";
 
-  async function onTrack(event: React.FormEvent) {
-    event.preventDefault();
+  async function lookup(value: string) {
     if (!lookupEnabled || preview) {
       setError(preview ? "Publish the page to look up live shipments from this preview." : null);
       return;
@@ -44,7 +45,7 @@ export function PublicTrackingPage({
     try {
       const data = await api<PublicTrackResult>("/api/v1/public/track", {
         method: "POST",
-        body: JSON.stringify({ query: query.trim(), subdomain: page?.subdomain }),
+        body: JSON.stringify({ query: value.trim(), subdomain: page?.subdomain }),
       });
       setResult(data);
       if (!data.found) {
@@ -55,6 +56,19 @@ export function PublicTrackingPage({
     } finally {
       setLoading(false);
     }
+  }
+
+  useEffect(() => {
+    const id = initialQuery.trim();
+    if (id.length < 6 || !lookupEnabled || preview || !page?.subdomain) return;
+    void lookup(id);
+    // The link from Shopify should look up once when the page opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery, lookupEnabled, preview, page?.subdomain]);
+
+  async function onTrack(event: React.FormEvent) {
+    event.preventDefault();
+    await lookup(query);
   }
 
   if (unavailable || !page) {

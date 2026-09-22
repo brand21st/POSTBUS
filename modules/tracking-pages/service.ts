@@ -9,7 +9,7 @@ import {
   MAX_BANNERS,
   MAX_UPLOAD_BYTES,
 } from "./constants";
-import { classifySubdomain, publicObjectUrl, trackingPagePublicUrl } from "./host";
+import { classifySubdomain, publicObjectUrl, subdomainCandidates, trackingPagePublicUrl } from "./host";
 import type { UpdateTrackingPageInput } from "./schema";
 import type { TrackingPageBanner, TrackingPageRecord, TrackingPageSocial } from "@/types/api";
 
@@ -229,6 +229,38 @@ export async function createTrackingPage(
   });
 
   return mapTrackingPage(data as TrackingPageRow);
+}
+
+export async function provisionTrackingPage(
+  supabase: SupabaseClient,
+  input: { userId: string; organizationId: string; organizationName: string }
+) {
+  const existing = await getTrackingPage(supabase, input.organizationId);
+  if (existing) return existing;
+
+  const storeName = input.organizationName.trim() || "Store";
+  const ctx: TenantContext = {
+    userId: input.userId,
+    email: null,
+    fullName: null,
+    organizationId: input.organizationId,
+    organizationName: storeName,
+    role: "OWNER",
+    permissions: [],
+  };
+
+  for (const subdomain of subdomainCandidates(storeName)) {
+    const availability = await checkSubdomainAvailability(supabase, subdomain, input.organizationId);
+    if (!availability.available) continue;
+    try {
+      return await createTrackingPage(supabase, ctx, subdomain, storeName);
+    } catch (error) {
+      if (error instanceof AppError && error.code === ERROR_CODES.CONFLICT) continue;
+      throw error;
+    }
+  }
+
+  throw new AppError(ERROR_CODES.CONFLICT, "Could not reserve a tracking URL for this workspace.");
 }
 
 export async function updateTrackingPage(

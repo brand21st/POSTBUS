@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { classifySubdomain, parseTrackingSubdomain, trackingPagePublicUrl } from "./host";
+import {
+  classifySubdomain,
+  customerTrackingLink,
+  parseTrackingSubdomain,
+  subdomainCandidates,
+  trackingPagePublicUrl,
+} from "./host";
 
 describe("parseTrackingSubdomain", () => {
   it("keeps apex and localhost on the marketing host", () => {
@@ -37,6 +43,27 @@ describe("classifySubdomain", () => {
     expect(classifySubdomain("www").reason).toBe("reserved");
     expect(classifySubdomain("Priya Stores").reason).toBe("invalid");
     expect(classifySubdomain("priya-stores").reason).toBe("ok");
+  });
+});
+
+describe("subdomainCandidates", () => {
+  it("builds a tracking subdomain from a workspace or store name", () => {
+    expect(subdomainCandidates("AURIMO BY NISH")[0]).toBe("aurimo-by-nish");
+    expect(subdomainCandidates("Priya's Store")[0]).toBe("priya-s-store");
+    expect(subdomainCandidates("Northwind Retail")[0]).toBe("northwind-retail");
+  });
+
+  it("skips reserved labels and offers the next free suffix", () => {
+    expect(subdomainCandidates("admin")[0]).toBe("admin-2");
+    expect(subdomainCandidates("!!!")[0]).toBe("store");
+  });
+});
+
+describe("customerTrackingLink", () => {
+  it("attaches the tracking id to the customer page", () => {
+    expect(customerTrackingLink("https://priya.postbus.in", "CL556974704IN")).toBe(
+      "https://priya.postbus.in/?tracking=CL556974704IN"
+    );
   });
 });
 
