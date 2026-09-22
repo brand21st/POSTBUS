@@ -148,6 +148,8 @@ export async function enqueueWatiNotify(
     .maybeSingle();
   if (!data || data.status !== "CONNECTED") return;
   if (!watiTemplateForEvent(event, data as WatiTemplateMap)) return;
+  const { isAutoWatiEventEnabled } = await import("@/modules/automation/service");
+  if (!(await isAutoWatiEventEnabled(supabase, organizationId, event))) return;
   const entityId = ids.shipmentId ?? ids.orderId;
   if (!entityId) return;
   const { createBackgroundJob } = await import("@/modules/jobs/service");

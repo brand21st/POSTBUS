@@ -4,6 +4,7 @@ import {
   AUTOMATION_DEFAULTS,
   getAutomationSettings,
   isAutoShopifySyncEnabled,
+  isAutoWatiEventEnabled,
   mapAutomationSettings,
   updateAutomationSettings,
 } from "@/modules/automation/service";
@@ -83,6 +84,8 @@ describe("automation settings", () => {
     expect(mapped.auto_shopify_sync).toBe(true);
     expect(mapped.autoBooking).toBe(false);
     expect(mapped.auto_booking).toBe(false);
+    expect(mapped.autoWatiOrderConfirmation).toBe(true);
+    expect(mapped.autoWatiDelivered).toBe(true);
   });
 
   it("creates a row with service defaults when none exists", async () => {
@@ -118,5 +121,14 @@ describe("automation settings", () => {
     });
     await expect(isAutoShopifySyncEnabled(on as never, "org-1")).resolves.toBe(true);
     await expect(isAutoShopifySyncEnabled(off as never, "org-1")).resolves.toBe(false);
+  });
+
+  it("reports whether a Wati stage is enabled", async () => {
+    const on = automationClient();
+    const off = automationClient({
+      existing: { ...row, auto_wati_processing: false },
+    });
+    await expect(isAutoWatiEventEnabled(on as never, "org-1", "processing")).resolves.toBe(true);
+    await expect(isAutoWatiEventEnabled(off as never, "org-1", "processing")).resolves.toBe(false);
   });
 });

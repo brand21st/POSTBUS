@@ -32,6 +32,7 @@ import {
   canMarkInTransit,
   canProcessOrderAction,
   customerName,
+  isShopifyConnected,
   isWatiConnected,
   itemCount,
   itemNamesPreview,
@@ -72,6 +73,8 @@ export default function OrdersPage() {
   const shopifyStatus = (shopify?.status ?? "").toUpperCase();
   const shopifyReady = shopifyStatus === "CONNECTED" || Boolean(shopify?.readyToSync);
   const watiConnected = isWatiConnected(integrations.data);
+  const shopifyConnected = isShopifyConnected(integrations.data);
+  const stageActionsEnabled = watiConnected || shopifyConnected;
 
   const query = useQuery({
     queryKey: ["orders", page, debounced, status, source, payment],
@@ -254,25 +257,25 @@ export default function OrdersPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
               <DropdownMenuItem
-                disabled={!canProcessOrderAction(row, watiConnected) || pending}
+                disabled={!canProcessOrderAction(row, stageActionsEnabled) || pending}
                 onSelect={() => ship.mutate({ orderIds: [row.id], action: "processing" })}
               >
                 Processing
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={!canFulfillOrderAction(row, watiConnected) || pending}
+                disabled={!canFulfillOrderAction(row, stageActionsEnabled) || pending}
                 onSelect={() => ship.mutate({ orderIds: [row.id], action: "fulfill" })}
               >
                 Fulfill · Booked / packed
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={!canMarkInTransit(row, watiConnected) || pending}
+                disabled={!canMarkInTransit(row, stageActionsEnabled) || pending}
                 onSelect={() => ship.mutate({ orderIds: [row.id], action: "in_transit" })}
               >
                 In transit
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={!canMarkDelivered(row, watiConnected) || pending}
+                disabled={!canMarkDelivered(row, stageActionsEnabled) || pending}
                 onSelect={() => ship.mutate({ orderIds: [row.id], action: "delivered" })}
               >
                 Delivered
@@ -290,7 +293,7 @@ export default function OrdersPage() {
         title="Orders"
         description={
           shopifyReady
-            ? "Unfulfilled Shopify orders import automatically. New store orders appear here as they arrive."
+            ? "Unfulfilled Shopify orders import automatically. Status changes send the matching Wati template and update Shopify fulfillment."
             : "Filter, export, and ship the canonical order list."
         }
         actions={

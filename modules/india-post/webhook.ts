@@ -261,6 +261,21 @@ export async function processIndiaPostInboxEvent(
       } catch {
         // WhatsApp is optional; tracking updates should still persist.
       }
+      try {
+        const { getAutomationSettings } = await import("@/modules/automation/service");
+        const automation = await getAutomationSettings(supabase, organizationId);
+        if (automation.autoShopifyFulfillment !== false) {
+          const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
+          await syncShopifyOrderStage(supabase, {
+            organizationId,
+            orderId: shipment.order_id,
+            shipmentId: shipment.id,
+            stage: mapped.shipmentStatus === "DELIVERED" ? "delivered" : "in_transit",
+          });
+        }
+      } catch {
+        // Shopify fulfillment events are optional; tracking updates should still persist.
+      }
     }
     await supabase.from("notifications").insert({
       organization_id: organizationId,

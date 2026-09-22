@@ -57,7 +57,37 @@ const TOGGLES = [
     snake: "auto_shopify_fulfillment",
     title: "Auto Shopify fulfillment",
     description:
-      "As soon as India Post returns an article ID, fulfill the Shopify order and set the tracking number and tracking link.",
+      "When an order is booked, write the tracking id and tracking link to Shopify. Later In transit and Delivered statuses add the matching Shopify fulfillment events.",
+  },
+  {
+    camel: "autoWatiOrderConfirmation",
+    snake: "auto_wati_order_confirmation",
+    title: "Wati · Order confirmation",
+    description: "Send the Order confirmation template from Integrations → Wati when a Shopify order is imported.",
+  },
+  {
+    camel: "autoWatiProcessing",
+    snake: "auto_wati_processing",
+    title: "Wati · Processing",
+    description: "Send the Processing template when the order status becomes Processing, including the Orders page action.",
+  },
+  {
+    camel: "autoWatiBooked",
+    snake: "auto_wati_booked",
+    title: "Wati · Booked / packed",
+    description: "Send the Booked / packed template when India Post returns a tracking id, or when you choose Fulfill on Orders.",
+  },
+  {
+    camel: "autoWatiInTransit",
+    snake: "auto_wati_in_transit",
+    title: "Wati · In transit",
+    description: "Send the In transit template when India Post first moves the article, or when you mark In transit on Orders.",
+  },
+  {
+    camel: "autoWatiDelivered",
+    snake: "auto_wati_delivered",
+    title: "Wati · Delivered",
+    description: "Send the Delivered template when the shipment is delivered, or when you mark Delivered on Orders.",
   },
 ] as const;
 
@@ -102,12 +132,12 @@ export default function AutomationPage() {
     <div className="space-y-6">
       <PageHeader
         title="Automation"
-        description="These rules are stored on your workspace and honored by workers. They never fake a provider success."
+        description="These rules match the order stages on Orders and the Wati templates. Workers skip a step when that integration is not connected."
       />
 
       {query.isLoading ? (
         <div className="space-y-3">
-          {Array.from({ length: 7 }).map((_, index) => (
+          {Array.from({ length: 12 }).map((_, index) => (
             <Skeleton key={index} className="h-24" />
           ))}
         </div>

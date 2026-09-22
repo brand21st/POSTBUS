@@ -89,6 +89,17 @@ export async function createShipmentsForOrders(
         orderId: order.id,
         shipmentId: current.id,
       });
+      try {
+        const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
+        await syncShopifyOrderStage(supabase, {
+          organizationId: ctx.organizationId,
+          orderId: order.id,
+          shipmentId: current.id,
+          stage: "booked",
+        });
+      } catch {
+        // Shopify fulfillment is optional when the article is already booked.
+      }
       created.push({ ...current, jobId: null });
       continue;
     }
@@ -271,14 +282,18 @@ export async function retryShipment(supabase: SupabaseClient, ctx: TenantContext
   return { shipmentId: id, jobId: job.id, message: "Retry queued." };
 }
 
-async function requireWatiConnected(supabase: SupabaseClient, organizationId: string) {
-  const { data } = await supabase
-    .from("wati_connections")
-    .select("status")
-    .eq("organization_id", organizationId)
-    .maybeSingle();
-  if ((data?.status ?? "").toUpperCase() !== "CONNECTED") {
-    throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Connect Wati to use this status.");
+async function requireShipmentStageIntegrations(supabase: SupabaseClient, organizationId: string) {
+  const [{ data: wati }, { data: shopify }] = await Promise.all([
+    supabase.from("wati_connections").select("status").eq("organization_id", organizationId).maybeSingle(),
+    supabase.from("shopify_connections").select("status").eq("organization_id", organizationId).maybeSingle(),
+  ]);
+  const watiOn = (wati?.status ?? "").toUpperCase() === "CONNECTED";
+  const shopifyOn = (shopify?.status ?? "").toUpperCase() === "CONNECTED";
+  if (!watiOn && !shopifyOn) {
+    throw new AppError(
+      ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+      "Connect Wati or Shopify to update this order status."
+    );
   }
 }
 
@@ -290,8 +305,13 @@ async function applyProcessingSideEffects(
 ) {
   await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", orderId);
   try {
-    const { markShopifyOrderProcessing } = await import("@/modules/shopify/orders");
-    await markShopifyOrderProcessing(supabase, { organizationId: ctx.organizationId, orderId });
+    const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
+    await syncShopifyOrderStage(supabase, {
+      organizationId: ctx.organizationId,
+      orderId,
+      shipmentId,
+      stage: "processing",
+    });
   } catch {
     // Shopify in-progress is optional; Processing should still succeed.
   }
@@ -321,7 +341,7 @@ async function markWatiShipmentStage(
   orderIds: string[],
   action: "in_transit" | "delivered"
 ) {
-  await requireWatiConnected(supabase, ctx.organizationId);
+  await requireShipmentStageIntegrations(supabase, ctx.organizationId);
 
   const { data: orders, error } = await supabase
     .from("orders")
@@ -373,6 +393,17 @@ async function markWatiShipmentStage(
       orderId: order.id,
       shipmentId: shipment?.id,
     });
+    try {
+      const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
+      await syncShopifyOrderStage(supabase, {
+        organizationId: ctx.organizationId,
+        orderId: order.id,
+        shipmentId: shipment?.id,
+        stage: watiEvent,
+      });
+    } catch {
+      // Shopify fulfillment events are optional; local status should still update.
+    }
     updated.push({ ...(shipment ?? { id: order.id, order_id: order.id, status: nextStatus }), jobId: null });
   }
 

@@ -417,12 +417,14 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     entityType: "shipment",
     entityId: shipment.id,
   });
-  await createBackgroundJob(supabase, {
-    organizationId: payload.organizationId,
-    jobType: "shopify-fulfillment",
-    entityType: "shipment",
-    entityId: shipment.id,
-  });
+  if (automation.autoShopifyFulfillment) {
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "shopify-fulfillment",
+      entityType: "shipment",
+      entityId: shipment.id,
+    });
+  }
   if (automation.autoTrackingSync) {
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
@@ -761,15 +763,42 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
     const delivered = article.del_status?.del_status?.toLowerCase() === "delivered";
     const alreadyDelivered = shipment.status === "DELIVERED";
     const alreadyMoving = ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"].includes(shipment.status);
+    let nextStage: "in_transit" | "delivered" | null = null;
     if (delivered && !alreadyDelivered) {
+      nextStage = "delivered";
       await supabase.from("shipments").update({ status: "DELIVERED" }).eq("id", shipment.id);
       if (shipment.order_id) {
         await supabase.from("orders").update({ status: "DELIVERED" }).eq("id", shipment.order_id);
       }
     } else if (!delivered && !alreadyMoving && (article.tracking_details?.length ?? 0) > 0) {
+      nextStage = "in_transit";
       await supabase.from("shipments").update({ status: "IN_TRANSIT" }).eq("id", shipment.id);
       if (shipment.order_id) {
         await supabase.from("orders").update({ status: "IN_TRANSIT" }).eq("id", shipment.order_id);
+      }
+    }
+    if (nextStage && shipment.order_id) {
+      try {
+        const { enqueueWatiNotify } = await import("@/modules/wati/send");
+        await enqueueWatiNotify(supabase, payload.organizationId, nextStage, {
+          shipmentId: shipment.id,
+          orderId: shipment.order_id,
+        });
+      } catch {
+        // WhatsApp is optional; tracking still updates.
+      }
+      if (automation.autoShopifyFulfillment) {
+        try {
+          const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
+          await syncShopifyOrderStage(supabase, {
+            organizationId: payload.organizationId,
+            orderId: shipment.order_id,
+            shipmentId: shipment.id,
+            stage: nextStage,
+          });
+        } catch {
+          // Shopify fulfillment events are optional.
+        }
       }
     }
   }
@@ -798,6 +827,8 @@ async function shopifyFulfillment(
   if (!payload.entityId) {
     throw Object.assign(new Error("Shipment id is missing."), { code: "VALIDATION_ERROR" });
   }
+  const automation = await loadAutomation(supabase, payload.organizationId);
+  if (!automation.autoShopifyFulfillment) return;
   const { fulfillShopifyShipment } = await import("@/modules/shopify/orders");
   const result = await fulfillShopifyShipment(supabase, {
     organizationId: payload.organizationId,

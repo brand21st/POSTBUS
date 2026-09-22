@@ -113,8 +113,11 @@ export function nextShopifyOrderStatus(input: {
   currentStatus?: string | null;
 }) {
   if (input.cancelledAt) return "CANCELLED";
-  if (input.fulfillmentStatus === "FULFILLED") return "SHIPPED";
   const current = (input.currentStatus ?? "").toUpperCase();
+  if (input.fulfillmentStatus === "FULFILLED") {
+    if (["BOOKED", "IN_TRANSIT", "DELIVERED"].includes(current)) return current;
+    return "SHIPPED";
+  }
   if (["PROCESSING", "BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"].includes(current)) {
     return current;
   }
@@ -433,6 +436,124 @@ export async function markShopifyOrderProcessing(
     }
   }
   return { skipped: marked === 0, marked };
+}
+
+export function shopifyFulfillmentEventStatus(stage: "booked" | "in_transit" | "delivered") {
+  if (stage === "delivered") return "delivered";
+  if (stage === "in_transit") return "in_transit";
+  return "confirmed";
+}
+
+async function latestShopifyFulfillmentId(shop: string, token: string, sourceOrderId: string) {
+  const listRes = await shopifyRequest(
+    shop,
+    token,
+    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillments.json`
+  );
+  if (!listRes.ok) return null;
+  const json = (await listRes.json()) as { fulfillments?: Array<{ id?: number | string }> };
+  const latest = [...(json.fulfillments ?? [])]
+    .map((row) => Number(row.id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+    .sort((a, b) => b - a)[0];
+  return latest ?? null;
+}
+
+async function loadShopifyOrderLink(
+  supabase: SupabaseClient,
+  input: { organizationId: string; orderId: string }
+) {
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, source, source_order_id")
+    .eq("id", input.orderId)
+    .eq("organization_id", input.organizationId)
+    .maybeSingle();
+  if ((order?.source || "").toUpperCase() !== "SHOPIFY") return null;
+  let sourceOrderId = order?.source_order_id ? String(order.source_order_id).trim() : "";
+  if (!sourceOrderId) {
+    const { data: ref } = await supabase
+      .from("external_order_references")
+      .select("source_order_id")
+      .eq("organization_id", input.organizationId)
+      .eq("order_id", input.orderId)
+      .eq("source", "SHOPIFY")
+      .maybeSingle();
+    sourceOrderId = ref?.source_order_id ? String(ref.source_order_id).trim() : "";
+  }
+  if (!sourceOrderId) return null;
+  return { orderId: order!.id as string, sourceOrderId };
+}
+
+export async function postShopifyFulfillmentEvent(
+  supabase: SupabaseClient,
+  input: { organizationId: string; orderId: string; stage: "booked" | "in_transit" | "delivered" }
+) {
+  const link = await loadShopifyOrderLink(supabase, input);
+  if (!link) return { skipped: true, reason: "not_shopify" };
+  const connection = await loadShopifyConnection(supabase, input.organizationId);
+  const shop = connection?.shop_domain;
+  const token = await resolveShopifyAdminToken(connection);
+  if (!shop || !token) return { skipped: true, reason: "shopify_not_connected" };
+  const fulfillmentId = await latestShopifyFulfillmentId(shop, token, link.sourceOrderId);
+  if (!fulfillmentId) return { skipped: true, reason: "no_fulfillment" };
+  const status = shopifyFulfillmentEventStatus(input.stage);
+  const response = await shopifyRequest(
+    shop,
+    token,
+    `/orders/${encodeURIComponent(link.sourceOrderId)}/fulfillments/${fulfillmentId}/events.json`,
+    {
+      method: "POST",
+      body: JSON.stringify({ event: { status } }),
+    }
+  );
+  if (!response.ok) {
+    const body = await response.text();
+    if (response.status === 422 && /already|duplicate|invalid/i.test(body)) {
+      return { skipped: true, reason: "event_already_set", status };
+    }
+    return { skipped: true, reason: `fulfillment_event_${response.status}`, status };
+  }
+  return { skipped: false, status };
+}
+
+export async function syncShopifyOrderStage(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    shipmentId?: string | null;
+    stage: "processing" | "booked" | "in_transit" | "delivered";
+  }
+) {
+  try {
+    if (input.stage === "processing") {
+      return await markShopifyOrderProcessing(supabase, {
+        organizationId: input.organizationId,
+        orderId: input.orderId,
+      });
+    }
+    if (input.stage === "booked") {
+      if (!input.shipmentId) return { skipped: true, reason: "no_shipment" };
+      return await fulfillShopifyShipment(supabase, {
+        organizationId: input.organizationId,
+        shipmentId: input.shipmentId,
+      });
+    }
+    if (input.shipmentId) {
+      await fulfillShopifyShipment(supabase, {
+        organizationId: input.organizationId,
+        shipmentId: input.shipmentId,
+      }).catch(() => null);
+    }
+    return await postShopifyFulfillmentEvent(supabase, {
+      organizationId: input.organizationId,
+      orderId: input.orderId,
+      stage: input.stage,
+    });
+  } catch {
+    return { skipped: true, reason: "shopify_stage_failed" };
+  }
 }
 
 export async function fulfillShopifyShipment(

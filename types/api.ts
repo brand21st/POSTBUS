@@ -285,6 +285,16 @@ export type AutomationSettings = {
   auto_tracking_sync?: boolean;
   autoShopifyFulfillment?: boolean;
   auto_shopify_fulfillment?: boolean;
+  autoWatiOrderConfirmation?: boolean;
+  auto_wati_order_confirmation?: boolean;
+  autoWatiProcessing?: boolean;
+  auto_wati_processing?: boolean;
+  autoWatiBooked?: boolean;
+  auto_wati_booked?: boolean;
+  autoWatiInTransit?: boolean;
+  auto_wati_in_transit?: boolean;
+  autoWatiDelivered?: boolean;
+  auto_wati_delivered?: boolean;
 };
 
 export type IntegrationCard = {

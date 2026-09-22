@@ -7,6 +7,7 @@ import {
   canProcessOrder,
   canProcessOrderAction,
   canShipOrder,
+  isShopifyConnected,
   isWatiConnected,
   itemSummary,
   orderActionLabel,
@@ -84,5 +85,11 @@ describe("canShipOrder", () => {
     expect(canMarkDelivered({ status: "CANCELLED" }, true)).toBe(false);
     expect(canProcessOrderAction({ status: "CANCELLED" }, true)).toBe(false);
     expect(canFulfillOrderAction({ status: "CANCELLED" }, true)).toBe(false);
+  });
+
+  it("enables in transit and delivered when Shopify is connected", () => {
+    expect(isShopifyConnected({ shopify: { provider: "shopify", status: "CONNECTED" } })).toBe(true);
+    expect(canMarkInTransit({ status: "BOOKED" }, true)).toBe(true);
+    expect(canMarkDelivered({ status: "IN_TRANSIT" }, true)).toBe(true);
   });
 });

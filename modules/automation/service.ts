@@ -10,7 +10,12 @@ type Column =
   | "auto_label_generation"
   | "auto_manifest"
   | "auto_tracking_sync"
-  | "auto_shopify_fulfillment";
+  | "auto_shopify_fulfillment"
+  | "auto_wati_order_confirmation"
+  | "auto_wati_processing"
+  | "auto_wati_booked"
+  | "auto_wati_in_transit"
+  | "auto_wati_delivered";
 
 const CAMEL_TO_COLUMN: Record<string, Column> = {
   autoShopifySync: "auto_shopify_sync",
@@ -27,6 +32,16 @@ const CAMEL_TO_COLUMN: Record<string, Column> = {
   auto_tracking_sync: "auto_tracking_sync",
   autoShopifyFulfillment: "auto_shopify_fulfillment",
   auto_shopify_fulfillment: "auto_shopify_fulfillment",
+  autoWatiOrderConfirmation: "auto_wati_order_confirmation",
+  auto_wati_order_confirmation: "auto_wati_order_confirmation",
+  autoWatiProcessing: "auto_wati_processing",
+  auto_wati_processing: "auto_wati_processing",
+  autoWatiBooked: "auto_wati_booked",
+  auto_wati_booked: "auto_wati_booked",
+  autoWatiInTransit: "auto_wati_in_transit",
+  auto_wati_in_transit: "auto_wati_in_transit",
+  autoWatiDelivered: "auto_wati_delivered",
+  auto_wati_delivered: "auto_wati_delivered",
 };
 
 export type AutomationRow = {
@@ -38,6 +53,11 @@ export type AutomationRow = {
   auto_manifest: boolean;
   auto_tracking_sync: boolean;
   auto_shopify_fulfillment: boolean;
+  auto_wati_order_confirmation?: boolean;
+  auto_wati_processing?: boolean;
+  auto_wati_booked?: boolean;
+  auto_wati_in_transit?: boolean;
+  auto_wati_delivered?: boolean;
 };
 
 export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
@@ -48,6 +68,11 @@ export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
   auto_manifest: true,
   auto_tracking_sync: true,
   auto_shopify_fulfillment: true,
+  auto_wati_order_confirmation: true,
+  auto_wati_processing: true,
+  auto_wati_booked: true,
+  auto_wati_in_transit: true,
+  auto_wati_delivered: true,
 };
 
 export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
@@ -67,7 +92,40 @@ export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
     auto_tracking_sync: row.auto_tracking_sync,
     autoShopifyFulfillment: row.auto_shopify_fulfillment,
     auto_shopify_fulfillment: row.auto_shopify_fulfillment,
+    autoWatiOrderConfirmation: row.auto_wati_order_confirmation ?? true,
+    auto_wati_order_confirmation: row.auto_wati_order_confirmation ?? true,
+    autoWatiProcessing: row.auto_wati_processing ?? true,
+    auto_wati_processing: row.auto_wati_processing ?? true,
+    autoWatiBooked: row.auto_wati_booked ?? true,
+    auto_wati_booked: row.auto_wati_booked ?? true,
+    autoWatiInTransit: row.auto_wati_in_transit ?? true,
+    auto_wati_in_transit: row.auto_wati_in_transit ?? true,
+    autoWatiDelivered: row.auto_wati_delivered ?? true,
+    auto_wati_delivered: row.auto_wati_delivered ?? true,
   };
+}
+
+const WATI_EVENT_FLAG: Record<string, keyof AutomationSettings> = {
+  order_confirmation: "autoWatiOrderConfirmation",
+  processing: "autoWatiProcessing",
+  booked: "autoWatiBooked",
+  in_transit: "autoWatiInTransit",
+  delivered: "autoWatiDelivered",
+};
+
+export async function isAutoWatiEventEnabled(
+  supabase: SupabaseClient,
+  organizationId: string,
+  event: string
+): Promise<boolean> {
+  const key = WATI_EVENT_FLAG[event];
+  if (!key) return true;
+  try {
+    const settings = await getAutomationSettings(supabase, organizationId);
+    return Boolean(settings[key]);
+  } catch {
+    return true;
+  }
 }
 
 export async function getAutomationSettings(

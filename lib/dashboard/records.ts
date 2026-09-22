@@ -135,26 +135,31 @@ export function isWatiConnected(payload?: IntegrationsResponse | null) {
   return (payload?.wati?.status ?? "").toUpperCase() === "CONNECTED";
 }
 
-export function canProcessOrderAction(order: { status?: string | null }, watiConnected = false) {
-  const status = (order.status ?? "").toUpperCase();
-  if (status === "CANCELLED") return false;
-  return watiConnected || canProcessOrder(order);
+export function isShopifyConnected(payload?: IntegrationsResponse | null) {
+  const status = (payload?.shopify?.status ?? "").toUpperCase();
+  return status === "CONNECTED" || Boolean(payload?.shopify?.readyToSync);
 }
 
-export function canFulfillOrderAction(order: { status?: string | null }, watiConnected = false) {
+export function canProcessOrderAction(order: { status?: string | null }, extrasConnected = false) {
   const status = (order.status ?? "").toUpperCase();
   if (status === "CANCELLED") return false;
-  return watiConnected || canFulfillOrder(order);
+  return extrasConnected || canProcessOrder(order);
 }
 
-export function canMarkInTransit(order: { status?: string | null }, watiConnected = false) {
-  if (!watiConnected) return false;
+export function canFulfillOrderAction(order: { status?: string | null }, extrasConnected = false) {
+  const status = (order.status ?? "").toUpperCase();
+  if (status === "CANCELLED") return false;
+  return extrasConnected || canFulfillOrder(order);
+}
+
+export function canMarkInTransit(order: { status?: string | null }, extrasConnected = false) {
+  if (!extrasConnected) return false;
   const status = (order.status ?? "").toUpperCase();
   return status !== "CANCELLED" && status !== "DELIVERED";
 }
 
-export function canMarkDelivered(order: { status?: string | null }, watiConnected = false) {
-  if (!watiConnected) return false;
+export function canMarkDelivered(order: { status?: string | null }, extrasConnected = false) {
+  if (!extrasConnected) return false;
   return (order.status ?? "").toUpperCase() !== "CANCELLED";
 }
 

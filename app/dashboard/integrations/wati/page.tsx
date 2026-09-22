@@ -181,7 +181,7 @@ export default function WatiIntegrationPage() {
     <div className="space-y-6">
       <PageHeader
         title="Wati"
-        description="Connect WhatsApp with a Wati API V3 token. Choose an approved Utility template for each order stage."
+        description="Choose an approved Utility template for each order stage. Automation uses the same stages: new Shopify order, Processing, Booked, In transit, and Delivered."
         actions={<StatusBadge value={config?.status ?? "NOT_CONNECTED"} />}
       />
 

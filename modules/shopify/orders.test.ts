@@ -9,6 +9,7 @@ import {
   nextShopifyOrderStatus,
   parseShopifyProgressReported,
   shopifyCustomerName,
+  shopifyFulfillmentEventStatus,
   shopifyFulfillmentOrderGid,
   shopifyFulfillmentPayload,
   shopifyOrderNumber,
@@ -111,6 +112,10 @@ describe("shopify order mapping", () => {
     ).toBe("PROCESSING");
     expect(nextShopifyOrderStatus({ fulfillmentStatus: "UNFULFILLED", currentStatus: "READY" })).toBe("READY");
     expect(nextShopifyOrderStatus({ fulfillmentStatus: "FULFILLED", currentStatus: "PROCESSING" })).toBe("SHIPPED");
+    expect(nextShopifyOrderStatus({ fulfillmentStatus: "FULFILLED", currentStatus: "BOOKED" })).toBe("BOOKED");
+    expect(nextShopifyOrderStatus({ fulfillmentStatus: "FULFILLED", currentStatus: "IN_TRANSIT" })).toBe(
+      "IN_TRANSIT"
+    );
     expect(nextShopifyOrderStatus({ fulfillmentStatus: "UNFULFILLED", cancelledAt: "2026-09-22" })).toBe(
       "CANCELLED"
     );
@@ -121,6 +126,9 @@ describe("shopify order mapping", () => {
     expect(canReportShopifyFulfillmentProgress("in_progress")).toBe(true);
     expect(canReportShopifyFulfillmentProgress("closed")).toBe(false);
     expect(shopifyFulfillmentOrderGid(5014440902678)).toBe("gid://shopify/FulfillmentOrder/5014440902678");
+    expect(shopifyFulfillmentEventStatus("booked")).toBe("confirmed");
+    expect(shopifyFulfillmentEventStatus("in_transit")).toBe("in_transit");
+    expect(shopifyFulfillmentEventStatus("delivered")).toBe("delivered");
   });
 
   it("parses Shopify progress-reported webhooks", () => {
