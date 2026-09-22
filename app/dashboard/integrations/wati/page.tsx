@@ -22,6 +22,15 @@ import { Copy } from "lucide-react";
 import type { WatiConfig } from "@/types/api";
 
 const NONE = "__none__";
+const WATI_WHATSAPP_NUMBER = "+917012788341";
+
+function watiNumberOption(value?: string | null) {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) return `+${digits}`;
+  if (digits.length === 10 && /^[6-9]/.test(digits)) return `+91${digits}`;
+  const trimmed = (value ?? "").trim();
+  return trimmed;
+}
 
 const TEMPLATE_SLOTS = [
   {
@@ -67,6 +76,7 @@ export default function WatiIntegrationPage() {
     delivered: "",
   });
   const [testPhone, setTestPhone] = useState("");
+  const [channelPhone, setChannelPhone] = useState(WATI_WHATSAPP_NUMBER);
   const [hydrated, setHydrated] = useState(false);
 
   const query = useQuery({
@@ -82,6 +92,7 @@ export default function WatiIntegrationPage() {
     setHydrated(true);
     setClientId(config.clientId ?? config.client_id ?? "");
     setBaseUrl(config.apiBaseUrl ?? config.api_base_url ?? "");
+    setChannelPhone(watiNumberOption(config.channelPhone ?? config.channel_phone) || WATI_WHATSAPP_NUMBER);
     setSlots({
       orderConfirmation: config.orderConfirmationTemplateName ?? config.order_confirmation_template_name ?? "",
       processing: config.processingTemplateName ?? config.processing_template_name ?? "",
@@ -101,6 +112,7 @@ export default function WatiIntegrationPage() {
         body: JSON.stringify({
           apiToken: replaceToken || !hasToken ? token.trim() || undefined : undefined,
           clientId: clientId.trim() || null,
+          channelPhone: channelPhone.trim() || null,
           apiBaseUrl: baseUrl.trim() || undefined,
           orderConfirmationTemplateName: slots.orderConfirmation || null,
           processingTemplateName: slots.processing || null,
@@ -161,6 +173,7 @@ export default function WatiIntegrationPage() {
   const lastWebhookEvent = config?.lastWebhookEvent ?? config?.last_webhook_event;
   const lastWebhookError = config?.lastWebhookError ?? config?.last_webhook_error;
   const webhookRegistered = Boolean(config?.webhookId ?? config?.webhook_id);
+  const phoneOptions = watiPhoneOptions(config?.channels, channelPhone, config?.channelPhone ?? config?.channel_phone);
 
   return (
     <div className="space-y-6">
@@ -196,8 +209,8 @@ export default function WatiIntegrationPage() {
               onChange={(event) => setClientId(event.target.value)}
             />
             <p className="text-xs text-muted">
-              Optional. The ID after live-mt-server.wati.io/ on the API Docs page. V3 keeps it out of
-              the request path.
+              Required to register the webhook. The ID after live-mt-server.wati.io/ on the API Docs
+              page. V3 keeps it out of the request path.
             </p>
           </div>
           {hasToken && !replaceToken ? (
@@ -228,6 +241,25 @@ export default function WatiIntegrationPage() {
             </div>
           )}
           <div className="space-y-2">
+            <Label htmlFor="wati-channel-phone">WhatsApp number</Label>
+            <Select value={channelPhone || WATI_WHATSAPP_NUMBER} onValueChange={setChannelPhone}>
+              <SelectTrigger id="wati-channel-phone">
+                <SelectValue placeholder={WATI_WHATSAPP_NUMBER} />
+              </SelectTrigger>
+              <SelectContent>
+                {phoneOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted">
+              Order messages and the webhook use this Wati line. {WATI_WHATSAPP_NUMBER} stays in the list
+              when Wati does not return the default channel.
+            </p>
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="wati-base">API host</Label>
             <Input
               id="wati-base"
@@ -237,11 +269,11 @@ export default function WatiIntegrationPage() {
             />
             <p className="text-xs text-muted">Leave blank to use the Wati V3 host.</p>
           </div>
-          {config?.channelName || config?.channel_name || config?.channelPhone || config?.channel_phone ? (
+          {config?.channelName || config?.channel_name ? (
             <p className="text-sm text-muted">
-              Channel {config.channelName ?? config.channel_name}
+              Connected channel {config.channelName ?? config.channel_name}
               {config.channelPhone ?? config.channel_phone
-                ? ` · ${config.channelPhone ?? config.channel_phone}`
+                ? ` · ${watiNumberOption(config.channelPhone ?? config.channel_phone)}`
                 : ""}
             </p>
           ) : null}
@@ -292,8 +324,8 @@ export default function WatiIntegrationPage() {
             <CardDescription>
               Incoming WhatsApp replies and failed templates are stored on this connection.
               {canRegisterWebhook
-                ? " Register to subscribe those events in Wati automatically."
-                : " On localhost Wati cannot reach this URL. After deploy, register it or paste the URL in Wati Connectors → Webhooks."}
+                ? ` Register to subscribe ${watiNumberOption(config?.channelPhone ?? config?.channel_phone) || channelPhone} in Wati.`
+                : " This URL is not public HTTPS, so Wati cannot call it yet."}
               {lastWebhookAt
                 ? ` Last event ${lastWebhookEvent ?? "unknown"} at ${formatDate(lastWebhookAt, true)}.`
                 : ""}
@@ -352,6 +384,29 @@ export default function WatiIntegrationPage() {
       </div>
     </div>
   );
+}
+
+function watiPhoneOptions(
+  channels: WatiConfig["channels"],
+  selected?: string | null,
+  saved?: string | null
+) {
+  const options = new Map<string, string>();
+  const add = (raw?: string | null, label?: string) => {
+    const value = watiNumberOption(raw);
+    if (!value || options.has(value)) return;
+    options.set(value, label || value);
+  };
+
+  add(WATI_WHATSAPP_NUMBER, WATI_WHATSAPP_NUMBER);
+  for (const channel of channels ?? []) {
+    const value = watiNumberOption(channel.platform_id);
+    const name = channel.name?.trim();
+    add(value, name && value ? `${name} · ${value}` : value || name);
+  }
+  add(saved);
+  add(selected);
+  return [...options.entries()].map(([value, label]) => ({ value, label }));
 }
 
 function TemplateSelect({

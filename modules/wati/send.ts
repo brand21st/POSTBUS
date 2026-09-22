@@ -62,7 +62,7 @@ export async function sendWatiNotice(
     template_name: templateName,
     broadcast_name: watiBroadcastName(event, trackingNumber ?? context.orderNumber),
     recipients: [recipient],
-    channel_number: connection.channel_phone ?? undefined,
+    channel: connection.channel_phone ?? undefined,
   });
   return { sent: true, templateName };
 }

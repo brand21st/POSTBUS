@@ -30,6 +30,7 @@ import { shopifyReadyToSync, syncUnfulfilledShopifyOrders } from "@/modules/shop
 import { watiClientFromRow } from "@/modules/wati/client";
 import { watiBroadcastName, watiNotifyRecipient } from "@/modules/wati/notify";
 import {
+  listWatiChannels,
   listWatiTemplates,
   mapWatiConfig,
   reconnectWati,
@@ -493,12 +494,11 @@ export async function handleIntegrationRoutes(
       .maybeSingle();
     const config = mapWatiConfig(data);
     if (!data?.encrypted_api_token) return config;
-    try {
-      const templates = await listWatiTemplates(data);
-      return { ...config, templates };
-    } catch {
-      return config;
-    }
+    const [templates, channels] = await Promise.all([
+      listWatiTemplates(data).catch(() => []),
+      listWatiChannels(data).catch(() => []),
+    ]);
+    return { ...config, templates, channels };
   }
 
   if (
@@ -511,6 +511,7 @@ export async function handleIntegrationRoutes(
       apiToken: body.apiToken ?? body.api_token ?? body.token,
       apiBaseUrl: body.apiBaseUrl ?? body.api_base_url,
       clientId: body.clientId ?? body.client_id,
+      channelPhone: body.channelPhone ?? body.channel_phone ?? body.whatsappNumber ?? body.whatsapp_number,
       orderConfirmationTemplateName:
         body.orderConfirmationTemplateName ?? body.order_confirmation_template_name,
       processingTemplateName: body.processingTemplateName ?? body.processing_template_name,
@@ -600,7 +601,7 @@ export async function handleIntegrationRoutes(
       template_name: templateName,
       broadcast_name: watiBroadcastName("booked", "TESTTRACKIN"),
       recipients: [recipient],
-      channel_number: data?.channel_phone ?? undefined,
+      channel: data?.channel_phone ?? undefined,
     });
     return { sent: true, broadcastId: result.broadcast_id ?? null };
   }

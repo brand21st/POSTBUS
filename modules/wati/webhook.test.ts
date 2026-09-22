@@ -1,10 +1,26 @@
 import { describe, expect, it } from "vitest";
+import { assertWebhookCreated, findWatiWebhook } from "@/modules/wati/register-webhook";
 import {
   parseWatiWebhookEvent,
+  parseWatiWebhookEvents,
   shouldNotifyWatiEvent,
   watiWebhookNotification,
 } from "@/modules/wati/webhook";
 import { canRegisterWatiWebhook, parseWatiWebhookPath, watiWebhookUrl } from "@/modules/wati/webhook-urls";
+
+describe("wati webhook subscription", () => {
+  it("matches an existing hook for the WhatsApp number and rejects a failed create", () => {
+    const url = "https://www.postbus.in/api/v1/webhooks/wati/11111111-1111-4111-8111-111111111111";
+    const match = findWatiWebhook(
+      [{ id: "hook-1", phoneNumber: "+917012788341", url: "https://old.example/hook" }],
+      { url, phone: "917012788341" }
+    );
+    expect(match?.id).toBe("hook-1");
+    expect(() => assertWebhookCreated({ ok: false, message: "Unknown phone number." })).toThrow(
+      "Unknown phone number."
+    );
+  });
+});
 
 describe("wati webhook URL", () => {
   it("builds and parses the inbound path", () => {
@@ -16,9 +32,13 @@ describe("wati webhook URL", () => {
     expect(parseWatiWebhookPath("webhooks/shopify")).toBeNull();
   });
 
-  it("only auto-registers on a public https host", () => {
+  it("uses the public Postbus host when the dashboard is on localhost", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(watiWebhookUrl(id, "http://localhost:3000")).toBe(
+      `https://www.postbus.in/api/v1/webhooks/wati/${id}`
+    );
     expect(canRegisterWatiWebhook("https://www.postbus.in")).toBe(true);
-    expect(canRegisterWatiWebhook("http://localhost:3000")).toBe(false);
+    expect(canRegisterWatiWebhook("http://localhost:3000")).toBe(true);
   });
 });
 
@@ -43,6 +63,17 @@ describe("parseWatiWebhookEvent", () => {
     expect(failed.eventId).toBe("local-9");
     expect(shouldNotifyWatiEvent(failed.eventType)).toBe(true);
     expect(watiWebhookNotification(failed.eventType).type).toBe("wati.template_failed");
+  });
+
+  it("reads a nested event and a batch", () => {
+    const nested = parseWatiWebhookEvent({
+      event: { eventType: "messageReceived", id: "evt-2", waId: "917012788341" },
+    });
+    expect(nested.eventType).toBe("messageReceived");
+    expect(nested.waId).toBe("917012788341");
+    expect(parseWatiWebhookEvents([{ eventType: "message", id: "a" }, { eventType: "message", id: "b" }])).toHaveLength(
+      2
+    );
   });
 
   it("notifies incoming replies and received messages", () => {

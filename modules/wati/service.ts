@@ -6,8 +6,11 @@ import {
   WatiClient,
   normalizeWatiBaseUrl,
   normalizeWatiClientId,
+  isWatiWhatsappChannel,
   pickWhatsappChannel,
+  watiChannelPhone,
   watiClientFromRow,
+  watiPhoneNumber,
   type WatiChannel,
   type WatiTemplate,
 } from "@/modules/wati/client";
@@ -91,9 +94,36 @@ export async function verifyWatiToken(token: string, baseUrl?: string | null) {
   return { channels: result.channels ?? [], channel };
 }
 
+export async function listWatiChannels(row: WatiConnectionRow | null) {
+  const client = watiClientFromRow(row);
+  const result = await client.listChannels(1, 100);
+  return (result.channels ?? []).filter((channel) => isWatiWhatsappChannel(channel));
+}
+
+function selectedWatiChannel(
+  channels: WatiChannel[],
+  preferred: string | null | undefined,
+  provided: boolean,
+  existing?: WatiConnectionRow | null
+) {
+  const detected = watiChannelPhone(pickWhatsappChannel(channels));
+  const phone = provided
+    ? watiPhoneNumber(preferred) || detected || null
+    : watiPhoneNumber(existing?.channel_phone) || detected || null;
+  const channel = pickWhatsappChannel(channels, phone);
+  const fallback = channels.find((item) => isWatiWhatsappChannel(item));
+  const sameExisting = Boolean(phone) && watiPhoneNumber(existing?.channel_phone) === phone;
+  return {
+    channel_id: channel?.id ?? (sameExisting ? existing?.channel_id ?? null : fallback?.id ?? null),
+    channel_name: channel?.name ?? fallback?.name ?? (phone ? "WhatsApp" : null),
+    channel_phone: phone,
+  };
+}
+
 export async function listWatiTemplates(row: WatiConnectionRow | null) {
   const client = watiClientFromRow(row);
-  const result = await client.listTemplates(1, 100, row?.channel_phone ?? undefined);
+  const channel = row?.channel_id ? watiPhoneNumber(row.channel_phone) ?? undefined : undefined;
+  const result = await client.listTemplates(1, 100, channel);
   return (result.templates ?? [])
     .filter((template) => isApprovedWatiTemplate(template.status) && template.name?.trim())
     .map((template) => ({
@@ -113,6 +143,7 @@ export async function saveWatiConnection(
     apiToken?: string;
     apiBaseUrl?: string;
     clientId?: string | null;
+    channelPhone?: string | null;
     orderConfirmationTemplateName?: string | null;
     processingTemplateName?: string | null;
     bookedTemplateName?: string | null;
@@ -162,16 +193,19 @@ export async function saveWatiConnection(
       token || decryptWatiToken(data as WatiConnectionRow),
       data.api_base_url
     );
-    const channel = verified.channel;
+    const channel = selectedWatiChannel(
+      verified.channels,
+      input.channelPhone,
+      input.channelPhone !== undefined,
+      existing as WatiConnectionRow | null
+    );
     const { data: connected, error: connectError } = await supabase
       .from("wati_connections")
       .update({
         status: "CONNECTED",
         last_verified_at: new Date().toISOString(),
         last_error: null,
-        channel_id: channel?.id ?? null,
-        channel_name: channel?.name ?? null,
-        channel_phone: channel?.platform_id ?? null,
+        ...channel,
       })
       .eq("id", data.id)
       .select()
@@ -180,7 +214,10 @@ export async function saveWatiConnection(
     const connectedRow = connected as WatiConnectionRow;
     return { row: await registerWatiWebhookQuietly(supabase, connectedRow), channels: verified.channels };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Wati verification failed.";
+    const raw = error instanceof Error ? error.message : "Wati verification failed.";
+    const message = /unable to authenticate data|unsupported state/i.test(raw)
+      ? "The saved Wati token could not be read. Click Replace and paste the API token again."
+      : raw;
     await supabase
       .from("wati_connections")
       .update({ status: "PENDING", last_error: message })
@@ -200,16 +237,14 @@ function decryptWatiToken(row: WatiConnectionRow) {
 
 export async function reconnectWati(supabase: SupabaseClient, row: WatiConnectionRow) {
   const verified = await verifyWatiToken(decryptWatiToken(row), row.api_base_url);
-  const channel = verified.channel;
+  const channel = selectedWatiChannel(verified.channels, row.channel_phone, false, row);
   const { data, error } = await supabase
     .from("wati_connections")
     .update({
       status: "CONNECTED",
       last_verified_at: new Date().toISOString(),
       last_error: null,
-      channel_id: channel?.id ?? null,
-      channel_name: channel?.name ?? null,
-      channel_phone: channel?.platform_id ?? null,
+      ...channel,
     })
     .eq("organization_id", row.organization_id)
     .select()
@@ -228,9 +263,11 @@ export async function registerWatiWebhook(supabase: SupabaseClient, row: WatiCon
         ? "Webhook URL is ready. Register it after this app is on a public HTTPS host, or paste the URL in Wati."
         : result.reason === "missing_client_id"
           ? "Add Client ID to register the Wati webhook automatically."
-          : result.error ?? "Could not register the Wati webhook.";
+          : result.reason === "missing_phone"
+            ? "Choose the WhatsApp number before registering the webhook."
+            : result.error ?? "Could not register the Wati webhook.";
     throw new AppError(
-      result.reason === "local_host" || result.reason === "missing_client_id"
+      result.reason === "local_host" || result.reason === "missing_client_id" || result.reason === "missing_phone"
         ? ERROR_CODES.VALIDATION_ERROR
         : ERROR_CODES.PROVIDER_ERROR,
       message

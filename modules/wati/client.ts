@@ -12,6 +12,13 @@ export type WatiChannel = {
   enabled?: boolean;
 };
 
+export type WatiSendResult = {
+  success?: boolean;
+  broadcast_id?: string;
+  error?: string | null;
+  recipients?: Array<{ phone_number?: string | null; errors?: string[] | null }>;
+};
+
 export type WatiTemplate = {
   id?: string | null;
   name?: string | null;
@@ -79,6 +86,92 @@ export function watiPhoneNumber(value?: string | null) {
   return null;
 }
 
+export function sameWatiPhone(left?: string | null, right?: string | null) {
+  const a = watiPhoneNumber(left);
+  const b = watiPhoneNumber(right);
+  if (a && b) return a === b;
+  const digits = (value?: string | null) => (value ?? "").replace(/\D/g, "");
+  const rawLeft = digits(left);
+  const rawRight = digits(right);
+  return Boolean(rawLeft) && rawLeft === rawRight;
+}
+
+function readChannelString(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return null;
+}
+
+export function normalizeWatiChannel(input: unknown): WatiChannel {
+  const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const platform = readChannelString(record, [
+    "platform_id",
+    "platformId",
+    "phoneNumber",
+    "phone_number",
+    "phone",
+    "whatsappNumber",
+    "whatsapp_number",
+  ]);
+  const phone = platform ? watiPhoneNumber(platform) ?? platform.replace(/\D/g, "") : null;
+  return {
+    id: readChannelString(record, ["id"]),
+    name: readChannelString(record, ["name", "channelName", "channel_name"]),
+    channel: readChannelString(record, ["channel", "type", "platform"]) ?? "WhatsApp",
+    platform_id: phone || null,
+    enabled: record.enabled !== false && record.isEnabled !== false && record.is_enabled !== false,
+  };
+}
+
+export function readWatiChannels(body: unknown): WatiChannel[] {
+  const list = Array.isArray(body)
+    ? body
+    : body && typeof body === "object"
+      ? ((body as { channels?: unknown }).channels ??
+        (body as { items?: unknown }).items ??
+        (body as { result?: unknown }).result ??
+        [])
+      : [];
+  if (!Array.isArray(list)) return [];
+  return list.map((item) => normalizeWatiChannel(item));
+}
+
+export function isWatiWhatsappChannel(channel: WatiChannel) {
+  const kind = (channel.channel ?? "").toLowerCase().replace(/[\s_-]/g, "");
+  if (!kind) return true;
+  return kind.includes("whatsapp") || kind === "waba" || kind === "wa";
+}
+
+export function watiChannelPhone(channel: WatiChannel | null | undefined) {
+  return watiPhoneNumber(channel?.platform_id) ?? null;
+}
+
+export function watiSendTemplatePayload(input: {
+  template_name: string;
+  broadcast_name: string;
+  recipients: WatiSendRecipient[];
+  channel?: string | null;
+}) {
+  const channel = input.channel ? watiPhoneNumber(input.channel) ?? undefined : undefined;
+  return {
+    template_name: input.template_name,
+    broadcast_name: input.broadcast_name,
+    recipients: input.recipients,
+    ...(channel ? { channel } : {}),
+  };
+}
+
+export function watiSendFailure(result: WatiSendResult) {
+  const recipientErrors = (result.recipients ?? []).flatMap((item) => item.errors ?? []).filter(Boolean);
+  if (recipientErrors.length) return recipientErrors.join(" ");
+  if (result.success === false) return result.error?.trim() || "Wati did not accept the template.";
+  if (typeof result.error === "string" && result.error.trim()) return result.error.trim();
+  return null;
+}
+
 export function watiErrorMessage(status: number, body: unknown, fallback: string) {
   if (body && typeof body === "object") {
     const record = body as Record<string, unknown>;
@@ -134,10 +227,11 @@ export class WatiClient {
     return body as T;
   }
 
-  listChannels(pageNumber = 1, pageSize = 50) {
-    return this.request<{ channels?: WatiChannel[] }>("/api/ext/v3/channels", {
+  async listChannels(pageNumber = 1, pageSize = 50) {
+    const body = await this.request<unknown>("/api/ext/v3/channels", {
       query: { page_number: pageNumber, page_size: pageSize },
     });
+    return { channels: readWatiChannels(body) };
   }
 
   listTemplates(pageNumber = 1, pageSize = 100, channel?: string) {
@@ -146,20 +240,29 @@ export class WatiClient {
     });
   }
 
-  sendTemplateMessages(input: {
+  async sendTemplateMessages(input: {
     template_name: string;
     broadcast_name: string;
     recipients: WatiSendRecipient[];
-    channel_number?: string;
+    channel?: string | null;
   }) {
-    return this.request<{ success?: boolean; broadcast_id?: string }>("/api/ext/v3/messageTemplates/send", {
+    const result = await this.request<WatiSendResult>("/api/ext/v3/messageTemplates/send", {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify(watiSendTemplatePayload(input)),
     });
+    const failure = watiSendFailure(result);
+    if (failure) {
+      throw new AppError(ERROR_CODES.PROVIDER_ERROR, failure, result);
+    }
+    return result;
   }
 
   listWebhooks() {
     return this.request<unknown>("/api/ext/v3/webhooks");
+  }
+
+  listWebhookEventTypes() {
+    return this.request<unknown>("/api/ext/v3/webhooks/event-types");
   }
 
   updateWebhook(
@@ -198,12 +301,25 @@ export function watiClientFromRow(row: {
   return new WatiClient(decryptSecret(row.encrypted_api_token), row.api_base_url ?? WATI_DEFAULT_BASE_URL);
 }
 
-export function pickWhatsappChannel(channels: WatiChannel[] | null | undefined) {
-  const items = channels ?? [];
-  return (
-    items.find((item) => (item.channel ?? "").toLowerCase() === "whatsapp" && item.enabled !== false) ??
-    items.find((item) => (item.channel ?? "").toLowerCase() === "whatsapp") ??
-    items[0] ??
-    null
-  );
+export function pickWhatsappChannel(channels: WatiChannel[] | null | undefined, preferred?: string | null) {
+  const items = (channels ?? []).map((item) => normalizeWatiChannel(item)).filter(isWatiWhatsappChannel);
+  const preferredPhone = watiPhoneNumber(preferred);
+  if (preferredPhone) {
+    return items.find((item) => watiChannelPhone(item) === preferredPhone) ?? null;
+  }
+  return items.find((item) => item.enabled !== false) ?? items[0] ?? null;
+}
+
+export function parseWatiEventTypes(body: unknown) {
+  const list = Array.isArray(body)
+    ? body
+    : body && typeof body === "object"
+      ? ((body as { eventTypes?: unknown }).eventTypes ??
+        (body as { event_types?: unknown }).event_types ??
+        (body as { result?: unknown }).result ??
+        (body as { items?: unknown }).items ??
+        [])
+      : [];
+  if (!Array.isArray(list)) return [];
+  return list.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
 }
