@@ -10,6 +10,7 @@ import {
 import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
 import { customerTrackingLink } from "@/modules/tracking-pages/host";
 import { getTrackingPage } from "@/modules/tracking-pages/service";
+import { logError } from "@/lib/logger";
 import type { FulfillmentStatus, PaymentStatus } from "@/types/domain";
 
 export const SHOPIFY_API_VERSION = "2025-01";
@@ -24,10 +25,37 @@ export const FULFILLMENT_ORDER_REPORT_PROGRESS = `
   mutation FulfillmentOrderReportProgress($id: ID!, $progressReport: FulfillmentOrderReportProgressInput) {
     fulfillmentOrderReportProgress(id: $id, progressReport: $progressReport) {
       fulfillmentOrder { id status }
+      userErrors { field message code }
+    }
+  }
+`;
+export const SHOPIFY_ORDER_FULFILLMENT_ORDERS = `
+  query ShopifyOrderFulfillmentOrders($id: ID!) {
+    order(id: $id) {
+      id
+      tags
+      displayFulfillmentStatus
+      fulfillmentOrders(first: 20) {
+        nodes { id status }
+      }
+    }
+  }
+`;
+export const SHOPIFY_ORDER_UPDATE = `
+  mutation ShopifyOrderUpdate($input: OrderInput!) {
+    orderUpdate(input: $input) {
+      order { id tags displayFulfillmentStatus }
       userErrors { field message }
     }
   }
 `;
+const SHOPIFY_STAGE_TAGS = {
+  processing: "postbus-processing",
+  booked: "postbus-booked",
+  in_transit: "postbus-in-transit",
+  delivered: "postbus-delivered",
+} as const;
+type ShopifyStageTag = keyof typeof SHOPIFY_STAGE_TAGS;
 
 export type ShopifyConnectionRow = ShopifyCredentialRow & {
   id?: string;
@@ -127,6 +155,24 @@ export function nextShopifyOrderStatus(input: {
 export function shopifyFulfillmentOrderGid(id: number | string) {
   const raw = String(id);
   return raw.startsWith("gid://") ? raw : `gid://shopify/FulfillmentOrder/${raw}`;
+}
+
+export function shopifyOrderGid(id: number | string) {
+  const raw = String(id);
+  return raw.startsWith("gid://") ? raw : `gid://shopify/Order/${raw}`;
+}
+
+export function nextShopifyStageTags(
+  existing: string[] | string | null | undefined,
+  stage: ShopifyStageTag
+) {
+  const list = Array.isArray(existing)
+    ? existing
+    : String(existing ?? "")
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+  return [...list.filter((tag) => !/^postbus-/i.test(tag)), SHOPIFY_STAGE_TAGS[stage]];
 }
 
 export function canReportShopifyFulfillmentProgress(status?: string | null) {
@@ -378,6 +424,87 @@ async function markOrderFulfilled(supabase: SupabaseClient, orderId: string) {
   await supabase.from("orders").update({ fulfillment_status: "FULFILLED" }).eq("id", orderId);
 }
 
+type ShopifyFulfillmentOrderNode = { id: string; status: string };
+
+async function loadShopifyOrderFulfillmentContext(
+  shop: string,
+  token: string,
+  sourceOrderId: string
+) {
+  const result = await shopifyGraphql<{
+    order?: {
+      tags?: string[] | null;
+      displayFulfillmentStatus?: string | null;
+      fulfillmentOrders?: { nodes?: Array<{ id?: string | null; status?: string | null }> };
+    } | null;
+  }>(shop, token, SHOPIFY_ORDER_FULFILLMENT_ORDERS, { id: shopifyOrderGid(sourceOrderId) });
+  if (result.ok && result.json.data?.order) {
+    return {
+      tags: result.json.data.order.tags ?? [],
+      displayFulfillmentStatus: result.json.data.order.displayFulfillmentStatus ?? null,
+      fulfillmentOrders: (result.json.data.order.fulfillmentOrders?.nodes ?? [])
+        .filter((node): node is { id: string; status: string | null } => Boolean(node?.id))
+        .map((node) => ({ id: node.id, status: node.status ?? "" })),
+    };
+  }
+
+  const fulfillmentOrdersRes = await shopifyRequest(
+    shop,
+    token,
+    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillment_orders.json`
+  );
+  if (!fulfillmentOrdersRes.ok) {
+    return {
+      tags: [] as string[],
+      displayFulfillmentStatus: null as string | null,
+      fulfillmentOrders: [] as ShopifyFulfillmentOrderNode[],
+      reason: `fulfillment_orders_${fulfillmentOrdersRes.status}`,
+    };
+  }
+  const json = (await fulfillmentOrdersRes.json()) as {
+    fulfillment_orders?: Array<{ id?: number | string; status?: string }>;
+  };
+  return {
+    tags: [] as string[],
+    displayFulfillmentStatus: null as string | null,
+    fulfillmentOrders: (json.fulfillment_orders ?? [])
+      .filter((row) => row.id != null && row.id !== "")
+      .map((row) => ({ id: shopifyFulfillmentOrderGid(row.id as number | string), status: row.status ?? "" })),
+  };
+}
+
+async function applyShopifyStageTag(
+  shop: string,
+  token: string,
+  sourceOrderId: string,
+  existingTags: string[],
+  stage: ShopifyStageTag
+) {
+  const tags = nextShopifyStageTags(existingTags, stage);
+  const result = await shopifyGraphql<{
+    orderUpdate?: {
+      order?: { tags?: string[] | null; displayFulfillmentStatus?: string | null };
+      userErrors?: Array<{ message?: string }>;
+    };
+  }>(shop, token, SHOPIFY_ORDER_UPDATE, {
+    input: { id: shopifyOrderGid(sourceOrderId), tags },
+  });
+  const payload = result.json.data?.orderUpdate;
+  if (!result.ok || payload?.userErrors?.length) {
+    logError("shopify.stage_tag_failed", {
+      sourceOrderId,
+      stage,
+      message: payload?.userErrors?.[0]?.message ?? result.json.errors?.[0]?.message ?? "orderUpdate failed",
+    });
+    return { skipped: true as const, reason: "tag_failed" };
+  }
+  return {
+    skipped: false as const,
+    tags: payload?.order?.tags ?? tags,
+    displayFulfillmentStatus: payload?.order?.displayFulfillmentStatus ?? null,
+  };
+}
+
 export async function markShopifyOrderProcessing(
   supabase: SupabaseClient,
   input: { organizationId: string; orderId: string }
@@ -408,34 +535,117 @@ export async function markShopifyOrderProcessing(
   const token = await resolveShopifyAdminToken(connection);
   if (!shop || !token) return { skipped: true, reason: "shopify_not_connected" };
 
-  const fulfillmentOrdersRes = await shopifyRequest(
-    shop,
-    token,
-    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillment_orders.json`
-  );
-  if (!fulfillmentOrdersRes.ok) return { skipped: true, reason: "fulfillment_orders_failed" };
-  const json = (await fulfillmentOrdersRes.json()) as { fulfillment_orders?: Array<{ id?: number | string; status?: string }> };
+  const context = await loadShopifyOrderFulfillmentContext(shop, token, sourceOrderId);
+  if (!context.fulfillmentOrders.length && "reason" in context && context.reason) {
+    logError("shopify.processing_skipped", { orderId: input.orderId, sourceOrderId, reason: context.reason });
+    return { skipped: true, reason: context.reason };
+  }
+
   let marked = 0;
-  for (const fulfillmentOrder of json.fulfillment_orders ?? []) {
+  const errors: string[] = [];
+  for (const fulfillmentOrder of context.fulfillmentOrders) {
+    if ((fulfillmentOrder.status || "").toUpperCase() === "IN_PROGRESS") {
+      marked += 1;
+      continue;
+    }
     if (!canReportShopifyFulfillmentProgress(fulfillmentOrder.status)) continue;
-    const id = fulfillmentOrder.id;
-    if (id == null || id === "") continue;
     const result = await shopifyGraphql<{
       fulfillmentOrderReportProgress?: {
         fulfillmentOrder?: { status?: string | null };
-        userErrors?: Array<{ message?: string }>;
+        userErrors?: Array<{ message?: string; code?: string }>;
       };
     }>(shop, token, FULFILLMENT_ORDER_REPORT_PROGRESS, {
-      id: shopifyFulfillmentOrderGid(id),
+      id: fulfillmentOrder.id.startsWith("gid://")
+        ? fulfillmentOrder.id
+        : shopifyFulfillmentOrderGid(fulfillmentOrder.id),
       progressReport: { reasonNotes: "Processing" },
     });
     const payload = result.json.data?.fulfillmentOrderReportProgress;
     const status = (payload?.fulfillmentOrder?.status ?? "").toUpperCase();
     if (result.ok && !payload?.userErrors?.length && status === "IN_PROGRESS") {
       marked += 1;
+      continue;
     }
+    const message =
+      payload?.userErrors?.[0]?.message ??
+      result.json.errors?.[0]?.message ??
+      `progress_${status || "unknown"}`;
+    errors.push(message);
+    logError("shopify.processing_progress_failed", {
+      orderId: input.orderId,
+      sourceOrderId,
+      fulfillmentOrderId: fulfillmentOrder.id,
+      code: payload?.userErrors?.[0]?.code,
+      message,
+    });
   }
-  return { skipped: marked === 0, marked };
+
+  const tagged = await applyShopifyStageTag(shop, token, sourceOrderId, context.tags, "processing");
+  if (marked === 0 && (context.displayFulfillmentStatus || "").toUpperCase() === "IN_PROGRESS") {
+    marked = 1;
+  }
+
+  if (marked === 0) {
+    return {
+      skipped: true,
+      marked,
+      tagged: !tagged.skipped,
+      reason: errors[0] ?? "no_open_fulfillment_orders",
+    };
+  }
+  return { skipped: false, marked, tagged: !tagged.skipped };
+}
+
+async function tagShopifyOrderStage(
+  shop: string,
+  token: string,
+  sourceOrderId: string,
+  stage: ShopifyStageTag
+) {
+  const context = await loadShopifyOrderFulfillmentContext(shop, token, sourceOrderId);
+  return applyShopifyStageTag(shop, token, sourceOrderId, context.tags, stage);
+}
+
+export function shopifyStageFromJobProgress(
+  progress: unknown
+): "processing" | "booked" | "in_transit" | "delivered" | null {
+  const event =
+    progress && typeof progress === "object" ? (progress as { event?: string }).event : undefined;
+  if (event === "processing" || event === "booked" || event === "in_transit" || event === "delivered") {
+    return event;
+  }
+  return null;
+}
+
+export async function enqueueShopifyStageSync(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    shipmentId?: string | null;
+    stage: "processing" | "booked" | "in_transit" | "delivered";
+    userId?: string;
+  }
+) {
+  try {
+    const settings = await getAutomationSettings(supabase, input.organizationId);
+    if (!settings.autoShopifyFulfillment) return;
+  } catch {
+    if (!AUTOMATION_DEFAULTS.auto_shopify_fulfillment) return;
+  }
+  const { createBackgroundJob } = await import("@/modules/jobs/service");
+  await createBackgroundJob(supabase, {
+    organizationId: input.organizationId,
+    jobType: "shopify-fulfillment",
+    entityType: input.shipmentId ? "shipment" : "order",
+    entityId: input.shipmentId ?? input.orderId,
+    userId: input.userId,
+    progress: {
+      event: input.stage,
+      orderId: input.orderId,
+      shipmentId: input.shipmentId ?? null,
+    },
+  });
 }
 
 export function shopifyFulfillmentEventStatus(stage: "booked" | "in_transit" | "delivered") {
@@ -510,10 +720,12 @@ export async function postShopifyFulfillmentEvent(
   if (!response.ok) {
     const body = await response.text();
     if (response.status === 422 && /already|duplicate|invalid/i.test(body)) {
+      await tagShopifyOrderStage(shop, token, link.sourceOrderId, input.stage).catch(() => null);
       return { skipped: true, reason: "event_already_set", status };
     }
     return { skipped: true, reason: `fulfillment_event_${response.status}`, status };
   }
+  await tagShopifyOrderStage(shop, token, link.sourceOrderId, input.stage).catch(() => null);
   return { skipped: false, status };
 }
 
@@ -551,7 +763,12 @@ export async function syncShopifyOrderStage(
       orderId: input.orderId,
       stage: input.stage,
     });
-  } catch {
+  } catch (error) {
+    logError("shopify.stage_sync_failed", {
+      orderId: input.orderId,
+      stage: input.stage,
+      message: error instanceof Error ? error.message : "shopify_stage_failed",
+    });
     return { skipped: true, reason: "shopify_stage_failed" };
   }
 }
@@ -635,6 +852,7 @@ export async function fulfillShopifyShipment(
   if (!payload.fulfillment.line_items_by_fulfillment_order.length) {
     const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking, trackingUrl);
     await markOrderFulfilled(supabase, order.id);
+    await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
     return updated
       ? { skipped: false, fulfilled: true }
       : { skipped: true, reason: "no_open_fulfillment_orders", fulfilled: true };
@@ -649,6 +867,7 @@ export async function fulfillShopifyShipment(
     if (createRes.status === 422 && /already fulfilled|closed|no remaining/i.test(body)) {
       const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking, trackingUrl);
       await markOrderFulfilled(supabase, order.id);
+      await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
       return updated
         ? { skipped: false, fulfilled: true }
         : { skipped: true, reason: "already_fulfilled_remote", fulfilled: true };
@@ -659,6 +878,7 @@ export async function fulfillShopifyShipment(
   }
 
   await markOrderFulfilled(supabase, order.id);
+  await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
   return { skipped: false, fulfilled: true };
 }
 

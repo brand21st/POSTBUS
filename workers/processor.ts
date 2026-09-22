@@ -824,12 +824,34 @@ async function shopifyFulfillment(
   supabase: ReturnType<typeof createAdminClient>,
   payload: JobPayload
 ) {
+  const automation = await loadAutomation(supabase, payload.organizationId);
+  if (!automation.autoShopifyFulfillment) return;
+  const { data: job } = await supabase
+    .from("background_jobs")
+    .select("progress")
+    .eq("id", payload.jobId)
+    .maybeSingle();
+  const { shopifyStageFromJobProgress, syncShopifyOrderStage, fulfillShopifyShipment } = await import(
+    "@/modules/shopify/orders"
+  );
+  const stage = shopifyStageFromJobProgress(job?.progress);
+  if (stage === "processing" || stage === "in_transit" || stage === "delivered") {
+    const progress =
+      job?.progress && typeof job.progress === "object"
+        ? (job.progress as { orderId?: string | null; shipmentId?: string | null })
+        : {};
+    const result = await syncShopifyOrderStage(supabase, {
+      organizationId: payload.organizationId,
+      orderId: progress.orderId ?? payload.entityId,
+      shipmentId: progress.shipmentId ?? (payload.entityType === "shipment" ? payload.entityId : null),
+      stage,
+    });
+    await supabase.from("background_jobs").update({ progress: result }).eq("id", payload.jobId);
+    return;
+  }
   if (!payload.entityId) {
     throw Object.assign(new Error("Shipment id is missing."), { code: "VALIDATION_ERROR" });
   }
-  const automation = await loadAutomation(supabase, payload.organizationId);
-  if (!automation.autoShopifyFulfillment) return;
-  const { fulfillShopifyShipment } = await import("@/modules/shopify/orders");
   const result = await fulfillShopifyShipment(supabase, {
     organizationId: payload.organizationId,
     shipmentId: payload.entityId,

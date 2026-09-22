@@ -12,7 +12,10 @@ import {
   shopifyFulfillmentEventStatus,
   shopifyFulfillmentOrderGid,
   shopifyFulfillmentPayload,
+  shopifyOrderGid,
+  nextShopifyStageTags,
   shopifyOrderNumber,
+  shopifyStageFromJobProgress,
   shopifyPhone,
   shopifyPincode,
   shopifyReadyToSync,
@@ -126,9 +129,22 @@ describe("shopify order mapping", () => {
     expect(canReportShopifyFulfillmentProgress("in_progress")).toBe(true);
     expect(canReportShopifyFulfillmentProgress("closed")).toBe(false);
     expect(shopifyFulfillmentOrderGid(5014440902678)).toBe("gid://shopify/FulfillmentOrder/5014440902678");
+    expect(shopifyOrderGid(18799791538429)).toBe("gid://shopify/Order/18799791538429");
+    expect(shopifyOrderGid("gid://shopify/Order/1")).toBe("gid://shopify/Order/1");
+    expect(nextShopifyStageTags(["vip", "postbus-booked"], "processing")).toEqual([
+      "vip",
+      "postbus-processing",
+    ]);
+    expect(nextShopifyStageTags("vip, postbus-processing", "in_transit")).toEqual([
+      "vip",
+      "postbus-in-transit",
+    ]);
     expect(shopifyFulfillmentEventStatus("booked")).toBe("confirmed");
     expect(shopifyFulfillmentEventStatus("in_transit")).toBe("in_transit");
     expect(shopifyFulfillmentEventStatus("delivered")).toBe("delivered");
+    expect(shopifyStageFromJobProgress({ event: "processing" })).toBe("processing");
+    expect(shopifyStageFromJobProgress({ event: "booked" })).toBe("booked");
+    expect(shopifyStageFromJobProgress({})).toBeNull();
   });
 
   it("parses Shopify progress-reported webhooks", () => {

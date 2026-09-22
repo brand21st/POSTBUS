@@ -305,15 +305,35 @@ async function applyProcessingSideEffects(
 ) {
   await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", orderId);
   try {
-    const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
-    await syncShopifyOrderStage(supabase, {
+    const { syncShopifyOrderStage, enqueueShopifyStageSync } = await import("@/modules/shopify/orders");
+    const result = await syncShopifyOrderStage(supabase, {
       organizationId: ctx.organizationId,
       orderId,
       shipmentId,
       stage: "processing",
     });
+    if (result && "skipped" in result && result.skipped && result.reason !== "not_shopify" && result.reason !== "shopify_not_connected") {
+      await enqueueShopifyStageSync(supabase, {
+        organizationId: ctx.organizationId,
+        orderId,
+        shipmentId,
+        stage: "processing",
+        userId: ctx.userId,
+      });
+    }
   } catch {
-    // Shopify in-progress is optional; Processing should still succeed.
+    try {
+      const { enqueueShopifyStageSync } = await import("@/modules/shopify/orders");
+      await enqueueShopifyStageSync(supabase, {
+        organizationId: ctx.organizationId,
+        orderId,
+        shipmentId,
+        stage: "processing",
+        userId: ctx.userId,
+      });
+    } catch {
+      // Shopify in-progress is retried by shopify-fulfillment jobs.
+    }
   }
   await enqueueOptionalWatiNotify(supabase, ctx.organizationId, "processing", {
     orderId,
@@ -394,15 +414,35 @@ async function markWatiShipmentStage(
       shipmentId: shipment?.id,
     });
     try {
-      const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
-      await syncShopifyOrderStage(supabase, {
+      const { syncShopifyOrderStage, enqueueShopifyStageSync } = await import("@/modules/shopify/orders");
+      const result = await syncShopifyOrderStage(supabase, {
         organizationId: ctx.organizationId,
         orderId: order.id,
         shipmentId: shipment?.id,
         stage: watiEvent,
       });
+      if (result && "skipped" in result && result.skipped && result.reason !== "not_shopify" && result.reason !== "shopify_not_connected") {
+        await enqueueShopifyStageSync(supabase, {
+          organizationId: ctx.organizationId,
+          orderId: order.id,
+          shipmentId: shipment?.id,
+          stage: watiEvent,
+          userId: ctx.userId,
+        });
+      }
     } catch {
-      // Shopify fulfillment events are optional; local status should still update.
+      try {
+        const { enqueueShopifyStageSync } = await import("@/modules/shopify/orders");
+        await enqueueShopifyStageSync(supabase, {
+          organizationId: ctx.organizationId,
+          orderId: order.id,
+          shipmentId: shipment?.id,
+          stage: watiEvent,
+          userId: ctx.userId,
+        });
+      } catch {
+        // Shopify fulfillment events are retried by shopify-fulfillment jobs.
+      }
     }
     updated.push({ ...(shipment ?? { id: order.id, order_id: order.id, status: nextStatus }), jobId: null });
   }
