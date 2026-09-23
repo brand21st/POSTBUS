@@ -29,8 +29,17 @@ export type ShippingInvoiceRow = {
   updated_at: string;
 };
 
+function relatedRecord(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (Array.isArray(value)) return (value[0] as Record<string, unknown> | undefined) ?? null;
+  if (typeof value === "object") return value as Record<string, unknown>;
+  return null;
+}
+
 export function mapInvoice(row: Record<string, unknown>) {
-  const order = row.orders as { order_number?: string } | null;
+  const order = relatedRecord(row.orders);
+  const customer = relatedRecord(order?.customers) ?? relatedRecord(row.customers);
+  const customerName = String(customer?.name || row.customer_name || row.customerName || "").trim();
   return {
     id: row.id,
     organizationId: row.organization_id,
@@ -53,6 +62,8 @@ export function mapInvoice(row: Record<string, unknown>) {
     total_amount: row.total_amount,
     orderNumber: order?.order_number ?? row.order_number,
     order_number: order?.order_number ?? row.order_number,
+    customerName: customerName || null,
+    customer_name: customerName || null,
     createdAt: row.created_at,
     created_at: row.created_at,
   };
@@ -93,7 +104,7 @@ async function loadInvoiceByShipment(supabase: SupabaseClient, organizationId: s
 export async function getInvoice(supabase: SupabaseClient, organizationId: string, id: string) {
   const { data, error } = await supabase
     .from("shipping_invoices")
-    .select("*, orders(order_number)")
+    .select("*, orders(order_number, customers(name))")
     .eq("organization_id", organizationId)
     .eq("id", id)
     .maybeSingle();
@@ -110,7 +121,7 @@ export async function listInvoices(
   const from = (query.page - 1) * query.pageSize;
   const { data, error, count } = await supabase
     .from("shipping_invoices")
-    .select("*, orders(order_number)", { count: "exact" })
+    .select("*, orders(order_number, customers(name))", { count: "exact" })
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false })
     .range(from, from + query.pageSize - 1);

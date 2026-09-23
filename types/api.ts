@@ -237,6 +237,8 @@ export type InvoiceRecord = InvoiceSummary & {
   total_amount?: number | string;
   orderNumber?: string | null;
   order_number?: string | null;
+  customerName?: string | null;
+  customer_name?: string | null;
   createdAt?: string;
   created_at?: string;
 };

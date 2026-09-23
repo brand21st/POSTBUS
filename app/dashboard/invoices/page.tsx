@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { asPaginated } from "@/lib/dashboard/records";
+import { asPaginated, customerName } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import type { InvoiceRecord, Paginated } from "@/types/api";
@@ -68,6 +68,11 @@ export default function InvoicesPage() {
       id: "order",
       header: "Order",
       cell: (row) => row.orderNumber ?? row.order_number ?? "—",
+    },
+    {
+      id: "customer",
+      header: "Customer",
+      cell: (row) => customerName(row),
     },
     {
       id: "tracking",
