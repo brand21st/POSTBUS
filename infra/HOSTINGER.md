@@ -64,18 +64,15 @@ Before deploying a build that generates labels:
 
 ## Shipping invoice files on Coolify
 
-New invoice PDFs are written to `INVOICE_STORAGE_PATH` (default `/data/invoices`) as
-`{organizationId}/{invoiceId}.pdf`. That directory is not public; merchants download
+New invoice PDFs are written to `INVOICE_STORAGE_PATH` (default `/data/labels/invoices`)
+as `{organizationId}/{invoiceId}.pdf`. That directory is not public; merchants download
 through `GET /api/v1/invoices/:id/download`.
 
-Before deploying a build that generates invoices:
+Invoices share the existing `/data/labels` volume so they survive container restarts.
+Do not serve `/data/labels` or `/data/labels/invoices` on Traefik/Nginx.
 
-1. PostBus resource → Persistent Storage → add a volume with destination `/data/invoices`
-   (separate from `/data/labels`).
-2. Set `INVOICE_STORAGE_PATH=/data/invoices`.
-3. Do not add a Traefik or Nginx alias for `/data/invoices`.
-4. The volume must be writable by the app process.
-5. Keep the scheduled drain task on the same PostBus container so invoice jobs see the mount.
+If you later add a dedicated volume, set `INVOICE_STORAGE_PATH` to that destination
+(for example `/data/invoices`) and keep the scheduled drain task on the same container.
 
 Do not store invoice PDFs in Supabase Storage.
 

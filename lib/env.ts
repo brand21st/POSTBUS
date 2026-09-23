@@ -34,7 +34,12 @@ export const env = {
   stripeWebhookSecret: optional(process.env.STRIPE_WEBHOOK_SECRET),
   // Coolify persistent volume destination. Relative DB paths are resolved under this root.
   labelStoragePath: optional(process.env.LABEL_STORAGE_PATH) || "/data/labels",
-  invoiceStoragePath: optional(process.env.INVOICE_STORAGE_PATH) || "/data/invoices",
+  invoiceStoragePath: (() => {
+    const configured = optional(process.env.INVOICE_STORAGE_PATH);
+    // /data/invoices is not on the Coolify labels volume, so PDFs vanished after write.
+    if (!configured || configured === "/data/invoices") return "/data/labels/invoices";
+    return configured;
+  })(),
 };
 
 export function usesDatabaseJobRunner() {

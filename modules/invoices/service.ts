@@ -320,18 +320,30 @@ export async function loadInvoicePdfBytes(
 ) {
   const { data } = await supabase
     .from("shipping_invoices")
-    .select("id, file_path, invoice_number, status")
+    .select("id, file_path, invoice_number, status, shipment_id")
     .eq("organization_id", organizationId)
     .eq("id", id)
     .maybeSingle();
-  if (!data?.file_path) {
-    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Invoice file not found.");
+  if (!data) {
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Invoice not found.");
   }
-  const bytes = await readInvoicePdfIfPresent({
-    relativePath: String(data.file_path),
-    organizationId,
-    invoiceId: String(data.id),
-  });
+
+  const readBytes = async (relativePath: string | null | undefined) => {
+    if (!relativePath) return null;
+    return readInvoicePdfIfPresent({
+      relativePath: String(relativePath),
+      organizationId,
+      invoiceId: String(data.id),
+    });
+  };
+
+  let bytes = await readBytes(data.file_path);
+  if (!bytes && data.shipment_id) {
+    const rebuilt = await generateShippingInvoice(supabase, organizationId, String(data.shipment_id), {
+      force: true,
+    });
+    bytes = await readBytes(rebuilt?.file_path);
+  }
   if (!bytes) {
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Invoice file not found.");
   }
