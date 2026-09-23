@@ -46,7 +46,8 @@ export async function handleCommerceRoutes(
   }
 
   if (key === "GET orders/export") {
-    const csv = await exportOrdersCsv(supabase, ctx);
+    const parsed = orderListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
+    const csv = await exportOrdersCsv(supabase, ctx, parsed);
     return new NextResponse(csv, {
       headers: {
         "Content-Type": "text/csv",

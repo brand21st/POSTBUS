@@ -7,6 +7,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Download, Plus, RefreshCw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
+import {
+  OrderDateFilter,
+  todayOrderRange,
+  yesterdayOrderRange,
+  type OrderDateFilterValue,
+} from "@/components/dashboard/order-date-filter";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -51,6 +57,7 @@ export default function OrdersPage() {
   const [source, setSource] = useState("all");
   const [payment, setPayment] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
+  const [dateFilter, setDateFilter] = useState<OrderDateFilterValue>({ kind: "all" });
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -67,9 +74,11 @@ export default function OrdersPage() {
   const shopify = integrations.data?.shopify;
   const shopifyStatus = (shopify?.status ?? "").toUpperCase();
   const shopifyReady = shopifyStatus === "CONNECTED" || Boolean(shopify?.readyToSync);
+  const activeFrom = dateFilter.kind === "all" ? undefined : dateFilter.from.toISOString();
+  const activeTo = dateFilter.kind === "all" ? undefined : dateFilter.to.toISOString();
 
   const query = useQuery({
-    queryKey: ["orders", page, debounced, status, source, payment],
+    queryKey: ["orders", page, debounced, status, source, payment, activeFrom, activeTo],
     queryFn: () =>
       api<Paginated<OrderRecord>>(`/api/v1/orders?${toSearchParams({
         page,
@@ -78,11 +87,57 @@ export default function OrdersPage() {
         status: status === "all" ? undefined : status,
         source: source === "all" ? undefined : source,
         paymentStatus: payment === "all" ? undefined : payment,
+        from: activeFrom,
+        to: activeTo,
       })}`),
     refetchInterval: shopifyReady ? 15000 : false,
   });
 
   const list = asPaginated<OrderRecord>(query.data, ["orders", "items"]);
+  const todayRange = todayOrderRange();
+  const yesterdayRange = yesterdayOrderRange();
+  const countFilters = {
+    page: 1,
+    pageSize: 1,
+    q: debounced,
+    status: status === "all" ? undefined : status,
+    source: source === "all" ? undefined : source,
+    paymentStatus: payment === "all" ? undefined : payment,
+  };
+  const allCount = useQuery({
+    queryKey: ["order-date-count", "all", debounced, status, source, payment],
+    queryFn: () =>
+      api<Paginated<OrderRecord>>(`/api/v1/orders?${toSearchParams(countFilters)}`),
+    refetchInterval: shopifyReady ? 15000 : false,
+  });
+  const todayCount = useQuery({
+    queryKey: ["order-date-count", "today", debounced, status, source, payment, todayRange.from.toISOString()],
+    queryFn: () =>
+      api<Paginated<OrderRecord>>(`/api/v1/orders?${toSearchParams({
+        ...countFilters,
+        from: todayRange.from.toISOString(),
+        to: todayRange.to.toISOString(),
+      })}`),
+    refetchInterval: shopifyReady ? 15000 : false,
+  });
+  const yesterdayCount = useQuery({
+    queryKey: [
+      "order-date-count",
+      "yesterday",
+      debounced,
+      status,
+      source,
+      payment,
+      yesterdayRange.from.toISOString(),
+    ],
+    queryFn: () =>
+      api<Paginated<OrderRecord>>(`/api/v1/orders?${toSearchParams({
+        ...countFilters,
+        from: yesterdayRange.from.toISOString(),
+        to: yesterdayRange.to.toISOString(),
+      })}`),
+    refetchInterval: shopifyReady ? 15000 : false,
+  });
 
   const syncShopify = useMutation({
     mutationFn: () =>
@@ -176,6 +231,8 @@ export default function OrdersPage() {
       status: status === "all" ? undefined : status,
       source: source === "all" ? undefined : source,
       paymentStatus: payment === "all" ? undefined : payment,
+      from: activeFrom,
+      to: activeTo,
       format: "csv",
     });
     // File download from an authenticated API route.
@@ -318,6 +375,19 @@ export default function OrdersPage() {
             </Link>
           </>
         }
+      />
+
+      <OrderDateFilter
+        value={dateFilter}
+        counts={{
+          all: allCount.data?.total,
+          today: todayCount.data?.total,
+          yesterday: yesterdayCount.data?.total,
+        }}
+        onChange={(next) => {
+          setDateFilter(next);
+          setPage(1);
+        }}
       />
 
       <div className="grid gap-3 md:grid-cols-4">

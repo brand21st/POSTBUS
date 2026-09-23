@@ -57,7 +57,7 @@ export function orderStatusRowClass(status?: string | null) {
     case "IN_TRANSIT":
       return "bg-indigo-50 hover:bg-indigo-100/80";
     case "DELIVERED":
-      return "bg-green-50 hover:bg-green-100/80";
+      return "bg-zinc-200 text-zinc-700 hover:bg-zinc-300/80";
     case "FAILED":
       return "bg-red-50 hover:bg-red-100/80";
     case "CANCELLED":

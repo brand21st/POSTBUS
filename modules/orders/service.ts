@@ -7,6 +7,11 @@ import type { createOrderSchema, orderListQuery } from "@/modules/orders/schema"
 
 type CreateInput = z.infer<typeof createOrderSchema>;
 
+function orderDateBoundary(value: string, endOfDay: boolean) {
+  if (value.includes("T")) return value;
+  return `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`;
+}
+
 async function nextOrderNumber(supabase: SupabaseClient, organizationId: string) {
   const { count } = await supabase
     .from("orders")
@@ -35,8 +40,9 @@ export async function listOrders(
 
   if (query.status) builder = builder.eq("status", query.status);
   if (query.source) builder = builder.eq("source", query.source);
-  if (query.from) builder = builder.gte("created_at", `${query.from}T00:00:00.000Z`);
-  if (query.to) builder = builder.lte("created_at", `${query.to}T23:59:59.999Z`);
+  if (query.paymentStatus) builder = builder.eq("payment_status", query.paymentStatus);
+  if (query.from) builder = builder.gte("created_at", orderDateBoundary(query.from, false));
+  if (query.to) builder = builder.lte("created_at", orderDateBoundary(query.to, true));
   if (query.q) {
     const filter = orIlike(["order_number", "source_order_id"], query.q);
     if (filter) builder = builder.or(filter);
@@ -193,13 +199,27 @@ function mapOrder(row: Record<string, unknown>) {
   };
 }
 
-export async function exportOrdersCsv(supabase: SupabaseClient, ctx: TenantContext) {
-  const { data, error } = await supabase
+export async function exportOrdersCsv(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  query: z.infer<typeof orderListQuery>
+) {
+  let builder = supabase
     .from("orders")
     .select("order_number, source, status, total_amount, payment_status, created_at, customers(name)")
     .eq("organization_id", ctx.organizationId)
     .order("created_at", { ascending: false })
     .limit(5000);
+  if (query.status) builder = builder.eq("status", query.status);
+  if (query.source) builder = builder.eq("source", query.source);
+  if (query.paymentStatus) builder = builder.eq("payment_status", query.paymentStatus);
+  if (query.from) builder = builder.gte("created_at", orderDateBoundary(query.from, false));
+  if (query.to) builder = builder.lte("created_at", orderDateBoundary(query.to, true));
+  if (query.q) {
+    const filter = orIlike(["order_number", "source_order_id"], query.q);
+    if (filter) builder = builder.or(filter);
+  }
+  const { data, error } = await builder;
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   const header = "order_number,source,status,total_amount,payment_status,customer,created_at";
   const lines = (data ?? []).map((row) => {

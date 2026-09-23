@@ -53,6 +53,7 @@ export const orderListQuery = z.object({
   q: z.string().optional(),
   status: z.enum(ORDER_STATUSES).optional(),
   source: z.enum(ORDER_SOURCES).optional(),
+  paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
   from: z.string().optional(),
   to: z.string().optional(),
   sort: z.string().optional(),
