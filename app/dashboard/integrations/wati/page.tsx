@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -19,7 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
-import { Copy } from "lucide-react";
+import { ChevronDown, Copy } from "lucide-react";
 import type { WatiConfig } from "@/types/api";
 
 const WATI_WHATSAPP_NUMBER = "+917012788341";
@@ -90,7 +90,8 @@ export default function WatiIntegrationPage() {
   const templateNames = new Set(templates.map((template) => template.name));
   const allowedSlot = (name?: string | null) => (name && templateNames.has(name) ? name : "");
 
-  if (config && !hydrated) {
+  useEffect(() => {
+    if (!config || hydrated) return;
     setHydrated(true);
     setClientId(config.clientId ?? config.client_id ?? "");
     setBaseUrl(config.apiBaseUrl ?? config.api_base_url ?? "");
@@ -102,7 +103,7 @@ export default function WatiIntegrationPage() {
       inTransit: allowedSlot(config.inTransitTemplateName ?? config.in_transit_template_name),
       delivered: allowedSlot(config.deliveredTemplateName ?? config.delivered_template_name),
     });
-  }
+  }, [config, hydrated]);
 
   const save = useMutation({
     mutationFn: () => {
@@ -430,32 +431,89 @@ function TemplateSelect({
   templates: Array<{ name?: string; status?: string | null; body?: string | null }>;
   onChange: (value: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const options = templates.filter((template) => template.name);
-  const selectedValue = options.some((template) => template.name === value) ? value : "";
   const selected = options.find((template) => template.name === value);
   const preview = templatePreview(selected?.body);
 
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const choose = (next: string) => {
+    onChange(next);
+    setOpen(false);
+  };
+
   return (
-    <div className="space-y-2">
+    <div ref={rootRef} className={cn("relative space-y-2", open && "z-50")}>
       <div>
         <Label>{label}</Label>
         <p className="text-xs text-muted">{hint}</p>
       </div>
-      <select
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className={cn(
-          "flex h-11 w-full rounded-[var(--radius-input)] border border-border bg-card px-3.5 text-sm text-foreground shadow-sm",
+          "flex h-11 w-full items-center justify-between gap-2 rounded-[var(--radius-input)] border border-border bg-card px-3.5 text-left text-sm text-foreground shadow-sm",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
         )}
-        value={selectedValue}
-        onChange={(event) => onChange(event.target.value)}
+        onClick={() => setOpen((current) => !current)}
       >
-        <option value="">None</option>
-        {options.map((template) => (
-          <option key={template.name} value={template.name}>
-            {template.name}
-          </option>
-        ))}
-      </select>
+        <span className={selected?.name ? "truncate" : "text-muted"}>{selected?.name || "None"}</span>
+        <ChevronDown className="size-4 shrink-0 text-muted" />
+      </button>
+      {open ? (
+        <ul
+          role="listbox"
+          className="absolute left-0 right-0 z-50 mt-1 max-h-64 overflow-y-auto rounded-xl border border-border bg-popover py-1 shadow-[0_1px_2px_rgb(9_9_11/0.05),0_12px_40px_rgb(9_9_11/0.08)]"
+        >
+          <li>
+            <button
+              type="button"
+              role="option"
+              aria-selected={!selected}
+              className="flex w-full px-3 py-2 text-left text-sm hover:bg-surface-soft"
+              onClick={() => choose("")}
+            >
+              None
+            </button>
+          </li>
+          {options.map((template) => (
+            <li key={template.name}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={template.name === value}
+                className={cn(
+                  "flex w-full flex-col px-3 py-2 text-left hover:bg-surface-soft",
+                  template.name === value ? "bg-surface-soft" : ""
+                )}
+                onClick={() => choose(template.name || "")}
+              >
+                <span className="text-sm text-foreground">{template.name}</span>
+                {templatePreview(template.body) ? (
+                  <span className="mt-0.5 line-clamp-2 text-xs text-muted">{templatePreview(template.body)}</span>
+                ) : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {preview ? (
         <p className="whitespace-pre-wrap rounded-xl border border-border bg-surface px-3 py-2 text-xs leading-5 text-muted">
           {selected?.body?.trim()}
