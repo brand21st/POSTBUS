@@ -17,6 +17,7 @@ import {
   indiaPostPickDeliveryOffice,
   indiaPostRequiredText,
 } from "@/modules/india-post/endpoints";
+import { saveLabelPdf } from "@/modules/labels/storage";
 import { stampOrgLogoOnLabel } from "@/modules/labels/stamp-logo";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
@@ -568,20 +569,16 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
       bytes = Buffer.from(stamped);
     }
   }
-  const path = `${payload.organizationId}/${shipment.id}.pdf`;
-  const upload = await supabase.storage.from("labels").upload(path, bytes, {
-    contentType: "application/pdf",
-    upsert: true,
+  const path = await saveLabelPdf({
+    organizationId: payload.organizationId,
+    shipmentId: String(shipment.id),
+    bytes,
   });
-  if (upload.error) {
-    throw Object.assign(new Error(upload.error.message), { code: "LABEL_GENERATION_FAILED" });
-  }
-  const { data: signed } = await supabase.storage.from("labels").createSignedUrl(path, 60 * 60 * 24 * 7);
   await supabase.from("labels").insert({
     organization_id: payload.organizationId,
     shipment_id: shipment.id,
     file_path: path,
-    file_url: signed?.signedUrl ?? null,
+    file_url: null,
     mime_type: "application/pdf",
     status: "READY",
   });

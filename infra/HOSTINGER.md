@@ -47,6 +47,24 @@ Then add a **Scheduled Task** on the PostBus resource:
 when `JOB_RUNNER=redis`. Verify with `GET /api/health`: `jobRunner` must be `database`
 and `jobs` must be `Healthy`. `jobs: "Warning"` means the scheduled task is not running.
 
+## Shipping label files on Coolify
+
+New label PDFs are written to the container path `LABEL_STORAGE_PATH` (default `/data/labels`)
+as `{organizationId}/{shipmentId}.pdf`. That directory is not public; merchants download
+through `GET /api/v1/labels/:id/download`.
+
+Before deploying a build that generates labels:
+
+1. PostBus resource → Persistent Storage → add a volume with destination `/data/labels`.
+2. Set `LABEL_STORAGE_PATH=/data/labels`.
+3. Do not add a Traefik or Nginx alias for `/data/labels`.
+4. The volume must be writable by the app process. If label jobs fail with permission
+   denied, chown the volume to that user.
+5. Keep the scheduled drain task on the same PostBus container so jobs see the mount.
+
+Historical objects in the private Supabase `labels` bucket are left in place. The download
+API reads disk first, then falls back to that bucket. Manifests still use Supabase Storage.
+
 Only use `JOB_RUNNER=redis` if you also deploy Redis and a second resource running
 `npm run workers` from the same image. Never run both runners against one database —
 each would execute the same job and book the article twice.

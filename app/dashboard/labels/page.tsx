@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Download, Printer, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
@@ -10,15 +10,44 @@ import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
-import { api } from "@/lib/hooks/use-api";
+import { ApiError, api } from "@/lib/hooks/use-api";
 import type { LabelRecord, Paginated } from "@/types/api";
 
 function fileUrl(label: LabelRecord) {
-  return label.fileUrl ?? label.file_url ?? `/api/v1/labels/${label.id}/download`;
+  return `/api/v1/labels/${label.id}/download`;
+}
+
+async function downloadLabelsZip(ids: string[]) {
+  const response = await fetch("/api/v1/labels/bulk-download", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (contentType.includes("application/zip")) {
+    const blob = await response.blob();
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = "labels.zip";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
+    return;
+  }
+  let message = "Could not download labels.";
+  try {
+    const payload = (await response.json()) as { message?: string };
+    message = payload.message || message;
+  } catch {
+    message = response.ok ? message : "The server returned an unexpected response.";
+  }
+  throw new ApiError(message, response.status);
 }
 
 export default function LabelsPage() {
-  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -30,19 +59,8 @@ export default function LabelsPage() {
   const list = asPaginated<LabelRecord>(query.data, ["labels", "items"]);
 
   const bulk = useMutation({
-    mutationFn: (ids: string[]) =>
-      api<{ url?: string }>("/api/v1/labels/bulk-download", {
-        method: "POST",
-        body: JSON.stringify({ ids }),
-      }),
-    onSuccess: (data) => {
-      if (data?.url) {
-        window.location.href = data.url;
-        return;
-      }
-      toast.success("Bulk download is ready.");
-      queryClient.invalidateQueries({ queryKey: ["labels"] });
-    },
+    mutationFn: downloadLabelsZip,
+    onSuccess: () => toast.success("Labels downloaded."),
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -68,7 +86,7 @@ export default function LabelsPage() {
       header: "Actions",
       cell: (row) => {
         const href = fileUrl(row);
-        const ready = (row.status ?? "").toUpperCase() === "READY" && Boolean(row.fileUrl || row.file_url || row.id);
+        const ready = (row.status ?? "").toUpperCase() === "READY" && Boolean(row.id);
         return (
           <div className="flex gap-2" onClick={(event) => event.stopPropagation()}>
             <Button

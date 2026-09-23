@@ -32,6 +32,8 @@ export const env = {
     "https://app.indiapost.gov.in/beextcustomer",
   stripeSecretKey: optional(process.env.STRIPE_SECRET_KEY),
   stripeWebhookSecret: optional(process.env.STRIPE_WEBHOOK_SECRET),
+  // Coolify persistent volume destination. Relative DB paths are resolved under this root.
+  labelStoragePath: optional(process.env.LABEL_STORAGE_PATH) || "/data/labels",
 };
 
 export function usesDatabaseJobRunner() {
