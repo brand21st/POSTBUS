@@ -5,6 +5,9 @@ describe("permissionForTenantRoute", () => {
   it("requires write permissions for mutating commerce routes", () => {
     expect(permissionForTenantRoute("GET", "orders", ["orders"])).toBe("orders.read");
     expect(permissionForTenantRoute("POST", "orders", ["orders"])).toBe("orders.write");
+    expect(permissionForTenantRoute("POST", "orders/bulk/status", ["orders", "bulk", "status"])).toBe(
+      "shipments.write"
+    );
     expect(permissionForTenantRoute("POST", "shipments/abc/retry", ["shipments", "abc", "retry"])).toBe(
       "shipments.write"
     );

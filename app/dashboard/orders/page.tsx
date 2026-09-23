@@ -16,6 +16,14 @@ import {
 import { PageHeader } from "@/components/dashboard/page-header";
 import { orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -45,7 +53,7 @@ import {
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
 import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES } from "@/types/domain";
-import type { IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
+import type { BulkOrderStatusResult, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -58,6 +66,7 @@ export default function OrdersPage() {
   const [payment, setPayment] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [dateFilter, setDateFilter] = useState<OrderDateFilterValue>({ kind: "all" });
+  const [confirmFulfill, setConfirmFulfill] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -225,6 +234,38 @@ export default function OrdersPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const bulkFulfill = useMutation({
+    mutationFn: (orderIds: string[]) =>
+      api<BulkOrderStatusResult>("/api/v1/orders/bulk/status", {
+        method: "POST",
+        body: JSON.stringify({ orderIds, action: "fulfill" }),
+      }),
+    onSuccess: (result) => {
+      const updated = result.updated.length;
+      const skipped = result.skipped.length;
+      const failed = result.failed.length;
+      const reasons = [...result.skipped, ...result.failed].map((item) => item.reason).slice(0, 4);
+      if (updated && !skipped && !failed) {
+        toast.success(
+          updated === 1 ? "1 order marked as Booked / packed." : `${updated} orders marked as Booked / packed.`
+        );
+      } else if (updated) {
+        toast.success(`${updated} orders updated · ${skipped + failed} skipped`, {
+          description: reasons.join("\n"),
+        });
+      } else {
+        toast.error(`${skipped + failed} orders skipped`, {
+          description: reasons.join("\n") || "None of the selected orders can be marked Booked / packed.",
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["order-date-count"] });
+      setSelected([]);
+      setConfirmFulfill(false);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   function exportCsv() {
     const params = toSearchParams({
       q: debounced,
@@ -360,15 +401,17 @@ export default function OrdersPage() {
               <Download className="size-4" />
               Export
             </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={selected.length === 0 || ship.isPending}
-              onClick={() => ship.mutate({ orderIds: selected, action: "fulfill" })}
-            >
-              <Truck className="size-4" />
-              Ship selected
-            </Button>
+            {selected.length < 2 ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={selected.length === 0 || ship.isPending}
+                onClick={() => ship.mutate({ orderIds: selected, action: "fulfill" })}
+              >
+                <Truck className="size-4" />
+                Ship selected
+              </Button>
+            ) : null}
             <Link href="/dashboard/orders/new" className={buttonVariants()}>
               <Plus className="size-4" />
               Add order
@@ -426,6 +469,33 @@ export default function OrdersPage() {
         </Select>
       </div>
 
+      {selected.length >= 2 ? (
+        <div className="sticky top-2 z-20 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm font-medium text-ink">{selected.length} selected</p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                disabled={bulkFulfill.isPending}
+                className={orderActionButtonClass("PROCESSING")}
+                onClick={() => setConfirmFulfill(true)}
+              >
+                <Truck className="size-4" />
+                {bulkFulfill.isPending ? "Processing…" : "Fulfill · Booked / packed"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={bulkFulfill.isPending}
+                onClick={() => setSelected([])}
+              >
+                Clear selection
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <DataTable
         columns={columns}
         data={list.items}
@@ -453,11 +523,48 @@ export default function OrdersPage() {
         total={list.total}
         onPageChange={setPage}
         selectable
+        selectedIds={selected}
         onSelectionChange={setSelected}
         onRowClick={(row) => router.push(`/dashboard/orders/${row.id}`)}
         getRowId={(row) => row.id}
         getRowClassName={(row) => orderStatusRowClass(row.status)}
       />
+      <Dialog
+        open={confirmFulfill}
+        onOpenChange={(open) => {
+          if (bulkFulfill.isPending) return;
+          setConfirmFulfill(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Mark {selected.length} orders as Booked / packed?
+            </DialogTitle>
+            <DialogDescription>
+              This will update the fulfillment status of the selected orders.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={bulkFulfill.isPending}
+              onClick={() => setConfirmFulfill(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={bulkFulfill.isPending || selected.length < 2}
+              className={orderActionButtonClass("PROCESSING")}
+              onClick={() => bulkFulfill.mutate(selected)}
+            >
+              {bulkFulfill.isPending ? "Processing…" : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

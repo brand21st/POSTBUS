@@ -185,6 +185,14 @@ export type OrderRecord = {
   updated_at?: string;
 };
 
+export type BulkOrderStatusResult = {
+  action: "fulfill";
+  selected: number;
+  updated: Array<{ id: string; orderNumber: string }>;
+  skipped: Array<{ id: string; orderNumber?: string; reason: string }>;
+  failed: Array<{ id: string; reason: string }>;
+};
+
 export type ShipmentRecord = {
   id: string;
   orderId?: string;

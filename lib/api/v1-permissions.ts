@@ -11,6 +11,7 @@ export function permissionForTenantRoute(
   if (path.startsWith("dashboard/")) return "orders.read";
 
   if (root === "orders") {
+    if (method === "POST" && slugs[1] === "bulk" && slugs[2] === "status") return "shipments.write";
     return method === "POST" ? "orders.write" : "orders.read";
   }
 

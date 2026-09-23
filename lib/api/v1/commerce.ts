@@ -7,7 +7,8 @@ import { orIlike } from "@/lib/api/filters";
 import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
-import { createOrderSchema, orderListQuery } from "@/modules/orders/schema";
+import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
+import { bulkOrderStatusSchema, createOrderSchema, orderListQuery } from "@/modules/orders/schema";
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
@@ -69,6 +70,11 @@ export async function handleCommerceRoutes(
       await createShipmentsForOrders(supabase, ctx, [order.id], body.shipment);
     }
     return order;
+  }
+
+  if (key === "POST orders/bulk/status") {
+    const body = bulkOrderStatusSchema.parse(await request.json());
+    return bulkUpdateOrderStatus(supabase, ctx, body);
   }
 
   if (key === "GET shipments") {

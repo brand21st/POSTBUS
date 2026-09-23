@@ -10,6 +10,7 @@ import type {
   SearchResponse,
   SearchResult,
 } from "@/types/api";
+import { titleCase } from "@/lib/format";
 
 export function pickString(...values: Array<string | null | undefined>) {
   for (const value of values) {
@@ -125,6 +126,26 @@ export function canProcessOrder(order: { status?: string | null }) {
 
 export function canFulfillOrder(order: { status?: string | null }) {
   return !BLOCKED_FULFILL_STATUSES.has((order.status ?? "").toUpperCase());
+}
+
+export function fulfillSkipReason(order: {
+  id?: string;
+  orderNumber?: string;
+  order_number?: string;
+  status?: string | null;
+}) {
+  if (canFulfillOrder(order)) return null;
+  const status = (order.status ?? "").toUpperCase();
+  const number = orderNumber({
+    id: order.id ?? "",
+    orderNumber: order.orderNumber,
+    order_number: order.order_number,
+  });
+  const statusLabel = titleCase(status);
+  if (status === "CANCELLED") {
+    return `Order #${number} cannot be marked Booked / packed because it is Cancelled.`;
+  }
+  return `Order #${number} cannot be marked Booked / packed because it is already ${statusLabel}.`;
 }
 
 export function canShipOrder(order: { status?: string | null }) {

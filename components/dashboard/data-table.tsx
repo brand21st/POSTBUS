@@ -43,6 +43,7 @@ export type DataTableProps<TData extends Record<string, unknown>> = {
   onPageChange?: (page: number) => void;
   getRowId?: (row: TData) => string;
   selectable?: boolean;
+  selectedIds?: string[];
   onSelectionChange?: (ids: string[]) => void;
   onRowClick?: (row: TData) => void;
   getRowClassName?: (row: TData) => string | undefined;
@@ -62,6 +63,7 @@ export function DataTable<TData extends Record<string, unknown>>({
   onPageChange,
   getRowId,
   selectable,
+  selectedIds,
   onSelectionChange,
   onRowClick,
   getRowClassName,
@@ -86,22 +88,45 @@ export function DataTable<TData extends Record<string, unknown>>({
     return helper.columns([
       helper.display({
         id: "_select",
-        header: ({ table }) => (
-          <Checkbox
-            aria-label="Select all rows"
-            checked={table.getIsAllRowsSelected()}
-            onCheckedChange={(value) => {
-              table.toggleAllRowsSelected(!!value);
-              if (!onSelectionChange) return;
-              onSelectionChange(value ? table.getRowModel().rows.map((row) => row.id) : []);
-            }}
-          />
-        ),
+        header: ({ table }) => {
+          const visibleIds = table.getRowModel().rows.map((row) => row.id);
+          const selectedVisible = selectedIds
+            ? visibleIds.filter((id) => selectedIds.includes(id)).length
+            : table.getIsAllRowsSelected()
+              ? visibleIds.length
+              : 0;
+          const allVisibleSelected = visibleIds.length > 0 && selectedVisible === visibleIds.length;
+          return (
+            <Checkbox
+              aria-label="Select all visible orders"
+              checked={
+                allVisibleSelected ? true : selectedVisible > 0 ? "indeterminate" : false
+              }
+              onCheckedChange={(value) => {
+                if (selectedIds) {
+                  onSelectionChange?.(value ? visibleIds : []);
+                  return;
+                }
+                table.toggleAllRowsSelected(!!value);
+                if (!onSelectionChange) return;
+                onSelectionChange(value ? visibleIds : []);
+              }}
+            />
+          );
+        },
         cell: ({ row, table }) => (
           <Checkbox
             aria-label="Select row"
-            checked={row.getIsSelected()}
+            checked={selectedIds ? selectedIds.includes(row.id) : row.getIsSelected()}
             onCheckedChange={(value) => {
+              if (selectedIds) {
+                onSelectionChange?.(
+                  value
+                    ? Array.from(new Set([...selectedIds, row.id]))
+                    : selectedIds.filter((id) => id !== row.id)
+                );
+                return;
+              }
               row.toggleSelected(!!value);
               if (!onSelectionChange) return;
               const current = table.getSelectedRowModel().rows.map((selected) => selected.id);
@@ -117,7 +142,7 @@ export function DataTable<TData extends Record<string, unknown>>({
       }),
       ...mapped,
     ]);
-  }, [columns, onSelectionChange, selectable]);
+  }, [columns, onSelectionChange, selectable, selectedIds]);
 
   const tableData = (data.length ? data : EMPTY_DATA) as TData[];
 

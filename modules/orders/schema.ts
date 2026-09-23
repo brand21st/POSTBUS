@@ -58,3 +58,8 @@ export const orderListQuery = z.object({
   to: z.string().optional(),
   sort: z.string().optional(),
 });
+
+export const bulkOrderStatusSchema = z.object({
+  orderIds: z.array(z.string().min(1)).min(1).max(100),
+  action: z.literal("fulfill"),
+});

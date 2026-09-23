@@ -7,6 +7,7 @@ import {
   canProcessOrder,
   canProcessOrderAction,
   canShipOrder,
+  fulfillSkipReason,
   isShopifyConnected,
   isWatiConnected,
   itemSummary,
@@ -88,6 +89,19 @@ describe("canShipOrder", () => {
     expect(canShipOrder({ status: "IN_TRANSIT" })).toBe(false);
     expect(canShipOrder({ status: "DELIVERED" })).toBe(false);
     expect(canShipOrder({ status: "CANCELLED" })).toBe(false);
+  });
+
+  it("explains why Booked / packed cannot run", () => {
+    expect(fulfillSkipReason({ status: "PROCESSING", order_number: "1020" })).toBeNull();
+    expect(fulfillSkipReason({ status: "DELIVERED", order_number: "1024" })).toBe(
+      "Order #1024 cannot be marked Booked / packed because it is already Delivered."
+    );
+    expect(fulfillSkipReason({ status: "CANCELLED", order_number: "1025" })).toBe(
+      "Order #1025 cannot be marked Booked / packed because it is Cancelled."
+    );
+    expect(fulfillSkipReason({ status: "BOOKED", order_number: "1026" })).toBe(
+      "Order #1026 cannot be marked Booked / packed because it is already Booked."
+    );
   });
 
   it("enables every shipment action when Wati is connected", () => {
