@@ -304,6 +304,9 @@ async function applyProcessingSideEffects(
   shipmentId?: string | null
 ) {
   await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", orderId);
+  const { data: orderRow } = await supabase.from("orders").select("source").eq("id", orderId).maybeSingle();
+  const isShopify = (orderRow?.source || "").toUpperCase() === "SHOPIFY";
+  let shopifySynced = !isShopify;
   try {
     const { syncShopifyOrderStage, enqueueShopifyStageSync } = await import("@/modules/shopify/orders");
     const result = await syncShopifyOrderStage(supabase, {
@@ -312,6 +315,9 @@ async function applyProcessingSideEffects(
       shipmentId,
       stage: "processing",
     });
+    if (isShopify) {
+      shopifySynced = Boolean(result && (!result.skipped || ("tagged" in result && result.tagged)));
+    }
     if (result && "skipped" in result && result.skipped && result.reason !== "not_shopify" && result.reason !== "shopify_not_connected") {
       await enqueueShopifyStageSync(supabase, {
         organizationId: ctx.organizationId,
@@ -335,10 +341,12 @@ async function applyProcessingSideEffects(
       // Shopify in-progress is retried by shopify-fulfillment jobs.
     }
   }
-  await enqueueOptionalWatiNotify(supabase, ctx.organizationId, "processing", {
-    orderId,
-    shipmentId,
-  });
+  if (!isShopify || shopifySynced) {
+    await enqueueOptionalWatiNotify(supabase, ctx.organizationId, "processing", {
+      orderId,
+      shipmentId,
+    });
+  }
 }
 
 async function enqueueOptionalWatiNotify(

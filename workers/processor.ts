@@ -831,9 +831,8 @@ async function shopifyFulfillment(
     .select("progress")
     .eq("id", payload.jobId)
     .maybeSingle();
-  const { shopifyStageFromJobProgress, syncShopifyOrderStage, fulfillShopifyShipment } = await import(
-    "@/modules/shopify/orders"
-  );
+  const { shopifyStageFromJobProgress, syncShopifyOrderStage, fulfillShopifyShipment, notifyShopifyProcessingWati } =
+    await import("@/modules/shopify/orders");
   const stage = shopifyStageFromJobProgress(job?.progress);
   if (stage === "processing" || stage === "in_transit" || stage === "delivered") {
     const progress =
@@ -852,6 +851,9 @@ async function shopifyFulfillment(
       shipmentId: progress.shipmentId ?? (payload.entityType === "shipment" ? payload.entityId : null),
       stage,
     });
+    if (stage === "processing" && result && (!result.skipped || ("tagged" in result && result.tagged))) {
+      await notifyShopifyProcessingWati(supabase, payload.organizationId, orderId);
+    }
     await supabase.from("background_jobs").update({ progress: result }).eq("id", payload.jobId);
     return;
   }

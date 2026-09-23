@@ -16,6 +16,8 @@ import {
   nextShopifyStageTags,
   shopifyOrderNumber,
   shopifyStageFromJobProgress,
+  shopifyRemoteSignalsProcessing,
+  shouldNotifyWatiForShopifyProcessing,
   shopifyPhone,
   shopifyPincode,
   shopifyReadyToSync,
@@ -145,6 +147,11 @@ describe("shopify order mapping", () => {
     expect(shopifyStageFromJobProgress({ event: "processing" })).toBe("processing");
     expect(shopifyStageFromJobProgress({ event: "booked" })).toBe("booked");
     expect(shopifyStageFromJobProgress({})).toBeNull();
+    expect(shopifyRemoteSignalsProcessing({ tags: "vip, postbus-processing" })).toBe(true);
+    expect(shopifyRemoteSignalsProcessing({ tags: ["ready"] })).toBe(false);
+    expect(shouldNotifyWatiForShopifyProcessing("READY")).toBe(true);
+    expect(shouldNotifyWatiForShopifyProcessing("PROCESSING")).toBe(true);
+    expect(shouldNotifyWatiForShopifyProcessing("BOOKED")).toBe(false);
   });
 
   it("parses Shopify progress-reported webhooks", () => {

@@ -152,6 +152,7 @@ export async function enqueueWatiNotify(
   if (!(await isAutoWatiEventEnabled(supabase, organizationId, event))) return;
   const entityId = ids.shipmentId ?? ids.orderId;
   if (!entityId) return;
+  if (await hasOpenWatiNotifyJob(supabase, organizationId, event, ids)) return;
   const { createBackgroundJob } = await import("@/modules/jobs/service");
   await createBackgroundJob(supabase, {
     organizationId,
@@ -160,6 +161,40 @@ export async function enqueueWatiNotify(
     entityId,
     progress: { event, shipmentId: ids.shipmentId ?? null, orderId: ids.orderId ?? null },
   });
+}
+
+export function isDuplicateWatiNotifyJob(
+  jobs: Array<{ entity_id?: string | null; progress?: unknown }>,
+  event: WatiNotifyEvent,
+  ids: WatiNotifyIds
+) {
+  return jobs.some((job) => {
+    if (watiEventFromJobProgress(job.progress) !== event) return false;
+    const fromJob = watiIdsFromJob(job.progress, job.entity_id);
+    if (ids.orderId && (fromJob.orderId === ids.orderId || job.entity_id === ids.orderId)) return true;
+    if (ids.shipmentId && (fromJob.shipmentId === ids.shipmentId || job.entity_id === ids.shipmentId)) {
+      return true;
+    }
+    return false;
+  });
+}
+
+async function hasOpenWatiNotifyJob(
+  supabase: SupabaseClient,
+  organizationId: string,
+  event: WatiNotifyEvent,
+  ids: WatiNotifyIds
+) {
+  const entityIds = [ids.shipmentId, ids.orderId].filter((value): value is string => Boolean(value));
+  if (!entityIds.length) return false;
+  const { data } = await supabase
+    .from("background_jobs")
+    .select("entity_id, progress")
+    .eq("organization_id", organizationId)
+    .eq("job_type", "wati-notify")
+    .in("entity_id", entityIds)
+    .in("status", ["QUEUED", "PENDING", "RUNNING", "RETRYING", "SUCCEEDED"]);
+  return isDuplicateWatiNotifyJob(data ?? [], event, ids);
 }
 
 export function watiEventFromJobProgress(progress: unknown): WatiNotifyEvent {

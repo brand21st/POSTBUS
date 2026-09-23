@@ -85,6 +85,7 @@ export type ShopifyRemoteOrder = {
   customer?: { first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null } | null;
   payment_gateway_names?: string[] | null;
   gateway?: string | null;
+  tags?: string | string[] | null;
   line_items?: Array<{
     title?: string;
     sku?: string | null;
@@ -160,6 +161,39 @@ export function shopifyFulfillmentOrderGid(id: number | string) {
 export function shopifyOrderGid(id: number | string) {
   const raw = String(id);
   return raw.startsWith("gid://") ? raw : `gid://shopify/Order/${raw}`;
+}
+
+export function shopifyRemoteSignalsProcessing(remote: { tags?: string | string[] | null }) {
+  const tags = Array.isArray(remote.tags) ? remote.tags.join(",") : String(remote.tags ?? "");
+  return tags
+    .split(",")
+    .some((tag) => tag.trim().toLowerCase() === SHOPIFY_STAGE_TAGS.processing);
+}
+
+export function shouldNotifyWatiForShopifyProcessing(currentStatus?: string | null) {
+  const current = (currentStatus ?? "").toUpperCase();
+  return !["BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CANCELLED"].includes(current);
+}
+
+export async function notifyShopifyProcessingWati(
+  supabase: SupabaseClient,
+  organizationId: string,
+  orderId: string
+) {
+  const { data: order } = await supabase
+    .from("orders")
+    .select("status")
+    .eq("id", orderId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (!shouldNotifyWatiForShopifyProcessing(order?.status)) return { skipped: true, reason: "advanced" };
+  try {
+    const { enqueueWatiNotify } = await import("@/modules/wati/send");
+    await enqueueWatiNotify(supabase, organizationId, "processing", { orderId });
+    return { skipped: false };
+  } catch {
+    return { skipped: true, reason: "wati_enqueue_failed" };
+  }
 }
 
 export function nextShopifyStageTags(
@@ -968,11 +1002,14 @@ export async function upsertShopifyOrder(
   const { data: existingOrder } = existing?.order_id
     ? await supabase.from("orders").select("status").eq("id", existing.order_id).maybeSingle()
     : { data: null };
-  const orderStatus = nextShopifyOrderStatus({
+  let orderStatus = nextShopifyOrderStatus({
     cancelledAt: input.remote.cancelled_at,
     fulfillmentStatus,
     currentStatus: existingOrder?.status,
   });
+  if (shopifyRemoteSignalsProcessing(input.remote) && orderStatus === "READY") {
+    orderStatus = "PROCESSING";
+  }
   const totals = {
     currency: input.remote.currency || "INR",
     subtotal: Number(input.remote.subtotal_price ?? 0),
@@ -987,6 +1024,9 @@ export async function upsertShopifyOrder(
 
   if (existing?.order_id) {
     await supabase.from("orders").update(totals).eq("id", existing.order_id);
+    if (shopifyRemoteSignalsProcessing(input.remote)) {
+      await notifyShopifyProcessingWati(supabase, input.organizationId, existing.order_id as string);
+    }
     return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string };
   }
 
@@ -1179,22 +1219,16 @@ export async function importShopifyProgressReported(
   if (!order) return { updated: false, skipped: true, orderId: null as string | null };
 
   const current = (order.status ?? "").toUpperCase();
-  const alreadyAdvanced = ["PROCESSING", "BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CANCELLED"].includes(
-    current
-  );
-  if (alreadyAdvanced) {
+  if (["BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CANCELLED"].includes(current)) {
     return { updated: false, skipped: true, orderId: order.id as string };
   }
 
-  await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", order.id);
-  try {
-    const { enqueueWatiNotify } = await import("@/modules/wati/send");
-    await enqueueWatiNotify(supabase, input.organizationId, "processing", { orderId: order.id });
-  } catch {
-    // WhatsApp is optional; Shopify progress should still persist.
+  if (current !== "PROCESSING") {
+    await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", order.id);
   }
+  await notifyShopifyProcessingWati(supabase, input.organizationId, order.id as string);
 
-  return { updated: true, skipped: false, orderId: order.id as string };
+  return { updated: current !== "PROCESSING", skipped: false, orderId: order.id as string };
 }
 
 export async function importShopifyWebhookOrder(

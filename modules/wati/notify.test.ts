@@ -8,6 +8,7 @@ import {
   watiTemplateForEvent,
   watiValuesForPlaceholders,
 } from "@/modules/wati/notify";
+import { isDuplicateWatiNotifyJob } from "@/modules/wati/send";
 
 describe("watiTemplateForEvent", () => {
   it("uses the saved template for each order and shipment event", () => {
@@ -23,6 +24,25 @@ describe("watiTemplateForEvent", () => {
     expect(watiTemplateForEvent("booked", templates)).toBe("order_booked");
     expect(watiTemplateForEvent("in_transit", templates)).toBeNull();
     expect(watiTemplateForEvent("delivered", templates)).toBe("order_delivered");
+  });
+});
+
+describe("isDuplicateWatiNotifyJob", () => {
+  it("treats the same order processing job as already queued", () => {
+    expect(
+      isDuplicateWatiNotifyJob(
+        [{ entity_id: "ord-1", progress: { event: "processing", orderId: "ord-1" } }],
+        "processing",
+        { orderId: "ord-1" }
+      )
+    ).toBe(true);
+    expect(
+      isDuplicateWatiNotifyJob(
+        [{ entity_id: "ship-1", progress: { event: "processing", shipmentId: "ship-1" } }],
+        "processing",
+        { orderId: "ord-1" }
+      )
+    ).toBe(false);
   });
 });
 
