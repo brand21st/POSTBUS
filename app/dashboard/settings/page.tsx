@@ -18,27 +18,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { asList, asPaginated } from "@/lib/dashboard/records";
-import { formatDate } from "@/lib/format";
+import { asList } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { hasPermission } from "@/lib/permissions/rbac";
-import { MEMBER_ROLES, WEBHOOK_EVENTS, type MemberRole } from "@/types/domain";
-import type {
-  ApiKeyRecord,
-  AuditLogRecord,
-  InviteRecord,
-  MemberRecord,
-  OrganizationSettings,
-  WebhookRecord,
-} from "@/types/api";
+import { MEMBER_ROLES, type MemberRole } from "@/types/domain";
+import type { InviteRecord, MemberRecord, OrganizationSettings } from "@/types/api";
 
 export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Organization, access, security, developer credentials, and audit history."
+        description="Organization, access, security, and notification preferences."
       />
       <Tabs defaultValue="organization" className="space-y-6">
         <TabsList className="flex h-auto w-full flex-wrap justify-start">
@@ -47,9 +39,6 @@ export default function SettingsPage() {
           <TabsTrigger value="roles">Roles</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="api-keys">API Keys</TabsTrigger>
-          <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
-          <TabsTrigger value="audit">Audit Logs</TabsTrigger>
         </TabsList>
         <TabsContent value="organization">
           <OrganizationSection />
@@ -65,15 +54,6 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="notifications">
           <NotificationsSection />
-        </TabsContent>
-        <TabsContent value="api-keys">
-          <ApiKeysSection />
-        </TabsContent>
-        <TabsContent value="webhooks">
-          <WebhooksSection />
-        </TabsContent>
-        <TabsContent value="audit">
-          <AuditSection />
         </TabsContent>
       </Tabs>
     </div>
@@ -432,211 +412,6 @@ function NotificationsSection() {
         <Button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
           Save preferences
         </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ApiKeysSection() {
-  const queryClient = useQueryClient();
-  const [name, setName] = useState("");
-  const [revealed, setRevealed] = useState<string | null>(null);
-
-  const query = useQuery({
-    queryKey: ["api-keys"],
-    queryFn: () => api<ApiKeyRecord[] | { items: ApiKeyRecord[] }>("/api/v1/api-keys"),
-  });
-
-  const create = useMutation({
-    mutationFn: () =>
-      api<ApiKeyRecord>("/api/v1/api-keys", {
-        method: "POST",
-        body: JSON.stringify({ name }),
-      }),
-    onSuccess: (data) => {
-      setRevealed(data.secret ?? null);
-      setName("");
-      toast.success("API key created. Copy the secret now — it will not be shown again.");
-      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const revoke = useMutation({
-    mutationFn: (id: string) => api(`/api/v1/api-keys/${id}`, { method: "DELETE" }),
-    onSuccess: () => {
-      toast.success("API key revoked.");
-      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const keys = asList<ApiKeyRecord>(query.data);
-
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Create API key</CardTitle>
-          <CardDescription>The raw secret is shown once. Only the prefix is stored afterwards.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 md:flex-row">
-          <Input placeholder="Production integration" value={name} onChange={(event) => setName(event.target.value)} />
-          <Button type="button" disabled={!name || create.isPending} onClick={() => create.mutate()}>
-            Create key
-          </Button>
-        </CardContent>
-      </Card>
-      {revealed ? (
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm font-medium">Copy this secret now</p>
-            <p className="mt-2 break-all rounded-xl bg-surface px-3 py-2 font-mono text-sm">{revealed}</p>
-          </CardContent>
-        </Card>
-      ) : null}
-      <Card>
-        <CardHeader>
-          <CardTitle>Keys</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {query.isError ? (
-            <p className="text-sm text-error">{query.error.message}</p>
-          ) : keys.length === 0 ? (
-            <p className="text-sm text-muted">No API keys yet.</p>
-          ) : (
-            keys.map((key) => (
-              <div key={key.id} className="flex items-center justify-between gap-3 rounded-xl border border-border px-4 py-3">
-                <div>
-                  <p className="text-sm font-medium">{key.name}</p>
-                  <p className="text-xs text-muted">
-                    {key.keyPrefix ?? key.key_prefix} · last used {formatDate(key.lastUsedAt ?? key.last_used_at, true)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge value={key.status} />
-                  <Button type="button" variant="secondary" size="sm" onClick={() => revoke.mutate(key.id)}>
-                    Revoke
-                  </Button>
-                </div>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function WebhooksSection() {
-  const queryClient = useQueryClient();
-  const [url, setUrl] = useState("");
-  const [events, setEvents] = useState<string[]>(["shipment.booked"]);
-
-  const query = useQuery({
-    queryKey: ["webhooks"],
-    queryFn: () => api<WebhookRecord[] | { items: WebhookRecord[] }>("/api/v1/webhooks"),
-  });
-
-  const create = useMutation({
-    mutationFn: () =>
-      api("/api/v1/webhooks", {
-        method: "POST",
-        body: JSON.stringify({ url, events }),
-      }),
-    onSuccess: () => {
-      toast.success("Webhook endpoint created.");
-      setUrl("");
-      queryClient.invalidateQueries({ queryKey: ["webhooks"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const endpoints = asList<WebhookRecord>(query.data);
-
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Outgoing webhook</CardTitle>
-          <CardDescription>Signed with HMAC, timestamp, and a replay window on the server.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Field label="Endpoint URL">
-            <Input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/webhooks/postbus" />
-          </Field>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {WEBHOOK_EVENTS.map((event) => (
-              <label key={event} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={events.includes(event)}
-                  onCheckedChange={(checked) =>
-                    setEvents((current) =>
-                      checked === true ? [...current, event] : current.filter((item) => item !== event)
-                    )
-                  }
-                />
-                {event}
-              </label>
-            ))}
-          </div>
-          <Button type="button" disabled={!url || create.isPending} onClick={() => create.mutate()}>
-            Add webhook
-          </Button>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Endpoints</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {query.isError ? (
-            <p className="text-sm text-error">{query.error.message}</p>
-          ) : endpoints.length === 0 ? (
-            <p className="text-sm text-muted">No webhook endpoints yet.</p>
-          ) : (
-            endpoints.map((endpoint) => (
-              <div key={endpoint.id} className="rounded-xl border border-border px-4 py-3">
-                <p className="text-sm font-medium">{endpoint.url}</p>
-                <p className="mt-1 text-xs text-muted">{(endpoint.events ?? []).join(", ") || "No events"}</p>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function AuditSection() {
-  const query = useQuery({
-    queryKey: ["audit-logs"],
-    queryFn: () => api<{ items?: AuditLogRecord[] }>("/api/v1/audit-logs"),
-  });
-  const logs = asPaginated<AuditLogRecord>(query.data, ["items"]).items;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Audit logs</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {query.isError ? (
-          <p className="text-sm text-error">{query.error.message}</p>
-        ) : logs.length === 0 ? (
-          <p className="text-sm text-muted">No audit events yet.</p>
-        ) : (
-          logs.map((log) => (
-            <div key={log.id} className="rounded-xl border border-border px-4 py-3 text-sm">
-              <p className="font-medium">{log.action}</p>
-              <p className="text-xs text-muted">
-                {[log.entityType ?? log.entity_type, log.entityId ?? log.entity_id, formatDate(log.createdAt ?? log.created_at, true)]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-            </div>
-          ))
-        )}
       </CardContent>
     </Card>
   );
