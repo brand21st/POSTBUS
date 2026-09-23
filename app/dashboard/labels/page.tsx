@@ -9,14 +9,6 @@ import { DataTable, type DataTableColumn } from "@/components/dashboard/data-tab
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { ApiError, api } from "@/lib/hooks/use-api";
@@ -69,7 +61,6 @@ async function downloadLabelsZip(ids: string[]) {
 export default function LabelsPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
-  const [regenerate, setRegenerate] = useState<LabelRecord | null>(null);
   const queryClient = useQueryClient();
   const station = usePrintStation();
   const connected = Boolean(station.data?.connected);
@@ -85,20 +76,6 @@ export default function LabelsPage() {
   const bulk = useMutation({
     mutationFn: downloadLabelsZip,
     onSuccess: () => toast.success("Labels downloaded."),
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const regenerateLabel = useMutation({
-    mutationFn: (label: LabelRecord) =>
-      api<{ message?: string }>(`/api/v1/labels/${label.id}/regenerate`, {
-        method: "POST",
-        body: JSON.stringify({ confirm: true, kind: label.kind || "INDIA_POST" }),
-      }),
-    onSuccess: async (data) => {
-      toast.success(data.message || "A new label was generated.");
-      setRegenerate(null);
-      await queryClient.invalidateQueries({ queryKey: ["labels"] });
-    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -194,15 +171,6 @@ export default function LabelsPage() {
               <Printer className="size-4" />
               Print
             </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!ready}
-              onClick={() => setRegenerate(row)}
-            >
-              Regenerate
-            </Button>
           </div>
         );
       },
@@ -255,28 +223,6 @@ export default function LabelsPage() {
         onSelectionChange={setSelected}
         getRowId={(row) => row.id}
       />
-      <Dialog open={Boolean(regenerate)} onOpenChange={(open) => !open && setRegenerate(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Regenerate label</DialogTitle>
-            <DialogDescription>
-              This creates a new file. The existing label stays unchanged. Official India Post labels are fetched again from India Post; packing labels use the current template.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setRegenerate(null)}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={!regenerate || regenerateLabel.isPending}
-              onClick={() => regenerate && regenerateLabel.mutate(regenerate)}
-            >
-              Regenerate
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

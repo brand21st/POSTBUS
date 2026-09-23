@@ -9,6 +9,7 @@ import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { createOrderSchema, orderListQuery } from "@/modules/orders/schema";
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders } from "@/modules/orders/service";
+import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { mapLabelRow } from "@/modules/labels/map";
 import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
@@ -131,12 +132,10 @@ export async function handleCommerceRoutes(
       shipment_id: data.shipment_id,
     });
     const filename = `${data.shipment_id || data.id}.pdf`;
-    return new NextResponse(new Uint8Array(bytes), {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="${filename}"`,
-      },
-    });
+    if (wantsBrowserPdfPreview(request)) {
+      return labelPdfViewerResponse(filename);
+    }
+    return labelPdfFileResponse(bytes, filename);
   }
 
   if (key === "POST labels/bulk-download") {
