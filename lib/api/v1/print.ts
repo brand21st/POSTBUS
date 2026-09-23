@@ -82,14 +82,17 @@ export async function handlePrintStationRoutes(
       paperSize?: string;
       paper_size?: string;
       orientation?: string;
-      copies?: number;
-    };
-    return updatePrintSettings(supabase, ctx, {
-      selectedPrinterName: body.selectedPrinterName ?? body.selected_printer_name,
-      paperSize: body.paperSize ?? body.paper_size,
-      orientation: body.orientation,
-      copies: body.copies,
-    });
+    copies?: number;
+    autoPrintMerchant?: boolean;
+    auto_print_merchant?: boolean;
+  };
+  return updatePrintSettings(supabase, ctx, {
+    selectedPrinterName: body.selectedPrinterName ?? body.selected_printer_name,
+    paperSize: body.paperSize ?? body.paper_size,
+    orientation: body.orientation,
+    copies: body.copies,
+    autoPrintMerchant: body.autoPrintMerchant ?? body.auto_print_merchant,
+  });
   }
 
   if (key === "POST print-station/token") {

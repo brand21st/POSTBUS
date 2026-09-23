@@ -25,6 +25,8 @@ type Job = {
   claimed_at: string | null;
   printed_at: string | null;
   created_at: string;
+  paper_size?: string | null;
+  copies?: number | null;
 };
 
 function printClient(state: {
@@ -225,6 +227,36 @@ describe("print jobs", () => {
     });
     const agent = await authenticatePrintAgent(supabase as never, `Bearer ${token}`);
     expect(agent.organizationId).toBe("org-1");
+  });
+
+  it("returns the job paper size on claim so a test print can differ from station settings", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "AUTO",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          paper_size: "A5",
+          copies: 2,
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+      agent: { printers: ["Epson TM"] },
+    };
+    const claimed = await claimNextPrintJob(printClient(state) as never, {
+      agentId: "agent-1",
+      organizationId: "org-1",
+    });
+    expect(claimed?.paperSize).toBe("A5");
+    expect(claimed?.copies).toBe(2);
   });
 
   it("does not claim a job when the selected printer is offline", async () => {

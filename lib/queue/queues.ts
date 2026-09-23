@@ -15,6 +15,7 @@ export const QUEUE_NAMES = {
   reports: "reports",
   shopifyFulfillment: "shopify-fulfillment",
   watiNotify: "wati-notify",
+  invoiceGeneration: "invoice-generation",
 } as const;
 
 const queues = new Map<string, Queue>();

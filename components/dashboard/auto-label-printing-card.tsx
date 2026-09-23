@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -40,6 +41,9 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
   const paperSize = String(stationField(station, "paperSize", "paper_size") ?? "A6");
   const orientation = String(stationField(station, "orientation", "orientation") ?? "portrait");
   const copies = Number(stationField(station, "copies", "copies") ?? 1);
+  const autoPrintMerchant = Boolean(
+    stationField(station, "autoPrintMerchant", "auto_print_merchant") ?? true
+  );
   const offlineMessage = String(stationField(station, "offlineMessage", "offline_message") ?? "");
   const [token, setToken] = useState<string | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -110,6 +114,7 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="A6">A6</SelectItem>
+                <SelectItem value="4x6">4 × 6 in</SelectItem>
                 <SelectItem value="A5">A5</SelectItem>
                 <SelectItem value="A4">A4</SelectItem>
               </SelectContent>
@@ -148,6 +153,18 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
+          <div>
+            <p className="text-sm font-medium text-ink">Print packing label</p>
+            <p className="text-xs text-muted">Also print the merchant packing label after the official India Post PDF.</p>
+          </div>
+          <Switch
+            checked={autoPrintMerchant}
+            disabled={!canManage || saveStation.isPending}
+            onCheckedChange={(checked) => saveStation.mutate({ autoPrintMerchant: checked })}
+          />
         </div>
 
         {printerNames.length > 0 ? (

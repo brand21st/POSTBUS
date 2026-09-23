@@ -11,6 +11,7 @@ const SUCCESS = new Set([
   "LABEL_READY",
   "MANIFEST_READY",
   "SUCCEEDED",
+  "GENERATED",
   "PUBLISHED",
   "PRINTED",
 ]);

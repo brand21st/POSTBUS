@@ -37,6 +37,26 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "labels/abc/print", ["labels", "abc", "print"])).toBe(
       "labels.write"
     );
+    expect(permissionForTenantRoute("POST", "labels/abc/regenerate", ["labels", "abc", "regenerate"])).toBe(
+      "labels.write"
+    );
+    expect(permissionForTenantRoute("GET", "label-template", ["label-template"])).toBe("labels.read");
+    expect(permissionForTenantRoute("PUT", "label-template", ["label-template"])).toBe("labels.write");
+    expect(permissionForTenantRoute("GET", "invoices", ["invoices"])).toBe("orders.read");
+    expect(permissionForTenantRoute("GET", "invoices/abc/download", ["invoices", "abc", "download"])).toBe(
+      "orders.read"
+    );
+    expect(permissionForTenantRoute("POST", "invoices/abc/retry", ["invoices", "abc", "retry"])).toBe(
+      "orders.write"
+    );
+    expect(permissionForTenantRoute("POST", "invoices/abc/regenerate", ["invoices", "abc", "regenerate"])).toBe(
+      "orders.write"
+    );
+    expect(permissionForTenantRoute("GET", "invoice-template", ["invoice-template"])).toBe("orders.read");
+    expect(permissionForTenantRoute("PUT", "invoice-template", ["invoice-template"])).toBe("orders.write");
+    expect(permissionForTenantRoute("POST", "label-template/print-test", ["label-template", "print-test"])).toBe(
+      "labels.write"
+    );
     expect(permissionForTenantRoute("GET", "notifications", ["notifications"])).toBeUndefined();
   });
 

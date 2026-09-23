@@ -71,26 +71,33 @@ describe("label filesystem storage", () => {
     expect(read?.equals(bytes)).toBe(true);
   });
 
-  it("overwrites the same relative path on regenerate", async () => {
+  it("writes unique files so regenerate does not replace an older label", async () => {
     const dir = await tempRoot();
+    const other = "33333333-3333-4333-8333-333333333333";
     await saveLabelPdf({
       organizationId: org,
-      shipmentId: shipment,
+      fileId: shipment,
       bytes: Buffer.from("first"),
       root: dir,
     });
     await saveLabelPdf({
       organizationId: org,
-      shipmentId: shipment,
+      fileId: other,
       bytes: Buffer.from("second"),
       root: dir,
     });
-    const read = await readLabelPdfIfPresent({
+    const first = await readLabelPdfIfPresent({
       relativePath: `${org}/${shipment}.pdf`,
       organizationId: org,
       root: dir,
     });
-    expect(read?.toString()).toBe("second");
+    const next = await readLabelPdfIfPresent({
+      relativePath: `${org}/${other}.pdf`,
+      organizationId: org,
+      root: dir,
+    });
+    expect(first?.toString()).toBe("first");
+    expect(next?.toString()).toBe("second");
   });
 
   it("returns null when the vps file is missing", async () => {

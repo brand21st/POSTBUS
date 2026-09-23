@@ -18,8 +18,21 @@ export function permissionForTenantRoute(
     return method === "POST" ? "shipments.write" : "shipments.read";
   }
 
+  if (root === "label-template") {
+    return method === "GET" ? "labels.read" : "labels.write";
+  }
+
+  if (root === "invoice-template") {
+    return method === "GET" ? "orders.read" : "orders.write";
+  }
+
+  if (root === "invoices") {
+    if (method === "POST" && (slugs[2] === "retry" || slugs[2] === "regenerate")) return "orders.write";
+    return "orders.read";
+  }
+
   if (root === "labels") {
-    if (method === "POST" && slugs[2] === "print") return "labels.write";
+    if (method === "POST" && (slugs[2] === "print" || slugs[2] === "regenerate")) return "labels.write";
     return "labels.read";
   }
 

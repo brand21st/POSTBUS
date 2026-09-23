@@ -178,6 +178,7 @@ export type OrderRecord = {
   line_items?: LineItem[];
   items?: number;
   shipment?: ShipmentRecord | null;
+  invoice?: InvoiceSummary | null;
   createdAt?: string;
   created_at?: string;
   updatedAt?: string;
@@ -209,12 +210,81 @@ export type ShipmentRecord = {
   created_at?: string;
   bookedAt?: string | null;
   booked_at?: string | null;
+  invoice?: InvoiceSummary | null;
+};
+
+export type InvoiceSummary = {
+  id: string;
+  status?: string;
+  invoiceNumber?: string;
+  invoice_number?: string;
+  errorMessage?: string | null;
+  error_message?: string | null;
+};
+
+export type InvoiceRecord = InvoiceSummary & {
+  organizationId?: string;
+  orderId?: string;
+  order_id?: string;
+  shipmentId?: string;
+  shipment_id?: string;
+  trackingNumber?: string | null;
+  tracking_number?: string | null;
+  invoiceDate?: string;
+  invoice_date?: string;
+  currency?: string;
+  totalAmount?: number | string;
+  total_amount?: number | string;
+  orderNumber?: string | null;
+  order_number?: string | null;
+  createdAt?: string;
+  created_at?: string;
+};
+
+export type InvoiceAppearance = {
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
+  textColor: string;
+  tableHeaderColor: string;
+  borderColor: string;
+  totalHighlightColor: string;
+};
+
+export type InvoicePreviewData = {
+  storeName: string;
+  storePhone: string;
+  storeEmail: string;
+  storeGstin: string;
+  storeWebsite: string;
+  storeAddress: string[];
+  hasLogo: boolean;
+  invoiceNumber: string;
+  invoiceDate: string;
+  orderNumber: string;
+  orderDate: string;
+  shipmentId: string;
+  trackingNumber: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  currency: string;
+  customer: { name: string; phone: string; email: string; lines: string[] };
+  billing: { name: string; phone: string; email: string; lines: string[] };
+  shipping: { name: string; phone: string; email: string; lines: string[] };
+  items: Array<{ title: string; sku: string | null; quantity: number; unitPrice: number; lineTotal: number }>;
+  subtotal: number;
+  discount: number;
+  shippingAmount: number;
+  taxAmount: number;
+  total: number;
+  codAmount: number | null;
 };
 
 export type LabelRecord = {
   id: string;
   shipmentId?: string;
   shipment_id?: string;
+  kind?: string | null;
   status?: string;
   fileUrl?: string | null;
   file_url?: string | null;
@@ -312,6 +382,8 @@ export type PrintStation = {
   paper_size?: string;
   orientation?: string;
   copies?: number;
+  autoPrintMerchant?: boolean;
+  auto_print_merchant?: boolean;
   connected?: boolean;
   printerNames?: string[];
   printer_names?: string[];

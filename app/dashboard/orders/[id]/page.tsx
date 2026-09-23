@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { addressLine, customerName, lineItems, orderNumber } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
+import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import type { OrderRecord, ShipmentRecord } from "@/types/api";
 
 export default function OrderDetailPage() {
@@ -163,6 +164,25 @@ export default function OrderDetailPage() {
               </table>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Invoice</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {record.invoice ? <StatusBadge value={record.invoice.status} /> : null}
+          <InvoiceActions
+            invoice={record.invoice}
+            onRetry={() =>
+              record.invoice &&
+              api(`/api/v1/invoices/${record.invoice.id}/retry`, { method: "POST" }).then(() => {
+                toast.success("Invoice retry queued.");
+                queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+              }).catch((error: Error) => toast.error(error.message))
+            }
+          />
         </CardContent>
       </Card>
 

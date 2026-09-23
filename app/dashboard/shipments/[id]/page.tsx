@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Truck } from "lucide-react";
 import { toast } from "sonner";
+import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
@@ -118,6 +119,25 @@ export default function ShipmentDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Invoice</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {record.invoice ? <StatusBadge value={record.invoice.status} /> : null}
+          <InvoiceActions
+            invoice={record.invoice}
+            onRetry={() =>
+              record.invoice &&
+              api(`/api/v1/invoices/${record.invoice.id}/retry`, { method: "POST" }).then(() => {
+                toast.success("Invoice retry queued.");
+                queryClient.invalidateQueries({ queryKey: ["shipment", params.id] });
+              }).catch((error: Error) => toast.error(error.message))
+            }
+          />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

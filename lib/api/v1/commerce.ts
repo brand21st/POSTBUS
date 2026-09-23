@@ -9,8 +9,8 @@ import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { createOrderSchema, orderListQuery } from "@/modules/orders/schema";
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders } from "@/modules/orders/service";
+import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { mapLabelRow } from "@/modules/labels/map";
-import { readLabelPdfIfPresent } from "@/modules/labels/storage";
 import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
 
 function dateRange(request: NextRequest) {
@@ -121,8 +121,15 @@ export async function handleCommerceRoutes(
       .eq("organization_id", ctx.organizationId)
       .eq("id", slugs[1])
       .maybeSingle();
-    if (!data?.file_path) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label file not found.");
-    const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, data);
+    if (!data?.file_path && !data?.file_url) {
+      throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label file not found.");
+    }
+    const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, {
+      id: String(data.id),
+      file_path: data.file_path || "",
+      file_url: data.file_url,
+      shipment_id: data.shipment_id,
+    });
     const filename = `${data.shipment_id || data.id}.pdf`;
     return new NextResponse(new Uint8Array(bytes), {
       headers: {
@@ -142,9 +149,14 @@ export async function handleCommerceRoutes(
       .in("id", ids);
     const zip = new JSZip();
     for (const label of data ?? []) {
-      if (!label.file_path) continue;
+      if (!label.file_path && !label.file_url) continue;
       try {
-        const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, label);
+        const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, {
+          id: String(label.id),
+          file_path: label.file_path || "",
+          file_url: label.file_url,
+          shipment_id: label.shipment_id,
+        });
         zip.file(`${label.id}.pdf`, bytes);
       } catch {
         continue;
@@ -205,23 +217,4 @@ export async function handleCommerceRoutes(
   }
 
   return null;
-}
-
-async function loadLabelPdfBytes(
-  supabase: SupabaseClient,
-  organizationId: string,
-  label: { id: string; file_path: string; shipment_id?: string | null }
-) {
-  const fromDisk = await readLabelPdfIfPresent({
-    relativePath: label.file_path,
-    organizationId,
-    labelId: label.id,
-    shipmentId: label.shipment_id ?? undefined,
-  });
-  if (fromDisk) return fromDisk;
-
-  const file = await supabase.storage.from("labels").download(label.file_path);
-  if (file.data) return Buffer.from(await file.data.arrayBuffer());
-
-  throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label file not found.");
 }

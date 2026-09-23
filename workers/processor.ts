@@ -12,14 +12,14 @@ import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { formatBarcode, indiaPostAcceptedArticleId, isCeptUatTestSeries } from "@/modules/india-post/barcode";
 import {
   indiaPostBookingArticle,
-  indiaPostDomesticLabelPayload,
   indiaPostFindOffice,
   indiaPostMobile,
   indiaPostPickDeliveryOffice,
   indiaPostRequiredText,
 } from "@/modules/india-post/endpoints";
-import { saveLabelPdf } from "@/modules/labels/storage";
-import { stampOrgLogoOnLabel } from "@/modules/labels/stamp-logo";
+import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
+import { persistLabelPdf } from "@/modules/labels/persist";
+import { persistMerchantPackingLabel } from "@/modules/labels/template-service";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
 import { PDFDocument, StandardFonts } from "pdf-lib";
@@ -38,6 +38,7 @@ export async function processJob(queue: string, payload: JobPayload) {
   try {
     if (queue === "shipment-booking") await bookShipment(supabase, payload);
     else if (queue === "label-generation") await generateLabel(supabase, payload);
+    else if (queue === "invoice-generation") await generateInvoice(supabase, payload);
     else if (queue === "manifest-generation") await generateManifest(supabase, payload);
     else if (queue === "tracking-sync") await syncTracking(supabase, payload);
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
@@ -111,7 +112,7 @@ export async function processJob(queue: string, payload: JobPayload) {
       })
       .eq("id", jobId);
 
-    if (payload.entityType === "shipment" && payload.entityId) {
+    if (queue !== "invoice-generation" && payload.entityType === "shipment" && payload.entityId) {
       await supabase
         .from("shipments")
         .update({
@@ -419,6 +420,20 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     entityType: "shipment",
     entityId: shipment.id,
   });
+  try {
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "invoice-generation",
+      entityType: "shipment",
+      entityId: shipment.id,
+    });
+  } catch (error) {
+    logError("INVOICE_JOB_ENQUEUE_FAILED", {
+      organizationId: payload.organizationId,
+      shipmentId: shipment.id,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+  }
   if (automation.autoShopifyFulfillment) {
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
@@ -453,156 +468,65 @@ async function loadAutomation(
   }
 }
 
+async function generateInvoice(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  if (!payload.entityId) {
+    throw Object.assign(new Error("Shipment is missing."), { code: "VALIDATION_ERROR" });
+  }
+  const { generateShippingInvoice } = await import("@/modules/invoices/service");
+  await generateShippingInvoice(supabase, payload.organizationId, payload.entityId);
+}
+
 async function generateLabel(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
-  const { data: shipment } = await supabase
-    .from("shipments")
-    .select("*, orders(order_number), customers(name, phone), addresses:shipping_address_id(*)")
-    .eq("id", payload.entityId)
-    .single();
-  if (!shipment?.barcode || !shipment.booked_at) {
-    throw Object.assign(new Error("Shipment is not booked."), { code: "VALIDATION_ERROR" });
+  if (!payload.entityId) {
+    throw Object.assign(new Error("Shipment is missing."), { code: "VALIDATION_ERROR" });
   }
-
-  const { data: connection } = await supabase
-    .from("india_post_connections")
-    .select("*")
-    .eq("organization_id", payload.organizationId)
-    .maybeSingle();
-  if (!connection) {
-    throw Object.assign(new Error("India Post is not connected."), { code: "PERMANENT_AUTH_ERROR" });
-  }
-
-  const address = shipment.addresses as {
-    name?: string;
-    line1?: string;
-    line2?: string;
-    city?: string;
-    state?: string;
-    pincode?: string;
-    phone?: string;
-  } | null;
-  const destPin = address?.pincode ?? "";
-  if (!/^\d{6}$/.test(destPin) || !address?.line1 || !address?.name) {
-    throw Object.assign(new Error("Receiver name, address and 6-digit pincode are required for the India Post label."), {
-      code: "VALIDATION_ERROR",
-    });
-  }
-
-  const { data: pickup } = await supabase
-    .from("pickup_locations")
-    .select("*")
-    .eq("organization_id", payload.organizationId)
-    .order("is_default", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const { data: org } = await supabase
-    .from("organizations")
-    .select("name, phone, line1, line2, city, state, pincode, logo_path")
-    .eq("id", payload.organizationId)
-    .maybeSingle();
-  const { data: shop } = await supabase
-    .from("shopify_stores")
-    .select("shop_name")
-    .eq("organization_id", payload.organizationId)
-    .maybeSingle();
-
-  const sender = organizationLabelSender(org, pickup, shop?.shop_name);
-  const provider = indiaPostFromRow(connection);
-  const origin = await resolveIndiaPostOrigin(
-    provider,
-    connection,
-    {
-      ...pickup,
-      pincode: sender.pincode || pickup?.pincode,
-      city: sender.city || pickup?.city,
-      state: sender.state || pickup?.state,
-    },
-    destPin
-  );
-  const destOffices = await provider.searchPostOffices(destPin);
-  const deliveryOffice = indiaPostPickDeliveryOffice(destOffices);
-
-  const receiverMobile =
-    indiaPostMobile(address.phone) ||
-    indiaPostMobile((shipment.customers as { phone?: string } | null)?.phone);
-  const senderMobile = indiaPostMobile(sender.phone) || receiverMobile;
-
-  const pdf = await provider.generateLabel({
-    payload: [
-      indiaPostDomesticLabelPayload({
-        customerId: String(connection.bulk_customer_id ?? ""),
-        barcode: String(shipment.barcode),
-        serviceCode: String(shipment.service_code || DEFAULT_INDIA_POST_SERVICE),
-        bookedAt: shipment.booked_at as string | null,
-        weightGrams: Number(shipment.weight_grams) || 100,
-        lengthCm: Number(shipment.length_cm) || 0,
-        widthCm: Number(shipment.width_cm) || 0,
-        heightCm: Number(shipment.height_cm) || 0,
-        tariff: shipment.tariff_amount as string | number | null,
-        bkgRefId: shipment.provider_ref as string | null,
-        recipientName: address.name,
-        recipientMobile: receiverMobile,
-        recipientLine1: address.line1,
-        recipientLine2: address.line2,
-        recipientCity: address.city ?? "",
-        recipientState: address.state ?? "",
-        recipientPin: destPin,
-        senderName: String(sender.name),
-        senderMobile,
-        senderLine1: sender.line1,
-        senderLine2: sender.line2,
-        senderCity: sender.city || origin.city,
-        senderState: sender.state || origin.state,
-        senderPin: origin.pincode,
-        deliveryOfficeName: deliveryOffice?.office_name,
-        bookingOfficeName: origin.name,
-        bookingOfficePin: origin.pincode,
-      }),
-    ],
-  });
-
-  let bytes = Buffer.from(pdf);
-  if (org?.logo_path) {
-    const downloaded = await supabase.storage.from("organization-assets").download(org.logo_path);
-    if (downloaded.data) {
-      const logoBytes = new Uint8Array(await downloaded.data.arrayBuffer());
-      const stamped = await stampOrgLogoOnLabel(bytes, logoBytes, downloaded.data.type || org.logo_path);
-      bytes = Buffer.from(stamped);
-    }
-  }
-  const path = await saveLabelPdf({
+  const officialPdf = await fetchOfficialIndiaPostLabelPdf(supabase, payload.organizationId, payload.entityId);
+  const official = await persistLabelPdf(supabase, {
     organizationId: payload.organizationId,
-    shipmentId: String(shipment.id),
-    bytes,
+    shipmentId: officialPdf.shipmentId,
+    kind: "INDIA_POST",
+    bytes: officialPdf.pdf,
   });
-  const { data: label } = await supabase
-    .from("labels")
-    .insert({
-      organization_id: payload.organizationId,
-      shipment_id: shipment.id,
-      file_path: path,
-      file_url: null,
-      mime_type: "application/pdf",
-      status: "READY",
-    })
-    .select("id")
-    .single();
-  await supabase.from("shipments").update({ status: "LABEL_READY" }).eq("id", shipment.id);
+  await supabase.from("shipments").update({ status: "LABEL_READY" }).eq("id", officialPdf.shipmentId);
+
+  const merchant = await persistMerchantPackingLabel(supabase, {
+    organizationId: payload.organizationId,
+    shipmentId: officialPdf.shipmentId,
+  });
 
   const automation = await loadAutomation(supabase, payload.organizationId);
-  if (automation.autoLabelPrinting && label?.id) {
+  if (automation.autoLabelPrinting) {
+    const { enqueueAutoPrintJob, getPrintSettings } = await import("@/modules/print/service");
     try {
-      const { enqueueAutoPrintJob } = await import("@/modules/print/service");
       await enqueueAutoPrintJob(supabase, {
         organizationId: payload.organizationId,
-        shipmentId: String(shipment.id),
-        labelId: String(label.id),
+        shipmentId: officialPdf.shipmentId,
+        labelId: official.id,
+        paperSize: "A6",
       });
     } catch (error) {
       logError("PRINT_JOB_ENQUEUE_FAILED", {
         organizationId: payload.organizationId,
-        shipmentId: String(shipment.id),
-        labelId: String(label.id),
+        shipmentId: officialPdf.shipmentId,
+        labelId: official.id,
+        message: error instanceof Error ? error.message : "unknown",
+      });
+    }
+    try {
+      const settings = await getPrintSettings(supabase, payload.organizationId);
+      if (settings.autoPrintMerchant) {
+        await enqueueAutoPrintJob(supabase, {
+          organizationId: payload.organizationId,
+          shipmentId: officialPdf.shipmentId,
+          labelId: merchant.id,
+          paperSize: merchant.paperSize,
+        });
+      }
+    } catch (error) {
+      logError("PRINT_JOB_ENQUEUE_FAILED", {
+        organizationId: payload.organizationId,
+        shipmentId: officialPdf.shipmentId,
+        labelId: merchant.id,
         message: error instanceof Error ? error.message : "unknown",
       });
     }
@@ -613,7 +537,7 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
       organizationId: payload.organizationId,
       jobType: "manifest-generation",
       entityType: "shipment",
-      entityId: shipment.id,
+      entityId: officialPdf.shipmentId,
     });
   }
 }

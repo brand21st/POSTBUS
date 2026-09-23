@@ -28,8 +28,12 @@ export function mapLabelRow(row: Record<string, unknown>) {
     | { status?: string; error_message?: string }
     | null;
   const printStatus = printStatusForJob(printJob);
+  const fileUrl = (row.file_url as string | null | undefined) ?? (row.fileUrl as string | null | undefined) ?? null;
   return {
     ...row,
+    kind: String(row.kind || "INDIA_POST"),
+    fileUrl,
+    file_url: fileUrl,
     trackingNumber: tracking,
     tracking_number: tracking,
     barcode: shipment?.barcode ?? null,

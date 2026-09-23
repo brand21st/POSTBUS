@@ -59,7 +59,7 @@ export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id:
   const { data, error } = await supabase
     .from("orders")
     .select(
-      "*, customers(*), shipping_address:addresses!shipping_address_id(*), billing_address:addresses!billing_address_id(*), order_line_items(*), shipments(*)"
+      "*, customers(*), shipping_address:addresses!shipping_address_id(*), billing_address:addresses!billing_address_id(*), order_line_items(*), shipments(*), shipping_invoices(id, status, invoice_number, error_message, shipment_id, created_at)"
     )
     .eq("organization_id", ctx.organizationId)
     .eq("id", id)
@@ -177,6 +177,12 @@ function mapOrder(row: Record<string, unknown>) {
   const customer = row.customers as { name?: string; phone?: string; email?: string } | null;
   const items = (row.order_line_items as Array<Record<string, unknown>> | undefined) ?? [];
   const shipments = (row.shipments as Array<Record<string, unknown>> | undefined) ?? [];
+  const invoicesRaw = row.shipping_invoices;
+  const invoices = Array.isArray(invoicesRaw)
+    ? invoicesRaw
+    : invoicesRaw && typeof invoicesRaw === "object"
+      ? [invoicesRaw as Record<string, unknown>]
+      : [];
   return {
     ...row,
     orderNumber: row.order_number,
@@ -191,6 +197,15 @@ function mapOrder(row: Record<string, unknown>) {
     lineItems: items,
     items: items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
     shipment: shipments[0] ?? null,
+    invoice: invoices[0]
+      ? {
+          id: invoices[0].id,
+          status: invoices[0].status,
+          invoiceNumber: invoices[0].invoice_number,
+          invoice_number: invoices[0].invoice_number,
+          errorMessage: invoices[0].error_message,
+        }
+      : null,
     shippingAddress:
       (row.shipping_address as Record<string, unknown> | null) ??
       (row.addresses as Record<string, unknown> | null) ??

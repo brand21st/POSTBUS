@@ -7,11 +7,11 @@ import { logError, logInfo } from "@/lib/logger";
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export function relativeLabelPath(organizationId: string, shipmentId: string) {
-  if (!UUID.test(organizationId) || !UUID.test(shipmentId)) {
+export function relativeLabelPath(organizationId: string, fileId: string) {
+  if (!UUID.test(organizationId) || !UUID.test(fileId)) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Invalid label path.");
   }
-  return `${organizationId}/${shipmentId}.pdf`;
+  return `${organizationId}/${fileId}.pdf`;
 }
 
 export function labelStorageRoot(root = env.labelStoragePath) {
@@ -63,11 +63,16 @@ export function resolveSafeLabelPath(
 
 export async function saveLabelPdf(input: {
   organizationId: string;
-  shipmentId: string;
+  fileId?: string;
+  shipmentId?: string;
   bytes: Buffer | Uint8Array;
   root?: string;
 }) {
-  const relative = relativeLabelPath(input.organizationId, input.shipmentId);
+  const fileId = input.fileId ?? input.shipmentId;
+  if (!fileId) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Invalid label path.");
+  }
+  const relative = relativeLabelPath(input.organizationId, fileId);
   const absolute = resolveSafeLabelPath(relative, input.organizationId, input.root);
   try {
     await mkdir(path.dirname(absolute), { recursive: true });
@@ -76,6 +81,7 @@ export async function saveLabelPdf(input: {
     logError("LABEL_WRITE_FAILED", {
       organizationId: input.organizationId,
       shipmentId: input.shipmentId,
+      labelId: input.fileId,
       filePath: relative,
       message: error instanceof Error ? error.message : "unknown",
     });
@@ -87,6 +93,7 @@ export async function saveLabelPdf(input: {
   logInfo("LABEL_SAVED", {
     organizationId: input.organizationId,
     shipmentId: input.shipmentId,
+    labelId: input.fileId,
     filePath: relative,
   });
   return relative;

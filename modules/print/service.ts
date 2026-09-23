@@ -2,7 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { hashSecret, randomToken, safeEqual } from "@/lib/security/crypto";
-import { readLabelPdfIfPresent } from "@/modules/labels/storage";
+import { isPaperSizeId, agentPaperSize } from "@/modules/labels/page-presets";
+import { loadLabelPdfBytes } from "@/modules/labels/load";
 
 export const PRINT_AGENT_ONLINE_MS = 30_000;
 export const PRINTING_STALE_MS = 120_000;
@@ -22,6 +23,7 @@ export type PrintSettings = {
   paperSize: string;
   orientation: string;
   copies: number;
+  autoPrintMerchant: boolean;
 };
 
 export type PrintAgentRow = {
@@ -46,6 +48,8 @@ export type PrintJobRow = {
   claimed_at: string | null;
   printed_at: string | null;
   created_at: string;
+  paper_size?: string | null;
+  copies?: number | null;
 };
 
 export type PrintStation = {
@@ -53,6 +57,7 @@ export type PrintStation = {
   paperSize: string;
   orientation: string;
   copies: number;
+  autoPrintMerchant?: boolean;
   connected: boolean;
   printerNames: string[];
   agentName: string | null;
@@ -88,6 +93,7 @@ export function mapPrintSettings(row: {
   paper_size?: string | null;
   orientation?: string | null;
   copies?: number | null;
+  auto_print_merchant?: boolean | null;
 }): PrintSettings {
   return {
     organizationId: row.organization_id,
@@ -95,6 +101,7 @@ export function mapPrintSettings(row: {
     paperSize: row.paper_size || PRINT_DEFAULTS.paperSize,
     orientation: row.orientation || PRINT_DEFAULTS.orientation,
     copies: Number(row.copies) || PRINT_DEFAULTS.copies,
+    autoPrintMerchant: row.auto_print_merchant !== false,
   };
 }
 
@@ -175,6 +182,7 @@ export async function updatePrintSettings(
     paperSize?: string;
     orientation?: string;
     copies?: number;
+    autoPrintMerchant?: boolean;
   }
 ): Promise<PrintSettings> {
   await getPrintSettings(supabase, ctx.organizationId);
@@ -183,8 +191,8 @@ export async function updatePrintSettings(
     updates.selected_printer_name = patch.selectedPrinterName?.trim() || null;
   }
   if (patch.paperSize !== undefined) {
-    if (!["A6", "A5", "A4"].includes(patch.paperSize)) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, A5, or A4.");
+    if (!isPaperSizeId(patch.paperSize)) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, 4x6, A5, or A4.");
     }
     updates.paper_size = patch.paperSize;
   }
@@ -200,6 +208,9 @@ export async function updatePrintSettings(
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Copies must be between 1 and 5.");
     }
     updates.copies = copies;
+  }
+  if (patch.autoPrintMerchant !== undefined) {
+    updates.auto_print_merchant = Boolean(patch.autoPrintMerchant);
   }
   if (Object.keys(updates).length === 0) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "No printer settings were provided.");
@@ -249,6 +260,7 @@ export async function getPrintStation(
     paperSize: settings.paperSize,
     orientation: settings.orientation,
     copies: settings.copies,
+    autoPrintMerchant: settings.autoPrintMerchant,
     connected: connected && (!selected || selectedOnline),
     printerNames,
     agentName: agent?.name ?? null,
@@ -375,7 +387,7 @@ export async function recoverStalePrintJobs(supabase: SupabaseClient, organizati
 
 export async function enqueueAutoPrintJob(
   supabase: SupabaseClient,
-  input: { organizationId: string; shipmentId: string; labelId: string }
+  input: { organizationId: string; shipmentId: string; labelId: string; paperSize?: string; copies?: number }
 ): Promise<PrintJobRow> {
   const { data: existing } = await supabase
     .from("print_jobs")
@@ -394,6 +406,8 @@ export async function enqueueAutoPrintJob(
     printer_name: settings.selectedPrinterName,
     source: "AUTO" as const,
     status: "PENDING" as const,
+    paper_size: input.paperSize || settings.paperSize,
+    copies: input.copies || settings.copies,
   };
   const { data, error } = await supabase.from("print_jobs").insert(insert).select("*").single();
   if (data) return data as PrintJobRow;
@@ -413,7 +427,8 @@ export async function enqueueAutoPrintJob(
 export async function enqueueManualPrintJob(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  labelId: string
+  labelId: string,
+  options?: { paperSize?: string; copies?: number }
 ): Promise<PrintJobRow> {
   const { data: label } = await supabase
     .from("labels")
@@ -428,6 +443,11 @@ export async function enqueueManualPrintJob(
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "The label PDF is not ready to print yet.");
   }
   const settings = await getPrintSettings(supabase, ctx.organizationId);
+  const paperSize = options?.paperSize || settings.paperSize;
+  if (paperSize && !isPaperSizeId(paperSize)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, 4x6, A5, or A4.");
+  }
+  const copies = options?.copies ?? settings.copies;
   const { data, error } = await supabase
     .from("print_jobs")
     .insert({
@@ -437,6 +457,8 @@ export async function enqueueManualPrintJob(
       printer_name: settings.selectedPrinterName,
       source: "MANUAL",
       status: "PENDING",
+      paper_size: paperSize,
+      copies,
     })
     .select("*")
     .single();
@@ -493,9 +515,9 @@ export async function claimNextPrintJob(supabase: SupabaseClient, agent: PrintAg
 
     return {
       job: mapPrintJob(claimed as PrintJobRow),
-      paperSize: settings.paperSize,
+      paperSize: agentPaperSize(claimed.paper_size || settings.paperSize),
       orientation: settings.orientation,
-      copies: settings.copies,
+      copies: Number(claimed.copies) || settings.copies,
     };
   }
   return null;
@@ -581,11 +603,11 @@ export async function loadPrintJobPdf(
 
   const { data: label } = await supabase
     .from("labels")
-    .select("id, file_path, shipment_id, organization_id")
+    .select("id, file_path, file_url, shipment_id, organization_id")
     .eq("id", job.label_id)
     .eq("organization_id", agent.organizationId)
     .maybeSingle();
-  if (!label?.file_path) {
+  if (!label?.file_path && !label?.file_url) {
     await supabase
       .from("print_jobs")
       .update({
@@ -597,34 +619,25 @@ export async function loadPrintJobPdf(
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "The label PDF is not available to print.");
   }
 
-  const fromDisk = await readLabelPdfIfPresent({
-    relativePath: label.file_path,
-    organizationId: agent.organizationId,
-    labelId: label.id,
-    shipmentId: label.shipment_id ?? job.shipment_id,
-  });
-  if (fromDisk) {
-    return { bytes: fromDisk, filename: `${job.shipment_id}.pdf`, job: job as PrintJobRow };
+  try {
+    const bytes = await loadLabelPdfBytes(supabase, agent.organizationId, {
+      id: String(label.id),
+      file_path: label.file_path || "",
+      file_url: label.file_url,
+      shipment_id: label.shipment_id ?? job.shipment_id,
+    });
+    return { bytes, filename: `${job.shipment_id}.pdf`, job: job as PrintJobRow };
+  } catch {
+    await supabase
+      .from("print_jobs")
+      .update({
+        status: "FAILED",
+        error_message: "PDF unavailable",
+      })
+      .eq("id", job.id)
+      .eq("organization_id", agent.organizationId);
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "The label PDF is not available to print.");
   }
-
-  const file = await supabase.storage.from("labels").download(label.file_path);
-  if (file.data) {
-    return {
-      bytes: Buffer.from(await file.data.arrayBuffer()),
-      filename: `${job.shipment_id}.pdf`,
-      job: job as PrintJobRow,
-    };
-  }
-
-  await supabase
-    .from("print_jobs")
-    .update({
-      status: "FAILED",
-      error_message: "PDF unavailable",
-    })
-    .eq("id", job.id)
-    .eq("organization_id", agent.organizationId);
-  throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "The label PDF is not available to print.");
 }
 
 export function latestPrintJob(jobs: { created_at?: string; createdAt?: string }[] | null | undefined) {

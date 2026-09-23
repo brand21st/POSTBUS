@@ -254,7 +254,7 @@ export async function listShipments(
 export async function getShipment(supabase: SupabaseClient, ctx: TenantContext, id: string) {
   const { data, error } = await supabase
     .from("shipments")
-    .select("*, orders(order_number), customers(name, phone), tracking_events(*), labels(*)")
+    .select("*, orders(order_number), customers(name, phone), tracking_events(*), labels(*), shipping_invoices(id, status, invoice_number, error_message, created_at)")
     .eq("organization_id", ctx.organizationId)
     .eq("id", id)
     .maybeSingle();
@@ -475,9 +475,17 @@ async function markWatiShipmentStage(
   return { queued: updated.length, skipped, shipments: updated };
 }
 
+function nestedRows(value: unknown): Record<string, unknown>[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value as Record<string, unknown>[];
+  if (typeof value === "object") return [value as Record<string, unknown>];
+  return [];
+}
+
 function mapShipment(row: Record<string, unknown>) {
   const order = row.orders as { order_number?: string } | null;
   const customer = row.customers as { name?: string; phone?: string } | null;
+  const invoice = nestedRows(row.shipping_invoices)[0];
   return {
     ...row,
     orderNumber: order?.order_number,
@@ -486,5 +494,14 @@ function mapShipment(row: Record<string, unknown>) {
     trackingNumber: row.tracking_number,
     serviceCode: row.service_code,
     createdAt: row.created_at,
+    invoice: invoice
+      ? {
+          id: invoice.id,
+          status: invoice.status,
+          invoiceNumber: invoice.invoice_number,
+          invoice_number: invoice.invoice_number,
+          errorMessage: invoice.error_message,
+        }
+      : null,
   };
 }
