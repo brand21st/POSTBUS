@@ -11,6 +11,7 @@ import {
   isWatiConnected,
   itemSummary,
   orderActionLabel,
+  orderStageMenu,
 } from "@/lib/dashboard/records";
 
 describe("itemSummary", () => {
@@ -57,12 +58,28 @@ describe("canShipOrder", () => {
     expect(canProcessOrder({ status: "BOOKED" })).toBe(false);
   });
 
-  it("labels the action button from order status", () => {
+  it("labels the action button from the next stage", () => {
     expect(orderActionLabel("READY")).toBe("Ship");
-    expect(orderActionLabel("PROCESSING")).toBe("Processing");
-    expect(orderActionLabel("BOOKED")).toBe("Booked");
-    expect(orderActionLabel("IN_TRANSIT")).toBe("In transit");
+    expect(orderActionLabel("PROCESSING")).toBe("Fulfill · Booked / packed");
+    expect(orderActionLabel("BOOKED")).toBe("In transit");
+    expect(orderActionLabel("IN_TRANSIT")).toBe("Delivered");
     expect(orderActionLabel("DELIVERED")).toBe("Delivered");
+  });
+
+  it("shows completed stages and only the next action", () => {
+    expect(orderStageMenu("READY")).toEqual({
+      hideActions: false,
+      completed: [],
+      next: { action: "processing", label: "Ship" },
+    });
+    expect(orderStageMenu("PROCESSING").completed.map((step) => step.label)).toEqual(["Processing"]);
+    expect(orderStageMenu("PROCESSING").completed.map((step) => step.action)).toEqual(["processing"]);
+    expect(orderStageMenu("PROCESSING").next?.action).toBe("fulfill");
+    expect(orderStageMenu("BOOKED").completed.map((step) => step.action)).toEqual(["processing", "fulfill"]);
+    expect(orderStageMenu("IN_TRANSIT").next?.action).toBe("delivered");
+    expect(orderStageMenu("DELIVERED").hideActions).toBe(true);
+    expect(orderStageMenu("DELIVERED").next).toBeNull();
+    expect(orderStageMenu("CANCELLED").hideActions).toBe(true);
   });
 
   it("blocks booked, in transit, delivered, and cancelled orders", () => {

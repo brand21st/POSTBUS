@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Plus, RefreshCw, Truck } from "lucide-react";
+import { Check, ChevronDown, Download, Plus, RefreshCw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -15,6 +15,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -27,19 +28,13 @@ import {
 import { cn } from "@/lib/utils";
 import {
   asPaginated,
-  canFulfillOrderAction,
-  canMarkDelivered,
-  canMarkInTransit,
-  canProcessOrderAction,
   customerName,
-  isShopifyConnected,
-  isWatiConnected,
   itemCount,
   itemNamesPreview,
   itemSummary,
   orderActionButtonClass,
-  orderActionLabel,
   orderNumber,
+  orderStageMenu,
 } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
@@ -72,9 +67,6 @@ export default function OrdersPage() {
   const shopify = integrations.data?.shopify;
   const shopifyStatus = (shopify?.status ?? "").toUpperCase();
   const shopifyReady = shopifyStatus === "CONNECTED" || Boolean(shopify?.readyToSync);
-  const watiConnected = isWatiConnected(integrations.data);
-  const shopifyConnected = isShopifyConnected(integrations.data);
-  const stageActionsEnabled = watiConnected || shopifyConnected;
 
   const query = useQuery({
     queryKey: ["orders", page, debounced, status, source, payment],
@@ -239,7 +231,10 @@ export default function OrdersPage() {
       header: "",
       cell: (row) => {
         const pending = ship.isPending && (ship.variables?.orderIds ?? []).includes(row.id);
-        const cancelled = (row.status ?? "").toUpperCase() === "CANCELLED";
+        const menu = orderStageMenu(row.status);
+        const next = menu.next;
+        if (menu.hideActions || !next) return null;
+        const nextLabel = pending ? "Working…" : next.label;
         return (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -247,38 +242,33 @@ export default function OrdersPage() {
                 type="button"
                 size="sm"
                 variant="secondary"
-                className={cn("shrink-0", orderActionButtonClass(row.status))}
-                disabled={cancelled || pending}
+                className={cn("shrink-0 transition-all duration-200", orderActionButtonClass(row.status))}
+                disabled={pending}
+                aria-label={`Next status: ${next.label}`}
                 onClick={(event) => event.stopPropagation()}
               >
                 <Truck className="size-4" />
-                {pending ? "Working…" : orderActionLabel(row.status)}
+                {nextLabel}
+                <ChevronDown className="size-3.5 opacity-80" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
+            <DropdownMenuContent align="end" className="min-w-[14rem]" onClick={(event) => event.stopPropagation()}>
+              {menu.completed.map((step) => (
+                <DropdownMenuLabel
+                  key={step.action}
+                  className="flex items-center gap-2 py-2 text-sm font-normal text-muted-foreground"
+                >
+                  <Check className="size-3.5 text-emerald-600" aria-hidden />
+                  <span>{step.label}</span>
+                  <span className="sr-only">completed</span>
+                </DropdownMenuLabel>
+              ))}
               <DropdownMenuItem
-                disabled={!canProcessOrderAction(row, stageActionsEnabled) || pending}
-                onSelect={() => ship.mutate({ orderIds: [row.id], action: "processing" })}
+                className="font-semibold transition-colors duration-200"
+                disabled={pending}
+                onSelect={() => ship.mutate({ orderIds: [row.id], action: next.action })}
               >
-                Processing
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!canFulfillOrderAction(row, stageActionsEnabled) || pending}
-                onSelect={() => ship.mutate({ orderIds: [row.id], action: "fulfill" })}
-              >
-                Fulfill · Booked / packed
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!canMarkInTransit(row, stageActionsEnabled) || pending}
-                onSelect={() => ship.mutate({ orderIds: [row.id], action: "in_transit" })}
-              >
-                In transit
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!canMarkDelivered(row, stageActionsEnabled) || pending}
-                onSelect={() => ship.mutate({ orderIds: [row.id], action: "delivered" })}
-              >
-                Delivered
+                {next.label}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

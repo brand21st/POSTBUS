@@ -163,15 +163,49 @@ export function canMarkDelivered(order: { status?: string | null }, extrasConnec
   return (order.status ?? "").toUpperCase() !== "CANCELLED";
 }
 
-export function orderActionLabel(status?: string | null) {
+export type OrderStageAction = "processing" | "fulfill" | "in_transit" | "delivered";
+
+export const ORDER_STAGE_FLOW: Array<{ action: OrderStageAction; label: string; nextLabel?: string }> = [
+  { action: "processing", label: "Processing", nextLabel: "Ship" },
+  { action: "fulfill", label: "Fulfill · Booked / packed" },
+  { action: "in_transit", label: "In transit" },
+  { action: "delivered", label: "Delivered" },
+];
+
+export function completedOrderStageCount(status?: string | null) {
   switch ((status ?? "").toUpperCase()) {
     case "PROCESSING":
-      return "Processing";
+      return 1;
     case "BOOKED":
-      return "Booked";
+      return 2;
     case "SHIPPED":
     case "IN_TRANSIT":
-      return "In transit";
+      return 3;
+    case "DELIVERED":
+      return 4;
+    default:
+      return 0;
+  }
+}
+
+export function orderStageMenu(status?: string | null) {
+  const normalized = (status ?? "").toUpperCase();
+  const hideActions = normalized === "DELIVERED" || normalized === "CANCELLED";
+  const completedCount = completedOrderStageCount(status);
+  const completed = hideActions
+    ? []
+    : ORDER_STAGE_FLOW.slice(0, completedCount).map(({ action, label }) => ({ action, label }));
+  const nextStep = hideActions ? null : ORDER_STAGE_FLOW[completedCount] ?? null;
+  const next = nextStep
+    ? { action: nextStep.action, label: nextStep.nextLabel ?? nextStep.label }
+    : null;
+  return { hideActions, completed, next };
+}
+
+export function orderActionLabel(status?: string | null) {
+  const next = orderStageMenu(status).next;
+  if (next) return next.label;
+  switch ((status ?? "").toUpperCase()) {
     case "DELIVERED":
       return "Delivered";
     case "CANCELLED":
@@ -184,14 +218,20 @@ export function orderActionLabel(status?: string | null) {
 }
 
 export function orderActionButtonClass(status?: string | null) {
-  switch ((status ?? "").toUpperCase()) {
+  const next = orderStageMenu(status).next?.action;
+  switch (next ?? (status ?? "").toUpperCase()) {
+    case "processing":
+      return "";
     case "PROCESSING":
       return "border-orange-300 bg-orange-500 text-white hover:bg-orange-600 hover:border-orange-400";
+    case "fulfill":
     case "BOOKED":
       return "border-amber-300 bg-amber-400 text-amber-950 hover:bg-amber-500 hover:border-amber-400";
+    case "in_transit":
     case "SHIPPED":
     case "IN_TRANSIT":
       return "border-indigo-300 bg-indigo-600 text-white hover:bg-indigo-700 hover:border-indigo-400";
+    case "delivered":
     case "DELIVERED":
       return "border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-400";
     case "CANCELLED":
