@@ -62,37 +62,45 @@ export default function InvoicesPage() {
     {
       id: "invoice",
       header: "Invoice",
-      cell: (row) => row.invoiceNumber ?? row.invoice_number ?? row.id.slice(0, 8),
-    },
-    {
-      id: "order",
-      header: "Order",
-      cell: (row) => row.orderNumber ?? row.order_number ?? "—",
+      cell: (row) => (
+        <div className="min-w-0">
+          <p className="font-medium tabular-nums leading-tight">
+            {row.invoiceNumber ?? row.invoice_number ?? row.id.slice(0, 8)}
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <StatusBadge value={row.status} />
+            <span className="text-xs text-muted">{formatDate(row.createdAt ?? row.created_at)}</span>
+          </div>
+        </div>
+      ),
     },
     {
       id: "customer",
       header: "Customer",
-      cell: (row) => customerName(row),
+      cell: (row) => (
+        <div className="min-w-0 max-w-[14rem]">
+          <p className="truncate font-medium leading-tight">{customerName(row)}</p>
+          <p className="mt-0.5 text-xs text-muted">{row.orderNumber ?? row.order_number ?? "—"}</p>
+        </div>
+      ),
     },
     {
       id: "tracking",
       header: "Tracking",
-      cell: (row) => row.trackingNumber ?? row.tracking_number ?? "—",
+      cell: (row) => (
+        <span className="font-mono text-xs tracking-tight">
+          {row.trackingNumber ?? row.tracking_number ?? "—"}
+        </span>
+      ),
     },
     {
       id: "total",
       header: "Total",
-      cell: (row) => formatCurrency(row.totalAmount ?? row.total_amount, row.currency),
-    },
-    {
-      id: "status",
-      header: "Status",
-      cell: (row) => <StatusBadge value={row.status} />,
-    },
-    {
-      id: "created",
-      header: "Created",
-      cell: (row) => formatDate(row.createdAt ?? row.created_at),
+      cell: (row) => (
+        <span className="tabular-nums font-medium">
+          {formatCurrency(row.totalAmount ?? row.total_amount, row.currency)}
+        </span>
+      ),
     },
     {
       id: "actions",
@@ -110,15 +118,15 @@ export default function InvoicesPage() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title="Invoices"
-        description="Invoices are created automatically after an India Post tracking ID is saved."
+        description="Created automatically after India Post returns a tracking ID."
         actions={
           <Link href="/dashboard/invoices/customize">
-            <Button type="button" variant="secondary">
+            <Button type="button" variant="secondary" size="sm">
               <Settings2 className="size-4" />
-              Customize Invoice
+              Customize
             </Button>
           </Link>
         }
