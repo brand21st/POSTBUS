@@ -101,7 +101,7 @@ export async function handleCommerceRoutes(
     const from = (page - 1) * pageSize;
     const { data, count, error } = await supabase
       .from("labels")
-      .select("*, shipments(barcode, tracking_number, orders(order_number))", { count: "exact" })
+      .select("*, shipments(barcode, tracking_number, orders(order_number)), print_jobs!print_jobs_label_id_fkey(*)", { count: "exact" })
       .eq("organization_id", ctx.organizationId)
       .order("created_at", { ascending: false })
       .range(from, from + pageSize - 1);

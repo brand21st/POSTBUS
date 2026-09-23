@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Workflow } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { AutoLabelPrintingCard } from "@/components/dashboard/auto-label-printing-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,6 +40,12 @@ const TOGGLES = [
     snake: "auto_label_generation",
     title: "Auto label generation",
     description: "Generate a stored PDF after a successful booking.",
+  },
+  {
+    camel: "autoLabelPrinting",
+    snake: "auto_label_printing",
+    title: "Auto Label Printing",
+    description: "Automatically print shipping labels when they are generated.",
   },
   {
     camel: "autoManifest",
@@ -137,7 +144,7 @@ export default function AutomationPage() {
 
       {query.isLoading ? (
         <div className="space-y-3">
-          {Array.from({ length: 12 }).map((_, index) => (
+          {Array.from({ length: 13 }).map((_, index) => (
             <Skeleton key={index} className="h-24" />
           ))}
         </div>
@@ -164,9 +171,13 @@ export default function AutomationPage() {
                     onCheckedChange={(value) => mutation.mutate({ [item.camel]: value })}
                   />
                 </CardHeader>
-                <CardContent className="pt-0 text-xs text-muted">
-                  Workers skip this step when the related integration is not connected.
-                </CardContent>
+                {item.camel === "autoLabelPrinting" ? (
+                  <AutoLabelPrintingCard enabled={checked} canManage={canManage} />
+                ) : (
+                  <CardContent className="pt-0 text-xs text-muted">
+                    Workers skip this step when the related integration is not connected.
+                  </CardContent>
+                )}
               </Card>
             );
           })}

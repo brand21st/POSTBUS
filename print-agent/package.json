@@ -1,0 +1,13 @@
+{
+  "name": "postbus-print-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local print agent for PostBus Auto Label Printing. Runs on the packing PC.",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "pdf-to-printer": "^5.0.0"
+  }
+}

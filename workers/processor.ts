@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs/retry";
+import { logError } from "@/lib/logger";
 import { encryptSecret } from "@/lib/security/crypto";
 import {
   AUTOMATION_DEFAULTS,
@@ -574,17 +575,38 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
     shipmentId: String(shipment.id),
     bytes,
   });
-  await supabase.from("labels").insert({
-    organization_id: payload.organizationId,
-    shipment_id: shipment.id,
-    file_path: path,
-    file_url: null,
-    mime_type: "application/pdf",
-    status: "READY",
-  });
+  const { data: label } = await supabase
+    .from("labels")
+    .insert({
+      organization_id: payload.organizationId,
+      shipment_id: shipment.id,
+      file_path: path,
+      file_url: null,
+      mime_type: "application/pdf",
+      status: "READY",
+    })
+    .select("id")
+    .single();
   await supabase.from("shipments").update({ status: "LABEL_READY" }).eq("id", shipment.id);
 
   const automation = await loadAutomation(supabase, payload.organizationId);
+  if (automation.autoLabelPrinting && label?.id) {
+    try {
+      const { enqueueAutoPrintJob } = await import("@/modules/print/service");
+      await enqueueAutoPrintJob(supabase, {
+        organizationId: payload.organizationId,
+        shipmentId: String(shipment.id),
+        labelId: String(label.id),
+      });
+    } catch (error) {
+      logError("PRINT_JOB_ENQUEUE_FAILED", {
+        organizationId: payload.organizationId,
+        shipmentId: String(shipment.id),
+        labelId: String(label.id),
+        message: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
   const { createBackgroundJob } = await import("@/modules/jobs/service");
   if (automation.autoManifest) {
     await createBackgroundJob(supabase, {

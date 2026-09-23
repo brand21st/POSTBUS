@@ -15,7 +15,8 @@ type Column =
   | "auto_wati_processing"
   | "auto_wati_booked"
   | "auto_wati_in_transit"
-  | "auto_wati_delivered";
+  | "auto_wati_delivered"
+  | "auto_label_printing";
 
 const CAMEL_TO_COLUMN: Record<string, Column> = {
   autoShopifySync: "auto_shopify_sync",
@@ -42,6 +43,8 @@ const CAMEL_TO_COLUMN: Record<string, Column> = {
   auto_wati_in_transit: "auto_wati_in_transit",
   autoWatiDelivered: "auto_wati_delivered",
   auto_wati_delivered: "auto_wati_delivered",
+  autoLabelPrinting: "auto_label_printing",
+  auto_label_printing: "auto_label_printing",
 };
 
 export type AutomationRow = {
@@ -58,6 +61,7 @@ export type AutomationRow = {
   auto_wati_booked?: boolean;
   auto_wati_in_transit?: boolean;
   auto_wati_delivered?: boolean;
+  auto_label_printing?: boolean;
 };
 
 export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
@@ -73,6 +77,7 @@ export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
   auto_wati_booked: true,
   auto_wati_in_transit: true,
   auto_wati_delivered: true,
+  auto_label_printing: false,
 };
 
 export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
@@ -102,6 +107,8 @@ export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
     auto_wati_in_transit: row.auto_wati_in_transit ?? true,
     autoWatiDelivered: row.auto_wati_delivered ?? true,
     auto_wati_delivered: row.auto_wati_delivered ?? true,
+    autoLabelPrinting: row.auto_label_printing ?? false,
+    auto_label_printing: row.auto_label_printing ?? false,
   };
 }
 

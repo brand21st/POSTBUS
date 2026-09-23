@@ -11,11 +11,13 @@ describe("mapLabelRow", () => {
         tracking_number: null,
         orders: { order_number: "#1001" },
       },
+      print_jobs: [{ status: "PENDING", created_at: "2026-09-23T00:00:00Z" }],
     });
 
     expect(mapped.trackingNumber).toBe("CL214330016IN");
     expect(mapped.tracking_number).toBe("CL214330016IN");
     expect(mapped.orderNumber).toBe("#1001");
+    expect(mapped.printStatus).toBe("WAITING");
   });
 
   it("falls back to tracking_number when barcode is empty", () => {

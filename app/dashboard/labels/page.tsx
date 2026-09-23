@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Printer, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
@@ -11,10 +11,19 @@ import { Button } from "@/components/ui/button";
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { ApiError, api } from "@/lib/hooks/use-api";
+import { usePrintStation } from "@/lib/hooks/use-print-station";
 import type { LabelRecord, Paginated } from "@/types/api";
 
 function fileUrl(label: LabelRecord) {
   return `/api/v1/labels/${label.id}/download`;
+}
+
+function printLabel(status?: string | null) {
+  const value = (status ?? "").toUpperCase();
+  if (value === "PRINTED") return { text: "Printed", badge: "PRINTED" };
+  if (value === "WAITING") return { text: "Waiting to print", badge: "WAITING" };
+  if (value === "FAILED") return { text: "Print failed", badge: "FAILED" };
+  return null;
 }
 
 async function downloadLabelsZip(ids: string[]) {
@@ -50,10 +59,14 @@ async function downloadLabelsZip(ids: string[]) {
 export default function LabelsPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
+  const queryClient = useQueryClient();
+  const station = usePrintStation();
+  const connected = Boolean(station.data?.connected);
 
   const query = useQuery({
     queryKey: ["labels", page],
     queryFn: () => api<Paginated<LabelRecord>>(`/api/v1/labels?page=${page}&pageSize=20`),
+    refetchInterval: 5_000,
   });
 
   const list = asPaginated<LabelRecord>(query.data, ["labels", "items"]);
@@ -61,6 +74,16 @@ export default function LabelsPage() {
   const bulk = useMutation({
     mutationFn: downloadLabelsZip,
     onSuccess: () => toast.success("Labels downloaded."),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const print = useMutation({
+    mutationFn: (id: string) =>
+      api<{ message?: string }>(`/api/v1/labels/${id}/print`, { method: "POST" }),
+    onSuccess: async (data) => {
+      toast.success(data.message || "The label was sent to the printer.");
+      await queryClient.invalidateQueries({ queryKey: ["labels"] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -76,6 +99,22 @@ export default function LabelsPage() {
       cell: (row) => row.trackingNumber ?? row.tracking_number ?? row.barcode ?? "—",
     },
     { id: "status", header: "Status", cell: (row) => <StatusBadge value={row.status} /> },
+    {
+      id: "print",
+      header: "Print",
+      cell: (row) => {
+        const info = printLabel(row.printStatus ?? row.print_status);
+        if (!info) return <span className="text-muted">—</span>;
+        return (
+          <div className="space-y-0.5">
+            <StatusBadge value={info.badge} />
+            {row.printError || row.print_error ? (
+              <p className="max-w-[16rem] text-xs text-muted">{row.printError ?? row.print_error}</p>
+            ) : null}
+          </div>
+        );
+      },
+    },
     {
       id: "created",
       header: "Created",
@@ -108,8 +147,14 @@ export default function LabelsPage() {
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!ready}
-              onClick={() => window.open(href, "_blank", "noopener,noreferrer")}
+              disabled={!ready || print.isPending}
+              onClick={() => {
+                if (connected) {
+                  print.mutate(row.id);
+                  return;
+                }
+                window.open(href, "_blank", "noopener,noreferrer");
+              }}
             >
               <Printer className="size-4" />
               Print

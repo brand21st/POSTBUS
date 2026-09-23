@@ -86,6 +86,8 @@ describe("automation settings", () => {
     expect(mapped.auto_booking).toBe(false);
     expect(mapped.autoWatiOrderConfirmation).toBe(true);
     expect(mapped.autoWatiDelivered).toBe(true);
+    expect(mapped.autoLabelPrinting).toBe(false);
+    expect(mapped.auto_label_printing).toBe(false);
   });
 
   it("creates a row with service defaults when none exists", async () => {
@@ -94,6 +96,8 @@ describe("automation settings", () => {
     expect(settings.autoShopifySync).toBe(AUTOMATION_DEFAULTS.auto_shopify_sync);
     expect(settings.autoManifest).toBe(AUTOMATION_DEFAULTS.auto_manifest);
     expect(settings.autoShopifyFulfillment).toBe(AUTOMATION_DEFAULTS.auto_shopify_fulfillment);
+    expect(settings.autoLabelPrinting).toBe(false);
+    expect(AUTOMATION_DEFAULTS.auto_label_printing).toBe(false);
   });
 
   it("accepts camelCase and snake_case patches", async () => {

@@ -1,3 +1,5 @@
+import { latestPrintJob, printStatusForJob } from "@/modules/print/service";
+
 type NestedShipment = {
   barcode?: string | null;
   tracking_number?: string | null;
@@ -20,6 +22,12 @@ export function mapLabelRow(row: Record<string, unknown>) {
   const order = firstNested(shipment?.orders);
   const tracking = trackingIdFromShipment(shipment);
   const orderNumber = order?.order_number ?? null;
+  const jobsRaw = row.print_jobs;
+  const jobs = Array.isArray(jobsRaw) ? jobsRaw : jobsRaw ? [jobsRaw] : [];
+  const printJob = latestPrintJob(jobs as { created_at?: string; status?: string; error_message?: string }[]) as
+    | { status?: string; error_message?: string }
+    | null;
+  const printStatus = printStatusForJob(printJob);
   return {
     ...row,
     trackingNumber: tracking,
@@ -27,5 +35,11 @@ export function mapLabelRow(row: Record<string, unknown>) {
     barcode: shipment?.barcode ?? null,
     orderNumber,
     order_number: orderNumber,
+    printStatus,
+    print_status: printStatus,
+    printError: printJob?.error_message ?? null,
+    print_error: printJob?.error_message ?? null,
+    printJob,
+    print_job: printJob,
   };
 }

@@ -32,6 +32,11 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("GET", "audit-logs", ["audit-logs"])).toBe("audit.read");
     expect(permissionForTenantRoute("PATCH", "automation", ["automation"])).toBe("automation.manage");
     expect(permissionForTenantRoute("GET", "automation", ["automation"])).toBeUndefined();
+    expect(permissionForTenantRoute("GET", "print-station", ["print-station"])).toBeUndefined();
+    expect(permissionForTenantRoute("PATCH", "print-station", ["print-station"])).toBe("automation.manage");
+    expect(permissionForTenantRoute("POST", "labels/abc/print", ["labels", "abc", "print"])).toBe(
+      "labels.write"
+    );
     expect(permissionForTenantRoute("GET", "notifications", ["notifications"])).toBeUndefined();
   });
 

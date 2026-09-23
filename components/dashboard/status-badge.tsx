@@ -12,6 +12,7 @@ const SUCCESS = new Set([
   "MANIFEST_READY",
   "SUCCEEDED",
   "PUBLISHED",
+  "PRINTED",
 ]);
 
 const WARNING = new Set([
@@ -27,6 +28,8 @@ const WARNING = new Set([
   "CONFIGURATION_REQUIRED",
   "UAT",
   "DRAFT",
+  "WAITING",
+  "PRINTING",
 ]);
 
 const ERROR = new Set([
@@ -89,7 +92,7 @@ export function StatusBadge({ value }: { value?: string | null }) {
           : undefined
       }
     >
-      {titleCase(value)}
+      {key === "WAITING" ? "Waiting to print" : key === "PRINTED" ? "Printed" : titleCase(value)}
     </Badge>
   );
 }

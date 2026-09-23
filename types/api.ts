@@ -227,6 +227,12 @@ export type LabelRecord = {
   tracking_number?: string | null;
   orderNumber?: string | null;
   order_number?: string | null;
+  printStatus?: string | null;
+  print_status?: string | null;
+  printError?: string | null;
+  print_error?: string | null;
+  printJob?: PrintJobRecord | null;
+  print_job?: PrintJobRecord | null;
 };
 
 export type ManifestRecord = {
@@ -295,6 +301,40 @@ export type AutomationSettings = {
   auto_wati_in_transit?: boolean;
   autoWatiDelivered?: boolean;
   auto_wati_delivered?: boolean;
+  autoLabelPrinting?: boolean;
+  auto_label_printing?: boolean;
+};
+
+export type PrintStation = {
+  selectedPrinterName?: string | null;
+  selected_printer_name?: string | null;
+  paperSize?: string;
+  paper_size?: string;
+  orientation?: string;
+  copies?: number;
+  connected?: boolean;
+  printerNames?: string[];
+  printer_names?: string[];
+  agentName?: string | null;
+  agent_name?: string | null;
+  tokenPrefix?: string | null;
+  token_prefix?: string | null;
+  lastSeenAt?: string | null;
+  last_seen_at?: string | null;
+  offlineMessage?: string | null;
+  offline_message?: string | null;
+};
+
+export type PrintJobRecord = {
+  id: string;
+  status?: string | null;
+  source?: string | null;
+  printerName?: string | null;
+  printer_name?: string | null;
+  errorMessage?: string | null;
+  error_message?: string | null;
+  printedAt?: string | null;
+  printed_at?: string | null;
 };
 
 export type IntegrationCard = {

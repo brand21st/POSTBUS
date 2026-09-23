@@ -18,7 +18,15 @@ export function permissionForTenantRoute(
     return method === "POST" ? "shipments.write" : "shipments.read";
   }
 
-  if (root === "labels") return "labels.read";
+  if (root === "labels") {
+    if (method === "POST" && slugs[2] === "print") return "labels.write";
+    return "labels.read";
+  }
+
+  if (root === "print-station") {
+    if (method === "GET") return undefined;
+    return "automation.manage";
+  }
 
   if (root === "manifests") {
     return method === "POST" ? "manifests.write" : "manifests.read";
