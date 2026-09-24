@@ -16,6 +16,7 @@ const SECRET_KEYS = [
   "id_token",
   "credential",
   "webhook_secret",
+  "razorpay",
 ];
 
 export function redact(value: unknown): unknown {

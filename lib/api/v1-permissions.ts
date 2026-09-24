@@ -63,7 +63,10 @@ export function permissionForTenantRoute(
 
   if (key === "PATCH organizations") return "org.manage";
 
-  if (path === "billing") return undefined;
+  if (root === "billing") {
+    if (method === "GET") return undefined;
+    return "org.billing";
+  }
 
   if (path === "notifications") return undefined;
 

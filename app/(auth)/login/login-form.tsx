@@ -71,7 +71,12 @@ export function LoginForm() {
       } else {
         window.localStorage.removeItem(SAVED_LOGIN_KEY);
       }
-      router.replace(next);
+      let dest = next;
+      if (!searchParams.get("next") || next === "/dashboard") {
+        const admin = await fetch("/api/admin/overview", { credentials: "same-origin" });
+        if (admin.ok) dest = "/admin";
+      }
+      router.replace(dest);
       router.refresh();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Could not sign in.");

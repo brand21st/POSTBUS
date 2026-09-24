@@ -26,6 +26,8 @@ export function contentSecurityPolicy() {
     "https://cloudflareinsights.com",
     "https://*.myshopify.com",
     "https://*.shopify.com",
+    "https://api.razorpay.com",
+    "https://lumberjack.razorpay.com",
     "https://api.stripe.com",
   ].join(" ");
 
@@ -35,13 +37,13 @@ export function contentSecurityPolicy() {
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    "script-src 'self' 'unsafe-inline' https://www.clarity.ms https://scripts.clarity.ms https://*.clarity.ms https://static.cloudflareinsights.com",
+    "script-src 'self' 'unsafe-inline' https://www.clarity.ms https://scripts.clarity.ms https://*.clarity.ms https://static.cloudflareinsights.com https://checkout.razorpay.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
     `connect-src ${connectSrc}`,
     "worker-src 'self' blob:",
-    "frame-src 'self' https://js.stripe.com https://hooks.stripe.com https://*.myshopify.com",
+    "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://js.stripe.com https://hooks.stripe.com https://*.myshopify.com",
     "upgrade-insecure-requests",
   ].join("; ");
 }

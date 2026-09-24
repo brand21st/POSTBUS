@@ -42,11 +42,12 @@ export async function updateSession(request: NextRequest, options?: SessionOptio
 
   const pathname = request.nextUrl.pathname;
   const isDashboard = pathname.startsWith("/dashboard");
+  const isAdmin = pathname.startsWith("/admin");
   const isOnboarding = pathname.startsWith("/onboarding");
   const isAuthPage = AUTH_PATHS.some((path) => pathname.startsWith(path));
   const isTrackingHost = Boolean(requestHeaders.get("x-tracking-subdomain"));
 
-  if (!user && (isDashboard || isOnboarding) && !isTrackingHost) {
+  if (!user && (isDashboard || isAdmin || isOnboarding) && !isTrackingHost) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", pathname);

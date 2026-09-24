@@ -8,6 +8,7 @@ import { handleInvoiceRoutes } from "@/lib/api/v1/invoices";
 import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
 import { handlePrintAgentRoutes, handlePrintStationRoutes, isPrintAgentApiPath } from "@/lib/api/v1/print";
 import { handleSessionRoutes } from "@/lib/api/v1/session";
+import { handleBillingRoutes } from "@/lib/api/v1/billing";
 import { handleWorkspaceRoutes } from "@/lib/api/v1/workspace";
 import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { rateLimit } from "@/lib/security/rate-limit";
@@ -41,11 +42,17 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   }
 
   const supabase = await createServerSupabase();
+  if (key === "GET billing/plans") {
+    const publicPlans = await handleBillingRoutes(request, supabase, null, key);
+    if (publicPlans !== null) return publicPlans;
+  }
+
   const session = await handleSessionRoutes(request, supabase, key);
   if (session !== null) return session;
 
   const ctx = await requireTenant(permissionForTenantRoute(method, path, slugs));
   return (
+    (await handleBillingRoutes(request, supabase, ctx, key)) ??
     (await handleWorkspaceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handlePrintStationRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleLabelTemplateRoutes(request, supabase, ctx, key, method, slugs)) ??

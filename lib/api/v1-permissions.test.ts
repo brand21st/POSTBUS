@@ -61,6 +61,10 @@ describe("permissionForTenantRoute", () => {
       "labels.write"
     );
     expect(permissionForTenantRoute("GET", "notifications", ["notifications"])).toBeUndefined();
+    expect(permissionForTenantRoute("GET", "billing", ["billing"])).toBeUndefined();
+    expect(permissionForTenantRoute("GET", "billing/plans", ["billing", "plans"])).toBeUndefined();
+    expect(permissionForTenantRoute("POST", "billing/subscribe", ["billing", "subscribe"])).toBe("org.billing");
+    expect(permissionForTenantRoute("POST", "billing/cancel", ["billing", "cancel"])).toBe("org.billing");
   });
 
   it("prevents admins from assigning owner or admin roles", () => {

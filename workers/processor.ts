@@ -136,6 +136,18 @@ export async function processJob(queue: string, payload: JobPayload) {
 }
 
 async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  try {
+    const { checkQuota } = await import("@/modules/billing/usage");
+    await checkQuota(supabase, payload.organizationId, 1);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Billing quota exceeded.";
+    await supabase
+      .from("shipments")
+      .update({ status: "FAILED", last_error: message, last_error_code: "BILLING_LIMIT" })
+      .eq("id", payload.entityId);
+    throw Object.assign(new Error(message), { code: "VALIDATION_ERROR" });
+  }
+
   const { data: shipment } = await supabase
     .from("shipments")
     .select("*, orders(*), customers(*), addresses:shipping_address_id(*)")
@@ -365,11 +377,21 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       // In-app alerts are optional; booking should still succeed.
     }
   }
-  await supabase.from("usage_events").insert({
-    organization_id: payload.organizationId,
-    metric: "shipments",
-    quantity: 1,
-  });
+  try {
+    const { consumeQuota } = await import("@/modules/billing/usage");
+    await consumeQuota(supabase, payload.organizationId);
+  } catch (error) {
+    logError("BILLING_QUOTA_CONSUME_FAILED", {
+      organizationId: payload.organizationId,
+      shipmentId: shipment.id,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+    await supabase.from("usage_events").insert({
+      organization_id: payload.organizationId,
+      metric: "shipments",
+      quantity: 1,
+    });
+  }
 
   const automation = await loadAutomation(supabase, payload.organizationId);
 

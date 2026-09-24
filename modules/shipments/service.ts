@@ -30,6 +30,10 @@ export async function createShipmentsForOrders(
 
   const action = extras?.action === "processing" ? "processing" : extras?.action === "fulfill" ? "fulfill" : null;
   const enqueueBooking = action === "processing" ? false : extras?.enqueueBooking !== false;
+  if (enqueueBooking) {
+    const { checkQuota } = await import("@/modules/billing/usage");
+    await checkQuota(supabase, ctx.organizationId, orderIds.length);
+  }
 
   const { data: orders, error } = await supabase
     .from("orders")
@@ -268,6 +272,8 @@ export async function getShipment(supabase: SupabaseClient, ctx: TenantContext, 
 
 export async function retryShipment(supabase: SupabaseClient, ctx: TenantContext, id: string) {
   await getShipment(supabase, ctx, id);
+  const { checkQuota } = await import("@/modules/billing/usage");
+  await checkQuota(supabase, ctx.organizationId, 1);
   await supabase
     .from("shipments")
     .update({ status: "QUEUED", last_error: null, last_error_code: null })

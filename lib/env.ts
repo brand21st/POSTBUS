@@ -30,8 +30,11 @@ export const env = {
   indiaPostProdBaseUrl:
     optional(process.env.INDIA_POST_PROD_BASE_URL) ||
     "https://app.indiapost.gov.in/beextcustomer",
-  stripeSecretKey: optional(process.env.STRIPE_SECRET_KEY),
-  stripeWebhookSecret: optional(process.env.STRIPE_WEBHOOK_SECRET),
+  razorpayKeyId: optional(process.env.RAZORPAY_KEY_ID),
+  razorpayKeySecret: optional(process.env.RAZORPAY_KEY_SECRET),
+  razorpayWebhookSecret: optional(process.env.RAZORPAY_WEBHOOK_SECRET),
+  razorpayPublicKeyId: optional(process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID),
+  platformAdminEmail: optional(process.env.PLATFORM_ADMIN_EMAIL),
   // Coolify persistent volume destination. Relative DB paths are resolved under this root.
   labelStoragePath: optional(process.env.LABEL_STORAGE_PATH) || "/data/labels",
   invoiceStoragePath: (() => {
@@ -51,7 +54,7 @@ export function isShopifyAppConfigured() {
 }
 
 export function isBillingConfigured() {
-  return Boolean(env.stripeSecretKey);
+  return Boolean(env.razorpayKeyId && env.razorpayKeySecret);
 }
 
 export function indiaPostBaseUrl(environment: "UAT" | "PRODUCTION") {

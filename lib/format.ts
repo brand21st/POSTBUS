@@ -10,6 +10,12 @@ export function formatCurrency(value: number | string | null | undefined, curren
   }).format(amount);
 }
 
+export function formatPaise(paise: number | string | null | undefined, currency = "INR") {
+  const amount = typeof paise === "string" ? Number(paise) : paise;
+  if (amount === null || amount === undefined || Number.isNaN(amount)) return "—";
+  return formatCurrency(amount / 100, currency);
+}
+
 export function formatNumber(value: number | string | null | undefined) {
   const amount = typeof value === "string" ? Number(value) : value;
   if (amount === null || amount === undefined || Number.isNaN(amount)) return "—";

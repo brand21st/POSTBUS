@@ -63,6 +63,29 @@ Copy `.env.example` to `.env.local`. `INTEGRATION_ENCRYPTION_KEY` is required in
 
 Edit [`lib/site-config.ts`](lib/site-config.ts) for public marketing metadata.
 
+## Billing (Razorpay)
+
+Subscriptions are stored per workspace (`subscriptions`, `plans`, `payments`, `billing_usage`). Amounts are integer paise. Yearly prices are 20% off the monthly list price.
+
+Environment:
+
+- `RAZORPAY_KEY_ID` / `NEXT_PUBLIC_RAZORPAY_KEY_ID`
+- `RAZORPAY_KEY_SECRET` (server only)
+- `RAZORPAY_WEBHOOK_SECRET` (server only)
+- `PLATFORM_ADMIN_EMAIL` — optional bootstrap for `/admin`
+
+Webhook: `POST /api/webhooks/razorpay` (verify signature, store `event_id` uniquely, then apply). Daily sweep: `POST /api/cron/billing` with `CRON_SECRET`.
+
+Merchant billing lives at `/dashboard/billing`. Super Admin is `/admin`.
+
+Customer APIs (session + tenant): `GET /api/v1/billing/plans|subscription|usage|payments|invoices`, `POST /api/v1/billing/subscribe|verify|change-plan|cancel|resume`.
+
+Super Admin APIs (platform_admins only): `/api/admin/overview`, `/accounts`, `/subscriptions`, `/payments`, `/plans`, `/revenue`, `/usage`, `/audit-logs`, `/razorpay`, `/trial-settings`.
+
+Order quota is consumed on a successful India Post booking (`consume_order_quota`). Failed bookings do not count.
+
+See [`docs/billing.md`](docs/billing.md) for the API surface.
+
 ## Routes
 
 Marketing:
@@ -73,6 +96,7 @@ Auth and product:
 
 - `/login` `/register` `/forgot-password` `/reset-password` `/onboarding`
 - `/dashboard` and nested merchant pages
+- `/admin` — Super Admin console
 - `{subdomain}.postbus.in` — published tracking pages (rewritten to `/track`)
 
 ## Deploy

@@ -33,12 +33,16 @@ export async function handleSessionRoutes(
       : null;
     const { data: subscription } = organization
       ? await supabase
-          .from("organization_subscriptions")
-          .select("status, billing_plans(code, name)")
+          .from("subscriptions")
+          .select("status, plans(slug, name)")
           .eq("organization_id", organization.id)
+          .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"])
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle()
       : { data: null };
-    const plan = subscription?.billing_plans as { code?: string; name?: string } | null;
+    const plan = subscription?.plans as { slug?: string; name?: string } | { slug?: string; name?: string }[] | null;
+    const planRow = Array.isArray(plan) ? plan[0] : plan;
     return {
       user: {
         id: user.id,
@@ -53,8 +57,8 @@ export async function handleSessionRoutes(
         ? [{ id: organization.id, name: organization.name, slug: organization.slug, role: ensured.role }]
         : [],
       subscription: {
-        planCode: plan?.code,
-        planName: plan?.name,
+        planCode: planRow?.slug,
+        planName: planRow?.name,
         status: subscription?.status ?? "CONFIGURATION_REQUIRED",
       },
     };
