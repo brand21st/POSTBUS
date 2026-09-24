@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
+import { hasPlatformAdminRow } from "@/lib/admin/access";
 
 const SAVED_LOGIN_KEY = "postbus.login.saved-email";
 
@@ -71,10 +72,19 @@ export function LoginForm() {
       } else {
         window.localStorage.removeItem(SAVED_LOGIN_KEY);
       }
-      let dest = next;
-      if (!searchParams.get("next") || next === "/dashboard") {
-        const admin = await fetch("/api/admin/overview", { credentials: "same-origin" });
-        if (admin.ok) dest = "/admin";
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const email = (user?.email ?? values.email).trim().toLowerCase();
+      let isAdmin = user ? await hasPlatformAdminRow(supabase, user.id, email) : false;
+      if (!isAdmin) {
+        const probe = await fetch("/api/admin/overview", { credentials: "same-origin" });
+        isAdmin = probe.ok;
+      }
+      const dest = isAdmin ? (next.startsWith("/admin") ? next : "/admin") : next;
+      if (dest.startsWith("/admin")) {
+        window.location.assign(dest);
+        return;
       }
       router.replace(dest);
       router.refresh();

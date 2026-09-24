@@ -1,3 +1,4 @@
+import { matchesPlatformAdminEmail } from "@/lib/admin/access";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { env } from "@/lib/env";
@@ -25,8 +26,7 @@ export async function requirePlatformAdmin(): Promise<AdminContext> {
     .maybeSingle();
 
   if (!existing) {
-    const configured = env.platformAdminEmail.trim().toLowerCase();
-    if (!configured || configured !== email || !hasAdminClient()) {
+    if (!matchesPlatformAdminEmail(email, env.platformAdminEmail) || !hasAdminClient()) {
       throw new AppError(ERROR_CODES.FORBIDDEN, "Super Admin access required.");
     }
     await createAdminClient().from("platform_admins").upsert(

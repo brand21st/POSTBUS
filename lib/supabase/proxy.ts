@@ -1,5 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  hasPlatformAdminRow,
+  matchesPlatformAdminEmail,
+  signedInHomePath,
+} from "@/lib/admin/access";
 import { env } from "@/lib/env";
 
 const AUTH_PATHS = ["/login", "/register", "/forgot-password", "/reset-password"];
@@ -54,10 +59,17 @@ export async function updateSession(request: NextRequest, options?: SessionOptio
     return NextResponse.redirect(url);
   }
 
-  if (user && isAuthPage && !isTrackingHost) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
+  if (user && (isAuthPage || isDashboard) && !isTrackingHost) {
+    const email = (user.email ?? "").trim().toLowerCase();
+    const isPlatformAdmin =
+      matchesPlatformAdminEmail(email, env.platformAdminEmail) ||
+      (await hasPlatformAdminRow(supabase, user.id, email));
+    if (isAuthPage || (isDashboard && isPlatformAdmin)) {
+      const url = request.nextUrl.clone();
+      url.pathname = signedInHomePath(isPlatformAdmin);
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;
