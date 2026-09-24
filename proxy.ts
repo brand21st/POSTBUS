@@ -1,6 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { applySecurityHeaders } from "@/lib/security/headers";
 import { updateSession } from "@/lib/supabase/proxy";
 import { parseTrackingSubdomain } from "@/modules/tracking-pages/host";
+
+function secured(response: NextResponse) {
+  applySecurityHeaders(response.headers);
+  return response;
+}
 
 function requestHostname(hostHeader: string | null) {
   return hostHeader?.split(":")[0]?.toLowerCase() ?? "";
@@ -24,7 +30,7 @@ export async function proxy(request: NextRequest) {
     url.protocol = "https:";
     url.hostname = "www.postbus.in";
     url.port = "";
-    return NextResponse.redirect(url, 308);
+    return secured(NextResponse.redirect(url, 308));
   }
 
   const subdomain = parseTrackingSubdomain(hostHeader);
@@ -35,12 +41,12 @@ export async function proxy(request: NextRequest) {
     if (shouldRewriteToTrack(request.nextUrl.pathname)) {
       const rewriteUrl = request.nextUrl.clone();
       rewriteUrl.pathname = "/track";
-      return updateSession(request, { extraHeaders, rewriteUrl });
+      return secured(await updateSession(request, { extraHeaders, rewriteUrl }));
     }
-    return updateSession(request, { extraHeaders });
+    return secured(await updateSession(request, { extraHeaders }));
   }
 
-  return updateSession(request);
+  return secured(await updateSession(request));
 }
 
 export const config = {

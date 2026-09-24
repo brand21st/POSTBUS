@@ -1,21 +1,18 @@
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import Script from "next/script";
+import { Geist } from "next/font/google";
 import { siteConfig } from "@/lib/site-config";
+import { contentSecurityPolicy } from "@/lib/security/headers";
 import { Providers } from "@/components/providers";
 import "./globals.css";
-
-const CLARITY_PROJECT_ID = "ymlhqkp345";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  style: "normal",
+  display: "swap",
+  preload: true,
+  adjustFontFallback: true,
 });
 
 export const metadata: Metadata = {
@@ -71,8 +68,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} h-full antialiased`}
     >
+      <head>
+        <meta httpEquiv="Content-Security-Policy" content={contentSecurityPolicy()} />
+      </head>
       <body className="min-h-full flex flex-col bg-background font-sans text-foreground">
         <a href="#main-content" className="skip-link">
           Skip to content
@@ -81,15 +81,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
-        {process.env.NODE_ENV === "production" ? (
-          <Script id="microsoft-clarity" strategy="afterInteractive">
-            {`(function(c,l,a,r,i,t,y){
-c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
-t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-})(window, document, "clarity", "script", "${CLARITY_PROJECT_ID}");`}
-          </Script>
-        ) : null}
         <Providers>{children}</Providers>
       </body>
     </html>

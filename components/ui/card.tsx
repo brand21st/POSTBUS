@@ -22,15 +22,16 @@ const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
 );
 CardHeader.displayName = "CardHeader";
 
-const CardTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
-  ({ className, ...props }, ref) => (
-    <h3
-      ref={ref}
-      className={cn("text-base font-semibold tracking-tight text-ink", className)}
-      {...props}
-    />
-  )
-);
+const CardTitle = React.forwardRef<
+  HTMLHeadingElement,
+  React.HTMLAttributes<HTMLHeadingElement> & { as?: "h2" | "h3" | "h4" }
+>(({ className, as: Comp = "h3", ...props }, ref) => (
+  <Comp
+    ref={ref}
+    className={cn("text-base font-semibold tracking-tight text-ink", className)}
+    {...props}
+  />
+));
 CardTitle.displayName = "CardTitle";
 
 const CardDescription = React.forwardRef<

@@ -59,12 +59,13 @@ export function Sidebar({
             <Link
               key={item.href}
               href={item.href}
+              prefetch={false}
               onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
                 collapsed && "justify-center px-0",
                 active
-                  ? "bg-brand/10 text-brand"
+                  ? "bg-rose-100 text-brand-dark"
                   : "text-muted hover:bg-surface-soft hover:text-foreground"
               )}
             >
@@ -79,6 +80,7 @@ export function Sidebar({
         <Separator />
         <Link
           href={helpNav.href}
+          prefetch={false}
           onClick={onNavigate}
           className={cn(
             "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-surface-soft hover:text-foreground",
@@ -105,6 +107,7 @@ export function Sidebar({
 
         <Link
           href="/dashboard/settings"
+          prefetch={false}
           onClick={onNavigate}
           className={cn(
             "flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-surface-soft",
@@ -122,13 +125,14 @@ export function Sidebar({
 
         <Link
           href="/dashboard/settings"
+          prefetch={false}
           onClick={onNavigate}
           className={cn(
             "flex items-center gap-3 rounded-xl px-3 py-2 hover:bg-surface-soft",
             collapsed && "justify-center px-0"
           )}
         >
-          <span className="flex size-8 items-center justify-center rounded-full bg-brand/10 text-xs font-semibold text-brand">
+          <span className="flex size-8 items-center justify-center rounded-full bg-rose-100 text-xs font-semibold text-brand-dark">
             {initials(profileName)}
           </span>
           <span className={cn("min-w-0", collapsed && "sr-only")}>

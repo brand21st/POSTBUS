@@ -135,7 +135,7 @@ export default function DashboardPage() {
       id: "order",
       header: "Order",
       cell: (row) => (
-        <Link href={`/dashboard/orders/${row.id}`} className="font-medium text-ink hover:text-brand">
+        <Link href={`/dashboard/orders/${row.id}`} prefetch={false} className="font-medium text-ink hover:text-brand">
           {orderNumber(row)}
         </Link>
       ),
@@ -166,7 +166,7 @@ export default function DashboardPage() {
         description={`${me.data?.organization?.name ?? "Your workspace"} · ${format(new Date(), "EEEE, d MMMM yyyy")}`}
         actions={
           <Select value={range} onValueChange={setRange}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-[180px]" aria-label="Date range">
               <SelectValue placeholder="Date range" />
             </SelectTrigger>
             <SelectContent>
@@ -183,7 +183,7 @@ export default function DashboardPage() {
       <Card className="overflow-hidden">
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <CardTitle>Ready to ship</CardTitle>
+            <CardTitle as="h2">Ready to ship</CardTitle>
             <CardDescription>
               {kpis.isError
                 ? "Could not load ready-to-ship volume."
@@ -210,7 +210,7 @@ export default function DashboardPage() {
                 Sync Shopify
               </Button>
             ) : (
-              <Link href="/dashboard/integrations" className={buttonVariants({ variant: "secondary" })}>
+              <Link href="/dashboard/integrations" prefetch={false} className={buttonVariants({ variant: "secondary" })}>
                 <Plug className="size-4" />
                 Connect Shopify
               </Link>
@@ -224,16 +224,16 @@ export default function DashboardPage() {
           const value = kpiValue(kpis.data, def.key, def.fallback);
           const change = kpiChange(kpis.data, def.key);
           return (
-            <Card key={def.key}>
+            <Card key={def.key} className="min-h-[9.5rem]">
               <CardHeader>
                 <CardDescription>{def.label}</CardDescription>
-                <CardTitle className="text-3xl">
+                <CardTitle className="min-h-9 text-3xl tabular-nums">
                   {kpis.isLoading ? "…" : kpis.isError ? "—" : formatNumber(value)}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {change === null ? (
-                  <p className="text-sm text-muted">No comparison for this window</p>
+                  <p className="min-h-5 text-sm text-muted">No comparison for this window</p>
                 ) : (
                   <p className="flex items-center gap-1 text-sm text-muted">
                     {change >= 0 ? (
@@ -288,7 +288,7 @@ export default function DashboardPage() {
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-ink">Recent orders</h2>
-          <Link href="/dashboard/orders" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+          <Link href="/dashboard/orders" prefetch={false} className={buttonVariants({ variant: "ghost", size: "sm" })}>
             View all
           </Link>
         </div>
@@ -300,7 +300,7 @@ export default function DashboardPage() {
           emptyTitle="No orders yet"
           emptyDescription="Import from Shopify or add a manual order to get started."
           emptyAction={
-            <Link href="/dashboard/orders/new" className={buttonVariants()}>
+            <Link href="/dashboard/orders/new" prefetch={false} className={buttonVariants()}>
               Add order
             </Link>
           }

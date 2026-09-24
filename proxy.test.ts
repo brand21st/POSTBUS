@@ -14,5 +14,7 @@ describe("proxy host canonicalization", () => {
     const response = await proxy(request);
     expect(response.status).toBe(308);
     expect(response.headers.get("location")).toBe("https://www.postbus.in/auth/callback?code=abc");
+    expect(response.headers.get("x-frame-options")).toBe("DENY");
+    expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
   });
 });

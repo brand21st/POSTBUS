@@ -54,7 +54,7 @@
   --color-popover: var(--popover);
   --color-accent: var(--accent);
   --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --radius-card: var(--radius-card);
   --radius-btn: var(--radius-btn);
   --radius-input: var(--radius-input);

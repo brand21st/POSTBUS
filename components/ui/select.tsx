@@ -20,6 +20,7 @@ const SelectTrigger = React.forwardRef<
       className
     )}
     {...props}
+    aria-label={props["aria-label"] ?? "Select"}
   >
     {children}
     <SelectPrimitive.Icon asChild>

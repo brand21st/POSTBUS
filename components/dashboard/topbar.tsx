@@ -78,6 +78,7 @@ export function Topbar({
             {index > 0 ? <ChevronRight className="size-3.5 text-muted" /> : null}
             <Link
               href={crumb.href}
+              prefetch={false}
               className={cn(
                 "truncate capitalize hover:text-brand",
                 index === crumbs.length - 1 ? "font-medium text-ink" : "text-muted"
@@ -160,8 +161,16 @@ export function Topbar({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" aria-label="Profile">
-              <span className="flex size-8 items-center justify-center rounded-full bg-brand/10 text-xs font-semibold text-brand">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`${initials(me?.user.fullName ?? me?.user.email)} profile`}
+            >
+              <span
+                aria-hidden
+                className="flex size-8 items-center justify-center rounded-full bg-rose-100 text-xs font-semibold text-brand-dark"
+              >
                 {initials(me?.user.fullName ?? me?.user.email)}
               </span>
             </Button>
