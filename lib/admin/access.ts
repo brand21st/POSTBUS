@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 export const PLATFORM_ADMIN_HOME = "/admin";
 export const MERCHANT_HOME = "/dashboard";
 
@@ -14,21 +16,7 @@ export function signedInHomePath(isPlatformAdmin: boolean) {
   return isPlatformAdmin ? PLATFORM_ADMIN_HOME : MERCHANT_HOME;
 }
 
-type AdminLookupClient = {
-  from: (table: string) => {
-    select: (columns: string) => {
-      or: (filter: string) => {
-        maybeSingle: () => Promise<{ data: { id?: string } | null }>;
-      };
-    };
-  };
-};
-
-export async function hasPlatformAdminRow(
-  supabase: AdminLookupClient,
-  userId: string,
-  email: string
-) {
+export async function hasPlatformAdminRow(supabase: SupabaseClient, userId: string, email: string) {
   const normalized = email.trim().toLowerCase();
   const { data } = await supabase
     .from("platform_admins")
@@ -37,3 +25,4 @@ export async function hasPlatformAdminRow(
     .maybeSingle();
   return Boolean(data);
 }
+
