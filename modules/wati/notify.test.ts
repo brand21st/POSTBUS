@@ -8,7 +8,7 @@ import {
   watiTemplateForEvent,
   watiValuesForPlaceholders,
 } from "@/modules/wati/notify";
-import { isDuplicateWatiNotifyJob } from "@/modules/wati/send";
+import { isDuplicateWatiNotifyJob, resolveWatiTrackingUrl } from "@/modules/wati/send";
 
 describe("watiTemplateForEvent", () => {
   it("uses the saved template for each order and shipment event", () => {
@@ -70,7 +70,7 @@ describe("watiNotifyRecipient", () => {
       phone: "9876543210",
       orderNumber: "1001",
       trackingNumber: "CL123456789IN",
-      trackingUrl: "https://www.indiapost.gov.in/track?articleid=CL123456789IN",
+      trackingUrl: "https://priya.postbus.in/?tracking=CL123456789IN",
     });
     expect(recipient?.phone_number).toBe("919876543210");
     expect(recipient?.custom_params).toEqual(
@@ -79,8 +79,8 @@ describe("watiNotifyRecipient", () => {
         { name: "order_number", value: "1001" },
         { name: "tracking_number", value: "CL123456789IN" },
         { name: "tracking_id", value: "CL123456789IN" },
-        { name: "tracking_url", value: "https://www.indiapost.gov.in/track?articleid=CL123456789IN" },
-        { name: "tracking_link", value: "https://www.indiapost.gov.in/track?articleid=CL123456789IN" },
+        { name: "tracking_url", value: "https://priya.postbus.in/?tracking=CL123456789IN" },
+        { name: "tracking_link", value: "https://priya.postbus.in/?tracking=CL123456789IN" },
       ])
     );
   });
@@ -129,6 +129,26 @@ describe("watiValuesForPlaceholders", () => {
         { name: "1", value: "Priya" },
         { name: "2", value: "1001" },
       ])
+    );
+  });
+});
+
+describe("resolveWatiTrackingUrl", () => {
+  it("prefers the published customer tracking page", () => {
+    expect(
+      resolveWatiTrackingUrl("CL123456789IN", {
+        status: "PUBLISHED",
+        publicUrl: "https://priya.postbus.in",
+      })
+    ).toBe("https://priya.postbus.in/?tracking=CL123456789IN");
+  });
+
+  it("falls back to India Post when the page is not published", () => {
+    expect(resolveWatiTrackingUrl("CL123456789IN", { status: "DRAFT", publicUrl: "https://priya.postbus.in" })).toBe(
+      "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=CL123456789IN"
+    );
+    expect(resolveWatiTrackingUrl("CL123456789IN", null)).toBe(
+      "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=CL123456789IN"
     );
   });
 });

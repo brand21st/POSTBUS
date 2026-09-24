@@ -27,8 +27,10 @@ import {
   verifyShopifyHmac,
 } from "@/modules/shopify/oauth";
 import { shopifyReadyToSync, syncUnfulfilledShopifyOrders } from "@/modules/shopify/orders";
+import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { watiClientFromRow } from "@/modules/wati/client";
 import { watiBroadcastName, watiNotifyRecipient } from "@/modules/wati/notify";
+import { resolveWatiTrackingUrl } from "@/modules/wati/send";
 import {
   listWatiChannels,
   listWatiTemplates,
@@ -591,14 +593,14 @@ export async function handleIntegrationRoutes(
     if (!template) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose an approved Utility template.");
     }
+    const trackingPage = await getTrackingPage(supabase, ctx.organizationId).catch(() => null);
     const recipient = watiNotifyRecipient(
       {
         customerName: "Test customer",
         phone: String(body.phone ?? ""),
         orderNumber: "TEST-001",
         trackingNumber: "TESTTRACKIN",
-        trackingUrl:
-          "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=TESTTRACKIN",
+        trackingUrl: resolveWatiTrackingUrl("TESTTRACKIN", trackingPage),
       },
       template
     );

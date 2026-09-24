@@ -46,7 +46,7 @@ const TEMPLATE_SLOTS = [
   {
     key: "booked",
     label: "Booked / packed",
-    hint: "Sent after booking. Includes tracking ID and tracking link.",
+    hint: "Sent after booking. Includes tracking ID and the customer tracking page.",
   },
   {
     key: "inTransit",
@@ -289,7 +289,7 @@ export default function WatiIntegrationPage() {
           <CardDescription>
             Only approved Utility templates from Wati are listed. Marketing and authentication
             templates stay hidden. Parameters sent: customer_name, order_number, tracking_number,
-            tracking_url.
+            and tracking_url (your published customer tracking page).
           </CardDescription>
         </CardHeader>
         <CardContent className="grid max-w-xl gap-4">
