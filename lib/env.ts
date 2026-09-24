@@ -26,7 +26,7 @@ export const env = {
   // CEPT UAT is a public sandbox URL; default so production still works if Coolify env was left blank.
   indiaPostUatBaseUrl:
     optional(process.env.INDIA_POST_UAT_BASE_URL) ||
-    "https://test.cept.gov.in/beextcustomer/v1",
+    "https://test.cept.gov.in/beextcustomer",
   indiaPostProdBaseUrl:
     optional(process.env.INDIA_POST_PROD_BASE_URL) ||
     "https://app.indiapost.gov.in/beextcustomer",
@@ -58,8 +58,4 @@ export function indiaPostBaseUrl(environment: "UAT" | "PRODUCTION") {
   return environment === "PRODUCTION"
     ? env.indiaPostProdBaseUrl
     : env.indiaPostUatBaseUrl;
-}
-
-export function isIndiaPostEnvironmentConfigured(environment: "UAT" | "PRODUCTION") {
-  return Boolean(indiaPostBaseUrl(environment));
 }

@@ -46,8 +46,10 @@ export function labelPdfViewerResponse(filename: string) {
         .then(function (blob) {
           document.getElementById("viewer").src = URL.createObjectURL(blob);
         })
-        .catch(function (error) {
-          document.body.innerHTML = "<p>" + error.message + "</p>";
+        .catch(function () {
+          var p = document.createElement("p");
+          p.textContent = "Could not open the label PDF.";
+          document.body.replaceChildren(p);
         });
     </script>
   </body>

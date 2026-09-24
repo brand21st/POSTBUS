@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
-import { pagePreset, officialDrawRect } from "@/modules/labels/page-presets";
+import { pagePreset } from "@/modules/labels/page-presets";
 import {
   MERCHANT_ELEMENT_IDS,
   parseLabelTemplate,
@@ -221,38 +221,6 @@ export async function drawMerchantFields(
       align,
     });
   }
-}
-
-export async function overlayMerchantOnOfficialPdf(
-  officialPdf: Uint8Array | Buffer,
-  templateInput: unknown,
-  data: PackingLabelData
-) {
-  const template = parseLabelTemplate(templateInput);
-  const target = pagePreset(template.page.paperSize);
-  const source = await PDFDocument.load(officialPdf, { ignoreEncryption: true });
-  const officialPage = source.getPages()[0];
-  if (!officialPage) return new Uint8Array(officialPdf);
-  const officialSize = officialPage.getSize();
-  const output = await PDFDocument.create();
-  const page = output.addPage([target.widthPt, target.heightPt]);
-  page.drawRectangle({
-    x: 0,
-    y: 0,
-    width: target.widthPt,
-    height: target.heightPt,
-    color: rgb(1, 1, 1),
-  });
-  const embedded = await output.embedPage(officialPage);
-  const placed = officialDrawRect(target.widthPt, target.heightPt, officialSize.width, officialSize.height);
-  page.drawPage(embedded, {
-    x: placed.x,
-    y: placed.y,
-    width: placed.width,
-    height: placed.height,
-  });
-  await drawMerchantFields(output, page, template, data);
-  return output.save();
 }
 
 export async function renderMerchantLabelPdf(templateInput: unknown, data: PackingLabelData) {

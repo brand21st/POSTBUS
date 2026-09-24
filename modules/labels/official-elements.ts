@@ -28,8 +28,6 @@ export const OFFICIAL_LOCKED_ELEMENTS: OfficialLockedElement[] = [
   { id: "grievance", label: "Grievance information", x: 16, y: 8, width: 264, height: 24 },
 ];
 
-export const OFFICIAL_LOCK_TOOLTIP = "Required India Post element — cannot be modified.";
-
 export function visibleOfficialElements() {
   return OFFICIAL_LOCKED_ELEMENTS.filter((item) => !item.coverOnCompose);
 }

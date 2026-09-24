@@ -2,66 +2,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import {
   indiaPostDomesticLabelPayload,
-  indiaPostFindOffice,
   indiaPostLabelPaymentFields,
   indiaPostMobile,
-  indiaPostPickDeliveryOffice,
 } from "@/modules/india-post/endpoints";
+import { resolveIndiaPostOrigin } from "@/modules/india-post/origin";
 import { overlayIndiaPostPartyBox, officialAddressLines } from "@/modules/labels/official-address";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
-
-type PickupRow = {
-  name?: string | null;
-  contact_name?: string | null;
-  line1?: string | null;
-  line2?: string | null;
-  city?: string | null;
-  state?: string | null;
-  pincode?: string | null;
-  phone?: string | null;
-  office_id?: string | null;
-};
-
-async function resolveIndiaPostOrigin(
-  provider: ReturnType<typeof indiaPostFromRow>,
-  connection: { pickup_dropoff_office_id?: string | null },
-  pickup: PickupRow | null,
-  destPin: string
-) {
-  const officeId = String(connection.pickup_dropoff_office_id ?? pickup?.office_id ?? "").trim();
-  const originPin = /^\d{6}$/.test(pickup?.pincode ?? "") ? String(pickup?.pincode) : "";
-  const originOffices = originPin ? await provider.searchPostOffices(originPin) : [];
-  const destOffices = destPin && destPin !== originPin ? await provider.searchPostOffices(destPin) : [];
-  const matched =
-    indiaPostFindOffice(originOffices, officeId) ||
-    indiaPostFindOffice(destOffices, officeId) ||
-    indiaPostPickDeliveryOffice(originOffices);
-  const pincode = String(matched?.pincode ?? originPin ?? "");
-  if (!officeId || officeId.length !== 8 || !/^\d{6}$/.test(pincode) || !matched?.office_name) {
-    throw Object.assign(
-      new Error(
-        "Add a pickup location with the 6-digit pincode of your India Post booking office (Kolenchery SO is 682311 for office 22660454). Drop-off pincode must be the origin office, not the receiver."
-      ),
-      { code: "VALIDATION_ERROR" }
-    );
-  }
-  if (pincode === destPin && originPin !== destPin) {
-    throw Object.assign(
-      new Error(
-        "India Post drop-off pincode was resolving to the receiver pin. Set pickup location pincode to your booking office pin."
-      ),
-      { code: "VALIDATION_ERROR" }
-    );
-  }
-  return {
-    officeId,
-    pincode,
-    name: String(matched.office_name),
-    city: String(matched.city_name ?? pickup?.city ?? "Ernakulam"),
-    state: String(matched.state_name ?? pickup?.state ?? "Kerala"),
-  };
-}
 
 export async function fetchOfficialIndiaPostLabelPdf(
   supabase: SupabaseClient,
@@ -133,8 +80,6 @@ export async function fetchOfficialIndiaPostLabelPdf(
     },
     destPin
   );
-  const destOffices = await provider.searchPostOffices(destPin);
-  const deliveryOffice = indiaPostPickDeliveryOffice(destOffices);
   const receiverMobile =
     indiaPostMobile(address.phone) ||
     indiaPostMobile((shipment.customers as { phone?: string } | null)?.phone);
@@ -171,7 +116,7 @@ export async function fetchOfficialIndiaPostLabelPdf(
         senderCity: sender.city || origin.city,
         senderState: sender.state || origin.state,
         senderPin: origin.pincode,
-        deliveryOfficeName: deliveryOffice?.office_name,
+        deliveryOfficeName: origin.deliveryOfficeName,
         bookingOfficeName: origin.name,
         bookingOfficePin: origin.pincode,
         paymentMode: shipment.payment_mode as string | null,

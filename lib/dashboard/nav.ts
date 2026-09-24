@@ -42,16 +42,6 @@ export const helpNav: NavItem = {
   icon: LifeBuoy,
 };
 
-export function pageTitleFromPath(pathname: string) {
-  if (pathname === "/dashboard") return "Dashboard";
-  const match = sidebarNav.find(
-    (item) => item.href !== "/dashboard" && pathname.startsWith(item.href)
-  );
-  if (match) return match.label;
-  if (pathname.startsWith("/dashboard/orders/new")) return "Add Order";
-  return "Dashboard";
-}
-
 export function breadcrumbs(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
   const crumbs: { label: string; href: string }[] = [];

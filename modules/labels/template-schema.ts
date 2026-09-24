@@ -29,28 +29,6 @@ export type MerchantElementId = (typeof MERCHANT_ELEMENT_IDS)[number];
 export const MERCHANT_OVERLAY_IDS = ["merchantLogo", "orderNumber", "products", "total"] as const;
 export type MerchantOverlayId = (typeof MERCHANT_OVERLAY_IDS)[number];
 
-export const MERCHANT_ELEMENT_LABELS: Record<MerchantElementId, string> = {
-  merchantLogo: "Store logo",
-  storeName: "Store name",
-  storePhone: "Store phone",
-  storeWebsite: "Store website",
-  orderNumber: "Order number",
-  shopifyOrderNumber: "Shopify order number",
-  products: "Products",
-  subtotal: "Subtotal",
-  shipping: "Shipping",
-  discount: "Discount",
-  total: "Price",
-  codAmount: "COD amount",
-  paymentMethod: "Payment method",
-  customerNote: "Customer note",
-  customText: "Custom text",
-  promotionalMessage: "Promotional message",
-  returnAddress: "Return address",
-  returnPolicy: "Return policy",
-  customerSupport: "Support information",
-};
-
 const elementSchema = z.object({
   visible: z.boolean().default(true),
   x: z.number(),
