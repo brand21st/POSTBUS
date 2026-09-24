@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/billing";
 import { writeSubscriptionHistory } from "@/modules/billing/audit";
 import { fetchRazorpaySubscription } from "@/modules/razorpay/client";
-import { env } from "@/lib/env";
+import { isBillingConfiguredAsync } from "@/modules/razorpay/config";
 import { logError } from "@/lib/logger";
 
 export async function runBillingSweep(supabase: SupabaseClient) {
@@ -45,7 +45,7 @@ export async function runBillingSweep(supabase: SupabaseClient) {
   }
 
   let reconciled = 0;
-  if (env.razorpayKeyId && env.razorpayKeySecret) {
+  if (await isBillingConfiguredAsync()) {
     const { data: live } = await supabase
       .from("subscriptions")
       .select("id, razorpay_subscription_id, status")

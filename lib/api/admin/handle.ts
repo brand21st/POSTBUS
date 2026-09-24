@@ -2,12 +2,17 @@ import { z } from "zod";
 import type { NextRequest } from "next/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { AdminContext } from "@/lib/api/admin-context";
-import { env } from "@/lib/env";
-import { maskSecret } from "@/lib/security/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
 import { yearlyPricePaise } from "@/modules/billing/prices";
 import { getLiveSubscription, mapPlan, type PlanRow } from "@/modules/billing/subscriptions";
+import {
+  loadRazorpaySettings,
+  registerRazorpayWebhook,
+  saveRazorpaySettings,
+  testRazorpaySettings,
+} from "@/modules/razorpay/admin-settings";
+import { getRazorpayConfig, publicRazorpayStatus } from "@/modules/razorpay/config";
 
 const planSchema = z.object({
   slug: z.string().min(2).optional(),
@@ -50,6 +55,10 @@ export async function handleAdminRoutes(
   if (key === "GET revenue") return loadRevenue(supabase);
   if (key === "GET usage") return loadUsage(supabase);
   if (key === "GET razorpay") return loadRazorpayStatus(supabase);
+  if (key === "GET settings/razorpay") return loadRazorpaySettings();
+  if (key === "PATCH settings/razorpay") return saveRazorpaySettings(request, supabase, ctx);
+  if (key === "POST settings/razorpay/test") return testRazorpaySettings(request, supabase, ctx);
+  if (key === "POST settings/razorpay/webhook") return registerRazorpayWebhook(request, supabase, ctx);
   if (key === "GET trial-settings" || (key === "GET settings" && slugs[0] === "trial-settings")) {
     const { data } = await supabase.from("platform_settings").select("*").eq("id", 1).maybeSingle();
     return data ?? { trial_enabled: true, trial_days: 14 };
@@ -237,11 +246,12 @@ async function loadRazorpayStatus(supabase: ReturnType<typeof createAdminClient>
       supabase.from("payments").select("*").order("created_at", { ascending: false }).limit(20),
     ]);
   const { data: capturedRows } = await supabase.from("payments").select("amount_paise").eq("status", "CAPTURED");
+  const status = publicRazorpayStatus(await getRazorpayConfig());
   return {
-    connected: Boolean(env.razorpayKeyId && env.razorpayKeySecret),
-    keyIdMasked: maskSecret(env.razorpayPublicKeyId || env.razorpayKeyId),
-    webhookConfigured: Boolean(env.razorpayWebhookSecret),
-    mode: (env.razorpayKeyId || "").startsWith("rzp_live") ? "live" : "test",
+    connected: status.connected,
+    keyIdMasked: status.keyIdMasked,
+    webhookConfigured: status.webhookConfigured,
+    mode: status.mode,
     totals: {
       payments: total ?? 0,
       captured: captured ?? 0,

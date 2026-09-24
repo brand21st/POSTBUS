@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { TenantContext } from "@/lib/api/context";
-import { env } from "@/lib/env";
+import { getRazorpayConfig } from "@/modules/razorpay/config";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import {
   cancelSubscription,
@@ -51,7 +51,8 @@ export async function handleBillingRoutes(
   key: string
 ) {
   if (key === "GET billing/plans") {
-    return { plans: await listActivePlans(supabase), configured: Boolean(env.razorpayKeyId) };
+    const razorpay = await getRazorpayConfig();
+    return { plans: await listActivePlans(supabase), configured: Boolean(razorpay.keyId && razorpay.keySecret) };
   }
 
   if (!ctx) return null;
@@ -64,10 +65,11 @@ export async function handleBillingRoutes(
         ? subscription.plans[0]
         : subscription.plans
       : null;
+    const razorpay = await getRazorpayConfig();
     return {
-      configurationRequired: !env.razorpayKeyId || !env.razorpayKeySecret,
-      configured: Boolean(env.razorpayKeyId && env.razorpayKeySecret),
-      keyId: env.razorpayPublicKeyId || env.razorpayKeyId || null,
+      configurationRequired: !razorpay.keyId || !razorpay.keySecret,
+      configured: Boolean(razorpay.keyId && razorpay.keySecret),
+      keyId: razorpay.keyId || null,
       plan: plan ? mapPlan(plan) : null,
       subscription: subscription
         ? {

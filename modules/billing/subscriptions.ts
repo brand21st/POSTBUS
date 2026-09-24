@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { env } from "@/lib/env";
+import { getRazorpayConfig } from "@/modules/razorpay/config";
 import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/billing";
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
 import { amountForCycle } from "@/modules/billing/prices";
@@ -179,7 +179,8 @@ export async function startCheckout(
     ip?: string | null;
   }
 ) {
-  if (!env.razorpayKeyId || !env.razorpayKeySecret) {
+  const razorpay = await getRazorpayConfig();
+  if (!razorpay.keyId || !razorpay.keySecret) {
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Billing is not configured yet.");
   }
   const plan = await ensureRazorpayPlanIds(supabase, await loadPlan(supabase, input.planId));
@@ -267,7 +268,7 @@ export async function startCheckout(
     metadata: { planId: plan.id, billingCycle: input.billingCycle, razorpaySubscriptionId },
   });
   return {
-    keyId: env.razorpayPublicKeyId || env.razorpayKeyId,
+    keyId: razorpay.keyId,
     subscriptionId,
     razorpaySubscriptionId,
     amountPaise: amount,
@@ -290,14 +291,15 @@ export async function verifyCheckout(
     ip?: string | null;
   }
 ) {
-  if (!env.razorpayKeySecret) {
+  const razorpay = await getRazorpayConfig();
+  if (!razorpay.keySecret) {
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Billing is not configured yet.");
   }
   const valid = verifyCheckoutSignature({
     paymentId: input.paymentId,
     subscriptionId: input.razorpaySubscriptionId,
     signature: input.signature,
-    secret: env.razorpayKeySecret,
+    secret: razorpay.keySecret,
   });
   if (!valid) throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid payment signature.");
   const { data: subscription } = await supabase
@@ -590,8 +592,25 @@ export async function pauseSubscriptionAdmin(
   await supabase.from("subscriptions").update({ status: "PAUSED" }).eq("id", subscription.id);
 }
 
-export function unixToDate(value: unknown) {
+export function unixToDateOrNull(value: unknown) {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return new Date();
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
   return new Date(numeric * 1000);
+}
+
+export function unixToDate(value: unknown) {
+  return unixToDateOrNull(value) ?? new Date();
+}
+
+export function periodsMatch(
+  subscription: Pick<SubscriptionRow, "current_period_start" | "current_period_end">,
+  periodStart?: Date | null,
+  periodEnd?: Date | null
+) {
+  if (!subscription.current_period_start || !subscription.current_period_end || !periodStart || !periodEnd) {
+    return false;
+  }
+  const storedStart = new Date(subscription.current_period_start).getTime();
+  const storedEnd = new Date(subscription.current_period_end).getTime();
+  return storedStart === periodStart.getTime() && storedEnd === periodEnd.getTime();
 }

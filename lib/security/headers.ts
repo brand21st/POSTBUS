@@ -31,13 +31,25 @@ export function contentSecurityPolicy() {
     "https://api.stripe.com",
   ].join(" ");
 
+  const scriptSrc = [
+    "'self'",
+    "'unsafe-inline'",
+    // React/Next reconstruct call stacks with eval() in development only.
+    ...(process.env.NODE_ENV === "production" ? [] : ["'unsafe-eval'"]),
+    "https://www.clarity.ms",
+    "https://scripts.clarity.ms",
+    "https://*.clarity.ms",
+    "https://static.cloudflareinsights.com",
+    "https://checkout.razorpay.com",
+  ].join(" ");
+
   return [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    "script-src 'self' 'unsafe-inline' https://www.clarity.ms https://scripts.clarity.ms https://*.clarity.ms https://static.cloudflareinsights.com https://checkout.razorpay.com",
+    `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",

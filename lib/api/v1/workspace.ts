@@ -11,7 +11,7 @@ import {
   memberInviteSchema,
   updateOrganizationSchema,
 } from "@/lib/api/v1-schemas";
-import { isBillingConfigured } from "@/lib/env";
+import { isBillingConfiguredAsync } from "@/modules/razorpay/config";
 import { encryptSecret, hashSecret, randomToken } from "@/lib/security/crypto";
 import { getAutomationSettings, updateAutomationSettings } from "@/modules/automation/service";
 import {
@@ -116,7 +116,7 @@ export async function handleWorkspaceRoutes(
       .order("created_at", { ascending: false });
     const plan = subscription?.billing_plans as { code?: string; name?: string; shipment_limit?: number } | null;
     return {
-      configurationRequired: !isBillingConfigured(),
+      configurationRequired: !(await isBillingConfiguredAsync()),
       plan: plan ? { code: plan.code, name: plan.name, shipmentLimit: plan.shipment_limit } : { name: "Starter" },
       subscription: {
         status: subscription?.status ?? "CONFIGURATION_REQUIRED",

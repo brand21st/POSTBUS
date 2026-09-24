@@ -1,16 +1,17 @@
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { env } from "@/lib/env";
 import { logError } from "@/lib/logger";
+import { getRazorpayCredentials } from "@/modules/razorpay/config";
 
 const RAZORPAY_API = "https://api.razorpay.com/v1";
 
 export type RazorpayEntity = Record<string, unknown>;
 
-function credentials() {
-  if (!env.razorpayKeyId || !env.razorpayKeySecret) {
+async function credentials() {
+  const { keyId, secret } = await getRazorpayCredentials();
+  if (!keyId || !secret) {
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Razorpay is not configured.");
   }
-  return { keyId: env.razorpayKeyId, secret: env.razorpayKeySecret };
+  return { keyId, secret };
 }
 
 async function razorpayRequest<T = RazorpayEntity>(
@@ -18,7 +19,7 @@ async function razorpayRequest<T = RazorpayEntity>(
   path: string,
   body?: Record<string, unknown>
 ): Promise<T> {
-  const { keyId, secret } = credentials();
+  const { keyId, secret } = await credentials();
   const response = await fetch(`${RAZORPAY_API}${path}`, {
     method,
     headers: {
@@ -116,4 +117,36 @@ export async function fetchRazorpayPayment(id: string) {
 
 export async function refundRazorpayPayment(id: string, amountPaise?: number) {
   return razorpayRequest("POST", `/payments/${id}/refund`, amountPaise ? { amount: amountPaise } : {});
+}
+
+export async function pingRazorpayApi() {
+  return razorpayRequest<{ count?: number; items?: RazorpayEntity[] }>("GET", "/customers?count=1");
+}
+
+export async function listRazorpayWebhooks() {
+  return razorpayRequest<{ items?: RazorpayEntity[]; count?: number }>("GET", "/webhooks");
+}
+
+export async function createRazorpayWebhook(input: {
+  url: string;
+  secret: string;
+  events: Record<string, boolean>;
+}) {
+  return razorpayRequest("POST", "/webhooks", {
+    url: input.url,
+    secret: input.secret,
+    events: input.events,
+  });
+}
+
+export async function updateRazorpayWebhook(
+  id: string,
+  input: { url: string; secret?: string; events: Record<string, boolean> }
+) {
+  const body: Record<string, unknown> = {
+    url: input.url,
+    events: input.events,
+  };
+  if (input.secret) body.secret = input.secret;
+  return razorpayRequest("PUT", `/webhooks/${id}`, body);
 }
