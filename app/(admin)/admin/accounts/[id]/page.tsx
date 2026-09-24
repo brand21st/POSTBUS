@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { AccountAdminActions } from "@/components/admin/account-actions";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
@@ -17,10 +18,10 @@ export default function AdminAccountDetailPage() {
     queryKey: ["admin", "account", params.id],
     queryFn: () => api<Record<string, unknown>>(`/api/admin/accounts/${params.id}`),
   });
-  const action = useMutation({
-    mutationFn: (path: string) => api(`/api/admin/accounts/${params.id}/${path}`, { method: "POST", body: JSON.stringify({}) }),
+  const resetUsage = useMutation({
+    mutationFn: () => api(`/api/admin/accounts/${params.id}/reset-usage`, { method: "POST", body: JSON.stringify({}) }),
     onSuccess: () => {
-      toast.success("Account updated.");
+      toast.success("Usage reset.");
       client.invalidateQueries({ queryKey: ["admin", "account", params.id] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -42,17 +43,9 @@ export default function AdminAccountDetailPage() {
         title={account?.name ?? "Account"}
         description={account?.slug}
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="secondary" onClick={() => action.mutate("activate")}>
-              Activate
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => action.mutate("suspend")}>
-              Suspend
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => action.mutate("disable")}>
-              Disable
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => action.mutate("reset-usage")}>
+          <div className="flex flex-wrap items-start gap-2">
+            <AccountAdminActions accountId={params.id} accountName={account?.name} />
+            <Button size="sm" variant="secondary" onClick={() => resetUsage.mutate()} disabled={resetUsage.isPending}>
               Reset usage
             </Button>
           </div>

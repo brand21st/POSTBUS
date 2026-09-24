@@ -20,7 +20,7 @@ export default function AdminTrialPage() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [days, setDays] = useState<string>("");
   const trialEnabled = enabled ?? query.data?.trial_enabled ?? true;
-  const trialDays = days || String(query.data?.trial_days ?? 14);
+  const trialDays = days || String(query.data?.trial_days ?? 3);
   const save = useMutation({
     mutationFn: () =>
       api("/api/admin/trial-settings", {
@@ -36,7 +36,7 @@ export default function AdminTrialPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Trial settings" description="Control whether new workspaces receive a trial and for how many days." />
+      <PageHeader title="Trial settings" description="New workspaces get a trial with every PostBus feature unlocked. Control whether trials are enabled and for how many days." />
       <Card className="max-w-lg">
         <CardContent className="space-y-5 p-6">
           <div className="flex items-center justify-between gap-4">

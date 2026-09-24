@@ -7,6 +7,9 @@ export function PricingToggle({ plans }: { plans: PublicPlan[] }) {
   const [cycle, setCycle] = useState<"monthly" | "yearly">("monthly");
   return (
     <div>
+      <div className="mb-8 text-center text-sm text-muted">
+        New accounts get a 3-day trial with every feature from every plan.
+      </div>
       <div className="mb-8 flex justify-center">
         <div className="inline-flex rounded-full border border-border bg-white p-1 text-sm">
           <button

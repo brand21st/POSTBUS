@@ -29,7 +29,7 @@ Requires a `platform_admins` row (or `PLATFORM_ADMIN_EMAIL` matching the signed-
 | GET | `/api/admin/overview` |
 | GET | `/api/admin/accounts` |
 | GET | `/api/admin/accounts/:id` |
-| POST | `/api/admin/accounts/:id/activate\|suspend\|disable\|change-plan\|extend\|trial\|reset-usage` |
+| POST | `/api/admin/accounts/:id/activate\|block\|suspend\|hold\|disable\|delete\|change-plan\|extend\|trial\|reset-usage` |
 | GET | `/api/admin/subscriptions` |
 | GET | `/api/admin/payments` |
 | GET/POST | `/api/admin/plans` |
@@ -39,10 +39,13 @@ Requires a `platform_admins` row (or `PLATFORM_ADMIN_EMAIL` matching the signed-
 | GET | `/api/admin/usage` |
 | GET | `/api/admin/audit-logs` |
 | GET | `/api/admin/razorpay` |
+| GET/PATCH | `/api/admin/settings/razorpay` |
+| POST | `/api/admin/settings/razorpay/test` |
+| POST | `/api/admin/settings/razorpay/webhook` |
 | GET/PATCH | `/api/admin/trial-settings` |
 
 Plans with subscribers are archived (`is_active = false`), never deleted. Audit logs have no update/delete API.
 
 ## Razorpay
 
-`POST /api/webhooks/razorpay` — HMAC of the raw body with `RAZORPAY_WEBHOOK_SECRET`. Duplicate `x-razorpay-event-id` values return 200 without applying the payload again.
+`POST /api/webhooks/razorpay` — HMAC of the raw body with the webhook secret from Super Admin settings (or `RAZORPAY_WEBHOOK_SECRET`). Duplicate `x-razorpay-event-id` values return 200 without applying the payload again. `subscription.charged` and `invoice.paid` renew the billing period; a second event for the same period is ignored.

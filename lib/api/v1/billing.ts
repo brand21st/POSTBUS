@@ -6,6 +6,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { getRazorpayConfig } from "@/modules/razorpay/config";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import {
+  applyFullTrialAccess,
   cancelSubscription,
   changePlan,
   getLiveSubscription,
@@ -66,18 +67,28 @@ export async function handleBillingRoutes(
         : subscription.plans
       : null;
     const razorpay = await getRazorpayConfig();
+    const catalog = await listActivePlans(supabase);
+    const mapped = plan ? mapPlan(plan) : null;
+    const trialPlan =
+      mapped && subscription?.status === "TRIAL" ? applyFullTrialAccess(mapped, catalog) : mapped;
+    const trialLimit =
+      subscription?.status === "TRIAL" && trialPlan
+        ? trialPlan.monthlyOrderLimit
+        : usage.orderLimit;
+    const remaining =
+      trialLimit == null ? usage.remaining : Math.max(0, trialLimit - usage.ordersUsed);
     return {
       configurationRequired: !razorpay.keyId || !razorpay.keySecret,
       configured: Boolean(razorpay.keyId && razorpay.keySecret),
       keyId: razorpay.keyId || null,
-      plan: plan ? mapPlan(plan) : null,
+      plan: trialPlan,
       subscription: subscription
         ? {
             id: subscription.id,
             status: subscription.status,
             billingCycle: subscription.billing_cycle,
             amountPaise: Number(subscription.amount_paise),
-            orderLimit: subscription.order_limit,
+            orderLimit: trialLimit ?? subscription.order_limit,
             startedAt: subscription.started_at,
             currentPeriodStart: subscription.current_period_start,
             currentPeriodEnd: subscription.current_period_end,
@@ -91,8 +102,8 @@ export async function handleBillingRoutes(
       usage: {
         metric: "orders",
         quantity: usage.ordersUsed,
-        limit: usage.orderLimit,
-        remaining: usage.remaining,
+        limit: trialLimit,
+        remaining,
         periodStart: usage.periodStart,
         periodEnd: usage.periodEnd,
       },

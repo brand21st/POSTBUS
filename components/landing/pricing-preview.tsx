@@ -27,8 +27,8 @@ export function PricingPreview() {
             Choose a plan that matches your shipping volume and team.
           </p>
           <p className="mx-auto mt-4 max-w-xl text-muted">
-            We keep pricing straightforward. View current plan options and talk to us
-            about what fits your store.
+            Start with a 3-day trial that includes every feature. Then pick the plan
+            that matches your shipping volume.
           </p>
           <Link
             href="/pricing"

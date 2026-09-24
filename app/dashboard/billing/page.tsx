@@ -16,7 +16,7 @@ import { api } from "@/lib/hooks/use-api";
 
 type BillingPayload = {
   configurationRequired?: boolean;
-  plan?: PublicPlan | null;
+  plan?: (PublicPlan & { description?: string | null; features?: string[] }) | null;
   subscription?: {
     status?: string;
     billingCycle?: "monthly" | "yearly";
@@ -106,6 +106,9 @@ export default function BillingPage() {
                 <StatusBadge value={data?.subscription?.status} />
                 <p className="capitalize text-muted">{data?.subscription?.billingCycle ?? "monthly"} billing</p>
                 <p>{formatPaise(data?.subscription?.amountPaise)}</p>
+                {data?.subscription?.status === "TRIAL" ? (
+                  <p className="text-muted">{data.plan?.description ?? "3-day trial with every PostBus feature unlocked."}</p>
+                ) : null}
               </CardContent>
             </Card>
             <Card>
@@ -135,6 +138,25 @@ export default function BillingPage() {
               </CardContent>
             </Card>
           </div>
+
+          {data?.subscription?.status === "TRIAL" && (data.plan?.features?.length ?? 0) > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardDescription>Trial access</CardDescription>
+                <CardTitle className="text-base">Full features unlocked for 3 days</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="grid gap-2 text-sm text-ink sm:grid-cols-2">
+                  {data.plan?.features?.map((feature) => (
+                    <li key={feature} className="flex gap-2">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <div className="flex flex-wrap gap-2">
             {data?.subscription?.cancelAtPeriodEnd ? (

@@ -3,6 +3,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { getRazorpayConfig } from "@/modules/razorpay/config";
 import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/billing";
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
+import { mergeFullPlanFeatures } from "@/modules/billing/plan-features";
 import { amountForCycle } from "@/modules/billing/prices";
 import { LIVE_STATUSES } from "@/modules/billing/usage";
 import {
@@ -77,6 +78,24 @@ export function mapPlan(plan: PlanRow) {
     displayOrder: plan.display_order,
     razorpayMonthlyPlanId: plan.razorpay_monthly_plan_id,
     razorpayYearlyPlanId: plan.razorpay_yearly_plan_id,
+  };
+}
+
+export function applyFullTrialAccess(
+  plan: ReturnType<typeof mapPlan>,
+  catalog: Array<ReturnType<typeof mapPlan>>,
+  trialDays = 3
+) {
+  const full = mergeFullPlanFeatures(catalog.length ? catalog : [plan]);
+  const top = (catalog.length ? catalog : [plan]).reduce((best, item) =>
+    item.monthlyOrderLimit > best.monthlyOrderLimit ? item : best
+  );
+  return {
+    ...plan,
+    name: top.name,
+    description: `${trialDays}-day trial with every PostBus feature unlocked.`,
+    features: full.features,
+    monthlyOrderLimit: full.monthlyOrderLimit || plan.monthlyOrderLimit,
   };
 }
 

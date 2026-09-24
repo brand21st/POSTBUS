@@ -2,7 +2,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logError, logInfo } from "@/lib/logger";
 import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/billing";
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
-import { activateSubscription, unixToDate, type SubscriptionRow } from "@/modules/billing/subscriptions";
+import {
+  activateSubscription,
+  periodsMatch,
+  unixToDate,
+  unixToDateOrNull,
+  type SubscriptionRow,
+} from "@/modules/billing/subscriptions";
+import { fetchRazorpaySubscription } from "@/modules/razorpay/client";
 
 export function razorpayWebhookEventId(headerId: string, event: string | undefined, rawBody: string) {
   return headerId || `${event ?? "event"}:${Buffer.from(rawBody).toString("base64").slice(0, 40)}`;
@@ -18,10 +25,11 @@ type RazorpayPayload = {
     subscription?: { entity?: Record<string, unknown> };
     payment?: { entity?: Record<string, unknown> };
     refund?: { entity?: Record<string, unknown> };
+    invoice?: { entity?: Record<string, unknown> };
   };
 };
 
-function entity(payload: RazorpayPayload, key: "subscription" | "payment" | "refund") {
+function entity(payload: RazorpayPayload, key: "subscription" | "payment" | "refund" | "invoice") {
   return payload.payload?.[key]?.entity ?? {};
 }
 
@@ -33,6 +41,85 @@ async function loadSubscription(supabase: SupabaseClient, razorpaySubscriptionId
     .eq("razorpay_subscription_id", razorpaySubscriptionId)
     .maybeSingle();
   return data as SubscriptionRow | null;
+}
+
+async function resolveSubscriptionEntity(entityRow: Record<string, unknown>, razorpaySubscriptionId: string) {
+  const hasPeriod = Boolean(unixToDateOrNull(entityRow.current_start) && unixToDateOrNull(entityRow.current_end));
+  if (hasPeriod || !razorpaySubscriptionId) return entityRow;
+  try {
+    const remote = await fetchRazorpaySubscription(razorpaySubscriptionId);
+    return { ...entityRow, ...remote };
+  } catch (error) {
+    logError("razorpay.subscription_fetch_failed", {
+      razorpaySubscriptionId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+    return entityRow;
+  }
+}
+
+async function applyPendingPlanChange(supabase: SupabaseClient, subscription: SubscriptionRow) {
+  if (!subscription.pending_plan_id) return;
+  await supabase
+    .from("subscriptions")
+    .update({
+      plan_id: subscription.pending_plan_id,
+      billing_cycle: subscription.pending_billing_cycle ?? subscription.billing_cycle,
+      pending_plan_id: null,
+      pending_billing_cycle: null,
+    })
+    .eq("id", subscription.id);
+}
+
+async function applyBillingCycleCharge(
+  supabase: SupabaseClient,
+  input: {
+    subscription: SubscriptionRow;
+    subscriptionEntity: Record<string, unknown>;
+    paymentEntity: Record<string, unknown>;
+    invoiceEntity?: Record<string, unknown>;
+    event: string;
+  }
+) {
+  const periodStart = unixToDateOrNull(input.subscriptionEntity.current_start);
+  const periodEnd = unixToDateOrNull(input.subscriptionEntity.current_end);
+  if (periodsMatch(input.subscription, periodStart, periodEnd)) return;
+  const wasActive = input.subscription.status === "ACTIVE";
+  await activateSubscription(supabase, {
+    subscription: input.subscription,
+    paymentId: input.paymentEntity.id ? String(input.paymentEntity.id) : null,
+    amountPaise: input.paymentEntity.amount
+      ? Number(input.paymentEntity.amount)
+      : input.invoiceEntity?.amount
+        ? Number(input.invoiceEntity.amount)
+        : null,
+    method: input.paymentEntity.method ? String(input.paymentEntity.method) : null,
+    razorpayOrderId: input.paymentEntity.order_id ? String(input.paymentEntity.order_id) : null,
+    razorpayInvoiceId: input.invoiceEntity?.id
+      ? String(input.invoiceEntity.id)
+      : input.paymentEntity.invoice_id
+        ? String(input.paymentEntity.invoice_id)
+        : null,
+    periodStart: periodStart ?? unixToDate(input.subscriptionEntity.current_start),
+    periodEnd: periodEnd ?? unixToDate(input.subscriptionEntity.current_end),
+    actor: "WEBHOOK",
+    reason: input.event,
+  });
+  await applyPendingPlanChange(supabase, input.subscription);
+  if (wasActive) {
+    await insertBillingNotification(supabase, {
+      organizationId: input.subscription.organization_id,
+      ...BILLING_NOTICE.renewal,
+      entityId: input.subscription.id,
+    });
+  }
+  if (input.paymentEntity.id) {
+    await insertBillingNotification(supabase, {
+      organizationId: input.subscription.organization_id,
+      ...BILLING_NOTICE.paymentSuccess,
+      entityId: input.subscription.id,
+    });
+  }
 }
 
 async function upsertPayment(
@@ -90,26 +177,85 @@ async function upsertPayment(
   });
 }
 
+async function syncPlanFromRazorpay(
+  supabase: SupabaseClient,
+  subscription: SubscriptionRow,
+  subscriptionEntity: Record<string, unknown>
+) {
+  const razorpayPlanId = String(subscriptionEntity.plan_id ?? "");
+  if (!razorpayPlanId) return;
+  const { data: monthly } = await supabase
+    .from("plans")
+    .select("*")
+    .eq("razorpay_monthly_plan_id", razorpayPlanId)
+    .maybeSingle();
+  let plan = monthly;
+  let billingCycle: "monthly" | "yearly" = "monthly";
+  if (!plan) {
+    const { data: yearly } = await supabase
+      .from("plans")
+      .select("*")
+      .eq("razorpay_yearly_plan_id", razorpayPlanId)
+      .maybeSingle();
+    plan = yearly;
+    billingCycle = "yearly";
+  }
+  if (!plan) return;
+  const periodStart = unixToDateOrNull(subscriptionEntity.current_start);
+  const periodEnd = unixToDateOrNull(subscriptionEntity.current_end);
+  const patch: Record<string, unknown> = {
+    plan_id: plan.id,
+    billing_cycle: billingCycle,
+  };
+  if (periodStart) patch.current_period_start = periodStart.toISOString();
+  if (periodEnd) {
+    patch.current_period_end = periodEnd.toISOString();
+    patch.renews_at = periodEnd.toISOString();
+  }
+  await supabase.from("subscriptions").update(patch).eq("id", subscription.id);
+}
+
 export async function processRazorpayEvent(
   supabase: SupabaseClient,
   payload: RazorpayPayload,
   eventId: string
 ) {
   const event = payload.event ?? "";
-  const subscriptionEntity = entity(payload, "subscription");
+  let subscriptionEntity = entity(payload, "subscription");
   const paymentEntity = entity(payload, "payment");
   const refundEntity = entity(payload, "refund");
-  const razorpaySubscriptionId = String(subscriptionEntity.id ?? paymentEntity.subscription_id ?? "");
+  const invoiceEntity = entity(payload, "invoice");
+  const razorpaySubscriptionId = String(
+    subscriptionEntity.id ?? paymentEntity.subscription_id ?? invoiceEntity.subscription_id ?? ""
+  );
   const subscription = await loadSubscription(supabase, razorpaySubscriptionId || null);
 
   logInfo("razorpay.webhook", { event, eventId, razorpaySubscriptionId });
 
-  if (!subscription && event.startsWith("subscription.")) {
+  if (!subscription && (event.startsWith("subscription.") || event === "invoice.paid")) {
     logError("razorpay.webhook_unmatched_subscription", { event, razorpaySubscriptionId });
     return { ignored: true };
   }
 
+  if (event === "subscription.authenticated" && subscription) {
+    await supabase
+      .from("subscriptions")
+      .update({
+        razorpay_subscription_id: razorpaySubscriptionId || subscription.razorpay_subscription_id,
+      })
+      .eq("id", subscription.id);
+    await writeSubscriptionHistory(supabase, {
+      organizationId: subscription.organization_id,
+      subscriptionId: subscription.id,
+      fromStatus: subscription.status,
+      toStatus: subscription.status,
+      reason: event,
+      actor: "WEBHOOK",
+    });
+  }
+
   if (event === "subscription.activated" && subscription) {
+    subscriptionEntity = await resolveSubscriptionEntity(subscriptionEntity, razorpaySubscriptionId);
     await activateSubscription(supabase, {
       subscription,
       paymentId: paymentEntity.id ? String(paymentEntity.id) : null,
@@ -124,45 +270,28 @@ export async function processRazorpayEvent(
     });
   }
 
-  if (event === "subscription.charged" && subscription) {
-    const wasActive = subscription.status === "ACTIVE";
-    await activateSubscription(supabase, {
+  if ((event === "subscription.charged" || event === "invoice.paid") && subscription) {
+    if (event === "invoice.paid" && !invoiceEntity.subscription_id && !subscriptionEntity.id) {
+      return { ignored: true };
+    }
+    subscriptionEntity = await resolveSubscriptionEntity(subscriptionEntity, razorpaySubscriptionId);
+    await applyBillingCycleCharge(supabase, {
       subscription,
-      paymentId: paymentEntity.id ? String(paymentEntity.id) : null,
-      amountPaise: paymentEntity.amount ? Number(paymentEntity.amount) : null,
-      method: paymentEntity.method ? String(paymentEntity.method) : null,
-      razorpayOrderId: paymentEntity.order_id ? String(paymentEntity.order_id) : null,
-      razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
-      periodStart: unixToDate(subscriptionEntity.current_start),
-      periodEnd: unixToDate(subscriptionEntity.current_end),
-      actor: "WEBHOOK",
-      reason: "subscription.charged",
+      subscriptionEntity,
+      paymentEntity: {
+        ...paymentEntity,
+        id: paymentEntity.id ?? invoiceEntity.payment_id,
+        amount: paymentEntity.amount ?? invoiceEntity.amount,
+        invoice_id: paymentEntity.invoice_id ?? invoiceEntity.id,
+      },
+      invoiceEntity,
+      event,
     });
-    if (subscription.pending_plan_id) {
-      await supabase
-        .from("subscriptions")
-        .update({
-          plan_id: subscription.pending_plan_id,
-          billing_cycle: subscription.pending_billing_cycle ?? subscription.billing_cycle,
-          pending_plan_id: null,
-          pending_billing_cycle: null,
-        })
-        .eq("id", subscription.id);
-    }
-    if (wasActive) {
-      await insertBillingNotification(supabase, {
-        organizationId: subscription.organization_id,
-        ...BILLING_NOTICE.renewal,
-        entityId: subscription.id,
-      });
-    }
-    if (paymentEntity.id) {
-      await insertBillingNotification(supabase, {
-        organizationId: subscription.organization_id,
-        ...BILLING_NOTICE.paymentSuccess,
-        entityId: subscription.id,
-      });
-    }
+  }
+
+  if (event === "subscription.updated" && subscription) {
+    subscriptionEntity = await resolveSubscriptionEntity(subscriptionEntity, razorpaySubscriptionId);
+    await syncPlanFromRazorpay(supabase, subscription, subscriptionEntity);
   }
 
   if ((event === "subscription.pending" || event === "payment.failed") && subscription) {

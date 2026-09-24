@@ -9,7 +9,7 @@ export const ORDER_LIMIT_MESSAGE =
   "You have reached your monthly order limit. Please upgrade your plan to continue processing orders.";
 
 export const ACCOUNT_BLOCKED_MESSAGE =
-  "This account is suspended. Contact support or update billing to continue processing orders.";
+  "This account is locked. Contact support to continue processing orders.";
 
 export const SUBSCRIPTION_INACTIVE_MESSAGE =
   "Your subscription is not active. Please choose a plan to continue processing orders.";
@@ -77,7 +77,18 @@ export async function getQuotaSnapshot(
       usage = row as UsageRow | null;
     }
   }
-  const orderLimit = usage?.order_limit ?? subscription?.order_limit ?? plan?.monthly_order_limit ?? null;
+  let orderLimit = usage?.order_limit ?? subscription?.order_limit ?? plan?.monthly_order_limit ?? null;
+  if (subscription?.status === "TRIAL") {
+    const { data: topPlan } = await supabase
+      .from("plans")
+      .select("monthly_order_limit")
+      .eq("is_active", true)
+      .order("monthly_order_limit", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const trialLimit = Number(topPlan?.monthly_order_limit) || 0;
+    if (trialLimit > 0) orderLimit = Math.max(orderLimit ?? 0, trialLimit);
+  }
   const ordersUsed = usage?.orders_used ?? 0;
   const remaining = orderLimit === null ? null : Math.max(0, orderLimit - ordersUsed);
   const accountOk = (org?.account_status ?? "ACTIVE") === "ACTIVE";

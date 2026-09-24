@@ -103,7 +103,7 @@ export default function AdminSettingsPage() {
             <Badge variant={data?.connected ? "success" : "warning"}>
               {data?.connected ? "Connected" : "Not configured"}
             </Badge>
-            <Badge variant="secondary" className="capitalize">
+            <Badge variant="outline" className="capitalize">
               {data?.mode ?? "test"}
             </Badge>
           </div>

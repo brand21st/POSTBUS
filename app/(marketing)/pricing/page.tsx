@@ -30,7 +30,7 @@ export default async function PricingPage() {
                 Built to grow with you.
               </>
             }
-            description="Three plans. Monthly or yearly billing with 20% off annual. Order limits reset every billing period."
+            description="Three plans. New workspaces get a 3-day trial with every PostBus feature unlocked. Monthly or yearly billing with 20% off annual. Order limits reset every billing period."
           />
         </Container>
       </section>

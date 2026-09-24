@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { env } from "@/lib/env";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { isUniqueViolation, processRazorpayEvent, razorpayWebhookEventId } from "@/modules/billing/webhooks";
+import { getRazorpayWebhookSecret } from "@/modules/razorpay/config";
 import { verifyWebhookSignature } from "@/modules/razorpay/signature";
 
 export const dynamic = "force-dynamic";
@@ -14,11 +14,12 @@ export async function POST(request: NextRequest) {
     request.headers.get("x-razorpay-event-id") ||
     request.headers.get("x-razorpay-delivery") ||
     "";
+  const webhookSecret = await getRazorpayWebhookSecret();
 
-  if (!env.razorpayWebhookSecret) {
+  if (!webhookSecret) {
     return NextResponse.json({ success: false, message: "Webhook secret is not configured." }, { status: 503 });
   }
-  if (!verifyWebhookSignature(raw, signature, env.razorpayWebhookSecret)) {
+  if (!verifyWebhookSignature(raw, signature, webhookSecret)) {
     return NextResponse.json({ success: false, message: "Invalid webhook signature." }, { status: 400 });
   }
   if (!hasAdminClient()) {

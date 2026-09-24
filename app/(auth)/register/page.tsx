@@ -56,7 +56,9 @@ export default function RegisterPage() {
   return (
     <div>
       <h1 className="text-2xl font-semibold tracking-tight text-ink">Create your account</h1>
-      <p className="mt-1.5 text-sm text-muted">Start automating Shopify shipping in a few minutes.</p>
+      <p className="mt-1.5 text-sm text-muted">
+        3-day trial with every PostBus feature unlocked. Start automating Shopify shipping in a few minutes.
+      </p>
 
       <form className="mt-7 space-y-5" onSubmit={form.handleSubmit(onSubmit)}>
         <div className="space-y-2">

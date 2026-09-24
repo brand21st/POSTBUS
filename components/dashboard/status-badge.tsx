@@ -31,6 +31,7 @@ const WARNING = new Set([
   "DRAFT",
   "WAITING",
   "PRINTING",
+  "HOLD",
 ]);
 
 const ERROR = new Set([
@@ -42,6 +43,8 @@ const ERROR = new Set([
   "REVOKED",
   "UNPAID",
   "DISABLED",
+  "SUSPENDED",
+  "BLOCKED",
 ]);
 
 const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY"]);

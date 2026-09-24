@@ -2,10 +2,12 @@ import { z } from "zod";
 import type { NextRequest } from "next/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { AdminContext } from "@/lib/api/admin-context";
+import { assertAdminActionPin } from "@/lib/admin/action-pin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
 import { yearlyPricePaise } from "@/modules/billing/prices";
 import { getLiveSubscription, mapPlan, type PlanRow } from "@/modules/billing/subscriptions";
+import { LIVE_STATUSES } from "@/modules/billing/usage";
 import {
   loadRazorpaySettings,
   registerRazorpayWebhook,
@@ -61,7 +63,7 @@ export async function handleAdminRoutes(
   if (key === "POST settings/razorpay/webhook") return registerRazorpayWebhook(request, supabase, ctx);
   if (key === "GET trial-settings" || (key === "GET settings" && slugs[0] === "trial-settings")) {
     const { data } = await supabase.from("platform_settings").select("*").eq("id", 1).maybeSingle();
-    return data ?? { trial_enabled: true, trial_days: 14 };
+    return data ?? { trial_enabled: true, trial_days: 3 };
   }
   if (key === "PATCH trial-settings") {
     const body = z
@@ -123,7 +125,7 @@ async function loadOverview(supabase: ReturnType<typeof createAdminClient>) {
     supabase.from("organizations").select("id", { count: "exact", head: true }).eq("account_status", "ACTIVE"),
     supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("status", "TRIAL"),
     supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("status", "CANCELLED"),
-    supabase.from("subscriptions").select("id, amount_paise, billing_cycle, plan_id, plans(slug)").eq("status", "ACTIVE"),
+    supabase.from("subscriptions").select("id, amount_paise, billing_cycle, plan_id, plans!plan_id(slug)").eq("status", "ACTIVE"),
     supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("billing_cycle", "monthly").eq("status", "ACTIVE"),
     supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("billing_cycle", "yearly").eq("status", "ACTIVE"),
     supabase.from("payments").select("amount_paise, created_at, status").eq("status", "CAPTURED"),
@@ -263,6 +265,60 @@ async function loadRazorpayStatus(supabase: ReturnType<typeof createAdminClient>
   };
 }
 
+function signupSearchFilter(q: string) {
+  const safe = q.replace(/[%*,()"]/g, " ").trim();
+  if (!safe) return null;
+  const pattern = `%${safe}%`;
+  return `full_name.ilike."${pattern}",email.ilike."${pattern}",whatsapp_number.ilike."${pattern}"`;
+}
+
+async function listAccountSignups(supabase: ReturnType<typeof createAdminClient>, q: string) {
+  let query = supabase
+    .from("profiles")
+    .select("id, email, full_name, whatsapp_number, created_at, active_organization_id")
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const filter = signupSearchFilter(q);
+  if (filter) query = query.or(filter);
+  const { data: profiles } = await query;
+  const userIds = (profiles ?? []).map((row) => row.id);
+  const { data: members } =
+    userIds.length > 0
+      ? await supabase
+          .from("organization_members")
+          .select("user_id, role, organizations(id, name, slug)")
+          .in("user_id", userIds)
+      : { data: [] as never[] };
+
+  const orgByUser = new Map<string, { id: string; name: string; slug: string }>();
+  const ownerSet = new Set<string>();
+  for (const row of members ?? []) {
+    const orgRaw = row.organizations as
+      | { id: string; name: string; slug: string }
+      | { id: string; name: string; slug: string }[]
+      | null;
+    const org = Array.isArray(orgRaw) ? orgRaw[0] : orgRaw;
+    if (!org) continue;
+    if (row.role === "OWNER") {
+      orgByUser.set(row.user_id, { id: org.id, name: org.name, slug: org.slug });
+      ownerSet.add(row.user_id);
+      continue;
+    }
+    if (!ownerSet.has(row.user_id) && !orgByUser.has(row.user_id)) {
+      orgByUser.set(row.user_id, { id: org.id, name: org.name, slug: org.slug });
+    }
+  }
+
+  return (profiles ?? []).map((profile) => ({
+    id: profile.id,
+    fullName: profile.full_name ?? null,
+    email: profile.email ?? null,
+    whatsappNumber: profile.whatsapp_number ?? null,
+    createdAt: profile.created_at,
+    organization: orgByUser.get(profile.id) ?? null,
+  }));
+}
+
 async function handleAccounts(
   request: NextRequest,
   supabase: ReturnType<typeof createAdminClient>,
@@ -286,7 +342,7 @@ async function handleAccounts(
     const { data: subs } = ids.length
       ? await supabase
           .from("subscriptions")
-          .select("organization_id, status, billing_cycle, amount_paise, plans(name, slug)")
+          .select("organization_id, status, billing_cycle, amount_paise, plans!plan_id(name, slug)")
           .in("organization_id", ids)
           .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"])
       : { data: [] as never[] };
@@ -296,6 +352,7 @@ async function handleAccounts(
         ...org,
         subscription: byOrg.get(org.id) ?? null,
       })),
+      signups: await listAccountSignups(supabase, q),
     };
   }
 
@@ -345,27 +402,44 @@ async function handleAccounts(
     });
     return { accountStatus: "ACTIVE" };
   }
-  if (method === "POST" && action === "suspend") {
-    await supabase.from("organizations").update({ account_status: "SUSPENDED" }).eq("id", orgId);
+  if (method === "POST" && (action === "suspend" || action === "block" || action === "hold" || action === "disable")) {
+    assertAdminActionPin((body as { pin?: unknown }).pin);
+    const status =
+      action === "block" ? "BLOCKED" : action === "hold" ? "HOLD" : action === "disable" ? "DISABLED" : "SUSPENDED";
+    const { data: existing } = await supabase.from("organizations").select("id, name").eq("id", orgId).maybeSingle();
+    if (!existing) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Account not found.");
+    await supabase.from("organizations").update({ account_status: status }).eq("id", orgId);
     await writeBillingAudit(supabase, {
       actorId: ctx.userId,
       actorType: "SUPER_ADMIN",
-      action: "account.suspended",
+      action: `account.${action}`,
       organizationId: orgId,
       ip: ip(request),
+      metadata: { accountStatus: status },
     });
-    return { accountStatus: "SUSPENDED" };
+    return { accountStatus: status };
   }
-  if (method === "POST" && action === "disable") {
-    await supabase.from("organizations").update({ account_status: "DISABLED" }).eq("id", orgId);
+  if (method === "POST" && action === "delete") {
+    assertAdminActionPin((body as { pin?: unknown }).pin);
+    const { data: existing } = await supabase
+      .from("organizations")
+      .select("id, name, slug")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (!existing) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Account not found.");
     await writeBillingAudit(supabase, {
       actorId: ctx.userId,
       actorType: "SUPER_ADMIN",
-      action: "account.disabled",
+      action: "account.deleted",
       organizationId: orgId,
+      targetType: "organization",
+      targetId: orgId,
       ip: ip(request),
+      metadata: { name: existing.name, slug: existing.slug },
     });
-    return { accountStatus: "DISABLED" };
+    const { error } = await supabase.from("organizations").delete().eq("id", orgId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    return { deleted: true, id: orgId };
   }
   if (method === "POST" && action === "change-plan") {
     const parsed = z.object({ planId: z.string().uuid(), billingCycle: z.enum(["monthly", "yearly"]).optional() }).parse(body);
@@ -478,12 +552,42 @@ async function handleSubscriptions(supabase: ReturnType<typeof createAdminClient
   const status = url.searchParams.get("status") ?? "";
   let query = supabase
     .from("subscriptions")
-    .select("*, plans(name, slug), organizations(name, slug, account_status)")
+    .select("*, plans!plan_id(name, slug), organizations(id, name, slug, account_status)")
     .order("created_at", { ascending: false })
     .limit(100);
   if (status) query = query.eq("status", status);
-  const { data } = await query;
-  return { subscriptions: data ?? [] };
+  const { data, error } = await query;
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  const orgIds = [...new Set((data ?? []).map((row) => row.organization_id).filter(Boolean))];
+  const { data: owners } =
+    orgIds.length > 0
+      ? await supabase
+          .from("organization_members")
+          .select("organization_id, user_id, role")
+          .in("organization_id", orgIds)
+          .eq("role", "OWNER")
+      : { data: [] as never[] };
+  const userIds = [...new Set((owners ?? []).map((row) => row.user_id).filter(Boolean))];
+  const { data: profiles } =
+    userIds.length > 0
+      ? await supabase.from("profiles").select("id, email, full_name").in("id", userIds)
+      : { data: [] as never[] };
+  const profileById = new Map((profiles ?? []).map((row) => [row.id, row]));
+  const emailByOrg = new Map<string, { email: string | null; fullName: string | null }>();
+  for (const row of owners ?? []) {
+    if (emailByOrg.has(row.organization_id)) continue;
+    const person = profileById.get(row.user_id);
+    emailByOrg.set(row.organization_id, {
+      email: person?.email ?? null,
+      fullName: person?.full_name ?? null,
+    });
+  }
+  return {
+    subscriptions: (data ?? []).map((row) => ({
+      ...row,
+      owner: emailByOrg.get(row.organization_id) ?? null,
+    })),
+  };
 }
 
 async function handlePayments(supabase: ReturnType<typeof createAdminClient>, request: NextRequest) {
@@ -510,7 +614,16 @@ async function handlePlans(
 ) {
   if (method === "GET" && slugs.length === 1) {
     const { data } = await supabase.from("plans").select("*").order("display_order", { ascending: true });
-    return { plans: (data as PlanRow[] | null)?.map(mapPlan) ?? [] };
+    const plans = (data as PlanRow[] | null)?.map(mapPlan) ?? [];
+    const { data: subs } = await supabase.from("subscriptions").select("plan_id").in("status", [...LIVE_STATUSES]);
+    const counts = new Map<string, number>();
+    for (const row of subs ?? []) {
+      if (!row.plan_id) continue;
+      counts.set(row.plan_id, (counts.get(row.plan_id) ?? 0) + 1);
+    }
+    return {
+      plans: plans.map((plan) => ({ ...plan, subscriberCount: counts.get(plan.id) ?? 0 })),
+    };
   }
   if (method === "POST" && slugs.length === 1) {
     const body = planSchema.parse(await request.json());
@@ -545,18 +658,27 @@ async function handlePlans(
   const planId = slugs[1];
   if (method === "PUT" && planId) {
     const body = planSchema.parse(await request.json());
+    const { data: current } = await supabase.from("plans").select("*").eq("id", planId).maybeSingle();
+    if (!current) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Plan not found.");
+    const yearly = body.yearlyPricePaise ?? yearlyPricePaise(body.monthlyPricePaise);
+    const monthlyChanged = Number(current.monthly_price_paise) !== body.monthlyPricePaise;
+    const yearlyChanged = Number(current.yearly_price_paise) !== yearly;
     const { data, error } = await supabase
       .from("plans")
       .update({
         name: body.name,
         description: body.description ?? null,
         monthly_price_paise: body.monthlyPricePaise,
-        yearly_price_paise: body.yearlyPricePaise ?? yearlyPricePaise(body.monthlyPricePaise),
+        yearly_price_paise: yearly,
         monthly_order_limit: body.monthlyOrderLimit,
         features: body.features ?? [],
-        display_order: body.displayOrder,
-        razorpay_monthly_plan_id: body.razorpayMonthlyPlanId,
-        razorpay_yearly_plan_id: body.razorpayYearlyPlanId,
+        display_order: body.displayOrder ?? current.display_order,
+        razorpay_monthly_plan_id: monthlyChanged
+          ? null
+          : (body.razorpayMonthlyPlanId !== undefined ? body.razorpayMonthlyPlanId : current.razorpay_monthly_plan_id),
+        razorpay_yearly_plan_id: yearlyChanged
+          ? null
+          : (body.razorpayYearlyPlanId !== undefined ? body.razorpayYearlyPlanId : current.razorpay_yearly_plan_id),
       })
       .eq("id", planId)
       .select()
