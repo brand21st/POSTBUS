@@ -44,7 +44,7 @@ export default function AdminAccountDetailPage() {
         description={account?.slug}
         actions={
           <div className="flex flex-wrap items-start gap-2">
-            <AccountAdminActions accountId={params.id} accountName={account?.name} />
+            <AccountAdminActions accountId={params.id} accountName={account?.name} layout="toolbar" />
             <Button size="sm" variant="secondary" onClick={() => resetUsage.mutate()} disabled={resetUsage.isPending}>
               Reset usage
             </Button>

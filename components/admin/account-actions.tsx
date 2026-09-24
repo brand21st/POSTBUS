@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { ChevronDown, MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,9 +14,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/hooks/use-api";
+import { cn } from "@/lib/utils";
 
 type AccountAction = "activate" | "block" | "suspend" | "hold" | "delete";
 type PendingAction = Exclude<AccountAction, "activate"> | null;
@@ -46,9 +56,11 @@ const ACTION_COPY: Record<Exclude<PendingAction, null>, { title: string; descrip
 export function AccountAdminActions({
   accountId,
   accountName,
+  layout = "menu",
 }: {
   accountId: string;
   accountName?: string;
+  layout?: "menu" | "toolbar";
 }) {
   const router = useRouter();
   const client = useQueryClient();
@@ -77,30 +89,78 @@ export function AccountAdminActions({
 
   const copy = pending ? ACTION_COPY[pending] : null;
 
+  const menuItems = (
+    <>
+      {layout === "menu" ? (
+        <DropdownMenuItem disabled={run.isPending} onSelect={() => run.mutate({ action: "activate" })}>
+          Activate
+        </DropdownMenuItem>
+      ) : null}
+      <DropdownMenuItem disabled={run.isPending} onSelect={() => setPending("block")}>
+        Block
+      </DropdownMenuItem>
+      <DropdownMenuItem disabled={run.isPending} onSelect={() => setPending("suspend")}>
+        Suspend
+      </DropdownMenuItem>
+      <DropdownMenuItem disabled={run.isPending} onSelect={() => setPending("hold")}>
+        Hold
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        disabled={run.isPending}
+        className="text-red-700 focus:bg-red-50 focus:text-red-800"
+        onSelect={() => setPending("delete")}
+      >
+        Delete permanently
+      </DropdownMenuItem>
+    </>
+  );
+
   return (
     <>
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" onClick={() => run.mutate({ action: "activate" })} disabled={run.isPending}>
-          Activate
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => setPending("block")} disabled={run.isPending}>
-          Block
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => setPending("suspend")} disabled={run.isPending}>
-          Suspend
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => setPending("hold")} disabled={run.isPending}>
-          Hold
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          className="text-red-700 hover:bg-red-50"
-          onClick={() => setPending("delete")}
-          disabled={run.isPending}
-        >
-          Delete
-        </Button>
+      <div className="flex items-center justify-end gap-1.5" onClick={(event) => event.stopPropagation()}>
+        {layout === "toolbar" ? (
+          <>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => run.mutate({ action: "activate" })}
+              disabled={run.isPending}
+            >
+              Activate
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="secondary" disabled={run.isPending}>
+                  Manage
+                  <ChevronDown className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuLabel>Account controls</DropdownMenuLabel>
+                {menuItems}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={run.isPending}
+                className={cn("size-8 text-muted hover:text-ink")}
+                aria-label={`Manage ${accountName ?? "account"}`}
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel>{accountName ?? "Account"}</DropdownMenuLabel>
+              {menuItems}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
       <Dialog
         open={Boolean(pending)}
