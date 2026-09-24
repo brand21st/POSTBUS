@@ -35,6 +35,15 @@ async function razorpayRequest<T = RazorpayEntity>(
       (typeof json.error === "string" ? json.error : null) ||
       `Razorpay request failed (${response.status}).`;
     logError("razorpay.request_failed", { path, method, status: response.status, description });
+    if (response.status === 401) {
+      const subscriptionsApi = path.startsWith("/plans") || path.startsWith("/subscriptions");
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        subscriptionsApi
+          ? "Razorpay Subscriptions is not enabled for these API keys. Enable Subscriptions in the Razorpay Dashboard (Account & Settings → Subscriptions), then try the upgrade again."
+          : "Razorpay rejected the API keys. Save the matching Key ID and Key secret in Super Admin → System Settings."
+      );
+    }
     throw new AppError(ERROR_CODES.PROVIDER_ERROR, description, json);
   }
   return json as T;

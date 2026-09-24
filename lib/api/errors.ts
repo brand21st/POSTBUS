@@ -22,7 +22,9 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   VALIDATION_ERROR: 422,
   RESOURCE_NOT_FOUND: 404,
   INTEGRATION_NOT_CONNECTED: 409,
-  PROVIDER_ERROR: 502,
+  // Not 502: Coolify/Traefik replace 502 bodies with HTML, which the billing UI
+  // surfaces as "The server returned an unexpected response."
+  PROVIDER_ERROR: 422,
   RATE_LIMITED: 429,
   JOB_FAILED: 500,
   SHIPMENT_FAILED: 422,

@@ -35,6 +35,7 @@ yarn-error.log*
 .env*
 !.env.example
 coolify.local.json
+.cursor/mcp.json
 
 # Supabase CLI cache
 supabase/.temp/

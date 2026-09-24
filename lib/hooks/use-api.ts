@@ -33,12 +33,21 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers,
   });
 
+  const raw = await response.text();
   let payload: ApiEnvelope<T> | null = null;
   try {
-    payload = (await response.json()) as ApiEnvelope<T>;
+    payload = raw ? (JSON.parse(raw) as ApiEnvelope<T>) : null;
   } catch {
     throw new ApiError(
-      response.ok ? "Unexpected empty response." : "The server returned an unexpected response.",
+      response.ok
+        ? "Unexpected empty response."
+        : `The server returned an unexpected response (${response.status}).`,
+      response.status
+    );
+  }
+  if (!payload) {
+    throw new ApiError(
+      response.ok ? "Unexpected empty response." : `The server returned an unexpected response (${response.status}).`,
       response.status
     );
   }

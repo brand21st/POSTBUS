@@ -83,8 +83,8 @@ export async function getRazorpayConfig(): Promise<RazorpayConfig> {
   const dbSecret = decryptOptional(row?.encrypted_razorpay_key_secret);
   const dbWebhook = decryptOptional(row?.encrypted_razorpay_webhook_secret);
   const envKeyId = env.razorpayPublicKeyId || env.razorpayKeyId;
-  const keyId = dbKeyId || envKeyId;
-  const keySecret = dbSecret || env.razorpayKeySecret;
+  const keyId = (dbKeyId || envKeyId).trim();
+  const keySecret = (dbSecret || env.razorpayKeySecret).trim();
   const webhookSecret = dbWebhook || env.razorpayWebhookSecret;
   const hasDb = Boolean(dbKeyId || dbSecret || dbWebhook);
   const hasEnv = Boolean(env.razorpayKeyId || env.razorpayKeySecret || env.razorpayWebhookSecret || env.razorpayPublicKeyId);
