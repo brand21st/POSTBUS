@@ -3,9 +3,11 @@ import { indiaPostFromRow } from "@/modules/india-post/provider";
 import {
   indiaPostDomesticLabelPayload,
   indiaPostFindOffice,
+  indiaPostLabelPaymentFields,
   indiaPostMobile,
   indiaPostPickDeliveryOffice,
 } from "@/modules/india-post/endpoints";
+import { overlayIndiaPostPartyBox, officialAddressLines } from "@/modules/labels/official-address";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 
@@ -138,6 +140,10 @@ export async function fetchOfficialIndiaPostLabelPdf(
     indiaPostMobile((shipment.customers as { phone?: string } | null)?.phone);
   const senderMobile = indiaPostMobile(sender.phone) || receiverMobile;
 
+  const payment = indiaPostLabelPaymentFields(
+    shipment.payment_mode as string | null,
+    shipment.cod_amount as string | number | null
+  );
   const pdf = await provider.generateLabel({
     payload: [
       indiaPostDomesticLabelPayload({
@@ -168,9 +174,32 @@ export async function fetchOfficialIndiaPostLabelPdf(
         deliveryOfficeName: deliveryOffice?.office_name,
         bookingOfficeName: origin.name,
         bookingOfficePin: origin.pincode,
+        paymentMode: shipment.payment_mode as string | null,
+        codAmount: shipment.cod_amount as string | number | null,
       }),
     ],
   });
+  const withAddress = await overlayIndiaPostPartyBox(Buffer.from(pdf), {
+    receiverName: address.name,
+    receiverLines: officialAddressLines({
+      line1: address.line1,
+      line2: address.line2,
+      city: address.city,
+      state: address.state,
+      pin: destPin,
+      mobile: receiverMobile,
+    }),
+    senderName: String(sender.name),
+    senderLines: officialAddressLines({
+      line1: sender.line1,
+      line2: sender.line2,
+      city: sender.city || origin.city,
+      state: sender.state || origin.state,
+      pin: origin.pincode,
+      mobile: senderMobile,
+    }),
+    paymentLabel: payment.payment_label,
+  });
 
-  return { pdf: Buffer.from(pdf), shipmentId: String(shipment.id) };
+  return { pdf: Buffer.from(withAddress), shipmentId: String(shipment.id) };
 }

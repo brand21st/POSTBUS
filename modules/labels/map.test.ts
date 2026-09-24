@@ -47,4 +47,15 @@ describe("mapLabelRow", () => {
     ]);
     expect(picked?.file_url).toBe("https://example.com/label.pdf");
   });
+
+  it("prefers the official label for the same shipment as the packing preview", () => {
+    const picked = pickOfficialPreviewLabel(
+      [
+        { kind: "INDIA_POST", status: "READY", shipment_id: "other", file_url: "https://example.com/other.pdf" },
+        { kind: "INDIA_POST", status: "READY", shipment_id: "ship-1", file_url: "https://example.com/match.pdf" },
+      ],
+      "ship-1"
+    );
+    expect(picked?.file_url).toBe("https://example.com/match.pdf");
+  });
 });

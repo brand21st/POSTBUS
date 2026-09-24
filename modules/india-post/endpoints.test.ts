@@ -119,6 +119,11 @@ describe("indiaPost domestic label payload", () => {
     expect(payload.size).toBe("A6");
     expect(payload.payment_mode).toBe("CO");
     expect(payload.payment_status).toBe("PC");
+    expect(payload.cod_value).toBe(0);
+    expect(payload.recipient_addressl1).toBe("Sulakkarai");
+    expect(payload.recipient_addressl2).toBe("Ph:9944388249");
+    expect(payload.recipient_addressl3).toBe("Prepaid");
+    expect(payload.sender_addressl3).toBe("");
     expect(payload.service_type).toBe("BP");
     expect(payload.transmission_mode).toBe("S");
     expect(payload.volumetric_weight).toBe(480);
@@ -128,6 +133,41 @@ describe("indiaPost domestic label payload", () => {
     expect(payload.sender_addressl2).toBe("Near SO");
     expect(payload.booking_office_name).toBe("Kolenchery SO");
     expect(payload.booking_office_pin).toBe("682311");
+  });
+
+  it("maps COD orders onto India Post COD payment and amount", () => {
+    const payload = indiaPostDomesticLabelPayload({
+      customerId: "1788590988",
+      barcode: "ET000000003IN",
+      serviceCode: "BUSINESS_PARCEL",
+      weightGrams: 500,
+      lengthCm: 30,
+      widthCm: 20,
+      heightCm: 4,
+      recipientName: "Clint Varghese",
+      recipientMobile: "9876543210",
+      recipientLine1: "House 12, MG Road",
+      recipientLine2: "Near Metro",
+      recipientCity: "Kochi",
+      recipientState: "Kerala",
+      recipientPin: "683565",
+      senderName: "Aurimo by Nish",
+      senderLine1: "NH 85",
+      senderMobile: "9000000000",
+      senderCity: "Ernakulam",
+      senderState: "Kerala",
+      senderPin: "682311",
+      bookingOfficeName: "Kolenchery SO",
+      bookingOfficePin: "682311",
+      paymentMode: "COD",
+      codAmount: "799.00",
+    });
+    expect(payload.payment_mode).toBe("COD");
+    expect(payload.cod_value).toBe(799);
+    expect(payload.recipient_addressl1).toBe("House 12, MG Road");
+    expect(payload.recipient_addressl2).toBe("Near Metro");
+    expect(payload.recipient_addressl3).toBe("Ph:9876543210 COD");
+    expect(payload.sender_addressl2).toBe("Ph:9000000000");
   });
 
   it("uses Speed Post air transmission", () => {

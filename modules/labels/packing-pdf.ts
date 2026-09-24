@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
-import { pagePreset } from "@/modules/labels/page-presets";
+import { pagePreset, officialDrawRect } from "@/modules/labels/page-presets";
 import {
   MERCHANT_ELEMENT_IDS,
   parseLabelTemplate,
@@ -110,7 +110,7 @@ function valueFor(id: MerchantElementId, data: PackingLabelData, template: Label
     case "discount":
       return `Discount  ${money(data.discount)}`;
     case "total":
-      return `Total  ${money(data.total)}`;
+      return `Price  ${money(data.total)}`;
     case "codAmount":
       return `COD  ${money(data.codAmount)}`;
     case "paymentMethod":
@@ -132,32 +132,28 @@ function valueFor(id: MerchantElementId, data: PackingLabelData, template: Label
   }
 }
 
-export async function renderMerchantLabelPdf(templateInput: unknown, data: PackingLabelData) {
-  const template = parseLabelTemplate(templateInput);
-  const pageSize = pagePreset(template.page.paperSize);
-  const document = await PDFDocument.create();
-  const page = document.addPage([pageSize.widthPt, pageSize.heightPt]);
+export async function drawMerchantFields(
+  document: PDFDocument,
+  page: PDFPage,
+  template: LabelTemplate,
+  data: PackingLabelData,
+  opts?: { scaleX?: number; scaleY?: number }
+) {
+  const scaleX = opts?.scaleX ?? 1;
+  const scaleY = opts?.scaleY ?? 1;
   const regular = await document.embedFont(StandardFonts.Helvetica);
   const bold = await document.embedFont(StandardFonts.HelveticaBold);
-
-  page.drawRectangle({
-    x: 0,
-    y: 0,
-    width: pageSize.widthPt,
-    height: pageSize.heightPt,
-    color: rgb(1, 1, 1),
-  });
-  page.drawText("Merchant packing label", {
-    x: 16,
-    y: pageSize.heightPt - 12,
-    size: 7,
-    font: regular,
-    color: rgb(0.45, 0.47, 0.52),
+  const box = (element: LabelTemplate["elements"][string]) => ({
+    x: element.x * scaleX,
+    y: element.y * scaleY,
+    width: element.width * scaleX,
+    height: element.height * scaleY,
   });
 
   const logo = template.elements.merchantLogo;
   if (logo?.visible && data.logoBytes && data.logoMime) {
     const mime = data.logoMime.toLowerCase();
+    const placed = box(logo);
     try {
       const image = mime.includes("png")
         ? await document.embedPng(data.logoBytes)
@@ -165,16 +161,23 @@ export async function renderMerchantLabelPdf(templateInput: unknown, data: Packi
           ? await document.embedJpg(data.logoBytes)
           : null;
       if (image) {
-        const scale = Math.min(logo.width / image.width, logo.height / image.height, 1);
+        const scale = Math.min(placed.width / image.width, placed.height / image.height, 1);
+        page.drawRectangle({
+          x: placed.x,
+          y: placed.y,
+          width: placed.width,
+          height: placed.height,
+          color: rgb(1, 1, 1),
+        });
         page.drawImage(image, {
-          x: logo.x,
-          y: logo.y,
+          x: placed.x,
+          y: placed.y,
           width: image.width * scale,
           height: image.height * scale,
         });
       }
     } catch {
-      // Skip a bad logo rather than failing the packing PDF.
+      // Skip a bad logo rather than failing the label.
     }
   }
 
@@ -182,18 +185,26 @@ export async function renderMerchantLabelPdf(templateInput: unknown, data: Packi
     if (id === "merchantLogo") continue;
     const element = template.elements[id];
     if (!element?.visible) continue;
+    const placed = box(element);
     const font = element.fontWeight === "bold" ? bold : regular;
-    const size = element.fontSize ?? 9;
+    const size = (element.fontSize ?? 9) * Math.min(scaleX, scaleY);
     const align = element.align ?? "left";
+    page.drawRectangle({
+      x: placed.x,
+      y: placed.y,
+      width: placed.width,
+      height: placed.height,
+      color: rgb(1, 1, 1),
+    });
     if (id === "products") {
       const lines = productLines(data, element);
-      let cursor = element.y + element.height - (size + 2);
+      let cursor = placed.y + placed.height - (size + 2);
       for (const line of lines) {
-        if (cursor < element.y) break;
-        const wrapped = wrapLines(font, line, size, element.width);
+        if (cursor < placed.y) break;
+        const wrapped = wrapLines(font, line, size, placed.width);
         for (const part of wrapped) {
-          if (cursor < element.y) break;
-          page.drawText(part, { x: element.x, y: cursor, size, font, color: rgb(0.07, 0.09, 0.15) });
+          if (cursor < placed.y) break;
+          page.drawText(part, { x: placed.x, y: cursor, size, font, color: rgb(0.07, 0.09, 0.15) });
           cursor -= size + 2;
         }
       }
@@ -202,14 +213,60 @@ export async function renderMerchantLabelPdf(templateInput: unknown, data: Packi
     const text = valueFor(id, data, template);
     if (!text) continue;
     drawWrapped(page, font, text, {
-      x: element.x,
-      y: element.y,
-      width: element.width,
-      height: element.height,
+      x: placed.x,
+      y: placed.y,
+      width: placed.width,
+      height: placed.height,
       size,
       align,
     });
   }
+}
 
+export async function overlayMerchantOnOfficialPdf(
+  officialPdf: Uint8Array | Buffer,
+  templateInput: unknown,
+  data: PackingLabelData
+) {
+  const template = parseLabelTemplate(templateInput);
+  const target = pagePreset(template.page.paperSize);
+  const source = await PDFDocument.load(officialPdf, { ignoreEncryption: true });
+  const officialPage = source.getPages()[0];
+  if (!officialPage) return new Uint8Array(officialPdf);
+  const officialSize = officialPage.getSize();
+  const output = await PDFDocument.create();
+  const page = output.addPage([target.widthPt, target.heightPt]);
+  page.drawRectangle({
+    x: 0,
+    y: 0,
+    width: target.widthPt,
+    height: target.heightPt,
+    color: rgb(1, 1, 1),
+  });
+  const embedded = await output.embedPage(officialPage);
+  const placed = officialDrawRect(target.widthPt, target.heightPt, officialSize.width, officialSize.height);
+  page.drawPage(embedded, {
+    x: placed.x,
+    y: placed.y,
+    width: placed.width,
+    height: placed.height,
+  });
+  await drawMerchantFields(output, page, template, data);
+  return output.save();
+}
+
+export async function renderMerchantLabelPdf(templateInput: unknown, data: PackingLabelData) {
+  const template = parseLabelTemplate(templateInput);
+  const pageSize = pagePreset(template.page.paperSize);
+  const document = await PDFDocument.create();
+  const page = document.addPage([pageSize.widthPt, pageSize.heightPt]);
+  page.drawRectangle({
+    x: 0,
+    y: 0,
+    width: pageSize.widthPt,
+    height: pageSize.heightPt,
+    color: rgb(1, 1, 1),
+  });
+  await drawMerchantFields(document, page, template, data);
   return document.save();
 }

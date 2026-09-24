@@ -2,16 +2,21 @@ import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { renderMerchantLabelPdf } from "@/modules/labels/packing-pdf";
 import { SAMPLE_PACKING_DATA } from "@/modules/labels/packing-data";
-import { PAGE_PRESETS } from "@/modules/labels/page-presets";
+import { PAGE_PRESETS, officialDrawRect } from "@/modules/labels/page-presets";
 import { applyPaperSize, defaultLabelTemplate, parseLabelTemplate } from "@/modules/labels/template-schema";
 
 describe("packing label template", () => {
   it("fills a default layout for A6", () => {
     const template = defaultLabelTemplate();
-    expect(template.templateVersion).toBe(1);
-    expect(template.page.paperSize).toBe("A6");
+    expect(template.templateVersion).toBe(3);
+    expect(template.page.paperSize).toBe("A5");
     expect(template.elements.products?.visible).toBe(true);
     expect(template.elements.merchantLogo?.visible).toBe(true);
+    expect(template.elements.orderNumber?.visible).toBe(true);
+    expect(template.elements.total?.visible).toBe(true);
+    expect(template.elements.storeName?.visible).toBe(false);
+    const extra = officialDrawRect(template.page.widthPt, template.page.heightPt).y;
+    expect(template.elements.products.y + template.elements.products.height).toBeLessThanOrEqual(extra + 0.5);
   });
 
   it("returns the default template for empty json", () => {
@@ -26,6 +31,15 @@ describe("packing label template", () => {
       expect(element.x + element.width).toBeLessThanOrEqual(wide.page.widthPt + 0.01);
       expect(element.y + element.height).toBeLessThanOrEqual(wide.page.heightPt + 0.01);
     }
+  });
+
+  it("puts logo, products, and price in the extra band on A5", () => {
+    const template = applyPaperSize(defaultLabelTemplate("A6"), "A5");
+    const extra = officialDrawRect(template.page.widthPt, template.page.heightPt).y;
+    expect(extra).toBeGreaterThan(80);
+    expect(template.elements.merchantLogo.y + template.elements.merchantLogo.height).toBeLessThanOrEqual(extra + 0.5);
+    expect(template.elements.products.y + template.elements.products.height).toBeLessThanOrEqual(extra + 0.5);
+    expect(template.elements.total.y + template.elements.total.height).toBeLessThanOrEqual(extra + 0.5);
   });
 });
 

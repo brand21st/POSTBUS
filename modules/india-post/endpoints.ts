@@ -73,6 +73,44 @@ export function indiaPostRequiredText(value: string | null | undefined, fallback
   return "India Post";
 }
 
+export function indiaPostIsPrepaid(paymentMode?: string | null) {
+  const mode = String(paymentMode ?? "").trim().toUpperCase();
+  return mode !== "COD" && mode !== "CASH_ON_DELIVERY";
+}
+
+/** CEPT postage is CONTRACT (`CO`) or COD. Prepaid Shopify orders are CONTRACT; the PDF overlay prints "Prepaid". */
+export function indiaPostLabelPaymentFields(paymentMode?: string | null, codAmount?: number | string | null) {
+  const prepaid = indiaPostIsPrepaid(paymentMode);
+  return {
+    payment_mode: prepaid ? "CO" : "COD",
+    payment_status: "PC" as const,
+    payment_label: prepaid ? "Prepaid" : "COD",
+    cod_value: prepaid ? 0 : Math.max(0, Number(codAmount) || 0),
+  };
+}
+
+export function indiaPostLabelPartyLines(input: {
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pin?: string | null;
+  mobile?: string | null;
+  paymentLabel?: string | null;
+}) {
+  const street = [input.line1, input.line2]
+    .map((value) => (value ?? "").trim())
+    .filter((value) => value.length > 0 && !/^registered\s*pickup$/i.test(value));
+  const phone = input.mobile ? `Ph:${input.mobile}` : "";
+  const pay = (input.paymentLabel ?? "").trim();
+  const packed = [...street, phone, pay].filter(Boolean);
+  return {
+    addressl1: (packed[0] || (input.city ?? "").trim() || "Address").slice(0, 80),
+    addressl2: packed.slice(1, 2).join(" ").slice(0, 80),
+    addressl3: packed.slice(2).join(" ").slice(0, 80),
+  };
+}
+
 export function indiaPostFindOffice(offices: IndiaPostOffice[], officeId?: string | null) {
   if (!officeId) return null;
   return offices.find((office) => String(office.office_id) === String(officeId)) ?? null;
@@ -147,12 +185,32 @@ export function indiaPostDomesticLabelPayload(input: {
   deliveryOfficeName?: string | null;
   bookingOfficeName: string;
   bookingOfficePin: string;
+  paymentMode?: string | null;
+  codAmount?: number | string | null;
 }) {
   const physical = Math.max(1, Number(input.weightGrams) || 1);
   const volumetric = indiaPostVolumetricWeightGrams(input.lengthCm, input.widthCm, input.heightCm);
   const charged = Math.max(physical, volumetric || physical);
   const customerId = Number(input.customerId);
   const originPin = input.senderPin || input.bookingOfficePin;
+  const payment = indiaPostLabelPaymentFields(input.paymentMode, input.codAmount);
+  const receiverLines = indiaPostLabelPartyLines({
+    line1: input.recipientLine1,
+    line2: input.recipientLine2,
+    city: input.recipientCity,
+    state: input.recipientState,
+    pin: input.recipientPin,
+    mobile: input.recipientMobile,
+    paymentLabel: payment.payment_label,
+  });
+  const senderLines = indiaPostLabelPartyLines({
+    line1: input.senderLine1,
+    line2: input.senderLine2,
+    city: input.senderCity,
+    state: input.senderState,
+    pin: originPin,
+    mobile: input.senderMobile,
+  });
   return {
     customer_id: customerId,
     delivery_office_name: input.deliveryOfficeName || undefined,
@@ -174,28 +232,29 @@ export function indiaPostDomesticLabelPayload(input: {
     insurance_value: 0,
     recipient_name: input.recipientName,
     recipient_mobile: input.recipientMobile || undefined,
-    recipient_addressl1: input.recipientLine1,
-    recipient_addressl2: input.recipientLine2 || "",
-    recipient_addressl3: "",
+    recipient_addressl1: receiverLines.addressl1,
+    recipient_addressl2: receiverLines.addressl2,
+    recipient_addressl3: receiverLines.addressl3,
     recipient_city: input.recipientCity,
     recipient_pin: input.recipientPin,
     recipient_state: input.recipientState,
     sender_name: input.senderName,
     sender_mobile: input.senderMobile || undefined,
-    sender_addressl1: input.senderLine1 || "",
-    sender_addressl2: input.senderLine2 || "",
-    sender_addressl3: "",
+    sender_addressl1: senderLines.addressl1,
+    sender_addressl2: senderLines.addressl2,
+    sender_addressl3: senderLines.addressl3,
     sender_city: input.senderCity || "",
     sender_pin: originPin,
     sender_state: input.senderState || "",
     transmission_mode: indiaPostTransmissionMode(input.serviceCode),
-    payment_mode: "CO",
+    payment_mode: payment.payment_mode,
     routing_data: `${input.bookingOfficePin} - ${input.recipientPin}`,
     booking_office_name: input.bookingOfficeName,
     booking_office_pin: input.bookingOfficePin,
     size: "A6",
     total_amount: Number(input.tariff) || 0,
-    payment_status: "PC",
+    payment_status: payment.payment_status,
+    cod_value: payment.cod_value,
     value_added_services: "ND",
     identifier: "Domestic",
     bkg_ref_id: input.bkgRefId || "",

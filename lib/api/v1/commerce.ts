@@ -105,13 +105,16 @@ export async function handleCommerceRoutes(
   if (key === "GET labels") {
     const page = Number(request.nextUrl.searchParams.get("page") || 1);
     const pageSize = Number(request.nextUrl.searchParams.get("pageSize") || 20);
+    const kind = request.nextUrl.searchParams.get("kind");
     const from = (page - 1) * pageSize;
-    const { data, count, error } = await supabase
+    let query = supabase
       .from("labels")
       .select("*, shipments(barcode, tracking_number, orders(order_number)), print_jobs!print_jobs_label_id_fkey(*)", { count: "exact" })
       .eq("organization_id", ctx.organizationId)
       .order("created_at", { ascending: false })
       .range(from, from + pageSize - 1);
+    if (kind) query = query.eq("kind", kind);
+    const { data, count, error } = await query;
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
     return {
       items: (data ?? []).map((row) => mapLabelRow(row as Record<string, unknown>)),

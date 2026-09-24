@@ -30,6 +30,23 @@ export function pagePreset(id: string | null | undefined): PagePreset {
   return PAGE_PRESETS.find((item) => item.id === id) ?? PAGE_PRESETS[0];
 }
 
+export function officialDrawRect(
+  pageWidthPt: number,
+  pageHeightPt: number,
+  officialWidthPt = pagePreset("A6").widthPt,
+  officialHeightPt = pagePreset("A6").heightPt
+) {
+  const fit = Math.min(1, pageWidthPt / officialWidthPt, pageHeightPt / officialHeightPt);
+  const width = officialWidthPt * fit;
+  const height = officialHeightPt * fit;
+  return {
+    x: (pageWidthPt - width) / 2,
+    y: pageHeightPt - height,
+    width,
+    height,
+  };
+}
+
 export function agentPaperSize(id: string | null | undefined) {
   const preset = pagePreset(id);
   return preset.id === "4x6" ? "4x6" : preset.id;

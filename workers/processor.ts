@@ -19,7 +19,6 @@ import {
 } from "@/modules/india-post/endpoints";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
-import { persistMerchantPackingLabel } from "@/modules/labels/template-service";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
 import { PDFDocument, StandardFonts } from "pdf-lib";
@@ -298,6 +297,7 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   const address = shipment.addresses as {
     name?: string;
     line1?: string;
+    line2?: string;
     city?: string;
     state?: string;
     pincode?: string;
@@ -369,13 +369,13 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         senderName,
         senderCompany: org?.name || pickup?.name || senderName,
         senderLine1: sender.line1,
-        senderLine2: sender.line2,
+        senderLine2: [sender.line2, senderMobile ? `Ph:${senderMobile}` : ""].filter((value) => value.trim().length >= 3).join(", "),
         senderCity: sender.city || origin.city,
         senderState: sender.state || origin.state,
         senderMobile,
         receiverName: address?.name ?? "Customer",
         receiverLine1: address?.line1 ?? "",
-        receiverLine2: (address as { line2?: string } | null)?.line2,
+        receiverLine2: [address?.line2, `Ph:${receiverMobile}`].filter((value) => (value ?? "").trim().length >= 3).join(", "),
         receiverCity: address?.city ?? "",
         receiverState: address?.state ?? "",
         receiverPin: destPincode,
@@ -501,14 +501,9 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
   });
   await supabase.from("shipments").update({ status: "LABEL_READY" }).eq("id", officialPdf.shipmentId);
 
-  const merchant = await persistMerchantPackingLabel(supabase, {
-    organizationId: payload.organizationId,
-    shipmentId: officialPdf.shipmentId,
-  });
-
   const automation = await loadAutomation(supabase, payload.organizationId);
   if (automation.autoLabelPrinting) {
-    const { enqueueAutoPrintJob, getPrintSettings } = await import("@/modules/print/service");
+    const { enqueueAutoPrintJob } = await import("@/modules/print/service");
     try {
       await enqueueAutoPrintJob(supabase, {
         organizationId: payload.organizationId,
@@ -521,24 +516,6 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
         organizationId: payload.organizationId,
         shipmentId: officialPdf.shipmentId,
         labelId: official.id,
-        message: error instanceof Error ? error.message : "unknown",
-      });
-    }
-    try {
-      const settings = await getPrintSettings(supabase, payload.organizationId);
-      if (settings.autoPrintMerchant) {
-        await enqueueAutoPrintJob(supabase, {
-          organizationId: payload.organizationId,
-          shipmentId: officialPdf.shipmentId,
-          labelId: merchant.id,
-          paperSize: merchant.paperSize,
-        });
-      }
-    } catch (error) {
-      logError("PRINT_JOB_ENQUEUE_FAILED", {
-        organizationId: payload.organizationId,
-        shipmentId: officialPdf.shipmentId,
-        labelId: merchant.id,
         message: error instanceof Error ? error.message : "unknown",
       });
     }

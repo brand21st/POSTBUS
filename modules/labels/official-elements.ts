@@ -1,3 +1,5 @@
+import { pagePreset } from "@/modules/labels/page-presets";
+
 export type OfficialLockedElement = {
   id: string;
   label: string;
@@ -5,6 +7,7 @@ export type OfficialLockedElement = {
   y: number;
   width: number;
   height: number;
+  coverOnCompose?: boolean;
 };
 
 /** Display-only hitboxes on a typical CEPT A6 page (PDF points, origin bottom-left). */
@@ -15,9 +18,9 @@ export const OFFICIAL_LOCKED_ELEMENTS: OfficialLockedElement[] = [
   { id: "barcode", label: "Barcode", x: 20, y: 300, width: 258, height: 64 },
   { id: "trackingNumber", label: "Tracking number", x: 20, y: 278, width: 180, height: 18 },
   { id: "serviceText", label: "Service text", x: 204, y: 278, width: 74, height: 18 },
-  { id: "receiver", label: "Receiver", x: 16, y: 188, width: 168, height: 84 },
-  { id: "sender", label: "Sender", x: 16, y: 118, width: 168, height: 64 },
-  { id: "qrCode", label: "QR code", x: 196, y: 148, width: 82, height: 82 },
+  { id: "receiver", label: "Receiver", x: 110, y: 188, width: 172, height: 84 },
+  { id: "sender", label: "Sender", x: 110, y: 118, width: 172, height: 64 },
+  { id: "qrCode", label: "QR code", x: 8, y: 162, width: 102, height: 108, coverOnCompose: true },
   { id: "bookingInfo", label: "Booking information", x: 16, y: 72, width: 130, height: 40 },
   { id: "weight", label: "Weight", x: 152, y: 72, width: 126, height: 40 },
   { id: "amount", label: "Amount", x: 16, y: 36, width: 120, height: 28 },
@@ -26,3 +29,25 @@ export const OFFICIAL_LOCKED_ELEMENTS: OfficialLockedElement[] = [
 ];
 
 export const OFFICIAL_LOCK_TOOLTIP = "Required India Post element — cannot be modified.";
+
+export function visibleOfficialElements() {
+  return OFFICIAL_LOCKED_ELEMENTS.filter((item) => !item.coverOnCompose);
+}
+
+export function coveredOfficialElements() {
+  return OFFICIAL_LOCKED_ELEMENTS.filter((item) => item.coverOnCompose);
+}
+
+export function mapOfficialRect(
+  rect: { x: number; y: number; width: number; height: number },
+  placed: { x: number; y: number; width: number; height: number },
+  sourceWidthPt = pagePreset("A6").widthPt,
+  sourceHeightPt = pagePreset("A6").heightPt
+) {
+  return {
+    x: placed.x + (rect.x / sourceWidthPt) * placed.width,
+    y: placed.y + (rect.y / sourceHeightPt) * placed.height,
+    width: (rect.width / sourceWidthPt) * placed.width,
+    height: (rect.height / sourceHeightPt) * placed.height,
+  };
+}

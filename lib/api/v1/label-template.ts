@@ -3,16 +3,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
-import { packingDataForOrganization } from "@/modules/labels/packing-data";
-import { renderMerchantLabelPdf } from "@/modules/labels/packing-pdf";
 import { persistLabelPdf } from "@/modules/labels/persist";
-import { applyPaperSize, parseLabelTemplate } from "@/modules/labels/template-schema";
-import {
-  getLabelTemplate,
-  persistMerchantPackingLabel,
-  saveLabelTemplate,
-} from "@/modules/labels/template-service";
-import { isPaperSizeId } from "@/modules/labels/page-presets";
+import { loadLabelPdfBytes } from "@/modules/labels/load";
+import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
+import { parseLabelTemplate } from "@/modules/labels/template-schema";
+import { getLabelTemplate, saveLabelTemplate } from "@/modules/labels/template-service";
 import { enqueueManualPrintJob, getPrintStation, updatePrintSettings } from "@/modules/print/service";
 
 export async function handleLabelTemplateRoutes(
@@ -37,94 +32,47 @@ export async function handleLabelTemplateRoutes(
   }
 
   if (key === "GET label-template/preview-data") {
-    const packed = await packingDataForOrganization(supabase, ctx.organizationId);
-    const { data } = packed;
-    return {
-      sample: packed.sample,
-      shipmentId: packed.shipmentId,
-      data: {
-        storeName: data.storeName,
-        storePhone: data.storePhone,
-        storeWebsite: data.storeWebsite,
-        orderNumber: data.orderNumber,
-        shopifyOrderNumber: data.shopifyOrderNumber,
-        items: data.items,
-        subtotal: data.subtotal,
-        shipping: data.shipping,
-        discount: data.discount,
-        total: data.total,
-        codAmount: data.codAmount,
-        paymentMethod: data.paymentMethod,
-        customerNote: data.customerNote,
-        returnAddress: data.returnAddress,
-        hasLogo: Boolean(data.logoBytes),
-      },
-    };
+    const official = await loadOfficialLabel(supabase, ctx.organizationId, null);
+    return { sample: !official, shipmentId: official?.shipmentId ?? null };
   }
 
   if (key === "POST label-template/preview") {
-    const body = (await request.json().catch(() => ({}))) as { template?: unknown; paperSize?: string };
-    let template = parseLabelTemplate(body.template ?? (await getLabelTemplate(supabase, ctx.organizationId)));
-    if (body.paperSize && isPaperSizeId(body.paperSize)) {
-      template = applyPaperSize(template, body.paperSize);
+    const official = await loadOfficialLabel(supabase, ctx.organizationId, null);
+    if (!official) {
+      throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Book a shipment to preview the India Post label.");
     }
-    const packed = await packingDataForOrganization(supabase, ctx.organizationId);
-    const bytes = await renderMerchantLabelPdf(template, packed.data);
-    return new NextResponse(Buffer.from(bytes), {
+    return new NextResponse(Buffer.from(official.bytes), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": 'inline; filename="packing-label-preview.pdf"',
+        "Content-Disposition": 'inline; filename="india-post-label.pdf"',
       },
     });
   }
 
   if (key === "POST label-template/print-test") {
-    const body = (await request.json().catch(() => ({}))) as {
-      template?: unknown;
-      paperSize?: string;
-      copies?: number;
-    };
-    const paperSize = body.paperSize && isPaperSizeId(body.paperSize) ? body.paperSize : "A6";
-    let template = parseLabelTemplate(body.template ?? (await getLabelTemplate(supabase, ctx.organizationId)));
-    template = applyPaperSize(template, paperSize);
-    const packed = await packingDataForOrganization(supabase, ctx.organizationId);
-    const bytes = await renderMerchantLabelPdf(template, packed.data);
-
-    if (!packed.shipmentId) {
-      return new NextResponse(Buffer.from(bytes), {
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": 'inline; filename="packing-label-test.pdf"',
-          "X-Print-Fallback": "preview",
-        },
-      });
+    const body = (await request.json().catch(() => ({}))) as { copies?: number };
+    const official = await loadOfficialLabel(supabase, ctx.organizationId, null);
+    if (!official) {
+      throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Book a shipment to print the India Post label.");
     }
-
-    const label = await persistLabelPdf(supabase, {
-      organizationId: ctx.organizationId,
-      shipmentId: packed.shipmentId,
-      kind: "MERCHANT",
-      bytes: Buffer.from(bytes),
-      templateSnapshot: template,
-    });
-    const job = await enqueueManualPrintJob(supabase, ctx, label.id, {
-      paperSize,
+    const job = await enqueueManualPrintJob(supabase, ctx, official.id, {
+      paperSize: "A6",
       copies: body.copies,
     });
     const station = await getPrintStation(supabase, ctx.organizationId);
     return {
-      job: { id: job.id, status: job.status, source: job.source, paperSize },
-      labelId: label.id,
+      job: { id: job.id, status: job.status, source: job.source, paperSize: "A6" },
+      labelId: official.id,
       connected: station.connected,
       message: station.connected
-        ? `Test packing label sent to the printer (${paperSize}).`
-        : "Printer unavailable. Opening the test PDF so you can check the size.",
-      downloadPath: `/api/v1/labels/${label.id}/download`,
+        ? "India Post label sent to the printer."
+        : "Printer unavailable. Opening the official India Post PDF.",
+      downloadPath: `/api/v1/labels/${official.id}/download?raw=1`,
     };
   }
 
   if (method === "POST" && slugs[0] === "labels" && slugs[2] === "regenerate") {
-    const body = (await request.json().catch(() => ({}))) as { confirm?: boolean; kind?: string };
+    const body = (await request.json().catch(() => ({}))) as { confirm?: boolean };
     if (!body.confirm) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Confirm regenerate to create a new label file.");
     }
@@ -135,15 +83,6 @@ export async function handleLabelTemplateRoutes(
       .eq("id", slugs[1])
       .maybeSingle();
     if (!existing) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label not found.");
-
-    const kind = (body.kind || existing.kind || "INDIA_POST").toUpperCase();
-    if (kind === "MERCHANT") {
-      const created = await persistMerchantPackingLabel(supabase, {
-        organizationId: ctx.organizationId,
-        shipmentId: String(existing.shipment_id),
-      });
-      return { id: created.id, kind: "MERCHANT", message: "A new packing label was generated." };
-    }
 
     const official = await fetchOfficialIndiaPostLabelPdf(supabase, ctx.organizationId, String(existing.shipment_id));
     const created = await persistLabelPdf(supabase, {
@@ -156,4 +95,31 @@ export async function handleLabelTemplateRoutes(
   }
 
   return null;
+}
+
+async function loadOfficialLabel(
+  supabase: SupabaseClient,
+  organizationId: string,
+  shipmentId: string | null
+) {
+  const { data } = await supabase
+    .from("labels")
+    .select("id, file_path, file_url, shipment_id, kind, status")
+    .eq("organization_id", organizationId)
+    .eq("status", "READY")
+    .order("created_at", { ascending: false })
+    .limit(80);
+  const picked = pickOfficialPreviewLabel(data ?? [], shipmentId);
+  if (!picked?.id || (!picked.file_path && !picked.file_url)) return null;
+  try {
+    const bytes = await loadLabelPdfBytes(supabase, organizationId, {
+      id: picked.id,
+      file_path: picked.file_path || "",
+      file_url: picked.file_url,
+      shipment_id: picked.shipment_id,
+    });
+    return { id: picked.id, shipmentId: picked.shipment_id ?? null, bytes };
+  } catch {
+    return null;
+  }
 }
