@@ -15,6 +15,16 @@ export function verifyCheckoutSignature(input: {
   return safeEqual(expected, input.signature);
 }
 
+export function verifyOrderCheckoutSignature(input: {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+  secret: string;
+}) {
+  const expected = razorpayHmacHex(`${input.orderId}|${input.paymentId}`, input.secret);
+  return safeEqual(expected, input.signature);
+}
+
 export function verifyWebhookSignature(rawBody: string, signature: string, secret: string) {
   const expected = razorpayHmacHex(rawBody, secret);
   return safeEqual(expected, signature);

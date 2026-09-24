@@ -84,7 +84,7 @@ export default function BillingPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Billing" description="Current plan, order usage, and payment history." />
+      <PageHeader title="Billing" description="Pay for a plan period with Razorpay. Recurring subscriptions can be added later." />
 
       {billing.isLoading ? (
         <Skeleton className="h-40" />
@@ -172,7 +172,7 @@ export default function BillingPage() {
 
           <div>
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-ink">Change plan</h2>
+              <h2 className="text-lg font-semibold text-ink">Pay for a plan</h2>
               <div className="inline-flex rounded-full border border-border bg-card p-1 text-sm">
                 <button
                   type="button"

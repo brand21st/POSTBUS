@@ -39,6 +39,12 @@ function fakeSupabase(state: {
             if (filters.razorpay_subscription_id === state.subscription?.razorpay_subscription_id) {
               return { data: state.subscription };
             }
+            if (
+              filters.razorpay_order_id &&
+              filters.razorpay_order_id === state.subscription?.razorpay_order_id
+            ) {
+              return { data: state.subscription };
+            }
             return { data: null };
           }
           if (table === "payments") {
@@ -104,6 +110,31 @@ describe("razorpay webhook idempotency", () => {
     expect(razorpayWebhookEventId("", "payment.captured", "{}").startsWith("payment.captured:")).toBe(true);
     expect(isUniqueViolation({ code: "23505" })).toBe(true);
     expect(isUniqueViolation({ code: "23503" })).toBe(false);
+  });
+
+  it("activates a trial from payment.captured using the Razorpay order id", async () => {
+    const state = {
+      subscription: liveSubscription({
+        status: "TRIAL",
+        razorpay_subscription_id: null,
+        razorpay_order_id: "order_pay",
+      }),
+      payments: [] as PaymentRow[],
+      activations: 0,
+    };
+    await processRazorpayEvent(
+      fakeSupabase(state),
+      {
+        event: "payment.captured",
+        payload: {
+          payment: { entity: { id: "pay_order", amount: 49900, order_id: "order_pay" } },
+        },
+      },
+      "evt_order"
+    );
+    expect(state.subscription?.status).toBe("ACTIVE");
+    expect(state.payments[0]?.razorpay_payment_id).toBe("pay_order");
+    expect(state.payments[0]?.status).toBe("CAPTURED");
   });
 
   it("does not insert a second payment for the same Razorpay payment id", async () => {

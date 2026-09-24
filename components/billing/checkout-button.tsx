@@ -7,17 +7,23 @@ import { api } from "@/lib/hooks/use-api";
 
 type CheckoutResponse = {
   keyId: string;
-  razorpaySubscriptionId: string;
+  razorpayOrderId: string;
   amountPaise: number;
   currency: string;
   name: string;
   description: string;
   plan: { name: string };
+  prefill?: { email?: string; name?: string };
+};
+
+type RazorpayCheckout = {
+  open: () => void;
+  on: (event: string, handler: (response: { error?: { description?: string } }) => void) => void;
 };
 
 declare global {
   interface Window {
-    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
+    Razorpay?: new (options: Record<string, unknown>) => RazorpayCheckout;
   }
 }
 
@@ -60,32 +66,45 @@ export function CheckoutButton({
         body: JSON.stringify({ planId, billingCycle }),
       }),
     onSuccess: async (data) => {
-      await loadCheckoutScript();
-      if (!window.Razorpay) throw new Error("Razorpay Checkout is unavailable.");
-      const checkout = new window.Razorpay({
-        key: data.keyId,
-        subscription_id: data.razorpaySubscriptionId,
-        name: data.name,
-        description: data.description,
-        prefill: {},
-        handler: async (response: {
-          razorpay_payment_id: string;
-          razorpay_subscription_id: string;
-          razorpay_signature: string;
-        }) => {
-          await api("/api/v1/billing/verify", {
-            method: "POST",
-            body: JSON.stringify({
-              razorpayPaymentId: response.razorpay_payment_id,
-              razorpaySubscriptionId: response.razorpay_subscription_id,
-              razorpaySignature: response.razorpay_signature,
-            }),
-          });
-          toast.success("Subscription activated.");
-          window.location.reload();
-        },
-      });
-      checkout.open();
+      try {
+        await loadCheckoutScript();
+        if (!window.Razorpay) throw new Error("Razorpay Checkout is unavailable.");
+        const checkout = new window.Razorpay({
+          key: data.keyId,
+          amount: data.amountPaise,
+          currency: data.currency,
+          order_id: data.razorpayOrderId,
+          name: data.name,
+          description: data.description,
+          prefill: data.prefill ?? {},
+          handler: async (response: {
+            razorpay_payment_id: string;
+            razorpay_order_id: string;
+            razorpay_signature: string;
+          }) => {
+            try {
+              await api("/api/v1/billing/verify", {
+                method: "POST",
+                body: JSON.stringify({
+                  razorpayPaymentId: response.razorpay_payment_id,
+                  razorpayOrderId: response.razorpay_order_id,
+                  razorpaySignature: response.razorpay_signature,
+                }),
+              });
+              toast.success("Payment received. Your plan is active.");
+              window.location.reload();
+            } catch (error) {
+              toast.error(error instanceof Error ? error.message : "Could not confirm payment.");
+            }
+          },
+        });
+        checkout.on("payment.failed", (response) => {
+          toast.error(response.error?.description || "Payment failed.");
+        });
+        checkout.open();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not open Razorpay Checkout.");
+      }
     },
     onError: (error: Error) => toast.error(error.message),
   });

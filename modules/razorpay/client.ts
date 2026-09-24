@@ -49,12 +49,32 @@ async function razorpayRequest<T = RazorpayEntity>(
   return json as T;
 }
 
-export async function createRazorpayCustomer(input: { name: string; email?: string | null; contact?: string | null }) {
-  return razorpayRequest("POST", "/customers", {
+export async function createRazorpayCustomer(input: {
+  name: string;
+  email?: string | null;
+  contact?: string | null;
+}) {
+  const body: Record<string, unknown> = {
     name: input.name,
-    email: input.email || undefined,
-    contact: input.contact || undefined,
     fail_existing: 0,
+  };
+  if (input.email) body.email = input.email;
+  if (input.contact) body.contact = input.contact;
+  return razorpayRequest("POST", "/customers", body);
+}
+
+export async function createRazorpayOrder(input: {
+  amountPaise: number;
+  currency?: string;
+  receipt?: string;
+  notes?: Record<string, string>;
+}) {
+  return razorpayRequest("POST", "/orders", {
+    amount: input.amountPaise,
+    currency: input.currency ?? "INR",
+    receipt: input.receipt,
+    payment_capture: 1,
+    notes: input.notes,
   });
 }
 

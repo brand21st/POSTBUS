@@ -30,8 +30,9 @@ const changePlanSchema = z.object({
 
 const verifySchema = z.object({
   razorpayPaymentId: z.string().min(1),
-  razorpaySubscriptionId: z.string().min(1),
+  razorpayOrderId: z.string().min(1),
   razorpaySignature: z.string().min(1),
+  razorpaySubscriptionId: z.string().min(1).optional(),
 });
 
 function clientIp(request: NextRequest) {
@@ -153,6 +154,7 @@ export async function handleBillingRoutes(
       organizationId: ctx.organizationId,
       userId: ctx.userId,
       paymentId: body.razorpayPaymentId,
+      razorpayOrderId: body.razorpayOrderId,
       razorpaySubscriptionId: body.razorpaySubscriptionId,
       signature: body.razorpaySignature,
       ip: clientIp(request),

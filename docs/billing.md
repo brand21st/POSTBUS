@@ -18,7 +18,8 @@ All tenant billing routes go through `/api/v1/...` and return `{ success, messag
 | POST | `/api/v1/billing/resume` | OWNER |
 
 `subscribe` body: `{ planId, billingCycle: "monthly" \| "yearly" }`.  
-`verify` body: `{ razorpayPaymentId, razorpaySubscriptionId, razorpaySignature }`.
+Creates a Razorpay **order** for the selected plan price (one-time payment for that period).  
+`verify` body: `{ razorpayPaymentId, razorpayOrderId, razorpaySignature }`.
 
 ## Super Admin
 
@@ -48,4 +49,6 @@ Plans with subscribers are archived (`is_active = false`), never deleted. Audit 
 
 ## Razorpay
 
-`POST /api/webhooks/razorpay` — HMAC of the raw body with the webhook secret from Super Admin settings (or `RAZORPAY_WEBHOOK_SECRET`). Duplicate `x-razorpay-event-id` values return 200 without applying the payload again. `subscription.charged` and `invoice.paid` renew the billing period; a second event for the same period is ignored.
+`POST /api/webhooks/razorpay` — HMAC of the raw body with the webhook secret from Super Admin settings (or `RAZORPAY_WEBHOOK_SECRET`). Duplicate `x-razorpay-event-id` values return 200 without applying the payload again.
+
+Checkout uses Razorpay **Orders** (one-time payment for the selected app plan period). `payment.captured` activates the local subscription by `order_id`. Razorpay Subscriptions (`subscription.charged` / `invoice.paid`) can renew a period later if that product is enabled; a second event for the same period is ignored.

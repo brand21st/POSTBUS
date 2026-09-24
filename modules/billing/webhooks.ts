@@ -43,6 +43,29 @@ async function loadSubscription(supabase: SupabaseClient, razorpaySubscriptionId
   return data as SubscriptionRow | null;
 }
 
+async function loadSubscriptionByOrderId(supabase: SupabaseClient, razorpayOrderId?: string | null) {
+  if (!razorpayOrderId) return null;
+  const { data } = await supabase
+    .from("subscriptions")
+    .select("*, plans(*)")
+    .eq("razorpay_order_id", razorpayOrderId)
+    .maybeSingle();
+  if (data) return data as SubscriptionRow;
+  const { data: payment } = await supabase
+    .from("payments")
+    .select("subscription_id")
+    .eq("razorpay_order_id", razorpayOrderId)
+    .not("subscription_id", "is", null)
+    .maybeSingle();
+  if (!payment?.subscription_id) return null;
+  const { data: byPayment } = await supabase
+    .from("subscriptions")
+    .select("*, plans(*)")
+    .eq("id", payment.subscription_id)
+    .maybeSingle();
+  return (byPayment as SubscriptionRow | null) ?? null;
+}
+
 async function resolveSubscriptionEntity(entityRow: Record<string, unknown>, razorpaySubscriptionId: string) {
   const hasPeriod = Boolean(unixToDateOrNull(entityRow.current_start) && unixToDateOrNull(entityRow.current_end));
   if (hasPeriod || !razorpaySubscriptionId) return entityRow;
@@ -228,9 +251,12 @@ export async function processRazorpayEvent(
   const razorpaySubscriptionId = String(
     subscriptionEntity.id ?? paymentEntity.subscription_id ?? invoiceEntity.subscription_id ?? ""
   );
-  const subscription = await loadSubscription(supabase, razorpaySubscriptionId || null);
+  const razorpayOrderId = String(paymentEntity.order_id ?? invoiceEntity.order_id ?? "");
+  const subscription =
+    (await loadSubscription(supabase, razorpaySubscriptionId || null)) ??
+    (await loadSubscriptionByOrderId(supabase, razorpayOrderId || null));
 
-  logInfo("razorpay.webhook", { event, eventId, razorpaySubscriptionId });
+  logInfo("razorpay.webhook", { event, eventId, razorpaySubscriptionId, razorpayOrderId });
 
   if (!subscription && (event.startsWith("subscription.") || event === "invoice.paid")) {
     logError("razorpay.webhook_unmatched_subscription", { event, razorpaySubscriptionId });
@@ -294,17 +320,30 @@ export async function processRazorpayEvent(
     await syncPlanFromRazorpay(supabase, subscription, subscriptionEntity);
   }
 
-  if ((event === "subscription.pending" || event === "payment.failed") && subscription) {
-    const next = event === "subscription.pending" ? "PAST_DUE" : "PAYMENT_FAILED";
-    await supabase.from("subscriptions").update({ status: next }).eq("id", subscription.id);
+  if (event === "subscription.pending" && subscription) {
+    await supabase.from("subscriptions").update({ status: "PAST_DUE" }).eq("id", subscription.id);
     await writeSubscriptionHistory(supabase, {
       organizationId: subscription.organization_id,
       subscriptionId: subscription.id,
       fromStatus: subscription.status,
-      toStatus: next,
+      toStatus: "PAST_DUE",
       reason: event,
       actor: "WEBHOOK",
     });
+  }
+
+  if (event === "payment.failed" && subscription) {
+    if (subscription.status !== "TRIAL") {
+      await supabase.from("subscriptions").update({ status: "PAYMENT_FAILED" }).eq("id", subscription.id);
+      await writeSubscriptionHistory(supabase, {
+        organizationId: subscription.organization_id,
+        subscriptionId: subscription.id,
+        fromStatus: subscription.status,
+        toStatus: "PAYMENT_FAILED",
+        reason: event,
+        actor: "WEBHOOK",
+      });
+    }
     await upsertPayment(supabase, {
       organizationId: subscription.organization_id,
       subscriptionId: subscription.id,
@@ -312,6 +351,7 @@ export async function processRazorpayEvent(
       amountPaise: Number(paymentEntity.amount ?? subscription.amount_paise ?? 0),
       status: "FAILED",
       razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : `failed-${eventId}`,
+      razorpayOrderId: razorpayOrderId || null,
       razorpaySubscriptionId,
       billingCycle: subscription.billing_cycle,
       failureReason: String(paymentEntity.error_description ?? paymentEntity.error_reason ?? "Payment failed"),
@@ -395,19 +435,44 @@ export async function processRazorpayEvent(
   }
 
   if (event === "payment.captured") {
-    const orgId = subscription?.organization_id;
-    if (orgId) {
+    const orderId = paymentEntity.order_id ? String(paymentEntity.order_id) : razorpayOrderId || null;
+    const paid = subscription ?? (await loadSubscriptionByOrderId(supabase, orderId));
+    if (
+      paid &&
+      paymentEntity.amount != null &&
+      Number(paid.amount_paise) !== Number(paymentEntity.amount)
+    ) {
+      logError("razorpay.webhook_amount_mismatch", {
+        event,
+        expected: paid.amount_paise,
+        received: paymentEntity.amount,
+        orderId,
+      });
+      return { ignored: true };
+    }
+    if (paid && paymentEntity.id) {
+      await activateSubscription(supabase, {
+        subscription: paid,
+        paymentId: String(paymentEntity.id),
+        amountPaise: paymentEntity.amount ? Number(paymentEntity.amount) : null,
+        method: paymentEntity.method ? String(paymentEntity.method) : null,
+        razorpayOrderId: orderId,
+        razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
+        actor: "WEBHOOK",
+        reason: "payment.captured",
+      });
+    } else if (paid) {
       await upsertPayment(supabase, {
-        organizationId: orgId,
-        subscriptionId: subscription?.id,
-        planId: subscription?.plan_id,
+        organizationId: paid.organization_id,
+        subscriptionId: paid.id,
+        planId: paid.plan_id,
         amountPaise: Number(paymentEntity.amount ?? 0),
         status: "CAPTURED",
         razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
-        razorpayOrderId: paymentEntity.order_id ? String(paymentEntity.order_id) : null,
+        razorpayOrderId: orderId,
         razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
         razorpaySubscriptionId,
-        billingCycle: subscription?.billing_cycle,
+        billingCycle: paid.billing_cycle,
         method: paymentEntity.method ? String(paymentEntity.method) : null,
         paidAt: new Date().toISOString(),
       });
