@@ -41,7 +41,7 @@ type UsageRow = {
 async function loadLiveSubscription(supabase: SupabaseClient, organizationId: string) {
   const { data } = await supabase
     .from("subscriptions")
-    .select("id, status, order_limit, current_period_start, current_period_end, plans(name, monthly_order_limit)")
+    .select("id, status, order_limit, current_period_start, current_period_end, plans!plan_id(name, monthly_order_limit)")
     .eq("organization_id", organizationId)
     .in("status", [...LIVE_STATUSES])
     .order("created_at", { ascending: false })

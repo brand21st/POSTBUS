@@ -37,7 +37,7 @@ async function loadSubscription(supabase: SupabaseClient, razorpaySubscriptionId
   if (!razorpaySubscriptionId) return null;
   const { data } = await supabase
     .from("subscriptions")
-    .select("*, plans(*)")
+    .select("*, plans!plan_id(*)")
     .eq("razorpay_subscription_id", razorpaySubscriptionId)
     .maybeSingle();
   return data as SubscriptionRow | null;
@@ -47,7 +47,7 @@ async function loadSubscriptionByOrderId(supabase: SupabaseClient, razorpayOrder
   if (!razorpayOrderId) return null;
   const { data } = await supabase
     .from("subscriptions")
-    .select("*, plans(*)")
+    .select("*, plans!plan_id(*)")
     .eq("razorpay_order_id", razorpayOrderId)
     .maybeSingle();
   if (data) return data as SubscriptionRow;
@@ -60,7 +60,7 @@ async function loadSubscriptionByOrderId(supabase: SupabaseClient, razorpayOrder
   if (!payment?.subscription_id) return null;
   const { data: byPayment } = await supabase
     .from("subscriptions")
-    .select("*, plans(*)")
+    .select("*, plans!plan_id(*)")
     .eq("id", payment.subscription_id)
     .maybeSingle();
   return (byPayment as SubscriptionRow | null) ?? null;

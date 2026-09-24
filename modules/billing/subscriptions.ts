@@ -57,6 +57,9 @@ export type SubscriptionRow = {
   plans?: PlanRow | PlanRow[] | null;
 };
 
+/** Two FKs to plans (plan_id, pending_plan_id) — hint the current plan or PostgREST returns no row. */
+const SUBSCRIPTION_WITH_PLAN = "*, plans!plan_id(*)";
+
 function asPlan(value: PlanRow | PlanRow[] | null | undefined): PlanRow | null {
   if (!value) return null;
   return Array.isArray(value) ? value[0] ?? null : value;
@@ -113,7 +116,7 @@ export async function listActivePlans(supabase: SupabaseClient) {
 export async function getLiveSubscription(supabase: SupabaseClient, organizationId: string) {
   const { data } = await supabase
     .from("subscriptions")
-    .select("*, plans(*)")
+    .select(SUBSCRIPTION_WITH_PLAN)
     .eq("organization_id", organizationId)
     .in("status", [...LIVE_STATUSES])
     .order("created_at", { ascending: false })
@@ -213,18 +216,21 @@ export async function startCheckout(
     name: input.organizationName,
     email: input.email,
   }).catch(() => null);
-  const live = await getLiveSubscription(supabase, input.organizationId);
   const now = new Date();
   const period = periodForCycle(input.billingCycle, now);
+  const checkoutPatch = {
+    plan_id: plan.id,
+    billing_cycle: input.billingCycle,
+    amount_paise: amount,
+    order_limit: plan.monthly_order_limit,
+  };
+  let live = await getLiveSubscription(supabase, input.organizationId);
   let subscriptionId = live?.id;
   if (live) {
     await supabase
       .from("subscriptions")
       .update({
-        plan_id: plan.id,
-        billing_cycle: input.billingCycle,
-        amount_paise: amount,
-        order_limit: plan.monthly_order_limit,
+        ...checkoutPatch,
         razorpay_customer_id: customerId ?? live.razorpay_customer_id,
       })
       .eq("id", live.id);
@@ -233,11 +239,8 @@ export async function startCheckout(
       .from("subscriptions")
       .insert({
         organization_id: input.organizationId,
-        plan_id: plan.id,
-        billing_cycle: input.billingCycle,
+        ...checkoutPatch,
         status: "TRIAL",
-        amount_paise: amount,
-        order_limit: plan.monthly_order_limit,
         started_at: now.toISOString(),
         current_period_start: now.toISOString(),
         current_period_end: period.end.toISOString(),
@@ -246,8 +249,26 @@ export async function startCheckout(
       })
       .select("id")
       .single();
-    if (error || !data) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not start subscription.");
-    subscriptionId = data.id;
+    const duplicateLive =
+      error?.code === "23505" || /one_live_per_org|duplicate key/i.test(error?.message ?? "");
+    if (duplicateLive) {
+      live = await getLiveSubscription(supabase, input.organizationId);
+      if (!live) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not start subscription.");
+      }
+      subscriptionId = live.id;
+      await supabase
+        .from("subscriptions")
+        .update({
+          ...checkoutPatch,
+          razorpay_customer_id: customerId ?? live.razorpay_customer_id,
+        })
+        .eq("id", live.id);
+    } else if (error || !data) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not start subscription.");
+    } else {
+      subscriptionId = data.id;
+    }
   }
   const order = await createRazorpayOrder({
     amountPaise: amount,
@@ -352,7 +373,7 @@ export async function verifyCheckout(
   const orderId = String(payment.order_id ?? input.razorpayOrderId);
   const { data: subscription } = await supabase
     .from("subscriptions")
-    .select("*, plans(*)")
+    .select(SUBSCRIPTION_WITH_PLAN)
     .eq("organization_id", input.organizationId)
     .eq("razorpay_order_id", orderId)
     .maybeSingle();

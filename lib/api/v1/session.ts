@@ -34,7 +34,7 @@ export async function handleSessionRoutes(
     const { data: subscription } = organization
       ? await supabase
           .from("subscriptions")
-          .select("status, plans(slug, name)")
+          .select("status, plans!plan_id(slug, name)")
           .eq("organization_id", organization.id)
           .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"])
           .order("created_at", { ascending: false })
