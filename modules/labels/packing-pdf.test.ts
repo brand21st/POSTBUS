@@ -8,12 +8,18 @@ import { applyPaperSize, defaultLabelTemplate, parseLabelTemplate } from "@/modu
 describe("packing label template", () => {
   it("fills a default layout for A6", () => {
     const template = defaultLabelTemplate();
-    expect(template.templateVersion).toBe(3);
+    expect(template.templateVersion).toBe(4);
     expect(template.page.paperSize).toBe("A5");
     expect(template.elements.products?.visible).toBe(true);
     expect(template.elements.merchantLogo?.visible).toBe(true);
     expect(template.elements.orderNumber?.visible).toBe(true);
     expect(template.elements.total?.visible).toBe(true);
+    expect(template.elements.receiverName?.visible).toBe(true);
+    expect(template.elements.receiverAddress?.visible).toBe(true);
+    expect(template.elements.receiverPhone?.visible).toBe(true);
+    expect(template.elements.senderName?.visible).toBe(true);
+    expect(template.elements.senderAddress?.visible).toBe(true);
+    expect(template.elements.senderPhone?.visible).toBe(true);
     expect(template.elements.storeName?.visible).toBe(false);
     const extra = officialDrawRect(template.page.widthPt, template.page.heightPt).y;
     expect(template.elements.products.y + template.elements.products.height).toBeLessThanOrEqual(extra + 0.5);
@@ -27,6 +33,17 @@ describe("packing label template", () => {
   it("clamps elements when switching to a smaller page", () => {
     const wide = applyPaperSize(defaultLabelTemplate("A4"), "A6");
     expect(wide.page.paperSize).toBe("A6");
+    for (const id of [
+      "receiverName",
+      "receiverAddress",
+      "receiverPhone",
+      "senderName",
+      "senderAddress",
+      "senderPhone",
+    ] as const) {
+      expect(wide.elements[id]).toBeTruthy();
+      expect(wide.elements[id].visible).toBe(true);
+    }
     for (const element of Object.values(wide.elements)) {
       expect(element.x + element.width).toBeLessThanOrEqual(wide.page.widthPt + 0.01);
       expect(element.y + element.height).toBeLessThanOrEqual(wide.page.heightPt + 0.01);

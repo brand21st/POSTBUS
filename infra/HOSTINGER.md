@@ -2,6 +2,17 @@
 
 Postgres stays on Supabase (`https://hgacoeoovjxkzfbesmvl.supabase.co`). Do not install a second PostgreSQL on the VPS.
 
+## Coolify (PostBus application)
+
+| Field | Value |
+| --- | --- |
+| Dashboard | `http://89.116.34.166:8000` |
+| Project UUID | `1tko9msc25imaecnzsmntip2` |
+| Environment UUID | `phidg7utdwrrrebgpq2mm9am` |
+| Application UUID | `mw9larpomkyonxzy1rk3h6jm` |
+
+Local copy (gitignored): `coolify.local.json`. API access needs a token from Coolify → **Keys & Tokens** → **API tokens** ([Coolify API auth](https://coolify.io/docs/api/authorization)). There is no Coolify MCP in Cursor; use the dashboard or API with that token.
+
 ## Keep vachat.in separate
 
 `vachat.in` and `www.vachat.in` are a different project. Do not change their nameservers, Cloudflare proxy, or `@` / `www` DNS records. PostBus must never be served on those hosts.

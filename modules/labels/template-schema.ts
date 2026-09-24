@@ -4,6 +4,12 @@ import { PAGE_PRESETS, officialDrawRect, pagePreset, type PagePreset, type Paper
 
 export const MERCHANT_ELEMENT_IDS = [
   "merchantLogo",
+  "receiverName",
+  "receiverAddress",
+  "receiverPhone",
+  "senderName",
+  "senderAddress",
+  "senderPhone",
   "storeName",
   "storePhone",
   "storeWebsite",
@@ -59,7 +65,18 @@ export const labelTemplateSchema = z.object({
 export type LabelTemplate = z.infer<typeof labelTemplateSchema>;
 export type TemplateElement = z.infer<typeof elementSchema>;
 
-const DEFAULT_VISIBLE: MerchantElementId[] = ["merchantLogo", "orderNumber", "products", "total"];
+const DEFAULT_VISIBLE: MerchantElementId[] = [
+  "merchantLogo",
+  "receiverName",
+  "receiverAddress",
+  "receiverPhone",
+  "senderName",
+  "senderAddress",
+  "senderPhone",
+  "orderNumber",
+  "products",
+  "total",
+];
 
 function placeOverlayFields(page: PagePreset, elements: LabelTemplate["elements"]) {
   const official = officialDrawRect(page.widthPt, page.heightPt);
@@ -154,8 +171,15 @@ export function defaultLabelTemplate(paperSize: PaperSizeId = "A5"): LabelTempla
       width,
       height,
       font: "Helvetica",
-      fontSize: id === "storeName" ? 12 : 9,
-      fontWeight: id === "storeName" || id === "total" || id === "codAmount" ? "bold" : "normal",
+      fontSize: id === "storeName" || id === "receiverName" || id === "senderName" ? 12 : 9,
+      fontWeight:
+        id === "storeName" ||
+        id === "receiverName" ||
+        id === "senderName" ||
+        id === "total" ||
+        id === "codAmount"
+          ? "bold"
+          : "normal",
       align: "left",
       showName: true,
       showSku: false,
@@ -166,6 +190,12 @@ export function defaultLabelTemplate(paperSize: PaperSizeId = "A5"): LabelTempla
   };
 
   place("merchantLogo", 36, { width: 90, height: 36 });
+  place("receiverName", 16);
+  place("receiverAddress", 36);
+  place("receiverPhone", 12);
+  place("senderName", 16);
+  place("senderAddress", 36);
+  place("senderPhone", 12);
   place("storeName", 16);
   place("storePhone", 12);
   place("storeWebsite", 12);
@@ -187,7 +217,7 @@ export function defaultLabelTemplate(paperSize: PaperSizeId = "A5"): LabelTempla
   placeOverlayFields(page, elements);
 
   return {
-    templateVersion: 3,
+    templateVersion: 4,
     page: {
       paperSize: page.id,
       widthPt: page.widthPt,
@@ -200,7 +230,7 @@ export function defaultLabelTemplate(paperSize: PaperSizeId = "A5"): LabelTempla
 export function parseLabelTemplate(value: unknown): LabelTemplate {
   const parsed = labelTemplateSchema.safeParse(value);
   if (parsed.success && Object.keys(parsed.data.elements).length > 0) {
-    if (parsed.data.templateVersion >= 3) return parsed.data;
+    if (parsed.data.templateVersion >= 4) return parsed.data;
     const size =
       parsed.data.page.paperSize === "A6" || parsed.data.page.paperSize === "4x6"
         ? "A5"
@@ -220,7 +250,7 @@ export function applyPaperSize(template: LabelTemplate, paperSize: PaperSizeId):
   placeOverlayFields(page, elements);
   return {
     ...template,
-    templateVersion: Math.max(template.templateVersion, 3),
+    templateVersion: Math.max(template.templateVersion, 4),
     page: { paperSize: page.id, widthPt: page.widthPt, heightPt: page.heightPt },
     elements,
   };

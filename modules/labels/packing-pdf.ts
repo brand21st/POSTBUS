@@ -14,6 +14,12 @@ export type PackingLineItem = {
   unitPrice: number;
 };
 
+export type PackingParty = {
+  name: string;
+  phone: string;
+  lines: string[];
+};
+
 export type PackingLabelData = {
   storeName: string;
   storePhone: string;
@@ -29,6 +35,8 @@ export type PackingLabelData = {
   paymentMethod: string;
   customerNote: string;
   returnAddress: string;
+  receiver: PackingParty;
+  sender: PackingParty;
   logoBytes?: Uint8Array | null;
   logoMime?: string | null;
 };
@@ -93,6 +101,18 @@ function productLines(data: PackingLabelData, element: LabelTemplate["elements"]
 function valueFor(id: MerchantElementId, data: PackingLabelData, template: LabelTemplate) {
   const element = template.elements[id];
   switch (id) {
+    case "receiverName":
+      return data.receiver.name ? `TO: ${data.receiver.name}` : "";
+    case "receiverAddress":
+      return data.receiver.lines.join(", ");
+    case "receiverPhone":
+      return data.receiver.phone ? `Ph: ${data.receiver.phone}` : "";
+    case "senderName":
+      return data.sender.name ? `FROM: ${data.sender.name}` : "";
+    case "senderAddress":
+      return data.sender.lines.join(", ");
+    case "senderPhone":
+      return data.sender.phone ? `Ph: ${data.sender.phone}` : "";
     case "storeName":
       return data.storeName;
     case "storePhone":

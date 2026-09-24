@@ -1,0 +1,8 @@
+{
+  "baseUrl": "http://YOUR_VPS_IP:8000",
+  "projectUuid": "your-project-uuid",
+  "environmentUuid": "your-environment-uuid",
+  "applicationUuid": "your-application-uuid",
+  "applicationPath": "/project/{projectUuid}/environment/{environmentUuid}/application/{applicationUuid}",
+  "apiToken": "paste-from-coolify-keys-and-tokens"
+}

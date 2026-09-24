@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { logError } from "@/lib/logger";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
+import { fetchPackingSlipPdf } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
@@ -91,7 +93,31 @@ export async function handleLabelTemplateRoutes(
       kind: "INDIA_POST",
       bytes: official.pdf,
     });
-    return { id: created.id, kind: "INDIA_POST", message: "A new India Post label was generated." };
+    try {
+      const packing = await fetchPackingSlipPdf(supabase, ctx.organizationId, official.shipmentId);
+      await persistLabelPdf(supabase, {
+        organizationId: ctx.organizationId,
+        shipmentId: packing.shipmentId,
+        kind: "MERCHANT",
+        bytes: packing.pdf,
+        templateSnapshot: packing.template,
+      });
+    } catch (error) {
+      logError("PACKING_LABEL_FAILED", {
+        organizationId: ctx.organizationId,
+        shipmentId: official.shipmentId,
+        message: error instanceof Error ? error.message : "unknown",
+      });
+      return {
+        id: created.id,
+        kind: "INDIA_POST",
+        message:
+          error instanceof Error
+            ? `A new India Post label was generated. Packing slip skipped: ${error.message}`
+            : "A new India Post label was generated. Packing slip skipped.",
+      };
+    }
+    return { id: created.id, kind: "INDIA_POST", message: "A new India Post label and packing slip were generated." };
   }
 
   return null;

@@ -60,14 +60,19 @@ async function downloadLabelsZip(ids: string[]) {
 
 export default function LabelsPage() {
   const [page, setPage] = useState(1);
+  const [kind, setKind] = useState<"ALL" | "INDIA_POST" | "MERCHANT">("ALL");
   const [selected, setSelected] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const station = usePrintStation();
   const connected = Boolean(station.data?.connected);
 
   const query = useQuery({
-    queryKey: ["labels", page],
-    queryFn: () => api<Paginated<LabelRecord>>(`/api/v1/labels?page=${page}&pageSize=20`),
+    queryKey: ["labels", page, kind],
+    queryFn: () => {
+      const params = new URLSearchParams({ page: String(page), pageSize: "20" });
+      if (kind !== "ALL") params.set("kind", kind);
+      return api<Paginated<LabelRecord>>(`/api/v1/labels?${params.toString()}`);
+    },
     refetchInterval: 5_000,
   });
 
@@ -202,6 +207,29 @@ export default function LabelsPage() {
           </>
         }
       />
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ["ALL", "All"],
+            ["INDIA_POST", "India Post"],
+            ["MERCHANT", "Packing"],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            type="button"
+            size="sm"
+            variant={kind === value ? "primary" : "secondary"}
+            onClick={() => {
+              setKind(value);
+              setPage(1);
+              setSelected([]);
+            }}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
       <DataTable
         columns={columns}
         data={list.items}

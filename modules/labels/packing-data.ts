@@ -19,6 +19,16 @@ export const SAMPLE_PACKING_DATA: PackingLabelData = {
   paymentMethod: "COD",
   customerNote: "Please call before delivery.",
   returnAddress: "Sample Store, Kochi, Kerala 682311",
+  receiver: {
+    name: "Priya Nair",
+    phone: "9876501234",
+    lines: ["14 Lake View", "Ernakulam, Kerala", "- 682016"],
+  },
+  sender: {
+    name: "Sample Store",
+    phone: "9876543210",
+    lines: ["12 Market Road", "Kochi, Kerala", "- 682311"],
+  },
   logoBytes: null,
   logoMime: null,
 };
