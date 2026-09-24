@@ -1,21 +1,37 @@
 export const SHOPIFY_ORDER_NOTIFICATION = "shopify.order_imported";
 
+export const DASHBOARD_ALERT_TYPES = new Set([
+  SHOPIFY_ORDER_NOTIFICATION,
+  "order.processing",
+  "shipment.booked",
+  "shipment.in_transit",
+  "shipment.delivered",
+]);
+
 export function isShopifyOrderNotification(type?: string | null) {
   return type === SHOPIFY_ORDER_NOTIFICATION;
 }
 
-export function collectNewShopifyOrderAlerts<T extends { id: string; type?: string | null; createdAt?: string | null; created_at?: string | null }>(
-  items: T[],
-  seen: Set<string>,
-  startedAt: number
-) {
+export function isDashboardAlertNotification(type?: string | null) {
+  return Boolean(type && DASHBOARD_ALERT_TYPES.has(type));
+}
+
+export function collectDashboardAlerts<
+  T extends { id: string; type?: string | null; createdAt?: string | null; created_at?: string | null },
+>(items: T[], seen: Set<string>, startedAt: number) {
   const incoming = items.filter((item) => {
-    if (!isShopifyOrderNotification(item.type) || seen.has(item.id)) return false;
+    if (!isDashboardAlertNotification(item.type) || seen.has(item.id)) return false;
     const created = Date.parse(String(item.createdAt ?? item.created_at ?? "")) || 0;
     return created > startedAt;
   });
   for (const item of items) seen.add(item.id);
   return incoming;
+}
+
+export function collectNewShopifyOrderAlerts<
+  T extends { id: string; type?: string | null; createdAt?: string | null; created_at?: string | null },
+>(items: T[], seen: Set<string>, startedAt: number) {
+  return collectDashboardAlerts(items, seen, startedAt);
 }
 
 let sharedContext: AudioContext | null = null;

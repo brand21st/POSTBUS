@@ -303,8 +303,26 @@ async function applyProcessingSideEffects(
   orderId: string,
   shipmentId?: string | null
 ) {
+  const { data: orderRow } = await supabase
+    .from("orders")
+    .select("source, status, order_number")
+    .eq("id", orderId)
+    .maybeSingle();
+  const alreadyProcessing = (orderRow?.status ?? "").toUpperCase() === "PROCESSING";
   await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", orderId);
-  const { data: orderRow } = await supabase.from("orders").select("source").eq("id", orderId).maybeSingle();
+  if (!alreadyProcessing) {
+    try {
+      const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
+      await insertOrderStageNotification(supabase, {
+        organizationId: ctx.organizationId,
+        orderId,
+        event: "processing",
+        body: orderRow?.order_number ?? null,
+      });
+    } catch {
+      // In-app alerts are optional; processing should still succeed.
+    }
+  }
   const isShopify = (orderRow?.source || "").toUpperCase() === "SHOPIFY";
   let shopifySynced = !isShopify;
   try {
@@ -414,6 +432,16 @@ async function markWatiShipmentStage(
       await supabase.from("orders").update({ status: nextStatus }).eq("id", order.id);
       if (shipment) {
         await supabase.from("shipments").update({ status: nextStatus }).eq("id", shipment.id);
+      }
+      try {
+        const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
+        await insertOrderStageNotification(supabase, {
+          organizationId: ctx.organizationId,
+          orderId: order.id,
+          event: watiEvent,
+        });
+      } catch {
+        // In-app alerts are optional; the status change should still succeed.
       }
     }
 

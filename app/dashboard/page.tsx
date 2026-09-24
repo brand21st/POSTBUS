@@ -116,6 +116,7 @@ export default function DashboardPage() {
       toast.success("Selected orders were queued for shipping.");
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });

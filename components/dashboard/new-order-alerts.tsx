@@ -7,7 +7,7 @@ import { useNotifications } from "@/lib/hooks/use-notifications";
 import {
   playNewOrderSound,
   unlockNewOrderSound,
-  collectNewShopifyOrderAlerts,
+  collectDashboardAlerts,
 } from "@/lib/notifications/new-order";
 import { cn } from "@/lib/utils";
 import type { NotificationRecord } from "@/types/api";
@@ -65,7 +65,7 @@ export function NewOrderAlerts() {
       primed.current = true;
       return;
     }
-    const incoming = collectNewShopifyOrderAlerts(items, seen.current, startedAt.current);
+    const incoming = collectDashboardAlerts(items, seen.current, startedAt.current);
     if (!incoming.length) return;
     setAlerts(incoming);
     try {
@@ -76,12 +76,12 @@ export function NewOrderAlerts() {
     if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
       const first = incoming[0];
       new Notification(
-        incoming.length === 1 ? first.title || "New Shopify order" : `${incoming.length} new Shopify orders`,
+        incoming.length === 1 ? first.title || "Order update" : `${incoming.length} order updates`,
         {
           body:
             incoming.length === 1
-              ? first.body || "An unfulfilled order just arrived from Shopify."
-              : "Unfulfilled orders just arrived from the connected store.",
+              ? first.body || "An order just moved to the next stage."
+              : "Orders just moved to the next stage.",
           tag: first.id,
         }
       );
@@ -97,11 +97,11 @@ export function NewOrderAlerts() {
   if (!alerts.length) return null;
 
   const first = alerts[0];
-  const title = alerts.length === 1 ? first.title || "New Shopify order" : `${alerts.length} new Shopify orders`;
+  const title = alerts.length === 1 ? first.title || "Order update" : `${alerts.length} order updates`;
   const body =
     alerts.length === 1
-      ? first.body || "An unfulfilled order just arrived from Shopify."
-      : "Unfulfilled orders just arrived from the connected store.";
+      ? first.body || "An order just moved to the next stage."
+      : "Orders just moved to the next stage.";
   const href = alerts.length === 1 ? orderHref(first) : "/dashboard/orders";
 
   return (

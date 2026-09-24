@@ -45,6 +45,7 @@ export default function OrderDetailPage() {
       toast.success("Shipment queued.");
       queryClient.invalidateQueries({ queryKey: ["order", params.id] });
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });

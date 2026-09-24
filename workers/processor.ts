@@ -405,6 +405,18 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     .eq("id", shipment.id);
 
   await supabase.from("orders").update({ status: "BOOKED" }).eq("id", shipment.order_id);
+  if (shipment.order_id) {
+    try {
+      const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
+      await insertOrderStageNotification(supabase, {
+        organizationId: payload.organizationId,
+        orderId: shipment.order_id,
+        event: "booked",
+      });
+    } catch {
+      // In-app alerts are optional; booking should still succeed.
+    }
+  }
   await supabase.from("usage_events").insert({
     organization_id: payload.organizationId,
     metric: "shipments",
@@ -721,6 +733,16 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
       }
     }
     if (nextStage && shipment.order_id) {
+      try {
+        const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
+        await insertOrderStageNotification(supabase, {
+          organizationId: payload.organizationId,
+          orderId: shipment.order_id,
+          event: nextStage,
+        });
+      } catch {
+        // In-app alerts are optional; tracking still updates.
+      }
       try {
         const { enqueueWatiNotify } = await import("@/modules/wati/send");
         await enqueueWatiNotify(supabase, payload.organizationId, nextStage, {

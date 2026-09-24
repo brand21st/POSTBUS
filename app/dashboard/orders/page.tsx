@@ -230,6 +230,7 @@ export default function OrdersPage() {
                 : "Selected orders were queued for booking and fulfillment."
       );
       queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -260,6 +261,7 @@ export default function OrdersPage() {
       }
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["order-date-count"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
       setSelected([]);
       setConfirmFulfill(false);
     },

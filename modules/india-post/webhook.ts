@@ -277,15 +277,31 @@ export async function processIndiaPostInboxEvent(
         // Shopify fulfillment events are optional; tracking updates should still persist.
       }
     }
-    await supabase.from("notifications").insert({
-      organization_id: organizationId,
-      type: mapped.shipmentStatus === "DELIVERED" ? "shipment.delivered" : "tracking.updated",
-      title:
-        mapped.shipmentStatus === "DELIVERED" ? "Shipment delivered" : "Shipment tracking updated",
-      body: mapped.eventDescription ?? mapped.eventCode,
-      entity_type: "shipment",
-      entity_id: shipment.id,
-    });
+    if (
+      shipment.order_id &&
+      (mapped.shipmentStatus === "DELIVERED" || mapped.shipmentStatus === "IN_TRANSIT")
+    ) {
+      try {
+        const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
+        await insertOrderStageNotification(supabase, {
+          organizationId,
+          orderId: shipment.order_id,
+          event: mapped.shipmentStatus === "DELIVERED" ? "delivered" : "in_transit",
+          body: mapped.eventDescription ?? mapped.eventCode,
+        });
+      } catch {
+        // In-app alerts are optional; tracking updates should still persist.
+      }
+    } else {
+      await supabase.from("notifications").insert({
+        organization_id: organizationId,
+        type: "tracking.updated",
+        title: "Shipment tracking updated",
+        body: mapped.eventDescription ?? mapped.eventCode,
+        entity_type: "shipment",
+        entity_id: shipment.id,
+      });
+    }
   } else if (!eventError) {
     await supabase.from("notifications").insert({
       organization_id: organizationId,
