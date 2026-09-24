@@ -140,25 +140,34 @@ export async function registerRazorpayWebhook(
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   }
   const url = razorpayWebhookUrl();
-  const events = billingWebhookEventsPayload();
-  let webhookId = config.webhookId;
-  if (webhookId) {
-    try {
-      await updateRazorpayWebhook(webhookId, { url, secret, events });
-    } catch {
-      webhookId = null;
+  const fullEvents = billingWebhookEventsPayload();
+  const paymentEvents = Object.fromEntries(
+    Object.entries(fullEvents).filter(([name]) => !name.startsWith("subscription."))
+  );
+  async function saveWebhook(events: Record<string, boolean>) {
+    let id = config.webhookId;
+    if (id) {
+      try {
+        await updateRazorpayWebhook(id, { url, secret, events });
+        return id;
+      } catch {
+        id = null;
+      }
     }
-  }
-  if (!webhookId) {
     const listed = await listRazorpayWebhooks();
     const existing = (listed.items ?? []).find((item) => String(item.url ?? "") === url);
     if (existing?.id) {
       await updateRazorpayWebhook(String(existing.id), { url, secret, events });
-      webhookId = String(existing.id);
-    } else {
-      const created = await createRazorpayWebhook({ url, secret, events });
-      webhookId = String(created.id ?? "");
+      return String(existing.id);
     }
+    const created = await createRazorpayWebhook({ url, secret, events });
+    return String(created.id ?? "");
+  }
+  let webhookId: string | null = null;
+  try {
+    webhookId = await saveWebhook(fullEvents);
+  } catch {
+    webhookId = await saveWebhook(paymentEvents);
   }
   if (!webhookId) {
     throw new AppError(ERROR_CODES.PROVIDER_ERROR, "Razorpay did not return a webhook id.");
