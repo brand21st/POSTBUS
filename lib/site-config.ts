@@ -6,6 +6,7 @@ export const siteConfig = {
     "PostBus helps Shopify merchants automate shipping operations — from order sync and shipment booking to labels, manifests, tracking and fulfillment.",
   url: "https://postbus.in",
   contactEmail: "hello@postbus.in",
+  supportWhatsapp: "918848772371",
   loginUrl: "/login",
   getStartedUrl: "/register",
   bookDemoUrl: "/contact?intent=demo",
