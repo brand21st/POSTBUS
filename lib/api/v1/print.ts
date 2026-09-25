@@ -101,7 +101,8 @@ export async function handlePrintStationRoutes(
 
   if (method === "POST" && slugs[0] === "labels" && slugs[2] === "print") {
     const { enqueueManualPrintJob } = await import("@/modules/print/service");
-    const job = await enqueueManualPrintJob(supabase, ctx, slugs[1]);
+    const body = (await request.json().catch(() => ({}))) as { paperSize?: string };
+    const job = await enqueueManualPrintJob(supabase, ctx, slugs[1], { paperSize: body.paperSize });
     const station = await getPrintStation(supabase, ctx.organizationId);
     return {
       job: {
@@ -111,8 +112,8 @@ export async function handlePrintStationRoutes(
       },
       connected: station.connected,
       message: station.connected
-        ? "The label was sent to the printer."
-        : "Printer unavailable. Label will print when the printer reconnects.",
+        ? "Sent to the printer."
+        : "Printer unavailable. The job will print when the printer reconnects.",
     };
   }
 

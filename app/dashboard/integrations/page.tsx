@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Plug } from "lucide-react";
+import { ShopifyLogo } from "@/components/brand/shopify-logo";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -94,7 +95,13 @@ export default function IntegrationsPage() {
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <CardTitle>{card.name ?? card.provider}</CardTitle>
+                      <CardTitle>
+                        {card.provider === "SHOPIFY" ? (
+                          <ShopifyLogo className="h-6" />
+                        ) : (
+                          card.name ?? card.provider
+                        )}
+                      </CardTitle>
                       <CardDescription className="mt-1">
                         {comingLater
                           ? "Coming later. Schema is reserved so this can connect without rewriting orders."

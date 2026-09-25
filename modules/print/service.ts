@@ -3,6 +3,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { hashSecret, randomToken, safeEqual } from "@/lib/security/crypto";
 import { isPaperSizeId, agentPaperSize } from "@/modules/labels/page-presets";
+import { paperSizeForLabelKind } from "@/modules/labels/print-targets";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 
 export const PRINT_AGENT_ONLINE_MS = 30_000;
@@ -432,7 +433,7 @@ export async function enqueueManualPrintJob(
 ): Promise<PrintJobRow> {
   const { data: label } = await supabase
     .from("labels")
-    .select("id, shipment_id, status")
+    .select("id, shipment_id, status, kind")
     .eq("organization_id", ctx.organizationId)
     .eq("id", labelId)
     .maybeSingle();
@@ -443,7 +444,7 @@ export async function enqueueManualPrintJob(
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "The label PDF is not ready to print yet.");
   }
   const settings = await getPrintSettings(supabase, ctx.organizationId);
-  const paperSize = options?.paperSize || settings.paperSize;
+  const paperSize = options?.paperSize || paperSizeForLabelKind(label.kind);
   if (paperSize && !isPaperSizeId(paperSize)) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, 4x6, A5, or A4.");
   }

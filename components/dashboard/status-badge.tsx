@@ -1,3 +1,4 @@
+import { ShopifyLogo } from "@/components/brand/shopify-logo";
 import { Badge } from "@/components/ui/badge";
 import { titleCase } from "@/lib/format";
 
@@ -78,6 +79,10 @@ export function orderStatusRowClass(status?: string | null) {
 export function StatusBadge({ value }: { value?: string | null }) {
   if (!value) return <Badge>—</Badge>;
   const key = value.toUpperCase();
+
+  if (key === "SHOPIFY") {
+    return <ShopifyLogo />;
+  }
   const variant = SUCCESS.has(key)
     ? "success"
     : WARNING.has(key)
