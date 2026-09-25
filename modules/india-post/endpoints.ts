@@ -29,6 +29,12 @@ export function indiaPostSessionUrl(environment: ProviderEnvironment, path: stri
   return `${apiRoot(environment)}/v1${suffix}`;
 }
 
+/** Documented CEPT lookup for post offices by 6-digit pincode (requires Bearer token). */
+export function indiaPostPincodeSearchApiUrl(environment: ProviderEnvironment, pincode = "682311") {
+  const params = new URLSearchParams({ pincode, "office-type": "post" });
+  return `${indiaPostSessionUrl(environment, "/pincode-search")}?${params}`;
+}
+
 export function indiaPostBookingUrl(environment: ProviderEnvironment, customerId: string) {
   return `${apiRoot(environment)}/process-articles/${encodeURIComponent(customerId)}`;
 }

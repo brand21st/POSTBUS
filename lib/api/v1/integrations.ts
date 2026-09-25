@@ -5,6 +5,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { env } from "@/lib/env";
 import { logError } from "@/lib/logger";
 import { encryptSecret, maskSecret } from "@/lib/security/crypto";
+import type { IndiaPostOffice } from "@/modules/india-post/endpoints";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
 import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
@@ -533,6 +534,39 @@ export async function handleIntegrationRoutes(
       entity_id: data.id,
     });
     return { saved: true, status, lastError };
+  }
+
+  if (key === "GET integrations/india-post/offices") {
+    const pincode = (new URL(request.url).searchParams.get("pincode") ?? "")
+      .replace(/\D/g, "")
+      .slice(0, 6);
+    if (!/^\d{6}$/.test(pincode)) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a 6-digit pincode.");
+    }
+    const { data } = await supabase
+      .from("india_post_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!data?.encrypted_username || !data?.encrypted_password) {
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        "Save India Post customer ID and password first."
+      );
+    }
+    const provider = indiaPostFromRow(data);
+    const offices = await provider.searchPostOffices(pincode);
+    return {
+      pincode,
+      offices: offices.map((office: IndiaPostOffice) => ({
+        officeId: String(office.office_id ?? ""),
+        name: office.office_name ?? "",
+        pincode: String(office.pincode ?? pincode),
+        city: office.city_name ?? "",
+        state: office.state_name ?? "",
+        officeTypeCode: office.office_type_code ?? "",
+      })),
+    };
   }
 
   if (key === "POST integrations/india-post/verify" || key === "POST integrations/india-post/test") {

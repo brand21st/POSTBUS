@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   indiaPostApiRoot,
+  indiaPostPincodeSearchApiUrl,
   indiaPostBookingArticle,
   indiaPostBookingArticleType,
   indiaPostBookingUrl,
@@ -31,6 +32,14 @@ describe("indiaPostApiRoot", () => {
     );
     expect(indiaPostApiRoot("https://test.cept.gov.in/beextcustomer/v1/")).toBe(
       "https://test.cept.gov.in/beextcustomer"
+    );
+  });
+});
+
+describe("indiaPostPincodeSearchApiUrl", () => {
+  it("builds the CEPT pincode-search URL", () => {
+    expect(indiaPostPincodeSearchApiUrl("UAT", "682311")).toBe(
+      "https://test.cept.gov.in/beextcustomer/v1/pincode-search?pincode=682311&office-type=post"
     );
   });
 });

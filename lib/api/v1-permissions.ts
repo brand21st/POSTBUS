@@ -56,6 +56,7 @@ export function permissionForTenantRoute(
       key === "GET integrations" ||
       key === "GET integrations/shopify" ||
       key === "GET integrations/india-post" ||
+      key === "GET integrations/india-post/offices" ||
       key === "GET integrations/wati" ||
       key === "GET integrations/wati/templates";
     return readable ? undefined : "integrations.manage";

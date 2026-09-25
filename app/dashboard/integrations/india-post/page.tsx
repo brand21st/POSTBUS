@@ -19,10 +19,13 @@ import {
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { Copy } from "lucide-react";
+import { IndiaPostOfficeFinder } from "@/components/integrations/india-post-office-finder";
+import { indiaPostPincodeSearchApiUrl } from "@/modules/india-post/endpoints";
 import {
   DEFAULT_INDIA_POST_SERVICE,
   INDIA_POST_SERVICES,
   PROVIDER_ENVIRONMENTS,
+  type ProviderEnvironment,
 } from "@/types/domain";
 import type { IndiaPostConfig } from "@/types/api";
 
@@ -354,16 +357,34 @@ export default function IndiaPostPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Pickup office</CardTitle>
+              <CardTitle>Drop-off office</CardTitle>
               <CardDescription>
-                Required for article booking. Leave blank if CEPT has not shared it yet.
+                Required for CEPT article booking ({`pickup_dropoff_office_id`}, 8-digit facility ID). Use the finder
+                or paste the ID from your India Post booking office.{" "}
+                <a
+                  href={indiaPostPincodeSearchApiUrl(
+                    form.environment === "PRODUCTION" ? "PRODUCTION" : "UAT"
+                  )}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-brand hover:underline"
+                >
+                  CEPT pincode-search API
+                </a>
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <Field
-                label="Pickup / drop-off office ID"
+                label="Drop-off office ID"
                 value={form.pickupDropoffOfficeId}
-                onChange={(value) => set("pickupDropoffOfficeId", value)}
+                placeholder="e.g. 22660454"
+                onChange={(value) => set("pickupDropoffOfficeId", value.replace(/\D/g, "").slice(0, 8))}
+              />
+              <IndiaPostOfficeFinder
+                environment={(form.environment === "PRODUCTION" ? "PRODUCTION" : "UAT") as ProviderEnvironment}
+                officeId={form.pickupDropoffOfficeId}
+                onOfficeIdChange={(value) => set("pickupDropoffOfficeId", value)}
+                canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
               />
             </CardContent>
           </Card>
