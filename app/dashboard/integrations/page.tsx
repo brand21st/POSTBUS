@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Plug } from "lucide-react";
+import { IndiaPostLogo } from "@/components/brand/india-post-logo";
 import { ShopifyLogo } from "@/components/brand/shopify-logo";
+import { WatiLogo } from "@/components/brand/wati-logo";
+import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -88,6 +91,13 @@ export default function IntegrationsPage() {
                     ? FEATURE.wati
                     : null;
             const locked = Boolean(feature && !entitlements.allows(feature));
+            const description = comingLater
+              ? null
+              : card.lastError || card.last_error
+                ? card.lastError ?? card.last_error
+                : connected
+                  ? "Connected and ready for background jobs."
+                  : "Not connected.";
 
             return (
               <PlanLock key={card.provider} locked={locked} feature={feature} compact>
@@ -98,19 +108,19 @@ export default function IntegrationsPage() {
                       <CardTitle>
                         {card.provider === "SHOPIFY" ? (
                           <ShopifyLogo className="h-6" />
+                        ) : card.provider === "INDIA_POST" ? (
+                          <IndiaPostLogo className="h-6" />
+                        ) : card.provider === "WATI" ? (
+                          <WatiLogo className="h-6" />
+                        ) : card.provider === "WOOCOMMERCE" ? (
+                          <WooCommerceLogo className="h-6" />
                         ) : (
                           card.name ?? card.provider
                         )}
                       </CardTitle>
-                      <CardDescription className="mt-1">
-                        {comingLater
-                          ? "Coming later. Schema is reserved so this can connect without rewriting orders."
-                          : card.lastError || card.last_error
-                            ? card.lastError ?? card.last_error
-                            : connected
-                              ? "Connected and ready for background jobs."
-                              : "Not connected."}
-                      </CardDescription>
+                      {description ? (
+                        <CardDescription className="mt-1">{description}</CardDescription>
+                      ) : null}
                     </div>
                     <StatusBadge value={comingLater ? "COMING_LATER" : card.status ?? "NOT_CONNECTED"} />
                   </div>
