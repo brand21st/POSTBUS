@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { ChevronsLeft, Lock } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { ChevronsLeft, Lock, Sparkles } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { requestDashboardTour } from "@/lib/dashboard/product-tour";
 import { helpNav, sidebarNav } from "@/lib/dashboard/nav";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,7 @@ export function Sidebar({
   className?: string;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const planName = me?.subscription?.planName ?? me?.subscription?.planCode ?? "Starter";
   const features = me?.subscription?.features ?? [];
   const trial = me?.subscription?.status === "TRIAL";
@@ -35,6 +37,7 @@ export function Sidebar({
 
   return (
     <aside
+      data-tour="nav"
       className={cn(
         "flex h-full flex-col border-r border-border bg-card transition-[width] duration-200",
         collapsed ? "w-[76px]" : "w-[260px]",
@@ -65,6 +68,7 @@ export function Sidebar({
               key={item.href}
               href={item.href}
               prefetch={false}
+              data-tour={item.tour}
               onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
@@ -85,6 +89,21 @@ export function Sidebar({
 
       <div className="space-y-3 px-3 pb-4">
         <Separator />
+        <button
+          type="button"
+          onClick={() => {
+            requestDashboardTour();
+            if (pathname !== "/dashboard") router.push("/dashboard");
+            onNavigate?.();
+          }}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-surface-soft hover:text-foreground",
+            collapsed && "justify-center px-0"
+          )}
+        >
+          <Sparkles className="size-4 shrink-0" />
+          <span className={cn(collapsed && "sr-only")}>Product tour</span>
+        </button>
         <Link
           href={helpNav.href}
           prefetch={false}

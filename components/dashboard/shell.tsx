@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { MobileNav } from "@/components/dashboard/mobile-nav";
+import { ProductTour } from "@/components/dashboard/product-tour";
 import { NewOrderAlerts } from "@/components/dashboard/new-order-alerts";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
@@ -96,6 +97,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         </main>
       </div>
       <MobileNav open={mobileOpen} onOpenChange={setMobileOpen} me={me.data} />
+      <ProductTour userId={me.data?.user.id} />
     </div>
   );
 }

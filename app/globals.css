@@ -239,6 +239,49 @@ body {
   animation: route-drift 5s ease-in-out infinite;
 }
 
+.driver-popover.driver-popover-postbus {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 12px 40px rgb(9 9 11 / 0.12);
+}
+
+.driver-popover.driver-popover-postbus .driver-popover-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.driver-popover.driver-popover-postbus .driver-popover-description {
+  color: var(--muted);
+}
+
+.driver-popover.driver-popover-postbus .driver-popover-progress-text {
+  color: var(--muted);
+}
+
+.driver-popover.driver-popover-postbus .driver-popover-footer button {
+  text-shadow: none;
+  border: 0;
+  border-radius: var(--radius-btn);
+  font-weight: 600;
+}
+
+.driver-popover.driver-popover-postbus .driver-popover-next-btn,
+.driver-popover.driver-popover-postbus .driver-popover-close-btn {
+  background-color: var(--brand);
+  color: #fff;
+}
+
+.driver-popover.driver-popover-postbus .driver-popover-prev-btn {
+  background-color: var(--surface-soft);
+  color: var(--ink);
+}
+
+.driver-popover.driver-popover-postbus .driver-popover-arrow {
+  border: 1px solid var(--border);
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

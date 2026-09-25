@@ -91,26 +91,28 @@ export function Topbar({
       </nav>
 
       <div className="ml-auto flex items-center gap-1.5">
-        <Button
-          type="button"
-          variant="secondary"
-          className="hidden h-10 w-64 justify-start text-muted md:inline-flex"
-          onClick={() => setSearchOpen(true)}
-        >
-          <Search className="size-4" />
-          Search
-          <span className="ml-auto text-xs text-muted">⌘K</span>
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="md:hidden"
-          onClick={() => setSearchOpen(true)}
-          aria-label="Search"
-        >
-          <Search className="size-4" />
-        </Button>
+        <div className="flex items-center" data-tour="search">
+          <Button
+            type="button"
+            variant="secondary"
+            className="hidden h-10 w-64 justify-start text-muted md:inline-flex"
+            onClick={() => setSearchOpen(true)}
+          >
+            <Search className="size-4" />
+            Search
+            <span className="ml-auto text-xs text-muted">⌘K</span>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            onClick={() => setSearchOpen(true)}
+            aria-label="Search"
+          >
+            <Search className="size-4" />
+          </Button>
+        </div>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

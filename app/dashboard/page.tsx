@@ -180,7 +180,7 @@ export default function DashboardPage() {
         }
       />
 
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden" data-tour="ready-to-ship">
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle as="h2">Ready to ship</CardTitle>
@@ -219,7 +219,7 @@ export default function DashboardPage() {
         </CardHeader>
       </Card>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-tour="kpis">
         {KPI_DEFS.map((def) => {
           const value = kpiValue(kpis.data, def.key, def.fallback);
           const change = kpiChange(kpis.data, def.key);
@@ -285,7 +285,7 @@ export default function DashboardPage() {
         )}
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-4" data-tour="recent-orders">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-ink">Recent orders</h2>
           <Link href="/dashboard/orders" prefetch={false} className={buttonVariants({ variant: "ghost", size: "sm" })}>

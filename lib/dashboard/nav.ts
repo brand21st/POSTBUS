@@ -19,19 +19,20 @@ export type NavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
+  tour?: string;
 };
 
 export const sidebarNav: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
-  { label: "Orders", href: "/dashboard/orders", icon: ShoppingBag },
-  { label: "Shipments", href: "/dashboard/shipments", icon: Truck },
-  { label: "Labels", href: "/dashboard/labels", icon: Tag },
+  { label: "Orders", href: "/dashboard/orders", icon: ShoppingBag, tour: "nav-orders" },
+  { label: "Shipments", href: "/dashboard/shipments", icon: Truck, tour: "nav-shipments" },
+  { label: "Labels", href: "/dashboard/labels", icon: Tag, tour: "nav-labels" },
   { label: "Invoices", href: "/dashboard/invoices", icon: Receipt },
   { label: "Manifest", href: "/dashboard/manifests", icon: ClipboardList },
   { label: "Tracking", href: "/dashboard/tracking", icon: Radio },
   { label: "Automation", href: "/dashboard/automation", icon: Workflow },
-  { label: "Integrations", href: "/dashboard/integrations", icon: Plug },
+  { label: "Integrations", href: "/dashboard/integrations", icon: Plug, tour: "nav-integrations" },
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
