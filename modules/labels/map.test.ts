@@ -7,6 +7,7 @@ describe("mapLabelRow", () => {
     const mapped = mapLabelRow({
       id: "label-1",
       status: "READY",
+      shipment_id: "ship-1",
       shipments: {
         barcode: "CL214330016IN",
         tracking_number: null,
@@ -21,6 +22,8 @@ describe("mapLabelRow", () => {
     expect(mapped.orderNumber).toBe("#1001");
     expect(mapped.printStatus).toBe("WAITING");
     expect(mapped.kind).toBe("INDIA_POST");
+    expect(mapped.shipmentId).toBe("ship-1");
+    expect(mapped.shipment_id).toBe("ship-1");
   });
 
   it("falls back to tracking_number when barcode is empty", () => {
