@@ -4,6 +4,7 @@ import {
   canReportShopifyFulfillmentProgress,
   importShopifyWebhookOrder,
   isUnfulfilledShopifyOrder,
+  mapShopifyCollectable,
   mapShopifyFulfillmentStatus,
   mapShopifyPaymentStatus,
   nextShopifyOrderStatus,
@@ -93,6 +94,24 @@ describe("shopify order mapping", () => {
     expect(mapShopifyFulfillmentStatus(null, null)).toBe("UNFULFILLED");
     expect(mapShopifyFulfillmentStatus("partial", null)).toBe("PARTIAL");
     expect(mapShopifyFulfillmentStatus("unfulfilled", "2026-01-01")).toBe("CANCELLED");
+  });
+
+  it("maps Shopify outstanding balance onto remaining COD", () => {
+    expect(
+      mapShopifyCollectable(
+        { total_price: "1000.00", total_outstanding: "400.00" },
+        "PARTIAL"
+      )
+    ).toEqual({
+      paymentStatus: "PARTIAL",
+      amountPaid: 600,
+      codAmount: 400,
+    });
+    expect(mapShopifyCollectable({ total_price: "499.00" }, "COD")).toEqual({
+      paymentStatus: "COD",
+      amountPaid: 0,
+      codAmount: 499,
+    });
   });
 
   it("builds a stable order number and customer name", () => {

@@ -11,6 +11,7 @@ import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
 import { customerTrackingLink } from "@/modules/tracking-pages/host";
 import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { logError } from "@/lib/logger";
+import { settleOrderPayment } from "@/modules/orders/payment";
 import type { FulfillmentStatus, PaymentStatus } from "@/types/domain";
 
 export const SHOPIFY_API_VERSION = "2025-01";
@@ -80,6 +81,7 @@ export type ShopifyRemoteOrder = {
   total_shipping_price_set?: { shop_money?: { amount?: string } } | null;
   total_tax?: string | number | null;
   total_price?: string | number | null;
+  total_outstanding?: string | number | null;
   shipping_address?: Record<string, string | null> | null;
   billing_address?: Record<string, string | null> | null;
   customer?: { first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null } | null;
@@ -136,6 +138,32 @@ export function mapShopifyPaymentStatus(
       if (isShopifyCodGateway(gateways)) return "COD";
       return "PENDING";
   }
+}
+
+export function mapShopifyCollectable(
+  remote: Pick<ShopifyRemoteOrder, "total_price" | "total_outstanding">,
+  paymentStatus: PaymentStatus
+) {
+  const total = Number(remote.total_price ?? 0);
+  if (paymentStatus === "PARTIAL") {
+    const outstanding =
+      remote.total_outstanding == null || remote.total_outstanding === ""
+        ? null
+        : Number(remote.total_outstanding);
+    const amountPaid =
+      outstanding == null || Number.isNaN(outstanding) ? 0 : Math.max(0, total - outstanding);
+    return settleOrderPayment({
+      paymentStatus: "PARTIAL",
+      totalAmount: total,
+      amountPaid,
+      strict: false,
+    });
+  }
+  return settleOrderPayment({
+    paymentStatus,
+    totalAmount: total,
+    strict: false,
+  });
 }
 
 export function nextShopifyOrderStatus(input: {
@@ -1027,6 +1055,7 @@ export async function upsertShopifyOrder(
   if (shopifyRemoteSignalsProcessing(input.remote) && orderStatus === "READY") {
     orderStatus = "PROCESSING";
   }
+  const collect = mapShopifyCollectable(input.remote, paymentStatus);
   const totals = {
     currency: input.remote.currency || "INR",
     subtotal: Number(input.remote.subtotal_price ?? 0),
@@ -1034,7 +1063,9 @@ export async function upsertShopifyOrder(
     shipping_amount: Number(input.remote.total_shipping_price_set?.shop_money?.amount ?? 0),
     tax_amount: Number(input.remote.total_tax ?? 0),
     total_amount: Number(input.remote.total_price ?? 0),
-    payment_status: paymentStatus,
+    payment_status: collect.paymentStatus,
+    amount_paid: collect.amountPaid,
+    cod_amount: collect.codAmount,
     fulfillment_status: fulfillmentStatus,
     status: orderStatus,
   };

@@ -113,6 +113,14 @@ export default function OrderDetailPage() {
               label="Total"
               value={formatCurrency(record.totalAmount ?? record.total_amount, record.currency)}
             />
+            <Row
+              label="Already paid"
+              value={formatCurrency(record.amountPaid ?? record.amount_paid, record.currency)}
+            />
+            <Row
+              label="Collect on delivery"
+              value={formatCurrency(record.codAmount ?? record.cod_amount, record.currency)}
+            />
           </CardContent>
         </Card>
 

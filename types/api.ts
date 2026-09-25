@@ -170,6 +170,10 @@ export type OrderRecord = {
   fulfillment_status?: FulfillmentStatus | string;
   totalAmount?: number | string;
   total_amount?: number | string;
+  amountPaid?: number | string;
+  amount_paid?: number | string;
+  codAmount?: number | string;
+  cod_amount?: number | string;
   currency?: string;
   customer?: CustomerSummary | null;
   customerName?: string | null;

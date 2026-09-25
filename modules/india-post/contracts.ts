@@ -24,6 +24,40 @@ function labelFor(code: string) {
   return INDIA_POST_SERVICES.find((service) => service.code === code)?.label ?? code;
 }
 
+export type SelectableIndiaPostService = {
+  code: string;
+  label: string;
+  isDefault: boolean;
+};
+
+export function selectableIndiaPostServices(config?: {
+  contracts?: Array<{
+    serviceCode: string;
+    contractId?: string | null;
+    isDefault?: boolean;
+    isActive?: boolean;
+    label?: string | null;
+  }>;
+  defaultServiceCode?: string | null;
+} | null): SelectableIndiaPostService[] {
+  const defaultCode = config?.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
+  const contracts = (config?.contracts ?? []).filter(
+    (contract) => Boolean(contract.contractId?.trim()) && contract.isActive !== false
+  );
+  if (contracts.length) {
+    return contracts.map((contract) => ({
+      code: contract.serviceCode,
+      label: contract.label?.trim() || labelFor(contract.serviceCode),
+      isDefault: Boolean(contract.isDefault) || contract.serviceCode === defaultCode,
+    }));
+  }
+  return INDIA_POST_SERVICES.map((service) => ({
+    code: service.code,
+    label: service.label,
+    isDefault: service.code === defaultCode,
+  }));
+}
+
 export async function listContracts(
   supabase: SupabaseClient,
   organizationId: string

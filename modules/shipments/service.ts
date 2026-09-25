@@ -4,6 +4,7 @@ import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { resolveDefaultServiceCode } from "@/modules/india-post/contracts";
+import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { INDIA_POST_SERVICES } from "@/types/domain";
 
 export async function createShipmentsForOrders(
@@ -109,9 +110,16 @@ export async function createShipmentsForOrders(
     }
 
     if (enqueueBooking && current && !alreadyBooked) {
+      const collect = shipmentCollectFromOrder(order);
       await supabase
         .from("shipments")
-        .update({ status: "QUEUED", last_error: null, last_error_code: null })
+        .update({
+          status: "QUEUED",
+          last_error: null,
+          last_error_code: null,
+          payment_mode: collect.payment_mode,
+          cod_amount: collect.cod_amount,
+        })
         .eq("id", current.id);
       const job = await createBackgroundJob(supabase, {
         organizationId: ctx.organizationId,
@@ -135,6 +143,7 @@ export async function createShipmentsForOrders(
       items.reduce((sum, item) => sum + (item.weight_grams || 100) * item.quantity, 0) ||
       100;
 
+    const collect = shipmentCollectFromOrder(order);
     const { data: shipment, error: shipError } = await supabase
       .from("shipments")
       .insert({
@@ -143,7 +152,8 @@ export async function createShipmentsForOrders(
         customer_id: order.customer_id,
         shipping_address_id: order.shipping_address_id,
         service_code: serviceCode,
-        payment_mode: order.payment_status === "COD" ? "COD" : "PREPAID",
+        payment_mode: collect.payment_mode,
+        cod_amount: collect.cod_amount,
         weight_grams: weight,
         length_cm: extras?.lengthCm ?? null,
         width_cm: extras?.widthCm ?? null,

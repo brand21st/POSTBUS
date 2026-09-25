@@ -4,6 +4,7 @@ import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
 import type { createOrderSchema, orderListQuery } from "@/modules/orders/schema";
+import { settleOrderPayment } from "@/modules/orders/payment";
 
 type CreateInput = z.infer<typeof createOrderSchema>;
 
@@ -95,6 +96,11 @@ export async function createManualOrder(
       : await insertAddress(supabase, ctx.organizationId, customer.id, input.billingAddress);
 
   const subtotal = input.lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const payment = settleOrderPayment({
+    paymentStatus: input.paymentStatus,
+    totalAmount: subtotal,
+    amountPaid: input.amountPaid,
+  });
   const orderNumber = input.orderNumber?.trim() || (await nextOrderNumber(supabase, ctx.organizationId));
 
   const { data: order, error: orderError } = await supabase
@@ -108,7 +114,9 @@ export async function createManualOrder(
       billing_address_id: billing.id,
       subtotal,
       total_amount: subtotal,
-      payment_status: input.paymentStatus ?? "PENDING",
+      payment_status: payment.paymentStatus,
+      amount_paid: payment.amountPaid,
+      cod_amount: payment.codAmount,
       fulfillment_status: "UNFULFILLED",
       status: "READY",
     })
@@ -138,7 +146,13 @@ export async function createManualOrder(
     action: "order.created",
     entity_type: "order",
     entity_id: order.id,
-    after: { orderNumber, source: "MANUAL" },
+    after: {
+      orderNumber,
+      source: "MANUAL",
+      paymentStatus: payment.paymentStatus,
+      amountPaid: payment.amountPaid,
+      codAmount: payment.codAmount,
+    },
   });
 
   return { ...order, createShipment: Boolean(input.createShipment), shipment: input.shipment };
@@ -189,6 +203,10 @@ function mapOrder(row: Record<string, unknown>) {
     paymentStatus: row.payment_status,
     fulfillmentStatus: row.fulfillment_status,
     totalAmount: row.total_amount,
+    amountPaid: row.amount_paid,
+    amount_paid: row.amount_paid,
+    codAmount: row.cod_amount,
+    cod_amount: row.cod_amount,
     createdAt: row.created_at,
     customer: customer
       ? { name: customer.name, phone: customer.phone, email: customer.email }

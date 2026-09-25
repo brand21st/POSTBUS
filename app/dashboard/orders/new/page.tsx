@@ -1,8 +1,11 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQuery } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -21,7 +24,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/hooks/use-api";
-import { PAYMENT_STATUSES } from "@/types/domain";
+import { formatCurrency } from "@/lib/format";
+import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
+import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
+import type { IndiaPostConfig } from "@/types/api";
 
 const addressSchema = z.object({
   name: z.string().min(2, "Name is required."),
@@ -40,6 +46,7 @@ const schema = z.object({
   customerPhone: z.string().min(8, "Phone is required."),
   customerEmail: z.union([z.email(), z.literal("")]).optional(),
   paymentStatus: z.enum(PAYMENT_STATUSES),
+  amountPaid: z.coerce.number().min(0).optional(),
   shippingAddress: addressSchema,
   billingSameAsShipping: z.boolean(),
   billingAddress: addressSchema.optional(),
@@ -64,12 +71,40 @@ const schema = z.object({
       serviceCode: z.string().optional(),
     })
     .optional(),
+}).superRefine((value, ctx) => {
+  if (value.paymentStatus !== "PARTIAL") return;
+  const total = value.lineItems.reduce(
+    (sum, item) => sum + Number(item.unitPrice || 0) * Number(item.quantity || 0),
+    0
+  );
+  const paid = Number(value.amountPaid || 0);
+  if (paid <= 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["amountPaid"],
+      message: "Enter how much the customer already paid.",
+    });
+  } else if (paid >= total && total > 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["amountPaid"],
+      message: "Partial payment must be less than the order total.",
+    });
+  }
 });
 
 type FormValues = z.infer<typeof schema>;
 
 export default function NewOrderPage() {
   const router = useRouter();
+  const indiaPost = useQuery({
+    queryKey: ["integrations", "india-post"],
+    queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
+  });
+  const serviceOptions = useMemo(
+    () => selectableIndiaPostServices(indiaPost.data),
+    [indiaPost.data]
+  );
   const form = useForm<FormValues>({
     resolver: zodResolver(schema) as never,
     defaultValues: {
@@ -78,6 +113,7 @@ export default function NewOrderPage() {
       customerPhone: "",
       customerEmail: "",
       paymentStatus: "PENDING",
+      amountPaid: 0,
       billingSameAsShipping: true,
       shippingAddress: {
         name: "",
@@ -91,15 +127,38 @@ export default function NewOrderPage() {
       },
       lineItems: [{ title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0 }],
       createShipment: false,
-      shipment: { serviceCode: "SP_INLAND_PARCEL", weightGrams: 0 },
+      shipment: { serviceCode: DEFAULT_INDIA_POST_SERVICE, weightGrams: 0 },
     },
   });
 
+  const serviceTouched = useRef(false);
   const items = useFieldArray({ control: form.control, name: "lineItems" });
   // React Hook Form watch() is incompatible with the compiler memoization pass.
   // eslint-disable-next-line react-hooks/incompatible-library -- form.watch subscription
   const billingSame = form.watch("billingSameAsShipping");
   const createShipment = form.watch("createShipment");
+  const paymentStatus = form.watch("paymentStatus");
+  const amountPaid = Number(form.watch("amountPaid") || 0);
+  const lineItemValues = form.watch("lineItems");
+  const selectedService = form.watch("shipment.serviceCode");
+  const orderTotal = (lineItemValues ?? []).reduce(
+    (sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0),
+    0
+  );
+  const collectOnDelivery =
+    paymentStatus === "COD"
+      ? orderTotal
+      : paymentStatus === "PARTIAL"
+        ? Math.max(0, orderTotal - amountPaid)
+        : 0;
+
+  useEffect(() => {
+    if (!serviceOptions.length || serviceTouched.current) return;
+    const preferred = serviceOptions.find((item) => item.isDefault)?.code ?? serviceOptions[0]?.code;
+    if (preferred && form.getValues("shipment.serviceCode") !== preferred) {
+      form.setValue("shipment.serviceCode", preferred);
+    }
+  }, [form, serviceOptions]);
 
   async function onSubmit(values: FormValues) {
     try {
@@ -116,6 +175,7 @@ export default function NewOrderPage() {
           billingSameAsShipping: values.billingSameAsShipping,
           billingAddress: values.billingSameAsShipping ? undefined : values.billingAddress,
           paymentStatus: values.paymentStatus,
+          amountPaid: values.paymentStatus === "PARTIAL" ? Number(values.amountPaid || 0) : undefined,
           lineItems: values.lineItems,
           createShipment: values.createShipment,
           shipment: values.createShipment ? values.shipment : undefined,
@@ -149,9 +209,9 @@ export default function NewOrderPage() {
             <Input {...form.register("orderNumber")} placeholder="PB-1042" />
           </Field>
           <div className="space-y-2">
-            <Label>Payment status</Label>
+            <Label>Payment</Label>
             <Select
-              value={form.watch("paymentStatus")}
+              value={paymentStatus}
               onValueChange={(value) =>
                 form.setValue("paymentStatus", value as FormValues["paymentStatus"])
               }
@@ -162,12 +222,27 @@ export default function NewOrderPage() {
               <SelectContent>
                 {PAYMENT_STATUSES.map((item) => (
                   <SelectItem key={item} value={item}>
-                    {item}
+                    {PAYMENT_STATUS_LABELS[item]}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
+          {paymentStatus === "PARTIAL" ? (
+            <Field
+              label="Amount already paid"
+              hint="The rest is collected on delivery."
+              error={form.formState.errors.amountPaid?.message}
+            >
+              <Input type="number" min={0} step="0.01" {...form.register("amountPaid")} />
+            </Field>
+          ) : null}
+          {paymentStatus === "COD" || paymentStatus === "PARTIAL" ? (
+            <p className="text-sm text-muted md:col-span-2">
+              Collect on delivery: {formatCurrency(collectOnDelivery)}
+              {orderTotal > 0 ? ` of ${formatCurrency(orderTotal)} total` : ""}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -289,8 +364,46 @@ export default function NewOrderPage() {
               <Field label="Height (cm)">
                 <Input type="number" min={0} step="0.1" {...form.register("shipment.heightCm")} />
               </Field>
-              <Field label="Service">
-                <Input {...form.register("shipment.serviceCode")} />
+              <Field
+                label="Service"
+                hint={
+                  indiaPost.isPending
+                    ? "Loading your India Post services…"
+                    : indiaPost.isError
+                      ? "Could not load India Post services."
+                      : (indiaPost.data?.contracts ?? []).some((item) => item.contractId?.trim())
+                        ? undefined
+                        : "Add a contract on India Post settings to show your services."
+                }
+              >
+                <Select
+                  value={selectedService || undefined}
+                  disabled={indiaPost.isPending || serviceOptions.length === 0}
+                  onValueChange={(value) => {
+                    serviceTouched.current = true;
+                    form.setValue("shipment.serviceCode", value);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a service" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {serviceOptions.map((item) => (
+                      <SelectItem key={item.code} value={item.code}>
+                        {item.label}
+                        {item.isDefault ? " (default)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!indiaPost.isPending &&
+                !(indiaPost.data?.contracts ?? []).some((item) => item.contractId?.trim()) ? (
+                  <p className="mt-1 text-xs">
+                    <Link href="/dashboard/integrations/india-post" className="text-brand underline-offset-2 hover:underline">
+                      Open India Post settings
+                    </Link>
+                  </p>
+                ) : null}
               </Field>
             </div>
           ) : null}

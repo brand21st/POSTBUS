@@ -24,6 +24,7 @@ export const createOrderSchema = z.object({
   billingSameAsShipping: z.boolean().optional(),
   billingAddress: addressInput.optional(),
   paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
+  amountPaid: z.coerce.number().min(0).optional(),
   lineItems: z
     .array(
       z.object({
@@ -45,6 +46,23 @@ export const createOrderSchema = z.object({
       serviceCode: z.string().optional(),
     })
     .optional(),
+}).superRefine((value, ctx) => {
+  if (value.paymentStatus !== "PARTIAL") return;
+  const total = value.lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const paid = value.amountPaid ?? 0;
+  if (paid <= 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["amountPaid"],
+      message: "Enter how much the customer already paid.",
+    });
+  } else if (paid >= total && total > 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["amountPaid"],
+      message: "Partial payment must be less than the order total.",
+    });
+  }
 });
 
 export const orderListQuery = z.object({

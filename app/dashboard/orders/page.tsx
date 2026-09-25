@@ -52,7 +52,7 @@ import {
 } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
-import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES } from "@/types/domain";
+import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { BulkOrderStatusResult, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
 
 export default function OrdersPage() {
@@ -465,7 +465,7 @@ export default function OrdersPage() {
           <SelectContent>
             <SelectItem value="all">All payments</SelectItem>
             {PAYMENT_STATUSES.map((item) => (
-              <SelectItem key={item} value={item}>{item}</SelectItem>
+              <SelectItem key={item} value={item}>{PAYMENT_STATUS_LABELS[item]}</SelectItem>
             ))}
           </SelectContent>
         </Select>
