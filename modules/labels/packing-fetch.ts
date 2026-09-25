@@ -1,9 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { officialAddressLines } from "@/modules/labels/official-address";
 import { loadLogoBytes } from "@/modules/labels/packing-data";
-import { renderMerchantLabelPdf, type PackingLabelData, type PackingParty } from "@/modules/labels/packing-pdf";
+import { renderPackingSlipPdf, type PackingLabelData, type PackingParty } from "@/modules/labels/packing-pdf";
 import { getLabelTemplate } from "@/modules/labels/template-service";
-import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import type { LabelTemplate } from "@/modules/labels/template-schema";
 
 export type PackingPartyInput = {
@@ -82,6 +81,42 @@ export function packingParty(input: PackingPartyInput, role: "receiver" | "sende
   };
 }
 
+export function packingMerchantFromOrganization(org?: {
+  name?: string | null;
+  phone?: string | null;
+  line1?: string | null;
+  line2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
+} | null): PackingPartyInput {
+  return {
+    name: org?.name ?? null,
+    phone: org?.phone ?? null,
+    line1: org?.line1 ?? null,
+    line2: org?.line2 ?? null,
+    city: org?.city ?? null,
+    state: org?.state ?? null,
+    pincode: org?.pincode ?? null,
+  };
+}
+
+export function packingCustomerFromShopifyAddress(
+  shopifyAddress: Record<string, unknown> | null,
+  customer: Record<string, unknown> | null
+): PackingPartyInput {
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  return {
+    name: String(shopifyAddress?.name || customer?.name || "").trim() || null,
+    line1: text(shopifyAddress?.line1) ?? text(shopifyAddress?.address1),
+    line2: text(shopifyAddress?.line2) ?? text(shopifyAddress?.address2),
+    city: text(shopifyAddress?.city),
+    state: text(shopifyAddress?.state) ?? text(shopifyAddress?.province),
+    pincode: text(shopifyAddress?.pincode) ?? text(shopifyAddress?.zip),
+    phone: String(shopifyAddress?.phone || customer?.phone || "").trim() || null,
+  };
+}
+
 export async function fetchPackingSlipPdf(
   supabase: SupabaseClient,
   organizationId: string,
@@ -90,7 +125,7 @@ export async function fetchPackingSlipPdf(
   const { data: shipment } = await supabase
     .from("shipments")
     .select(
-      "id, order_id, payment_mode, cod_amount, orders(id, order_number, source_order_id, payment_status, subtotal, discount, shipping_amount, total_amount, metadata), customers(name, phone), addresses:shipping_address_id(*)"
+      "id, order_id, payment_mode, cod_amount, orders(id, order_number, source_order_id, created_at, payment_status, subtotal, discount, shipping_amount, total_amount, metadata, shipping_address:addresses!shipping_address_id(*), billing_address:addresses!billing_address_id(*)), customers(name, phone), addresses:shipping_address_id(*)"
     )
     .eq("id", shipmentId)
     .eq("organization_id", organizationId)
@@ -101,27 +136,10 @@ export async function fetchPackingSlipPdf(
 
   const order = asRecord(shipment.orders);
   const customer = asRecord(shipment.customers);
-  const address = asRecord(shipment.addresses);
-  const receiver = packingParty(
-    {
-      name: String(address?.name || customer?.name || "").trim() || null,
-      line1: typeof address?.line1 === "string" ? address.line1 : null,
-      line2: typeof address?.line2 === "string" ? address.line2 : null,
-      city: typeof address?.city === "string" ? address.city : null,
-      state: typeof address?.state === "string" ? address.state : null,
-      pincode: typeof address?.pincode === "string" ? address.pincode : null,
-      phone: String(address?.phone || customer?.phone || "").trim() || null,
-    },
-    "receiver"
-  );
+  const shopifyShipping =
+    asRecord(order?.shipping_address) ?? asRecord(shipment.addresses);
+  const receiver = packingParty(packingCustomerFromShopifyAddress(shopifyShipping, customer), "receiver");
 
-  const { data: pickup } = await supabase
-    .from("pickup_locations")
-    .select("*")
-    .eq("organization_id", organizationId)
-    .order("is_default", { ascending: false })
-    .limit(1)
-    .maybeSingle();
   const { data: org } = await supabase
     .from("organizations")
     .select("name, phone, line1, line2, city, state, pincode, logo_path")
@@ -133,19 +151,7 @@ export async function fetchPackingSlipPdf(
     .eq("organization_id", organizationId)
     .maybeSingle();
 
-  const senderIdentity = organizationLabelSender(org, pickup, shop?.shop_name);
-  const sender = packingParty(
-    {
-      name: senderIdentity.name,
-      line1: senderIdentity.line1,
-      line2: senderIdentity.line2,
-      city: senderIdentity.city,
-      state: senderIdentity.state,
-      pincode: senderIdentity.pincode,
-      phone: senderIdentity.phone,
-    },
-    "sender"
-  );
+  const sender = packingParty(packingMerchantFromOrganization(org), "sender");
 
   const orderId = String(order?.id || shipment.order_id || "");
   const { data: lineRows } = orderId
@@ -174,6 +180,7 @@ export async function fetchPackingSlipPdf(
     storeWebsite: String(shop?.shop_domain || shop?.shop_name || ""),
     orderNumber: String(order?.order_number || ""),
     shopifyOrderNumber: String(order?.source_order_id || ""),
+    orderDate: formatPackingDate(order?.created_at),
     items,
     subtotal: moneyNumber(order?.subtotal),
     shipping: moneyNumber(order?.shipping_amount),
@@ -189,8 +196,16 @@ export async function fetchPackingSlipPdf(
     logoMime: logo?.mime ?? null,
   };
 
-  const pdf = await renderMerchantLabelPdf(template, data);
+  const pdf = await renderPackingSlipPdf(data);
   return { pdf: Buffer.from(pdf), shipmentId: String(shipment.id), template };
+}
+
+function formatPackingDate(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
 
 export type PackingSlipResult = {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchPackingSlipPdf, packingParty } from "@/modules/labels/packing-fetch";
+import { fetchPackingSlipPdf, packingCustomerFromShopifyAddress, packingMerchantFromOrganization, packingParty } from "@/modules/labels/packing-fetch";
 
 const goodAddress = {
   name: "Priya Nair",
@@ -60,6 +60,7 @@ function client(overrides?: {
             shipping_amount: 0,
             total_amount: 799,
             metadata: {},
+            shipping_address: address,
           },
           customers: { name: "Priya Nair", phone: overrides?.customerPhone ?? "9876501234" },
           addresses: address,
@@ -109,6 +110,36 @@ describe("packingParty", () => {
   });
 });
 
+describe("packing address sources", () => {
+  it("takes the merchant FROM address only from Organization", () => {
+    const sender = packingParty(packingMerchantFromOrganization(goodOrg), "sender");
+    expect(sender.name).toBe("Sample Store");
+    expect(sender.lines.join(" ")).toContain("12 Market Road");
+    expect(sender.lines.join(" ")).toContain("Kochi");
+    expect(sender.lines.join(" ")).toMatch(/682311/);
+  });
+
+  it("takes SHIP TO from the Shopify shipping address", () => {
+    const receiver = packingParty(
+      packingCustomerFromShopifyAddress(
+        {
+          name: "Priya Nair",
+          address1: "14 Lake View",
+          city: "Ernakulam",
+          province: "Kerala",
+          zip: "682016",
+          phone: "9876501234",
+        },
+        { name: "Other", phone: "9000000000" }
+      ),
+      "receiver"
+    );
+    expect(receiver.name).toBe("Priya Nair");
+    expect(receiver.lines.join(" ")).toContain("14 Lake View");
+    expect(receiver.phone).toBe("9876501234");
+  });
+});
+
 describe("fetchPackingSlipPdf", () => {
   it("renders a packing slip from a stored Shopify shipping address", async () => {
     const result = await fetchPackingSlipPdf(client() as never, "org-1", "ship-1");
@@ -125,5 +156,11 @@ describe("fetchPackingSlipPdf", () => {
     );
     expect(result.shipmentId).toBe("ship-1");
     expect(Buffer.from(result.pdf).subarray(0, 4).toString()).toBe("%PDF");
+  });
+
+  it("does not read pickup locations for the merchant address", async () => {
+    const supabase = client() as never;
+    await fetchPackingSlipPdf(supabase, "org-1", "ship-1");
+    expect(supabase.from).not.toHaveBeenCalledWith("pickup_locations");
   });
 });

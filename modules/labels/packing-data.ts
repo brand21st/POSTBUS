@@ -7,6 +7,7 @@ export const SAMPLE_PACKING_DATA: PackingLabelData = {
   storeWebsite: "samplestore.myshopify.com",
   orderNumber: "12345",
   shopifyOrderNumber: "1001",
+  orderDate: "2 October 2018",
   items: [
     { title: "Cotton Shirt", sku: "SHIRT-BLK", quantity: 2, unitPrice: 799 },
     { title: "Black Jeans", sku: "JEAN-BLK", quantity: 1, unitPrice: 999 },
@@ -28,6 +29,11 @@ export const SAMPLE_PACKING_DATA: PackingLabelData = {
     name: "Sample Store",
     phone: "9876543210",
     lines: ["12 Market Road", "Kochi, Kerala", "- 682311"],
+  },
+  billing: {
+    name: "Priya Nair",
+    phone: "9876501234",
+    lines: ["14 Lake View", "Ernakulam, Kerala", "- 682016"],
   },
   logoBytes: null,
   logoMime: null,

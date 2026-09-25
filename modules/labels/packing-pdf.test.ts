@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { renderMerchantLabelPdf } from "@/modules/labels/packing-pdf";
+import { renderMerchantLabelPdf, renderPackingSlipPdf } from "@/modules/labels/packing-pdf";
 import { SAMPLE_PACKING_DATA } from "@/modules/labels/packing-data";
 import { PAGE_PRESETS, officialDrawRect } from "@/modules/labels/page-presets";
 import { applyPaperSize, defaultLabelTemplate, parseLabelTemplate } from "@/modules/labels/template-schema";
@@ -80,5 +80,17 @@ describe("merchant packing PDF", () => {
       expect(Math.round(page.getSize().width)).toBe(Math.round(preset.widthPt));
       expect(Math.round(page.getSize().height)).toBe(Math.round(preset.heightPt));
     }
+  });
+});
+
+describe("professional packing slip", () => {
+  it("renders an A4 packing slip with ship, items, and totals", async () => {
+    const bytes = await renderPackingSlipPdf(SAMPLE_PACKING_DATA);
+    const pdf = await PDFDocument.load(bytes);
+    const page = pdf.getPages()[0];
+    const size = page.getSize();
+    expect(Math.round(size.width)).toBe(595);
+    expect(Math.round(size.height)).toBe(842);
+    expect(Buffer.from(bytes).subarray(0, 4).toString()).toBe("%PDF");
   });
 });
