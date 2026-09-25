@@ -7,6 +7,7 @@ import { IndiaPostLogo } from "@/components/brand/india-post-logo";
 import { ShopifyLogo } from "@/components/brand/shopify-logo";
 import { WatiLogo } from "@/components/brand/wati-logo";
 import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
+import { ShopifyWatchTutorialLink } from "@/components/integrations/shopify-watch-tutorial-link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -120,6 +121,9 @@ export default function IntegrationsPage() {
                       </CardTitle>
                       {description ? (
                         <CardDescription className="mt-1">{description}</CardDescription>
+                      ) : null}
+                      {card.provider === "SHOPIFY" ? (
+                        <ShopifyWatchTutorialLink className="mt-2" />
                       ) : null}
                     </div>
                     <StatusBadge value={comingLater ? "COMING_LATER" : card.status ?? "NOT_CONNECTED"} />

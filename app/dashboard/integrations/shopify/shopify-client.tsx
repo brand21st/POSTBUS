@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
+import { ShopifyWatchTutorialLink } from "@/components/integrations/shopify-watch-tutorial-link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -137,6 +138,8 @@ export default function ShopifyIntegrationPage() {
         description="Paste Client ID and Client secret from Shopify Dev Dashboard → Apps → Settings → Credentials."
         actions={<StatusBadge value={status} />}
       />
+
+      <ShopifyWatchTutorialLink />
 
       <Card>
         <CardHeader>
