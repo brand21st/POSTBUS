@@ -8,7 +8,8 @@ import { siteConfig } from "@/lib/site-config";
 export const metadata: Metadata = {
   title: "Contact",
   description:
-    "Get started with PostBus, book a demo, or ask about Shopify shipping automation for India.",
+    "Get started with PostBus, book a demo, or ask about Shopify India Post shipping automation and India Post Shopify integration.",
+  keywords: [...siteConfig.keywords],
   alternates: { canonical: "/contact" },
 };
 

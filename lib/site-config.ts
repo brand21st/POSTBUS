@@ -1,9 +1,10 @@
 export const siteConfig = {
   name: "PostBus",
   legalName: "PostBus",
-  tagline: "Shopify Shipping Automation for India",
+  tagline: "Shopify India Post Shipping Automation",
+  seoTitle: "Shopify India Post Shipping Automation | PostBus",
   description:
-    "PostBus helps Shopify merchants automate shipping operations — from order sync and shipment booking to labels, manifests, tracking and fulfillment.",
+    "Automate Shopify India Post shipping with PostBus. Sync orders, book shipments, generate labels, automate fulfillment, track deliveries and send WhatsApp updates.",
   url: "https://postbus.in",
   contactEmail: "hello@postbus.in",
   supportWhatsapp: "918848772371",
@@ -11,14 +12,14 @@ export const siteConfig = {
   getStartedUrl: "/register",
   bookDemoUrl: "/contact?intent=demo",
   keywords: [
+    "Shopify India Post",
+    "India Post Shopify integration",
     "Shopify shipping automation",
-    "India Post shipping",
-    "Shopify India shipping",
-    "shipment booking",
-    "shipping labels",
-    "manifest generation",
-    "order fulfillment",
-    "PostBus",
+    "India Post shipping automation",
+    "India Post booking Shopify",
+    "Shopify India Post shipping",
+    "India Post API Shopify",
+    "Shopify shipping India",
   ],
 } as const;
 

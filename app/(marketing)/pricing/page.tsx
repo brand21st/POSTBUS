@@ -4,11 +4,14 @@ import { Container } from "@/components/ui/container";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PricingToggle } from "@/app/(marketing)/pricing/pricing-toggle";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { siteConfig } from "@/lib/site-config";
 import { mapPlan, type PlanRow } from "@/modules/billing/subscriptions";
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "PostBus plans for Shopify shipping automation — Starter, Pro, and Business with monthly or yearly billing.",
+  description:
+    "PostBus plans for Shopify India Post shipping automation — Starter, Pro, and Business with monthly or yearly billing.",
+  keywords: [...siteConfig.keywords],
   alternates: { canonical: "/pricing" },
 };
 

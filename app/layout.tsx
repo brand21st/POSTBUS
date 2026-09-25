@@ -18,7 +18,7 @@ const geistSans = Geist({
 export const metadata: Metadata = {
   metadataBase: new URL(siteConfig.url),
   title: {
-    default: `${siteConfig.name} — ${siteConfig.tagline}`,
+    default: siteConfig.seoTitle,
     template: `%s · ${siteConfig.name}`,
   },
   description: siteConfig.description,
@@ -33,12 +33,12 @@ export const metadata: Metadata = {
     locale: "en_IN",
     url: siteConfig.url,
     siteName: siteConfig.name,
-    title: `${siteConfig.name} — ${siteConfig.tagline}`,
+    title: siteConfig.seoTitle,
     description: siteConfig.description,
   },
   twitter: {
     card: "summary_large_image",
-    title: `${siteConfig.name} — ${siteConfig.tagline}`,
+    title: siteConfig.seoTitle,
     description: siteConfig.description,
   },
   robots: {
@@ -51,10 +51,12 @@ const jsonLd = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   name: siteConfig.name,
+  alternateName: siteConfig.tagline,
   applicationCategory: "BusinessApplication",
   operatingSystem: "Web",
   url: siteConfig.url,
   description: siteConfig.description,
+  keywords: siteConfig.keywords.join(", "),
   offers: {
     "@type": "Offer",
     url: `${siteConfig.url}/pricing`,

@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "PostBus — Shopify Shipping Automation for India";
+export const alt = "Shopify India Post Shipping Automation | PostBus";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -57,10 +57,10 @@ export default function OpenGraphImage() {
               maxWidth: 900,
             }}
           >
-            Ship every Shopify order. Automatically.
+            Shopify India Post shipping automation
           </div>
           <div style={{ color: "#A1A1AA", fontSize: 28, maxWidth: 780 }}>
-            Shipping automation for Shopify merchants in India.
+            Sync orders, book shipments, generate labels, track deliveries and send WhatsApp updates.
           </div>
         </div>
         <div style={{ color: "#E11D48", fontSize: 22, fontWeight: 600 }}>postbus.in</div>

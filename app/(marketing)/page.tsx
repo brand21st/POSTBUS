@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { AutomationSection } from "@/components/landing/automation-section";
 import { AutomationShowcase } from "@/components/landing/automation-showcase";
 import { Benefits } from "@/components/landing/benefits";
@@ -14,6 +15,16 @@ import { SecuritySection } from "@/components/landing/security-section";
 import { ShopifySection } from "@/components/landing/shopify-section";
 import { TrustedIntegrations } from "@/components/landing/trusted-integrations";
 import { Workflow } from "@/components/landing/workflow";
+import { siteConfig } from "@/lib/site-config";
+
+export const metadata: Metadata = {
+  title: {
+    absolute: siteConfig.seoTitle,
+  },
+  description: siteConfig.description,
+  keywords: [...siteConfig.keywords],
+  alternates: { canonical: "/" },
+};
 
 export default function HomePage() {
   return (

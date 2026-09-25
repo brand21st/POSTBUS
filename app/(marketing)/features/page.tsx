@@ -21,7 +21,8 @@ import { cn } from "@/lib/utils";
 export const metadata: Metadata = {
   title: "Features",
   description:
-    "Explore PostBus features for Shopify order sync, India Post booking, bulk shipping, labels, manifests, tracking and automation.",
+    "Shopify India Post shipping automation features: order sync, India Post booking, labels, fulfillment, tracking and WhatsApp updates.",
+  keywords: [...siteConfig.keywords],
   alternates: { canonical: "/features" },
 };
 

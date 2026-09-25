@@ -12,7 +12,7 @@ import { SectionHeading } from "@/components/ui/section-heading";
 const faqs = [
   {
     q: "What is PostBus?",
-    a: "PostBus is a shipping automation platform for Shopify merchants in India. It helps you move from Shopify order to shipment booking, labels, manifests, tracking and fulfillment in one workflow.",
+    a: "PostBus is Shopify India Post shipping automation for merchants in India. Sync orders, book shipments through the India Post API, generate labels, automate fulfillment, track deliveries and send WhatsApp updates.",
   },
   {
     q: "How does PostBus work with Shopify?",

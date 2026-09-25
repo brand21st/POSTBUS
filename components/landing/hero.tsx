@@ -15,7 +15,7 @@ export function Hero() {
         <div className="grid items-center gap-12 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14">
           <div>
             <p className="mb-5 inline-flex items-center rounded-full border border-brand/15 bg-brand/[0.06] px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-brand">
-              Ship smarter with PostBus
+              Shopify India Post shipping automation
             </p>
             <h1 className="hero-title text-ink text-balance">
               Ship Every Shopify Order.
@@ -23,9 +23,9 @@ export function Hero() {
               <span className="text-brand">Automatically.</span>
             </h1>
             <p className="mt-6 max-w-xl text-pretty text-lg leading-relaxed text-muted sm:text-xl">
-              Connect your Shopify store and India Post account once. PostBus handles
-              shipment booking, labels, manifests, tracking and fulfillment from one
-              simple platform.
+              Automate Shopify India Post shipping with PostBus. Sync orders, book
+              shipments, generate labels, automate fulfillment, track deliveries and
+              send WhatsApp updates.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
               <Link
@@ -49,7 +49,7 @@ export function Hero() {
               </Link>
             </div>
             <p className="mt-5 text-sm font-medium text-muted">
-              Built for Indian Shopify merchants
+              India Post Shopify integration for merchants shipping in India
             </p>
           </div>
 
