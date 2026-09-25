@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Workflow } from "lucide-react";
 import { toast } from "sonner";
+import { PlanLock } from "@/components/billing/plan-lock";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AutoLabelPrintingCard } from "@/components/dashboard/auto-label-printing-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +14,9 @@ import { Switch } from "@/components/ui/switch";
 import { boolField } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
+import { automationToggleLock } from "@/modules/billing/entitlements";
 import type { AutomationSettings } from "@/types/api";
 import type { MemberRole } from "@/types/domain";
 
@@ -101,6 +105,8 @@ const TOGGLES = [
 export default function AutomationPage() {
   const queryClient = useQueryClient();
   const me = useMe();
+  const entitlements = usePlanEntitlements();
+  const [lock, setLock] = useState<{ camel: string; feature: string } | null>(null);
   const canManage = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "automation.manage");
 
   const query = useQuery({
@@ -158,8 +164,16 @@ export default function AutomationPage() {
         <div className="space-y-3">
           {TOGGLES.map((item) => {
             const checked = boolField(query.data as Record<string, unknown>, item.camel, item.snake);
+            const lockedFeature = lock?.camel === item.camel ? lock.feature : null;
             return (
-              <Card key={item.camel}>
+              <PlanLock
+                key={item.camel}
+                compact
+                locked={Boolean(lockedFeature)}
+                feature={lockedFeature}
+                onDismiss={() => setLock(null)}
+              >
+                <Card>
                 <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
                   <div>
                     <CardTitle>{item.title}</CardTitle>
@@ -168,7 +182,14 @@ export default function AutomationPage() {
                   <Switch
                     checked={checked}
                     disabled={!canManage || mutation.isPending}
-                    onCheckedChange={(value) => mutation.mutate({ [item.camel]: value })}
+                    onCheckedChange={(value) => {
+                      const feature = automationToggleLock(item.camel, entitlements.allows);
+                      if (feature) {
+                        setLock({ camel: item.camel, feature });
+                        return;
+                      }
+                      mutation.mutate({ [item.camel]: value });
+                    }}
                   />
                 </CardHeader>
                 {item.camel === "autoLabelPrinting" ? (
@@ -178,7 +199,8 @@ export default function AutomationPage() {
                     Workers skip this step when the related integration is not connected.
                   </CardContent>
                 )}
-              </Card>
+                </Card>
+              </PlanLock>
             );
           })}
         </div>

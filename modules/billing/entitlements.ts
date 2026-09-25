@@ -51,7 +51,6 @@ export const UPGRADE_PLAN_MESSAGE = "This feature is on a higher plan. Upgrade t
 
 const NAV_FEATURES: Array<{ href: string; feature: string }> = [
   { href: "/dashboard/analytics", feature: FEATURE.analytics },
-  { href: "/dashboard/automation", feature: FEATURE.automation },
   { href: "/dashboard/manifests", feature: FEATURE.manifests },
   { href: "/dashboard/labels/customize", feature: FEATURE.packing },
   { href: "/dashboard/integrations/wati", feature: FEATURE.wati },
@@ -88,6 +87,22 @@ export function expandPlanFeatures(
 
 export function hasPlanFeature(features: string[] | null | undefined, feature: string) {
   return (features ?? []).includes(feature);
+}
+
+export function automationToggleLock(camel: string, allows: (feature: string) => boolean): string | null {
+  if (!allows(FEATURE.automation)) return FEATURE.automation;
+  if (camel.startsWith("autoWati") && !allows(FEATURE.wati)) return FEATURE.wati;
+  if (camel === "autoManifest" && !allows(FEATURE.manifests)) return FEATURE.manifests;
+  if ((camel === "autoShopifySync" || camel === "autoShopifyFulfillment") && !allows(FEATURE.shopify)) {
+    return FEATURE.shopify;
+  }
+  if (
+    (camel === "autoBooking" || camel === "autoTrackingSync" || camel === "autoLabelGeneration") &&
+    !allows(FEATURE.indiaPost)
+  ) {
+    return FEATURE.indiaPost;
+  }
+  return null;
 }
 
 export function lockedFeatureForPath(pathname: string): string | null {

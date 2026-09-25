@@ -4,6 +4,7 @@ import {
   FEATURE,
   PRO_FEATURES,
   STARTER_FEATURES,
+  automationToggleLock,
   expandPlanFeatures,
   lockedFeatureForApi,
   lockedFeatureForPath,
@@ -30,6 +31,7 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForPath("/dashboard/labels/customize")).toBe(FEATURE.packing);
     expect(lockedFeatureForPath("/dashboard/orders")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/integrations")).toBeNull();
+    expect(lockedFeatureForPath("/dashboard/automation")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/integrations/wati")).toBe(FEATURE.wati);
   });
 
@@ -39,5 +41,14 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForApi("GET", "automation", ["automation"])).toBeNull();
     expect(lockedFeatureForApi("PATCH", "automation", ["automation"])).toBe(FEATURE.automation);
     expect(lockedFeatureForApi("POST", "integrations/shopify", ["integrations", "shopify"])).toBe(FEATURE.shopify);
+  });
+
+  it("locks automation toggles until the matching plan feature is included", () => {
+    const starter = (feature: string) => STARTER_FEATURES.includes(feature as (typeof STARTER_FEATURES)[number]);
+    const pro = (feature: string) => PRO_FEATURES.includes(feature as (typeof PRO_FEATURES)[number]);
+    expect(automationToggleLock("autoShopifySync", starter)).toBe(FEATURE.automation);
+    expect(automationToggleLock("autoWatiBooked", pro)).toBe(FEATURE.wati);
+    expect(automationToggleLock("autoManifest", pro)).toBeNull();
+    expect(automationToggleLock("autoLabelPrinting", pro)).toBeNull();
   });
 });
