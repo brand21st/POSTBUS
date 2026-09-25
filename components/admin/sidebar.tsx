@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Logo } from "@/components/layout/logo";
+import { AdminAccountMenu } from "@/components/admin/account-menu";
 import { adminNav } from "@/lib/admin/nav";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +36,9 @@ export function AdminSidebar() {
           );
         })}
       </nav>
+      <div className="border-t border-border p-3">
+        <AdminAccountMenu />
+      </div>
     </aside>
   );
 }

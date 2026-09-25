@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AdminSidebar } from "@/components/admin/sidebar";
+import { AdminAccountMenu } from "@/components/admin/account-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError } from "@/lib/hooks/use-api";
 import { useEffect } from "react";
@@ -53,8 +54,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <AdminSidebar />
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 items-center border-b border-border bg-card px-4 md:hidden">
+        <header className="flex h-16 items-center justify-between border-b border-border bg-card px-4 md:hidden">
           <span className="font-semibold text-ink">PostBus Admin</span>
+          <AdminAccountMenu compact />
         </header>
         <main className="flex-1 px-4 py-6 lg:px-8 lg:py-8">{children}</main>
       </div>
