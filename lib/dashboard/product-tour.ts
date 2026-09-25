@@ -1,9 +1,6 @@
 import { driver, type DriveStep, type Driver } from "driver.js";
 import "driver.js/dist/driver.css";
 
-export const PRODUCT_TOUR_EVENT = "postbus:start-product-tour";
-export const PRODUCT_TOUR_REPLAY_KEY = "postbus.tour.dashboard.replay";
-
 const STORAGE_PREFIX = "postbus.tour.dashboard.v1:";
 
 const STEP_DEFS: DriveStep[] = [
@@ -77,7 +74,7 @@ const STEP_DEFS: DriveStep[] = [
     element: "[data-tour='recent-orders']",
     popover: {
       title: "Recent orders",
-      description: "Open an order for details, or select rows to book. You can replay this tour anytime from Product tour.",
+      description: "Open an order for details, or select rows to book.",
     },
   },
 ];
@@ -103,15 +100,6 @@ export function markDashboardTourComplete(userId: string) {
   } catch {
     // private mode / blocked storage should not block the overlay from closing
   }
-}
-
-export function requestDashboardTour() {
-  try {
-    window.sessionStorage.setItem(PRODUCT_TOUR_REPLAY_KEY, "1");
-  } catch {
-    // still dispatch so a listener on /dashboard can start immediately
-  }
-  window.dispatchEvent(new Event(PRODUCT_TOUR_EVENT));
 }
 
 function isHighlightableEl(el: HTMLElement) {
@@ -151,8 +139,8 @@ export function destroyDashboardTour() {
   persistOnDestroy = true;
 }
 
-export function startDashboardTour(options: { userId: string; force?: boolean }) {
-  if (!options.force && hasCompletedDashboardTour(options.userId)) return;
+export function startDashboardTour(options: { userId: string }) {
+  if (hasCompletedDashboardTour(options.userId)) return;
 
   destroyDashboardTour();
 
@@ -160,6 +148,7 @@ export function startDashboardTour(options: { userId: string; force?: boolean })
   if (steps.length === 0) return;
 
   const userId = options.userId;
+  markDashboardTourComplete(userId);
   active = driver({
     steps,
     showProgress: true,
