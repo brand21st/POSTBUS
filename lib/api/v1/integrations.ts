@@ -24,6 +24,8 @@ import {
   shopifyWebhookUrl,
   SHOPIFY_OAUTH_STATE_COOKIE,
   storedClientId,
+  shouldDisconnectShopifyOnCredentialChange,
+  SHOPIFY_CREDENTIAL_DISCONNECT_PATCH,
   verifyShopifyHmac,
 } from "@/modules/shopify/oauth";
 import { shopifyReadyToSync, syncUnfulfilledShopifyOrders } from "@/modules/shopify/orders";
@@ -57,7 +59,7 @@ export async function handleIntegrationRoutes(
     return {
       shopify: {
         provider: "shopify",
-        status: shopifyConfigured ? shopify?.status ?? "NOT_CONNECTED" : "NOT_CONNECTED",
+        status: shopify?.status ?? "NOT_CONNECTED",
         shopDomain: shopify?.shop_domain ?? "",
         lastSyncAt: shopify?.last_sync_at,
         lastError: shopify?.last_error,
@@ -80,7 +82,7 @@ export async function handleIntegrationRoutes(
         {
           provider: "shopify",
           name: "Shopify",
-          status: shopifyConfigured ? shopify?.status ?? "NOT_CONNECTED" : "NOT_CONNECTED",
+          status: shopify?.status ?? "NOT_CONNECTED",
           appConfigured: shopifyConfigured,
           readyToSync: shopifySyncReady,
         },
@@ -145,17 +147,25 @@ export async function handleIntegrationRoutes(
     if (!hasStoredClientSecret(existing) && !incomingSecret) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Provide the Shopify Client secret.");
     }
+    const disconnectStore = shouldDisconnectShopifyOnCredentialChange(existing, {
+      shopDomain,
+      clientId,
+      incomingSecret,
+    });
     const payload: Record<string, unknown> = {
       organization_id: ctx.organizationId,
       shop_domain: shopDomain,
       client_id: clientId,
       requested_scopes: body.requestedScopes ?? body.requested_scopes ?? existing?.requested_scopes ?? env.shopifyScopes,
-      status: existing?.status ?? "NOT_CONNECTED",
+      status: disconnectStore ? "DISCONNECTED" : existing?.status ?? "NOT_CONNECTED",
     };
     if (incomingSecret) {
       const currentSecret = existing?.encrypted_client_secret || existing?.encrypted_api_secret;
       if (currentSecret) payload.encrypted_previous_client_secret = currentSecret;
       payload.encrypted_client_secret = encryptSecret(incomingSecret);
+    }
+    if (disconnectStore) {
+      Object.assign(payload, SHOPIFY_CREDENTIAL_DISCONNECT_PATCH);
     }
 
     const query = existing
@@ -166,14 +176,14 @@ export async function handleIntegrationRoutes(
     await supabase.from("audit_logs").insert({
       organization_id: ctx.organizationId,
       actor_id: ctx.userId,
-      action: "shopify.credentials_saved",
+      action: disconnectStore ? "shopify.store_disconnected" : "shopify.credentials_saved",
       entity_type: "shopify_connection",
       entity_id: data.id,
     });
     const creds = resolveShopifyAppCredentials(data);
     const savedClientId = storedClientId(data);
     const hasSecret = hasStoredClientSecret(data);
-    if (shopifyReadyToSync(data)) {
+    if (!disconnectStore && shopifyReadyToSync(data)) {
       void syncUnfulfilledShopifyOrders(supabase, {
         organizationId: ctx.organizationId,
         userId: ctx.userId,
@@ -185,6 +195,7 @@ export async function handleIntegrationRoutes(
     }
     return {
       saved: true,
+      disconnected: disconnectStore,
       status: data.status,
       shopDomain: data.shop_domain,
       clientId: savedClientId,
@@ -194,6 +205,64 @@ export async function handleIntegrationRoutes(
       requestedScopes: data.requested_scopes || env.shopifyScopes,
       webhookUrl: shopifyWebhookUrl(),
       appConfigured: Boolean(creds),
+      lastError: data.last_error,
+    };
+  }
+
+  if (key === "DELETE integrations/shopify") {
+    const { data: existing } = await supabase
+      .from("shopify_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!existing) {
+      return {
+        deleted: true,
+        disconnected: false,
+        status: "NOT_CONNECTED",
+        shopDomain: "",
+        clientId: "",
+        hasClientSecret: false,
+        hasApiKey: false,
+        hasApiSecret: false,
+        appConfigured: false,
+      };
+    }
+    const { data, error } = await supabase
+      .from("shopify_connections")
+      .update({
+        ...SHOPIFY_CREDENTIAL_DISCONNECT_PATCH,
+        client_id: null,
+        encrypted_client_secret: null,
+        encrypted_previous_client_secret: null,
+        encrypted_api_key: null,
+        encrypted_api_secret: null,
+        encrypted_access_token: null,
+      })
+      .eq("id", existing.id)
+      .select()
+      .single();
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "shopify.credentials_deleted",
+      entity_type: "shopify_connection",
+      entity_id: data.id,
+    });
+    return {
+      deleted: true,
+      disconnected: true,
+      status: data.status,
+      shopDomain: data.shop_domain,
+      clientId: "",
+      hasClientSecret: false,
+      hasApiKey: false,
+      hasApiSecret: false,
+      requestedScopes: data.requested_scopes || env.shopifyScopes,
+      webhookUrl: shopifyWebhookUrl(),
+      appConfigured: false,
+      lastError: data.last_error,
     };
   }
 

@@ -6,6 +6,8 @@ import {
   normalizeShopDomain,
   oauthStateMatches,
   parseShopifyOAuthState,
+  pickShopifyConnectionForShop,
+  shouldDisconnectShopifyOnCredentialChange,
   resolveShopifyAppCredentials,
   resolveShopifyWebhookSecrets,
   shopifyAppConfiguredFor,
@@ -61,8 +63,60 @@ describe("shopify oauth hmac", () => {
 
 describe("shopify credential helpers", () => {
   it("normalizes shop domains", () => {
-    expect(normalizeShopDomain("https://demo.myshopify.com/")).toBe("demo.myshopify.com");
+    expect(normalizeShopDomain("https://Demo.myshopify.com/")).toBe("demo.myshopify.com");
     expect(normalizeShopDomain("demo.myshopify.com")).toBe("demo.myshopify.com");
+  });
+
+  it("disconnects a connected store when Client ID, secret, or shop changes", () => {
+    const connected = {
+      status: "CONNECTED",
+      shop_domain: "demo.myshopify.com",
+      client_id: "client-a",
+    };
+    expect(
+      shouldDisconnectShopifyOnCredentialChange(connected, {
+        shopDomain: "demo.myshopify.com",
+        clientId: "client-a",
+      })
+    ).toBe(false);
+    expect(
+      shouldDisconnectShopifyOnCredentialChange(connected, {
+        shopDomain: "other.myshopify.com",
+        clientId: "client-a",
+      })
+    ).toBe(true);
+    expect(
+      shouldDisconnectShopifyOnCredentialChange(connected, {
+        shopDomain: "demo.myshopify.com",
+        clientId: "client-b",
+      })
+    ).toBe(true);
+    expect(
+      shouldDisconnectShopifyOnCredentialChange(connected, {
+        shopDomain: "demo.myshopify.com",
+        clientId: "client-a",
+        incomingSecret: "new-secret",
+      })
+    ).toBe(true);
+    expect(
+      shouldDisconnectShopifyOnCredentialChange(
+        { ...connected, status: "NOT_CONNECTED" },
+        { shopDomain: "demo.myshopify.com", clientId: "client-b" }
+      )
+    ).toBe(false);
+  });
+
+  it("routes a shop webhook to the connected workspace", () => {
+    expect(
+      pickShopifyConnectionForShop(
+        [
+          { shop_domain: "other.myshopify.com", status: "CONNECTED" },
+          { shop_domain: "https://Demo.myshopify.com/", status: "DISCONNECTED" },
+          { shop_domain: "demo.myshopify.com", status: "CONNECTED" },
+        ],
+        "Demo.myshopify.com"
+      )
+    ).toEqual({ shop_domain: "demo.myshopify.com", status: "CONNECTED" });
   });
 
   it("prefers Client ID and encrypted Client secret from the connection row", () => {

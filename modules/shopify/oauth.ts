@@ -61,8 +61,37 @@ export function shopifyAppConfiguredFor(row?: ShopifyCredentialRow | null) {
 }
 
 export function normalizeShopDomain(shop: string) {
-  return shop.replace(/^https?:\/\//, "").replace(/\/$/, "").trim();
+  return shop.replace(/^https?:\/\//, "").replace(/\/$/, "").trim().toLowerCase();
 }
+
+export function pickShopifyConnectionForShop<T extends { shop_domain?: string | null; status?: string | null }>(
+  rows: T[] | null | undefined,
+  shop: string
+) {
+  const domain = normalizeShopDomain(shop);
+  const matches = (rows ?? []).filter((row) => normalizeShopDomain(String(row.shop_domain || "")) === domain);
+  return matches.find((row) => String(row.status || "").toUpperCase() === "CONNECTED") ?? matches[0] ?? null;
+}
+
+export function isShopifyConnected(status?: string | null) {
+  return String(status || "").toUpperCase() === "CONNECTED";
+}
+
+export function shouldDisconnectShopifyOnCredentialChange(
+  existing: (ShopifyCredentialRow & { status?: string | null; shop_domain?: string | null }) | null | undefined,
+  next: { shopDomain: string; clientId: string; incomingSecret?: string }
+) {
+  if (!isShopifyConnected(existing?.status)) return false;
+  if (normalizeShopDomain(String(existing?.shop_domain || "")) !== normalizeShopDomain(next.shopDomain)) return true;
+  if (storedClientId(existing) !== next.clientId.trim()) return true;
+  return Boolean(next.incomingSecret?.trim());
+}
+
+export const SHOPIFY_CREDENTIAL_DISCONNECT_PATCH = {
+  status: "DISCONNECTED",
+  encrypted_access_token: null,
+  last_error: null,
+} as const;
 
 export function shopifyInstallUrl(shop: string, state: string, creds: Pick<ShopifyAppCredentials, "clientId" | "scopes">) {
   if (!creds.clientId) {

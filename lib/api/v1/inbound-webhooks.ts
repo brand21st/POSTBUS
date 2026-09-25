@@ -6,7 +6,7 @@ import { isAutoShopifySyncEnabled } from "@/modules/automation/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
-import { resolveShopifyWebhookSecrets, verifyWebhookHmac } from "@/modules/shopify/oauth";
+import { resolveShopifyWebhookSecrets, verifyWebhookHmac, normalizeShopDomain, pickShopifyConnectionForShop } from "@/modules/shopify/oauth";
 import {
   importShopifyProgressReported,
   importShopifyWebhookOrder,
@@ -57,17 +57,18 @@ export async function handleInboundWebhook(request: NextRequest, path: string) {
     const shop = request.headers.get("x-shopify-shop-domain") || "";
     const hmacHeader = request.headers.get("x-shopify-hmac-sha256");
     const eventId = request.headers.get("x-shopify-webhook-id") || hashSecret(raw);
+    const shopDomain = normalizeShopDomain(shop);
     const { createAdminClient, hasAdminClient } = await import("@/lib/supabase/admin");
     const admin = hasAdminClient() ? createAdminClient() : null;
-    const { data: connection } = admin
+    const { data: shopRows } = admin
       ? await admin
           .from("shopify_connections")
           .select(
-            "organization_id, client_id, encrypted_client_secret, encrypted_previous_client_secret, encrypted_api_key, encrypted_api_secret"
+            "id, organization_id, shop_domain, status, client_id, encrypted_client_secret, encrypted_previous_client_secret, encrypted_api_key, encrypted_api_secret"
           )
-          .eq("shop_domain", shop)
-          .maybeSingle()
+          .ilike("shop_domain", shopDomain)
       : { data: null };
+    const connection = pickShopifyConnectionForShop(shopRows, shopDomain);
     const webhookSecrets = resolveShopifyWebhookSecrets(connection);
     if (!verifyWebhookHmac(raw, hmacHeader, webhookSecrets)) {
       throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Shopify webhook signature.");
@@ -75,62 +76,68 @@ export async function handleInboundWebhook(request: NextRequest, path: string) {
     if (!admin) {
       return { accepted: true, queued: false };
     }
+    if (!connection) {
+      return { accepted: true, unmatched: true };
+    }
     const { data: existing } = await admin
       .from("idempotency_keys")
       .select("id")
+      .eq("organization_id", connection.organization_id)
       .eq("key", `shopify:${eventId}`)
       .maybeSingle();
     if (existing) return { duplicate: true };
-    if (connection) {
-      await admin.from("idempotency_keys").insert({
-        organization_id: connection.organization_id,
-        key: `shopify:${eventId}`,
-        request_hash: hashSecret(raw),
-      });
-      if (topic === "app/uninstalled") {
-        await admin
-          .from("shopify_connections")
-          .update({ status: "DISCONNECTED", encrypted_access_token: null })
-          .eq("organization_id", connection.organization_id);
-      } else if (topic === "fulfillment_orders/progress_reported") {
-        try {
-          await importShopifyProgressReported(admin, {
-            organizationId: connection.organization_id,
-            payload: JSON.parse(raw) as unknown,
-          });
-        } catch (error) {
-          logError("shopify.webhook_progress_failed", {
-            topic,
-            shop,
-            message: error instanceof Error ? error.message : "progress import failed",
-          });
-          throw error;
-        }
-      } else if (topic.startsWith("orders/")) {
-        try {
-          const remote = JSON.parse(raw) as ShopifyRemoteOrder;
-          await importShopifyWebhookOrder(admin, {
-            organizationId: connection.organization_id,
-            shopDomain: shop,
-            topic,
-            remote,
-          });
-        } catch (error) {
-          logError("shopify.webhook_order_import_failed", {
-            topic,
-            shop,
-            message: error instanceof Error ? error.message : "import failed",
-          });
-          throw error;
-        }
-      } else if (await isAutoShopifySyncEnabled(admin, connection.organization_id)) {
-        await createBackgroundJob(admin, {
+    await admin.from("idempotency_keys").insert({
+      organization_id: connection.organization_id,
+      key: `shopify:${eventId}`,
+      request_hash: hashSecret(raw),
+    });
+    await admin
+      .from("shopify_connections")
+      .update({ last_webhook_at: new Date().toISOString() })
+      .eq("id", connection.id);
+    if (topic === "app/uninstalled") {
+      await admin
+        .from("shopify_connections")
+        .update({ status: "DISCONNECTED", encrypted_access_token: null })
+        .eq("id", connection.id);
+    } else if (topic === "fulfillment_orders/progress_reported") {
+      try {
+        await importShopifyProgressReported(admin, {
           organizationId: connection.organization_id,
-          jobType: "shopify-sync",
-          entityType: "shopify_connection",
-          progress: { topic },
+          payload: JSON.parse(raw) as unknown,
         });
+      } catch (error) {
+        logError("shopify.webhook_progress_failed", {
+          topic,
+          shop,
+          message: error instanceof Error ? error.message : "progress import failed",
+        });
+        throw error;
       }
+    } else if (topic.startsWith("orders/")) {
+      try {
+        const remote = JSON.parse(raw) as ShopifyRemoteOrder;
+        await importShopifyWebhookOrder(admin, {
+          organizationId: connection.organization_id,
+          shopDomain,
+          topic,
+          remote,
+        });
+      } catch (error) {
+        logError("shopify.webhook_order_import_failed", {
+          topic,
+          shop,
+          message: error instanceof Error ? error.message : "import failed",
+        });
+        throw error;
+      }
+    } else if (await isAutoShopifySyncEnabled(admin, connection.organization_id)) {
+      await createBackgroundJob(admin, {
+        organizationId: connection.organization_id,
+        jobType: "shopify-sync",
+        entityType: "shopify_connection",
+        progress: { topic },
+      });
     }
     return { accepted: true };
   }

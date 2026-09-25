@@ -511,6 +511,8 @@ export type WatiConfig = {
 
 export type ShopifyConfig = {
   status?: IntegrationStatus | string;
+  disconnected?: boolean;
+  deleted?: boolean;
   shopDomain?: string | null;
   shop_domain?: string | null;
   clientId?: string | null;

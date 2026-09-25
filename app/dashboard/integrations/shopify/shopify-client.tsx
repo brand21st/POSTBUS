@@ -9,6 +9,14 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -34,6 +42,7 @@ export default function ShopifyIntegrationPage() {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [replaceSecret, setReplaceSecret] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const query = useQuery({
     queryKey: ["shopify"],
@@ -72,13 +81,34 @@ export default function ShopifyIntegrationPage() {
         }),
       }),
     onSuccess: (data) => {
-      toast.success("Shopify Client ID saved. Client secret is stored encrypted.");
+      if (data.disconnected) {
+        toast.success("Store disconnected");
+      } else {
+        toast.success("Shopify Client ID saved. Client secret is stored encrypted.");
+      }
       setForm({
         shopDomain: data.shopDomain ?? data.shop_domain ?? form.shopDomain,
         clientId: data.clientId ?? data.client_id ?? form.clientId,
         clientSecret: "",
       });
       setReplaceSecret(false);
+      queryClient.invalidateQueries({ queryKey: ["shopify"] });
+      queryClient.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const removeCredentials = useMutation({
+    mutationFn: () => api<ShopifyConfig>("/api/v1/integrations/shopify", { method: "DELETE" }),
+    onSuccess: (data) => {
+      toast.success("Store disconnected");
+      setConfirmDelete(false);
+      setReplaceSecret(false);
+      setForm({
+        shopDomain: data.shopDomain ?? data.shop_domain ?? "",
+        clientId: "",
+        clientSecret: "",
+      });
       queryClient.invalidateQueries({ queryKey: ["shopify"] });
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
     },
@@ -98,6 +128,7 @@ export default function ShopifyIntegrationPage() {
   }, [shopDomain]);
   const canConnect = Boolean(appConfigured && shopDomain);
   const canSave = Boolean(form.shopDomain && form.clientId && (hasClientSecret || form.clientSecret));
+  const canDelete = Boolean(config?.clientId || config?.client_id || hasClientSecret || status === "CONNECTED");
 
   return (
     <div className="space-y-6">
@@ -181,10 +212,20 @@ export default function ShopifyIntegrationPage() {
             onCopy={() => copyValue(webhookUrl, "Webhook URL")}
           />
 
-          <div>
+          <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={() => save.mutate()} disabled={save.isPending || !canSave}>
               {save.isPending ? "Saving…" : "Save credentials"}
             </Button>
+            {canDelete ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setConfirmDelete(true)}
+                disabled={removeCredentials.isPending}
+              >
+                Delete credentials
+              </Button>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -219,6 +260,29 @@ export default function ShopifyIntegrationPage() {
           </p>
         </CardContent>
       </Card>
+
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Shopify credentials?</DialogTitle>
+            <DialogDescription>
+              Client ID and Client secret will be removed. The store will be disconnected until you save credentials and connect again.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setConfirmDelete(false)}>
+              Keep credentials
+            </Button>
+            <Button
+              type="button"
+              onClick={() => removeCredentials.mutate()}
+              disabled={removeCredentials.isPending}
+            >
+              {removeCredentials.isPending ? "Deleting…" : "Delete credentials"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
