@@ -317,6 +317,10 @@ export type LabelRecord = {
   packing_label_id?: string | null;
   indiaPostLabelId?: string | null;
   india_post_label_id?: string | null;
+  packingStatus?: string | null;
+  packing_status?: string | null;
+  barcodeStatus?: string | null;
+  barcode_status?: string | null;
 };
 
 export type ManifestRecord = {

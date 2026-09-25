@@ -23,6 +23,7 @@ const WARNING = new Set([
   "BOOKED",
   "QUEUED",
   "PARTIAL",
+  "INCOMPLETE",
   "COD",
   "IN_TRANSIT",
   "OUT_FOR_DELIVERY",

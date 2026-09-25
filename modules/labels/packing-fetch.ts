@@ -1,10 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { officialAddressLines } from "@/modules/labels/official-address";
 import { loadLogoBytes } from "@/modules/labels/packing-data";
-import { renderPackingSlipPdf, type PackingLabelData, type PackingParty } from "@/modules/labels/packing-pdf";
+import { renderPackingSlipPdf, type PackingLabelData, type PackingParty, packingItemName } from "@/modules/labels/packing-pdf";
 import { persistLabelPdf } from "@/modules/labels/persist";
 import { getLabelTemplate } from "@/modules/labels/template-service";
 import type { LabelTemplate } from "@/modules/labels/template-schema";
+import { notifyLabelsReadyIfComplete } from "@/lib/notifications/labels-ready";
+import { logError } from "@/lib/logger";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 
 export type PackingPartyInput = {
@@ -219,7 +221,7 @@ export async function fetchPackingSlipPdf(
     : { data: [] as Array<{ title?: string; sku?: string | null; quantity?: number; unit_price?: number }> };
 
   const items = (lineRows ?? []).map((item) => ({
-    title: item.title || "Item",
+    title: packingItemName(item),
     sku: item.sku ?? null,
     quantity: Number(item.quantity) || 1,
     unitPrice: moneyNumber(item.unit_price),
@@ -278,13 +280,26 @@ export async function persistPackingSlip(
     }
   }
   const packing = await fetchPackingSlipPdf(supabase, organizationId, shipmentId);
-  return persistLabelPdf(supabase, {
+  const saved = await persistLabelPdf(supabase, {
     organizationId,
     shipmentId: packing.shipmentId,
     kind: "MERCHANT",
     bytes: packing.pdf,
     templateSnapshot: packing.template,
   });
+  try {
+    await notifyLabelsReadyIfComplete(supabase, {
+      organizationId,
+      shipmentId: packing.shipmentId,
+    });
+  } catch (error) {
+    logError("LABELS_READY_NOTIFICATION_FAILED", {
+      organizationId,
+      shipmentId: packing.shipmentId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+  }
+  return saved;
 }
 
 function formatPackingDate(value: unknown) {

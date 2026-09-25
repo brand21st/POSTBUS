@@ -1,4 +1,4 @@
-import { pagePreset } from "@/modules/labels/page-presets";
+import { officialDrawRect, pagePreset } from "@/modules/labels/page-presets";
 
 export type OfficialLockedElement = {
   id: string;
@@ -18,10 +18,11 @@ export const OFFICIAL_LOCKED_ELEMENTS: OfficialLockedElement[] = [
   { id: "barcode", label: "Barcode", x: 20, y: 300, width: 258, height: 64 },
   { id: "trackingNumber", label: "Tracking number", x: 20, y: 278, width: 180, height: 18 },
   { id: "serviceText", label: "Service text", x: 204, y: 278, width: 74, height: 18 },
-  { id: "receiver", label: "Receiver", x: 110, y: 188, width: 172, height: 84 },
-  { id: "sender", label: "Sender", x: 110, y: 118, width: 172, height: 64 },
-  { id: "qrCode", label: "QR code", x: 8, y: 162, width: 102, height: 108, coverOnCompose: true },
-  { id: "bookingInfo", label: "Booking information", x: 16, y: 72, width: 130, height: 40 },
+  { id: "pinRange", label: "PIN range", x: 18, y: 254, width: 262, height: 22 },
+  { id: "qrCode", label: "QR code", x: 12, y: 140, width: 112, height: 112, coverOnCompose: true },
+  { id: "receiver", label: "Receiver", x: 132, y: 198, width: 150, height: 54 },
+  { id: "sender", label: "Sender", x: 132, y: 140, width: 150, height: 54 },
+  { id: "bookingInfo", label: "Booking information", x: 14, y: 46, width: 270, height: 84 },
   { id: "weight", label: "Weight", x: 152, y: 72, width: 126, height: 40 },
   { id: "amount", label: "Amount", x: 16, y: 36, width: 120, height: 28 },
   { id: "contract", label: "Contract / customer ID", x: 140, y: 36, width: 140, height: 28 },
@@ -47,5 +48,32 @@ export function mapOfficialRect(
     y: placed.y + (rect.y / sourceHeightPt) * placed.height,
     width: (rect.width / sourceWidthPt) * placed.width,
     height: (rect.height / sourceHeightPt) * placed.height,
+  };
+}
+
+export function officialElement(id: string) {
+  const found = OFFICIAL_LOCKED_ELEMENTS.find((item) => item.id === id);
+  if (!found) throw new Error(`Unknown official label element: ${id}`);
+  return found;
+}
+
+/** Address rewrite box: right of the QR, above the booking footer, below the PIN strip. */
+export function indiaPostPartyOverlayRect(pageWidth: number, pageHeight: number) {
+  const a6 = pagePreset("A6");
+  const placed = officialDrawRect(pageWidth, pageHeight, a6.widthPt, a6.heightPt);
+  const qr = mapOfficialRect(officialElement("qrCode"), placed);
+  const booking = mapOfficialRect(officialElement("bookingInfo"), placed);
+  const pin = mapOfficialRect(officialElement("pinRange"), placed);
+  const scale = placed.width / a6.widthPt;
+  const gap = 8 * scale;
+  const x = qr.x + qr.width + gap;
+  const y = Math.max(qr.y, booking.y + booking.height + gap);
+  const top = Math.min(qr.y + qr.height, pin.y - gap);
+  const right = placed.x + placed.width - 12 * scale;
+  return {
+    x,
+    y,
+    width: Math.max(24, right - x),
+    height: Math.max(24, top - y),
   };
 }

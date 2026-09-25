@@ -14,6 +14,13 @@ export type PackingLineItem = {
   unitPrice: number;
 };
 
+export function packingItemName(item: { title?: string | null; sku?: string | null }) {
+  const title = String(item.title ?? "").trim();
+  if (title && !/^item$/i.test(title)) return title;
+  const sku = String(item.sku ?? "").trim();
+  return sku || "Item";
+}
+
 export type PackingParty = {
   name: string;
   phone: string;
@@ -97,7 +104,7 @@ function productLines(data: PackingLabelData, element: LabelTemplate["elements"]
   const showPrice = element.showPrice !== false;
   return data.items.map((item) => {
     const parts: string[] = [];
-    if (showName) parts.push(item.title);
+    if (showName) parts.push(packingItemName(item));
     if (showSku && item.sku) parts.push(`SKU ${item.sku}`);
     if (showQty) parts.push(`Qty: ${item.quantity}`);
     if (showPrice) parts.push(money(item.unitPrice * item.quantity));
@@ -378,7 +385,7 @@ export async function renderPackingSlipPdf(data: PackingLabelData) {
   });
 
   y -= 18;
-  page.drawText("ITEMS", { x: SLIP_MARGIN, y, size: 8, font: bold, color: muted });
+  page.drawText("ITEM", { x: SLIP_MARGIN, y, size: 8, font: bold, color: muted });
   page.drawText("QTY", { x: SLIP_MARGIN + 318, y, size: 8, font: bold, color: muted });
   page.drawText("PRICE", { x: SLIP_MARGIN + 372, y, size: 8, font: bold, color: muted });
   drawRight(page, bold, "TOTAL", contentRight, y, 8, muted);
@@ -394,18 +401,19 @@ export async function renderPackingSlipPdf(data: PackingLabelData) {
 
   const items = data.items.length ? data.items : [{ title: "No line items", sku: null, quantity: 0, unitPrice: 0 }];
   for (const item of items) {
-    const titleLines = wrapLines(regular, item.title || "Item", 10, 300);
+    const productName = packingItemName(item);
+    const titleLines = wrapLines(bold, productName, 10, 300);
     const sku = item.sku?.trim();
     const rowHeight = titleLines.length * 13 + (sku ? 11 : 0) + 10;
     if (y - rowHeight < 120) break;
 
     let textY = y;
-    titleLines.forEach((line, index) => {
-      page.drawText(line, { x: SLIP_MARGIN, y: textY, size: 10, font: index === 0 ? regular : regular, color: ink });
+    titleLines.forEach((line) => {
+      page.drawText(line, { x: SLIP_MARGIN, y: textY, size: 10, font: bold, color: ink });
       textY -= 13;
     });
-    if (sku) {
-      page.drawText(sku, { x: SLIP_MARGIN, y: textY, size: 8, font: regular, color: muted });
+    if (sku && sku.toLowerCase() !== productName.toLowerCase()) {
+      page.drawText(`SKU: ${sku}`, { x: SLIP_MARGIN, y: textY, size: 8, font: regular, color: muted });
     }
 
     const qty = item.quantity > 0 ? String(item.quantity) : "—";

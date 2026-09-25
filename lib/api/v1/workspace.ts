@@ -143,9 +143,11 @@ export async function handleWorkspaceRoutes(
         readAt: item.read_at,
         createdAt: item.created_at,
         href:
-          item.entity_type === "order" && item.entity_id
-            ? `/dashboard/orders/${item.entity_id}`
-            : null,
+          item.type === "labels.barcode_and_packing_ready"
+            ? "/dashboard/labels"
+            : item.entity_type === "order" && item.entity_id
+              ? `/dashboard/orders/${item.entity_id}`
+              : null,
       })),
     };
   }

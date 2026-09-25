@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { renderMerchantLabelPdf, renderPackingSlipPdf } from "@/modules/labels/packing-pdf";
+import { packingItemName, renderMerchantLabelPdf, renderPackingSlipPdf } from "@/modules/labels/packing-pdf";
 import { SAMPLE_PACKING_DATA } from "@/modules/labels/packing-data";
 import { PAGE_PRESETS, officialDrawRect } from "@/modules/labels/page-presets";
 import { applyPaperSize, defaultLabelTemplate, parseLabelTemplate } from "@/modules/labels/template-schema";
@@ -84,6 +84,11 @@ describe("merchant packing PDF", () => {
 });
 
 describe("professional packing slip", () => {
+  it("uses the product item name on each row", () => {
+    expect(packingItemName({ title: "Cotton Shirt", sku: "SHIRT-BLK" })).toBe("Cotton Shirt");
+    expect(packingItemName({ title: "Item", sku: "SHIRT-BLK" })).toBe("SHIRT-BLK");
+  });
+
   it("renders an A4 packing slip with ship, items, and totals", async () => {
     const bytes = await renderPackingSlipPdf(SAMPLE_PACKING_DATA);
     const pdf = await PDFDocument.load(bytes);

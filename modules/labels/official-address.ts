@@ -1,6 +1,5 @@
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { OFFICIAL_LOCKED_ELEMENTS } from "@/modules/labels/official-elements";
-import { pagePreset } from "@/modules/labels/page-presets";
+import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
+import { indiaPostPartyOverlayRect } from "@/modules/labels/official-elements";
 
 export type OfficialPartyBox = {
   receiverName: string;
@@ -10,76 +9,100 @@ export type OfficialPartyBox = {
   paymentLabel?: string | null;
 };
 
-function wrap(text: string, maxChars: number) {
+function wrapToWidth(font: PDFFont, text: string, size: number, maxWidth: number) {
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
+  const pushLong = (value: string) => {
+    let rest = value;
+    while (rest.length) {
+      let cut = rest.length;
+      while (cut > 1 && font.widthOfTextAtSize(rest.slice(0, cut), size) > maxWidth) cut -= 1;
+      lines.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+  };
   for (const word of words) {
     const next = current ? `${current} ${word}` : word;
-    if (next.length <= maxChars) current = next;
+    if (font.widthOfTextAtSize(next, size) <= maxWidth) current = next;
     else {
       if (current) lines.push(current);
-      current = word;
+      if (font.widthOfTextAtSize(word, size) <= maxWidth) current = word;
+      else {
+        pushLong(word);
+        current = "";
+      }
     }
   }
   if (current) lines.push(current);
-  return lines;
+  return lines.length ? lines : [""];
 }
 
-/** Rewrites the CEPT A6 RECEIVER/SENDER box so street, pin, phone and Prepaid/COD stay readable. */
+function heading(label: string, name: string) {
+  return `${label}:${name}`.trim();
+}
+
+/** Rewrites the CEPT RECEIVER/SENDER box without covering the QR or booking footer. */
 export async function overlayIndiaPostPartyBox(officialPdf: Uint8Array | Buffer, box: OfficialPartyBox) {
   const document = await PDFDocument.load(officialPdf, { ignoreEncryption: true });
   const page = document.getPages()[0];
   if (!page) return new Uint8Array(officialPdf);
   const size = page.getSize();
-  const a6 = pagePreset("A6");
-  const sx = size.width / a6.widthPt;
-  const sy = size.height / a6.heightPt;
-  const receiver = OFFICIAL_LOCKED_ELEMENTS.find((item) => item.id === "receiver")!;
-  const sender = OFFICIAL_LOCKED_ELEMENTS.find((item) => item.id === "sender")!;
-  const x = Math.min(receiver.x, sender.x) * sx;
-  const y = Math.min(receiver.y, sender.y) * sy;
-  const width = Math.max(receiver.x + receiver.width, sender.x + sender.width) * sx - x;
-  const height = Math.max(receiver.y + receiver.height, sender.y + sender.height) * sy - y;
+  const rect = indiaPostPartyOverlayRect(size.width, size.height);
   const font = await document.embedFont(StandardFonts.Helvetica);
   const bold = await document.embedFont(StandardFonts.HelveticaBold);
   page.drawRectangle({
-    x: x + 1,
-    y: y + 1,
-    width: width - 2,
-    height: height - 2,
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
     color: rgb(1, 1, 1),
   });
-  const textWidth = width - 8;
-  const maxChars = Math.max(18, Math.floor(textWidth / 4.2));
-  const receiverBlock = [
-    `RECEIVER:${box.receiverName}`,
-    ...box.receiverLines,
-    box.paymentLabel?.trim() || "",
-  ]
-    .flatMap((line) => wrap(line, maxChars))
-    .filter(Boolean);
-  const senderBlock = [`SENDER:${box.senderName}`, ...box.senderLines]
-    .flatMap((line) => wrap(line, maxChars))
-    .filter(Boolean);
-  const sizePt = 6.5;
-  const gap = sizePt + 1.4;
-  let cursor = y + height - 10;
-  const draw = (line: string, heading: boolean) => {
-    if (cursor < y + 4) return;
+  const pad = Math.max(3, Math.min(6, rect.width * 0.04));
+  const textWidth = Math.max(12, rect.width - pad * 2);
+  const innerHeight = Math.max(12, rect.height - pad * 2);
+
+  const layout = (sizePt: number) => {
+    const wrap = (text: string) => wrapToWidth(font, text, sizePt, textWidth);
+    const receiver = [
+      heading("RECEIVER", box.receiverName),
+      ...box.receiverLines,
+      box.paymentLabel?.trim() || "",
+    ]
+      .flatMap((line) => wrap(line))
+      .filter(Boolean);
+    const sender = [heading("SENDER", box.senderName), ...box.senderLines]
+      .flatMap((line) => wrap(line))
+      .filter(Boolean);
+    const gap = sizePt + 1.15;
+    const needed = (receiver.length + sender.length) * gap + gap;
+    return { receiver, sender, gap, needed, sizePt };
+  };
+
+  let fitted = layout(6.5);
+  for (const sizePt of [6.5, 6, 5.5, 5]) {
+    fitted = layout(sizePt);
+    if (fitted.needed <= innerHeight) break;
+  }
+
+  let cursor = rect.y + rect.height - pad - fitted.sizePt;
+  const floor = rect.y + pad;
+  const draw = (line: string, headingLine: boolean) => {
+    if (cursor < floor) return false;
     page.drawText(line, {
-      x: x + 4,
+      x: rect.x + pad,
       y: cursor,
-      size: sizePt,
-      font: heading ? bold : font,
+      size: fitted.sizePt,
+      font: headingLine ? bold : font,
       color: rgb(0, 0, 0),
       maxWidth: textWidth,
     });
-    cursor -= gap;
+    cursor -= fitted.gap;
+    return true;
   };
-  receiverBlock.forEach((line, index) => draw(line, index === 0));
-  cursor -= 3;
-  senderBlock.forEach((line, index) => draw(line, index === 0));
+  fitted.receiver.forEach((line, index) => draw(line, index === 0));
+  cursor -= fitted.gap * 0.35;
+  fitted.sender.forEach((line, index) => draw(line, index === 0));
   return document.save();
 }
 

@@ -88,6 +88,8 @@ export type ShopifyRemoteOrder = {
   tags?: string | string[] | null;
   line_items?: Array<{
     title?: string;
+    name?: string | null;
+    variant_title?: string | null;
     sku?: string | null;
     quantity?: number;
     price?: string | number;
@@ -252,6 +254,21 @@ export function shopifyOrderNumber(order: ShopifyRemoteOrder, sourceId: string) 
   if (name) return name;
   if (order.order_number) return `#${order.order_number}`;
   return `SH-${sourceId}`;
+}
+
+export function shopifyLineItemTitle(item: {
+  name?: string | null;
+  title?: string | null;
+  variant_title?: string | null;
+}) {
+  const fullName = String(item.name || "").trim();
+  if (fullName) return fullName;
+  const title = String(item.title || "").trim();
+  const variant = String(item.variant_title || "").trim();
+  if (title && variant && !title.toLowerCase().includes(variant.toLowerCase())) {
+    return `${title} — ${variant}`;
+  }
+  return title || "Item";
 }
 
 export function shopifyPhone(value?: string | null) {
@@ -1108,7 +1125,7 @@ export async function upsertShopifyOrder(
       lineItems.map((item) => ({
         organization_id: input.organizationId,
         order_id: order.id,
-        title: String(item.title ?? "Item"),
+        title: shopifyLineItemTitle(item),
         sku: item.sku ? String(item.sku) : null,
         quantity: Number(item.quantity ?? 1),
         unit_price: Number(item.price ?? 0),

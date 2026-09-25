@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Printer, Settings2, Tag } from "lucide-react";
+import { Check, Download, FileText, Printer, QrCode, Settings2, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -16,6 +16,8 @@ import { openLabelPdf } from "@/lib/labels/preview";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
+import { NOTIFICATIONS_QUERY_KEY } from "@/lib/hooks/use-notifications";
+import { LABELS_READY_NOTIFICATION, LABELS_READY_TITLE } from "@/lib/notifications/labels-ready";
 import type { LabelRecord, Paginated } from "@/types/api";
 
 function printLabel(status?: string | null) {
@@ -24,6 +26,25 @@ function printLabel(status?: string | null) {
   if (value === "WAITING") return { text: "Waiting to print", badge: "WAITING" };
   if (value === "FAILED") return { text: "Print failed", badge: "FAILED" };
   return null;
+}
+
+function barcodeId(row: LabelRecord) {
+  return row.indiaPostLabelId ?? row.india_post_label_id ?? ((row.kind ?? "INDIA_POST") !== "MERCHANT" ? row.id : null);
+}
+
+function packingId(row: LabelRecord) {
+  return row.packingLabelId ?? row.packing_label_id ?? ((row.kind ?? "") === "MERCHANT" ? row.id : null);
+}
+
+function documentsStatus(row: LabelRecord) {
+  const barcode = barcodeId(row);
+  const packing = packingId(row);
+  const barcodeState = (row.barcodeStatus ?? row.barcode_status ?? (barcode ? row.status : "") ?? "").toUpperCase();
+  const packingState = (row.packingStatus ?? row.packing_status ?? (packing ? "READY" : "") ?? "").toUpperCase();
+  if (barcodeState === "FAILED" || packingState === "FAILED") return "FAILED";
+  if (barcode && packing && barcodeState === "READY") return "READY";
+  if (barcode && barcodeState === "READY") return "INCOMPLETE";
+  return "PROCESSING";
 }
 
 async function downloadLabelsZip(ids: string[]) {
@@ -56,9 +77,34 @@ async function downloadLabelsZip(ids: string[]) {
   throw new ApiError(message, response.status);
 }
 
+async function downloadLabelPdf(id: string) {
+  const response = await fetch(`/api/v1/labels/${id}/download`, { credentials: "same-origin" });
+  if (!response.ok) {
+    let message = "Could not download the file.";
+    try {
+      const payload = (await response.json()) as { message?: string };
+      message = payload.message || message;
+    } catch {
+      message = "Could not download the file.";
+    }
+    throw new ApiError(message, response.status);
+  }
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  const disposition = response.headers.get("Content-Disposition");
+  const match = disposition?.match(/filename="?([^"]+)"?/i);
+  link.download = match?.[1] || "label.pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+}
+
 export default function LabelsPage() {
   const [page, setPage] = useState(1);
-  const [kind, setKind] = useState<"ALL" | "INDIA_POST" | "MERCHANT">("ALL");
+  const [kind, setKind] = useState<"ALL" | "COMPLETE" | "INCOMPLETE">("ALL");
   const [selected, setSelected] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const station = usePrintStation();
@@ -81,7 +127,7 @@ export default function LabelsPage() {
 
   const bulk = useMutation({
     mutationFn: downloadLabelsZip,
-    onSuccess: () => toast.success("Labels downloaded."),
+    onSuccess: () => toast.success("Barcode and packing slip files downloaded."),
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -95,17 +141,41 @@ export default function LabelsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const downloadBarcode = useMutation({
+    mutationFn: downloadLabelPdf,
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const downloadPacking = useMutation({
     mutationFn: async (row: LabelRecord) => {
-      const packingId = row.packingLabelId ?? row.packing_label_id;
-      if (packingId) {
-        window.location.href = `/api/v1/labels/${packingId}/download`;
-        return packingId;
+      const existing = packingId(row);
+      if (existing) {
+        await downloadLabelPdf(existing);
+        return { created: false };
       }
-      const created = await api<{ id: string }>(`/api/v1/labels/${row.id}/packing-slip`, { method: "POST" });
+      const created = await api<{ id: string }>(`/api/v1/labels/${barcodeId(row) ?? row.id}/packing-slip`, {
+        method: "POST",
+      });
       await queryClient.invalidateQueries({ queryKey: ["labels"] });
-      window.location.href = `/api/v1/labels/${created.id}/download`;
-      return created.id;
+      await queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_QUERY_KEY });
+      await downloadLabelPdf(created.id);
+      return { created: true };
+    },
+    onSuccess: (result) => {
+      if (!result.created) return;
+      window.dispatchEvent(
+        new CustomEvent("postbus:new-shopify-orders", {
+          detail: [
+            {
+              id: `labels-ready-${Date.now()}`,
+              type: LABELS_READY_NOTIFICATION,
+              title: LABELS_READY_TITLE,
+              body: "Download the barcode and packing slip.",
+              href: "/dashboard/labels",
+            },
+          ],
+        })
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -118,29 +188,64 @@ export default function LabelsPage() {
   const columns: DataTableColumn<LabelRecord>[] = [
     {
       id: "label",
-      header: "Label",
-      cell: (row) => row.orderNumber ?? row.order_number ?? row.id.slice(0, 8),
+      header: "Order",
+      cell: (row) => (
+        <div className="min-w-[7rem]">
+          <p className="font-semibold text-foreground">{row.orderNumber ?? row.order_number ?? row.id.slice(0, 8)}</p>
+          <p className="text-xs text-muted">{formatDate(row.createdAt ?? row.created_at, true)}</p>
+        </div>
+      ),
     },
     {
       id: "tracking",
       header: "Tracking",
-      cell: (row) => row.trackingNumber ?? row.tracking_number ?? row.barcode ?? "—",
+      cell: (row) => (
+        <span className="font-mono text-sm">{row.trackingNumber ?? row.tracking_number ?? row.barcode ?? "—"}</span>
+      ),
     },
     {
-      id: "kind",
-      header: "Type",
-      cell: (row) => ((row.kind ?? "INDIA_POST") === "MERCHANT" ? "Packing" : "India Post"),
-    },
-    { id: "status", header: "Status", cell: (row) => <StatusBadge value={row.status} /> },
-    {
-      id: "print",
-      header: "Print",
+      id: "documents",
+      header: "Documents",
       cell: (row) => {
-        const info = printLabel(row.printStatus ?? row.print_status);
-        if (!info) return <span className="text-muted">—</span>;
+        const indiaId = barcodeId(row);
+        const packId = packingId(row);
+        const packingBusy = downloadPacking.isPending && downloadPacking.variables?.id === row.id;
         return (
-          <div className="space-y-0.5">
-            <StatusBadge value={info.badge} />
+          <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!indiaId || (downloadBarcode.isPending && downloadBarcode.variables === indiaId)}
+              onClick={() => indiaId && downloadBarcode.mutate(indiaId)}
+            >
+              {indiaId ? <Check className="size-4 text-emerald-600" /> : <QrCode className="size-4" />}
+              Barcode
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={packingBusy}
+              onClick={() => downloadPacking.mutate(row)}
+            >
+              {packId ? <Check className="size-4 text-emerald-600" /> : <FileText className="size-4" />}
+              {packId ? "Packing slip" : packingBusy ? "Generating…" : "Packing slip"}
+            </Button>
+          </div>
+        );
+      },
+    },
+    {
+      id: "status",
+      header: "Status",
+      cell: (row) => {
+        const status = documentsStatus(row);
+        const info = printLabel(row.printStatus ?? row.print_status);
+        return (
+          <div className="space-y-1">
+            <StatusBadge value={status} />
+            {info ? <p className="text-xs text-muted">{info.text}</p> : null}
             {row.printError || row.print_error ? (
               <p className="max-w-[16rem] text-xs text-muted">{row.printError ?? row.print_error}</p>
             ) : null}
@@ -149,50 +254,27 @@ export default function LabelsPage() {
       },
     },
     {
-      id: "created",
-      header: "Created",
-      cell: (row) => formatDate(row.createdAt ?? row.created_at, true),
-    },
-    {
       id: "actions",
       header: "Actions",
       cell: (row) => {
-        const indiaId = row.indiaPostLabelId ?? row.india_post_label_id ?? ((row.kind ?? "INDIA_POST") !== "MERCHANT" ? row.id : null);
-        const packingId = row.packingLabelId ?? row.packing_label_id ?? ((row.kind ?? "") === "MERCHANT" ? row.id : null);
+        const indiaId = barcodeId(row);
         const indiaHref = indiaId ? `/api/v1/labels/${indiaId}/download` : null;
-        const indiaReady = Boolean(indiaId);
         return (
           <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!indiaReady || (preview.isPending && preview.variables === indiaId)}
+              disabled={!indiaId || (preview.isPending && preview.variables === indiaId)}
               onClick={() => indiaId && preview.mutate(indiaId)}
             >
               Preview
             </Button>
-            <a href={indiaHref ?? undefined} className={!indiaHref ? "pointer-events-none opacity-50" : undefined}>
-              <Button type="button" variant="secondary" size="sm" disabled={!indiaHref}>
-                <Download className="size-4" />
-                Barcode
-              </Button>
-            </a>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={downloadPacking.isPending}
-              onClick={() => downloadPacking.mutate(row)}
-            >
-              <Download className="size-4" />
-              {packingId ? "Packing slip" : "Create packing slip"}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!indiaReady || print.isPending}
+              disabled={!indiaId || print.isPending}
               onClick={() => {
                 if (!indiaId) return;
                 if (connected) {
@@ -215,7 +297,7 @@ export default function LabelsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Labels"
-        description="Download the India Post barcode label and the packing slip for each shipment."
+        description="One row per shipment. Barcode and packing slip generate together and download from the same line."
         actions={
           <>
             <Link href="/dashboard/labels/customize">
@@ -245,9 +327,9 @@ export default function LabelsPage() {
       <div className="flex flex-wrap gap-2">
         {(
           [
-            ["ALL", "All"],
-            ["INDIA_POST", "India Post"],
-            ["MERCHANT", "Packing"],
+            ["ALL", "All shipments"],
+            ["COMPLETE", "Both ready"],
+            ["INCOMPLETE", "Incomplete"],
           ] as const
         ).map(([value, label]) => (
           <Button
@@ -271,7 +353,7 @@ export default function LabelsPage() {
         loading={query.isLoading}
         error={query.error instanceof Error ? query.error : null}
         emptyTitle="No labels yet"
-        emptyDescription="Labels appear here after a shipment is booked and the label job succeeds."
+        emptyDescription="When a shipment is booked, the India Post barcode and packing slip appear on one row."
         emptyAction={
           <div className="flex items-center gap-2 text-muted">
             <Tag className="size-4" />
@@ -284,7 +366,7 @@ export default function LabelsPage() {
         onPageChange={setPage}
         selectable
         onSelectionChange={setSelected}
-        getRowId={(row) => row.id}
+        getRowId={(row) => barcodeId(row) ?? packingId(row) ?? row.id}
       />
     </div>
   );

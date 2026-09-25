@@ -5,6 +5,8 @@ import {
   isDashboardAlertNotification,
   isShopifyOrderNotification,
   SHOPIFY_ORDER_NOTIFICATION,
+  LABELS_READY_NOTIFICATION,
+  usesCompletionSound,
 } from "@/lib/notifications/new-order";
 import { orderStageNotificationType } from "@/lib/notifications/order-stage";
 
@@ -46,6 +48,7 @@ describe("order stage dashboard alerts", () => {
     expect(isDashboardAlertNotification("shipment.booked")).toBe(true);
     expect(isDashboardAlertNotification("shipment.in_transit")).toBe(true);
     expect(isDashboardAlertNotification("shipment.delivered")).toBe(true);
+    expect(isDashboardAlertNotification("labels.barcode_and_packing_ready")).toBe(true);
     expect(isDashboardAlertNotification("shipment.failed")).toBe(false);
     expect(isDashboardAlertNotification("tracking.updated")).toBe(false);
   });
@@ -60,6 +63,7 @@ describe("order stage dashboard alerts", () => {
         { id: "booked", type: "shipment.booked", createdAt: "2026-09-20T12:01:00.000Z" },
         { id: "transit", type: "shipment.in_transit", createdAt: "2026-09-20T12:01:00.000Z" },
         { id: "delivered", type: "shipment.delivered", createdAt: "2026-09-20T12:01:00.000Z" },
+        { id: "labels", type: "labels.barcode_and_packing_ready", createdAt: "2026-09-20T12:01:00.000Z" },
         { id: "failed", type: "shipment.failed", createdAt: "2026-09-20T12:01:00.000Z" },
         { id: "tracking", type: "tracking.updated", createdAt: "2026-09-20T12:01:00.000Z" },
         { id: "stale", type: "shipment.delivered", createdAt: "2026-09-20T11:00:00.000Z" },
@@ -67,8 +71,27 @@ describe("order stage dashboard alerts", () => {
       seen,
       startedAt
     );
-    expect(incoming.map((item) => item.id)).toEqual(["processing", "booked", "transit", "delivered"]);
+    expect(incoming.map((item) => item.id)).toEqual(["processing", "booked", "transit", "delivered", "labels"]);
     expect(seen.has("failed")).toBe(true);
     expect(seen.has("tracking")).toBe(true);
+  });
+
+  it("alerts on unseen labels-ready items after the listener is primed", () => {
+    const seen = new Set<string>(["old"]);
+    const incoming = collectDashboardAlerts(
+      [
+        { id: "old", type: LABELS_READY_NOTIFICATION, createdAt: "2026-09-20T11:00:00.000Z" },
+        { id: "ready", type: LABELS_READY_NOTIFICATION, createdAt: "2026-09-20T11:00:00.000Z" },
+      ],
+      seen,
+      0
+    );
+    expect(incoming.map((item) => item.id)).toEqual(["ready"]);
+  });
+
+  it("uses the completion chime when both barcode and packing slip are ready", () => {
+    expect(usesCompletionSound([LABELS_READY_NOTIFICATION])).toBe(true);
+    expect(usesCompletionSound([SHOPIFY_ORDER_NOTIFICATION, LABELS_READY_NOTIFICATION])).toBe(true);
+    expect(usesCompletionSound([SHOPIFY_ORDER_NOTIFICATION])).toBe(false);
   });
 });

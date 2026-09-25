@@ -12,6 +12,7 @@ import { bulkOrderStatusSchema, createOrderSchema, orderListQuery } from "@/modu
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
+import { filterGroupedLabels, groupLabelsByShipment, paginateGroupedLabels } from "@/modules/labels/group";
 import { mapLabelRow } from "@/modules/labels/map";
 import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
 
@@ -106,54 +107,15 @@ export async function handleCommerceRoutes(
     const page = Number(request.nextUrl.searchParams.get("page") || 1);
     const pageSize = Number(request.nextUrl.searchParams.get("pageSize") || 20);
     const kind = request.nextUrl.searchParams.get("kind");
-    const from = (page - 1) * pageSize;
-    let query = supabase
+    const { data, error } = await supabase
       .from("labels")
-      .select("*, shipments(barcode, tracking_number, orders(order_number)), print_jobs!print_jobs_label_id_fkey(*)", { count: "exact" })
+      .select("*, shipments(barcode, tracking_number, orders(order_number)), print_jobs!print_jobs_label_id_fkey(*)")
       .eq("organization_id", ctx.organizationId)
       .order("created_at", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (kind) query = query.eq("kind", kind);
-    const { data, count, error } = await query;
+      .limit(2000);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-    const items = (data ?? []).map((row) => mapLabelRow(row as Record<string, unknown>));
-    const shipmentIds = [...new Set(items.map((row) => String(row.shipment_id || row.shipmentId || "")).filter(Boolean))];
-    const packingByShipment = new Map<string, string>();
-    const indiaByShipment = new Map<string, string>();
-    if (shipmentIds.length) {
-      const { data: siblingRows } = await supabase
-        .from("labels")
-        .select("id, shipment_id, kind")
-        .eq("organization_id", ctx.organizationId)
-        .eq("status", "READY")
-        .in("shipment_id", shipmentIds)
-        .in("kind", ["MERCHANT", "INDIA_POST"])
-        .order("created_at", { ascending: false });
-      for (const row of siblingRows ?? []) {
-        const shipmentId = String(row.shipment_id || "");
-        const kind = String(row.kind || "INDIA_POST").toUpperCase();
-        if (!shipmentId) continue;
-        if (kind === "MERCHANT" && !packingByShipment.has(shipmentId)) packingByShipment.set(shipmentId, String(row.id));
-        if (kind === "INDIA_POST" && !indiaByShipment.has(shipmentId)) indiaByShipment.set(shipmentId, String(row.id));
-      }
-    }
-    return {
-      items: items.map((row) => {
-        const shipmentId = String(row.shipment_id || row.shipmentId || "");
-        const packingLabelId = packingByShipment.get(shipmentId) ?? null;
-        const indiaPostLabelId = indiaByShipment.get(shipmentId) ?? null;
-        return {
-          ...row,
-          packingLabelId,
-          packing_label_id: packingLabelId,
-          indiaPostLabelId,
-          india_post_label_id: indiaPostLabelId,
-        };
-      }),
-      page,
-      pageSize,
-      total: count ?? 0,
-    };
+    const grouped = groupLabelsByShipment((data ?? []).map((row) => mapLabelRow(row as Record<string, unknown>)));
+    return paginateGroupedLabels(filterGroupedLabels(grouped, kind), page, pageSize);
   }
 
   if (method === "GET" && slugs[0] === "labels" && slugs[2] === "download") {
@@ -186,11 +148,23 @@ export async function handleCommerceRoutes(
   if (key === "POST labels/bulk-download") {
     const body = await request.json();
     const ids: string[] = body.ids ?? [];
-    const { data } = await supabase
+    const { data: selected } = await supabase
       .from("labels")
-      .select("*")
+      .select("id, shipment_id")
       .eq("organization_id", ctx.organizationId)
       .in("id", ids);
+    const shipmentIds = [
+      ...new Set((selected ?? []).map((row) => String(row.shipment_id || "")).filter(Boolean)),
+    ];
+    const { data } = shipmentIds.length
+      ? await supabase
+          .from("labels")
+          .select("*")
+          .eq("organization_id", ctx.organizationId)
+          .eq("status", "READY")
+          .in("shipment_id", shipmentIds)
+          .in("kind", ["INDIA_POST", "MERCHANT"])
+      : { data: [] as Record<string, unknown>[] };
     const zip = new JSZip();
     for (const label of data ?? []) {
       if (!label.file_path && !label.file_url) continue;
@@ -201,7 +175,9 @@ export async function handleCommerceRoutes(
           file_url: label.file_url,
           shipment_id: label.shipment_id,
         });
-        zip.file(`${label.id}.pdf`, bytes);
+        const kind = String(label.kind || "INDIA_POST").toUpperCase();
+        const prefix = kind === "MERCHANT" ? "packing-slip" : "barcode";
+        zip.file(`${prefix}-${label.shipment_id || label.id}.pdf`, bytes);
       } catch {
         continue;
       }

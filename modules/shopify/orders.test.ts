@@ -15,6 +15,7 @@ import {
   shopifyOrderGid,
   nextShopifyStageTags,
   shopifyOrderNumber,
+  shopifyLineItemTitle,
   shopifyStageFromJobProgress,
   shopifyRemoteSignalsProcessing,
   shouldNotifyWatiForShopifyProcessing,
@@ -102,6 +103,16 @@ describe("shopify order mapping", () => {
         shipping_address: { first_name: "Asha", last_name: "Rao" },
       })
     ).toBe("Asha Rao");
+  });
+
+  it("stores the Shopify product name, including the variant", () => {
+    expect(shopifyLineItemTitle({ name: "Cotton Shirt - Black / M", title: "Cotton Shirt" })).toBe(
+      "Cotton Shirt - Black / M"
+    );
+    expect(shopifyLineItemTitle({ title: "Cotton Shirt", variant_title: "Black / M" })).toBe(
+      "Cotton Shirt — Black / M"
+    );
+    expect(shopifyLineItemTitle({ title: "Mug" })).toBe("Mug");
   });
 
   it("normalizes Indian phone and pincode values", () => {
