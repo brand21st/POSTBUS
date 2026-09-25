@@ -14,6 +14,8 @@ describe("plan entitlements", () => {
   it("uses catalog floors for starter, pro, and business slugs", () => {
     expect(expandPlanFeatures([FEATURE.analytics], { slug: "starter" })).toEqual(STARTER_FEATURES);
     expect(expandPlanFeatures([], { slug: "pro" })).toEqual(PRO_FEATURES);
+    expect(PRO_FEATURES).toContain(FEATURE.analytics);
+    expect(STARTER_FEATURES).not.toContain(FEATURE.analytics);
     expect(expandPlanFeatures([], { slug: "business" })).toEqual(BUSINESS_FEATURES);
   });
 

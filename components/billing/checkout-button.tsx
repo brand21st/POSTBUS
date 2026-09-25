@@ -53,11 +53,13 @@ export function CheckoutButton({
   billingCycle,
   label,
   variant = "primary",
+  disabled = false,
 }: {
   planId: string;
   billingCycle: "monthly" | "yearly";
   label: string;
   variant?: "primary" | "secondary";
+  disabled?: boolean;
 }) {
   const start = useMutation({
     mutationFn: () =>
@@ -110,8 +112,13 @@ export function CheckoutButton({
   });
 
   return (
-    <Button variant={variant} className="w-full" onClick={() => start.mutate()} disabled={start.isPending}>
-      {start.isPending ? "Starting…" : label}
+    <Button
+      variant={variant}
+      className="w-full"
+      onClick={() => start.mutate()}
+      disabled={disabled || start.isPending}
+    >
+      {disabled ? label : start.isPending ? "Starting…" : label}
     </Button>
   );
 }

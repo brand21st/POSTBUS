@@ -23,15 +23,32 @@ export function PlanPicker({
   plans,
   cycle,
   cta = "checkout",
+  currentPlanId,
+  currentPlanSlug,
+  currentCycle,
+  subscriptionStatus,
 }: {
   plans: PublicPlan[];
   cycle: "monthly" | "yearly";
   cta?: "checkout" | "register";
+  currentPlanId?: string | null;
+  currentPlanSlug?: string | null;
+  currentCycle?: "monthly" | "yearly" | null;
+  subscriptionStatus?: string | null;
 }) {
+  const hasCurrent = Boolean(currentPlanId || currentPlanSlug);
+  const trial = (subscriptionStatus ?? "").toUpperCase() === "TRIAL";
+
   return (
     <div className="grid gap-5 lg:grid-cols-3">
       {plans.map((plan) => {
+        const isCurrent =
+          Boolean(currentPlanId && currentPlanId === plan.id) ||
+          Boolean(currentPlanSlug && currentPlanSlug === plan.slug);
+        const sameCycle = !currentCycle || currentCycle === cycle;
+        const paidCurrent = isCurrent && sameCycle && !trial;
         const featured = plan.slug === "pro";
+        const highlight = isCurrent || (featured && !hasCurrent);
         const price = cycle === "yearly" ? plan.yearlyPricePaise : plan.monthlyPricePaise;
         const savings = yearlySavingsPaise(plan.monthlyPricePaise);
         return (
@@ -39,10 +56,14 @@ export function PlanPicker({
             key={plan.id}
             className={cn(
               "flex flex-col rounded-[28px] border bg-white p-7 card-shadow",
-              featured ? "border-brand shadow-[0_0_0_1px_rgba(225,29,72,0.15)]" : "border-border"
+              highlight ? "border-brand shadow-[0_0_0_1px_rgba(225,29,72,0.15)]" : "border-border"
             )}
           >
-            {featured ? (
+            {isCurrent ? (
+              <span className="mb-4 w-fit rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white">
+                Current plan
+              </span>
+            ) : featured ? (
               <span className="mb-4 w-fit rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-semibold text-brand">
                 Popular
               </span>
@@ -77,8 +98,17 @@ export function PlanPicker({
                 <CheckoutButton
                   planId={plan.id}
                   billingCycle={cycle}
-                  label={featured ? "Upgrade to Pro" : `Choose ${plan.name}`}
-                  variant={featured ? "primary" : "secondary"}
+                  disabled={paidCurrent}
+                  label={
+                    paidCurrent
+                      ? "Current plan"
+                      : isCurrent && trial
+                        ? `Pay for ${plan.name}`
+                        : featured
+                          ? "Upgrade to Pro"
+                          : `Choose ${plan.name}`
+                  }
+                  variant={isCurrent || featured ? "primary" : "secondary"}
                 />
               ) : (
                 <Link

@@ -8,8 +8,8 @@ export const PLAN_FEATURE_OPTIONS = [
   "Manifest management",
   "Invoices",
   "Tracking page",
+  "Analytics",
   "Everything in Pro",
-  "Operational analytics",
   "Priority support",
   "WhatsApp (Wati) notifications",
   "India Post booking",
@@ -17,6 +17,13 @@ export const PLAN_FEATURE_OPTIONS = [
 ] as const;
 
 const ORDERS_FEATURE = /^up to .+ orders per billing period$/i;
+const FEATURE_ALIASES: Record<string, string> = {
+  "Operational analytics": "Analytics",
+};
+
+function catalogLine(line: string) {
+  return FEATURE_ALIASES[line] ?? line;
+}
 
 export function ordersFeatureLine(limit: number) {
   return `Up to ${Number(limit).toLocaleString("en-IN")} orders per billing period`;
@@ -24,7 +31,9 @@ export function ordersFeatureLine(limit: number) {
 
 export function splitPlanFeatures(features: string[], orderLimit: number) {
   const generated = ordersFeatureLine(orderLimit);
-  const rest = features.filter((line) => line !== generated && !ORDERS_FEATURE.test(line));
+  const rest = features
+    .filter((line) => line !== generated && !ORDERS_FEATURE.test(line))
+    .map(catalogLine);
   const catalog = new Set<string>(PLAN_FEATURE_OPTIONS);
   return {
     selected: PLAN_FEATURE_OPTIONS.filter((option) => rest.includes(option)),

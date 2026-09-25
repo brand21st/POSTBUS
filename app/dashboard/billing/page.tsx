@@ -16,7 +16,7 @@ import { api } from "@/lib/hooks/use-api";
 
 type BillingPayload = {
   configurationRequired?: boolean;
-  plan?: (PublicPlan & { description?: string | null; features?: string[] }) | null;
+  plan?: (PublicPlan & { id?: string; slug?: string; description?: string | null; features?: string[] }) | null;
   subscription?: {
     status?: string;
     billingCycle?: "monthly" | "yearly";
@@ -81,6 +81,10 @@ export default function BillingPage() {
   const limit = data?.usage?.limit ?? 0;
   const remaining = data?.usage?.remaining ?? Math.max(0, limit - used);
   const percent = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const catalogPlan = (plans.data?.plans ?? []).find(
+    (plan) => plan.id === data?.plan?.id || plan.slug === data?.plan?.slug
+  );
+  const currentPlanName = catalogPlan?.name ?? data?.plan?.name ?? "No plan";
 
   return (
     <div className="space-y-6">
@@ -100,7 +104,14 @@ export default function BillingPage() {
             <Card>
               <CardHeader>
                 <CardDescription>Current plan</CardDescription>
-                <CardTitle>{data?.plan?.name ?? "No plan"}</CardTitle>
+                <CardTitle className="flex flex-wrap items-center gap-2">
+                  {currentPlanName}
+                  {catalogPlan || data?.plan ? (
+                    <span className="rounded-full bg-brand px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                      Current plan
+                    </span>
+                  ) : null}
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <StatusBadge value={data?.subscription?.status} />
@@ -190,7 +201,15 @@ export default function BillingPage() {
                 </button>
               </div>
             </div>
-            <PlanPicker plans={plans.data?.plans ?? []} cycle={cycle} cta="checkout" />
+            <PlanPicker
+              plans={plans.data?.plans ?? []}
+              cycle={cycle}
+              cta="checkout"
+              currentPlanId={data?.plan?.id}
+              currentPlanSlug={data?.plan?.slug}
+              currentCycle={data?.subscription?.billingCycle}
+              subscriptionStatus={data?.subscription?.status}
+            />
           </div>
 
           <Card>

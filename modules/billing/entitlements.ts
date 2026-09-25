@@ -17,8 +17,8 @@ export const FEATURE = {
   manifests: "Manifest management",
   invoices: "Invoices",
   trackingPage: "Tracking page",
+  analytics: "Analytics",
   proBundle: "Everything in Pro",
-  analytics: "Operational analytics",
   support: "Priority support",
   wati: "WhatsApp (Wati) notifications",
   indiaPost: "India Post booking",
@@ -41,11 +41,11 @@ export const PRO_FEATURES: PlanFeatureName[] = [
   FEATURE.manifests,
   FEATURE.invoices,
   FEATURE.trackingPage,
+  FEATURE.analytics,
 ];
 
 export const BUSINESS_FEATURES: PlanFeatureName[] = [
   ...PRO_FEATURES,
-  FEATURE.analytics,
   FEATURE.support,
   FEATURE.wati,
   FEATURE.packing,
@@ -86,6 +86,7 @@ export function expandPlanFeatures(
   if (canonical) return [...canonical];
   const listed = (features ?? []).map((line) => line.trim()).filter(Boolean);
   const allowed = new Set<string>(listed);
+  if (listed.includes("Operational analytics")) allowed.add(FEATURE.analytics);
   if (listed.includes(FEATURE.starterBundle)) STARTER_FEATURES.forEach((item) => allowed.add(item));
   if (listed.includes(FEATURE.proBundle)) PRO_FEATURES.forEach((item) => allowed.add(item));
   return [...allowed];
@@ -119,7 +120,9 @@ export function lockedFeatureForPath(pathname: string): string | null {
 }
 
 export function lockedFeatureForApi(method: string, path: string, slugs: string[]): string | null {
-  if (path === "dashboard/analytics") return FEATURE.analytics;
+  if (path === "dashboard/analytics" || (slugs[0] === "dashboard" && slugs[1] === "analytics")) {
+    return FEATURE.analytics;
+  }
   if (slugs[0] === "invoices" || slugs[0] === "invoice-template") return FEATURE.invoices;
   if (slugs[0] === "tracking" || slugs[0] === "tracking-pages") return FEATURE.trackingPage;
   if (slugs[0] === "automation" && method !== "GET") return FEATURE.automation;

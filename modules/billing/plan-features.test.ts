@@ -21,7 +21,7 @@ describe("plan features", () => {
   it("unions every plan feature and takes the highest order limit for trial access", () => {
     const full = mergeFullPlanFeatures([
       { monthlyOrderLimit: 300, features: [ordersFeatureLine(300), "Shopify order sync"] },
-      { monthlyOrderLimit: 10000, features: [ordersFeatureLine(10000), "Priority support", "Operational analytics"] },
+      { monthlyOrderLimit: 10000, features: [ordersFeatureLine(10000), "Priority support", "Analytics"] },
     ]);
     expect(full.monthlyOrderLimit).toBe(10000);
     expect(full.features[0]).toBe(ordersFeatureLine(10000));
