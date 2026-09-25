@@ -15,8 +15,8 @@ function isMerchant(kind?: string | null) {
   return String(kind || "INDIA_POST").toUpperCase() === "MERCHANT";
 }
 
-function shipmentKey(row: { shipmentId?: string; shipment_id?: string; id: string }) {
-  return String(row.shipmentId || row.shipment_id || row.id);
+function shipmentKey(row: { shipmentId?: string; shipment_id?: string; id?: string }) {
+  return String(row.shipmentId || row.shipment_id || row.id || "");
 }
 
 function createdMs(row: { createdAt?: unknown; created_at?: unknown }) {
@@ -78,8 +78,8 @@ export function groupLabelsByShipment(rows: ReturnType<typeof mapLabelRow>[]): M
     }
 
     if (createdMs(row) > createdMs(existing)) {
-      existing.createdAt = (row.createdAt ?? row.created_at) as string | undefined;
-      existing.created_at = (row.created_at ?? row.createdAt) as string | undefined;
+      existing.createdAt = (row.createdAt ?? row.created_at ?? null) as string | null;
+      existing.created_at = (row.created_at ?? row.createdAt ?? null) as string | null;
     }
   }
 

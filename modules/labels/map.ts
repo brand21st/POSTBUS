@@ -32,6 +32,10 @@ export function mapLabelRow(row: Record<string, unknown>) {
   const shipmentId = String(row.shipment_id || row.shipmentId || "");
   return {
     ...row,
+    id: String(row.id || ""),
+    status: row.status == null ? "" : String(row.status),
+    createdAt: (row.createdAt ?? row.created_at ?? null) as string | null,
+    created_at: (row.created_at ?? row.createdAt ?? null) as string | null,
     kind: String(row.kind || "INDIA_POST"),
     shipmentId,
     shipment_id: shipmentId,

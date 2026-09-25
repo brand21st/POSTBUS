@@ -39,8 +39,8 @@ function packingId(row: LabelRecord) {
 function documentsStatus(row: LabelRecord) {
   const barcode = barcodeId(row);
   const packing = packingId(row);
-  const barcodeState = (row.barcodeStatus ?? row.barcode_status ?? (barcode ? row.status : "") ?? "").toUpperCase();
-  const packingState = (row.packingStatus ?? row.packing_status ?? (packing ? "READY" : "") ?? "").toUpperCase();
+  const barcodeState = String(row.barcodeStatus ?? row.barcode_status ?? (barcode ? row.status : "")).toUpperCase();
+  const packingState = String(row.packingStatus ?? row.packing_status ?? (packing ? "READY" : "")).toUpperCase();
   if (barcodeState === "FAILED" || packingState === "FAILED") return "FAILED";
   if (barcode && packing && barcodeState === "READY") return "READY";
   if (barcode && barcodeState === "READY") return "INCOMPLETE";

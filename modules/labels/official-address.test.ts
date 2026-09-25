@@ -92,10 +92,14 @@ describe("overlayIndiaPostPartyBox", () => {
     page.drawText("Kolenchery SO (682311)", { x: booking.x + 6, y: booking.y + booking.height - 14, size: 8, font });
     const bytes = await overlayIndiaPostPartyBox(await source.save(), SAMPLE_BOX);
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const pdf = await pdfjs.getDocument({ data: new Uint8Array(bytes), disableWorker: true }).promise;
+    const pdf = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
     const pdfPage = await pdf.getPage(1);
     const text = await pdfPage.getTextContent();
-    const items = text.items.filter((item): item is { str: string; transform: number[] } => "str" in item && "transform" in item);
+    const items = text.items.flatMap((item) => {
+      if (!item || typeof item !== "object" || !("str" in item) || !("transform" in item)) return [];
+      const textItem = item as { str: string; transform: number[] };
+      return [textItem];
+    });
     const receiver = items.find((item) => item.str.includes("RECEIVER"));
     const sender = items.find((item) => item.str.includes("SENDER"));
     expect(receiver).toBeTruthy();
