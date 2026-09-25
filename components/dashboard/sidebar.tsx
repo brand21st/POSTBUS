@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronsLeft } from "lucide-react";
+import { ChevronsLeft, Lock } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { helpNav, sidebarNav } from "@/lib/dashboard/nav";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { lockedFeatureForPath } from "@/modules/billing/entitlements";
 import type { MeResponse } from "@/types/api";
 
 export function Sidebar({
@@ -27,6 +28,8 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const planName = me?.subscription?.planName ?? me?.subscription?.planCode ?? "Starter";
+  const features = me?.subscription?.features ?? [];
+  const trial = me?.subscription?.status === "TRIAL";
   const workspace = me?.organization?.name ?? "Workspace";
   const profileName = me?.user.fullName ?? me?.user.email ?? "Account";
 
@@ -55,6 +58,8 @@ export function Sidebar({
               ? pathname === "/dashboard"
               : pathname.startsWith(item.href);
           const Icon = item.icon;
+          const lockedFeature = trial ? null : lockedFeatureForPath(item.href);
+          const locked = Boolean(lockedFeature && !features.includes(lockedFeature));
           return (
             <Link
               key={item.href}
@@ -66,11 +71,13 @@ export function Sidebar({
                 collapsed && "justify-center px-0",
                 active
                   ? "bg-rose-100 text-brand-dark"
-                  : "text-muted hover:bg-surface-soft hover:text-foreground"
+                  : "text-muted hover:bg-surface-soft hover:text-foreground",
+                locked && !active && "text-muted/70"
               )}
             >
-              <Icon className="size-4 shrink-0" />
-              <span className={cn(collapsed && "sr-only")}>{item.label}</span>
+              <Icon className={cn("size-4 shrink-0", locked && "blur-[0.5px]")} />
+              <span className={cn(collapsed && "sr-only", locked && "blur-[1px]")}>{item.label}</span>
+              {locked && !collapsed ? <Lock className="ml-auto size-3.5 shrink-0 text-muted" /> : null}
             </Link>
           );
         })}

@@ -11,6 +11,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
+import { PlanLock } from "@/components/billing/plan-lock";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
 import type { IntegrationCard, IntegrationsResponse } from "@/types/api";
 
 const FALLBACK: IntegrationCard[] = [
@@ -35,6 +38,7 @@ function cardsFromPayload(payload?: IntegrationsResponse | null): IntegrationCar
 }
 
 export default function IntegrationsPage() {
+  const entitlements = usePlanEntitlements();
   const query = useQuery({
     queryKey: ["integrations"],
     queryFn: () => api<IntegrationsResponse>("/api/v1/integrations"),
@@ -74,8 +78,19 @@ export default function IntegrationsPage() {
                     ? "/dashboard/integrations/wati"
                     : undefined;
 
+            const feature =
+              card.provider === "INDIA_POST"
+                ? FEATURE.indiaPost
+                : card.provider === "SHOPIFY"
+                  ? FEATURE.shopify
+                  : card.provider === "WATI"
+                    ? FEATURE.wati
+                    : null;
+            const locked = Boolean(feature && !entitlements.allows(feature));
+
             return (
-              <Card key={card.provider}>
+              <PlanLock key={card.provider} locked={locked} feature={feature} compact>
+                <Card>
                 <CardHeader>
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -109,7 +124,8 @@ export default function IntegrationsPage() {
                     </Link>
                   ) : null}
                 </CardContent>
-              </Card>
+                </Card>
+              </PlanLock>
             );
           })}
         </div>

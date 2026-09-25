@@ -13,6 +13,7 @@ import { handleWorkspaceRoutes } from "@/lib/api/v1/workspace";
 import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { assertPlanFeature, lockedFeatureForApi } from "@/modules/billing/entitlements";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
 
@@ -51,6 +52,8 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   if (session !== null) return session;
 
   const ctx = await requireTenant(permissionForTenantRoute(method, path, slugs));
+  const planFeature = lockedFeatureForApi(method, path, slugs);
+  if (planFeature) await assertPlanFeature(supabase, ctx.organizationId, planFeature);
   return (
     (await handleBillingRoutes(request, supabase, ctx, key)) ??
     (await handleWorkspaceRoutes(request, supabase, ctx, key, method, slugs)) ??

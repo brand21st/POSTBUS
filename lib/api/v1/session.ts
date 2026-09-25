@@ -6,6 +6,7 @@ import {
   ensureActiveWorkspace,
   listMemberships,
 } from "@/modules/organizations/service";
+import { getOrganizationEntitlements } from "@/modules/billing/entitlements";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export async function handleSessionRoutes(
@@ -31,18 +32,9 @@ export async function handleSessionRoutes(
     const organization = ensured.current
       ? { id: ensured.current.id, name: ensured.current.name, slug: ensured.current.slug }
       : null;
-    const { data: subscription } = organization
-      ? await supabase
-          .from("subscriptions")
-          .select("status, plans!plan_id(slug, name)")
-          .eq("organization_id", organization.id)
-          .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"])
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle()
-      : { data: null };
-    const plan = subscription?.plans as { slug?: string; name?: string } | { slug?: string; name?: string }[] | null;
-    const planRow = Array.isArray(plan) ? plan[0] : plan;
+    const entitlements = organization
+      ? await getOrganizationEntitlements(supabase, organization.id)
+      : null;
     return {
       user: {
         id: user.id,
@@ -57,9 +49,10 @@ export async function handleSessionRoutes(
         ? [{ id: organization.id, name: organization.name, slug: organization.slug, role: ensured.role }]
         : [],
       subscription: {
-        planCode: planRow?.slug,
-        planName: planRow?.name,
-        status: subscription?.status ?? "CONFIGURATION_REQUIRED",
+        planCode: entitlements?.planSlug,
+        planName: entitlements?.planName,
+        status: entitlements?.status ?? "CONFIGURATION_REQUIRED",
+        features: entitlements?.features ?? [],
       },
     };
   }

@@ -37,6 +37,7 @@ export type MeSubscription = {
   planCode?: BillingPlanCode | string | null;
   planName?: string | null;
   status?: string | null;
+  features?: string[];
 };
 
 export type MeResponse = {

@@ -20,7 +20,12 @@ type AccountRow = {
   slug: string;
   account_status: string;
   created_at: string;
-  subscription?: { status?: string; plans?: { name?: string } | { name?: string }[] | null } | null;
+  subscription?: {
+    status?: string;
+    billing_cycle?: string;
+    plan_id?: string;
+    plans?: { name?: string } | { name?: string }[] | null;
+  } | null;
 };
 
 type SignupRow = {
@@ -292,7 +297,12 @@ export default function AdminAccountsPage() {
                       {formatRelative(account.created_at)}
                     </td>
                     <td className="px-2 py-1.5 text-right">
-                      <AccountAdminActions accountId={account.id} accountName={account.name} />
+                      <AccountAdminActions
+                        accountId={account.id}
+                        accountName={account.name}
+                        currentPlanId={account.subscription?.plan_id}
+                        currentBillingCycle={account.subscription?.billing_cycle}
+                      />
                     </td>
                   </tr>
                 ))}

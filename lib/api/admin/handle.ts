@@ -6,7 +6,7 @@ import { assertAdminActionPin } from "@/lib/admin/action-pin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
 import { yearlyPricePaise } from "@/modules/billing/prices";
-import { getLiveSubscription, mapPlan, type PlanRow } from "@/modules/billing/subscriptions";
+import { adminAssignPlan, getLiveSubscription, mapPlan, type PlanRow } from "@/modules/billing/subscriptions";
 import { LIVE_STATUSES } from "@/modules/billing/usage";
 import {
   loadRazorpaySettings,
@@ -342,7 +342,7 @@ async function handleAccounts(
     const { data: subs } = ids.length
       ? await supabase
           .from("subscriptions")
-          .select("organization_id, status, billing_cycle, amount_paise, plans!plan_id(name, slug)")
+          .select("organization_id, status, billing_cycle, amount_paise, plan_id, plans!plan_id(name, slug)")
           .in("organization_id", ids)
           .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"])
       : { data: [] as never[] };
@@ -442,40 +442,21 @@ async function handleAccounts(
     return { deleted: true, id: orgId };
   }
   if (method === "POST" && action === "change-plan") {
-    const parsed = z.object({ planId: z.string().uuid(), billingCycle: z.enum(["monthly", "yearly"]).optional() }).parse(body);
-    const live = await getLiveSubscription(supabase, orgId);
-    const { data: plan } = await supabase.from("plans").select("*").eq("id", parsed.planId).maybeSingle();
-    if (!plan) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Plan not found.");
-    const cycle = parsed.billingCycle ?? live?.billing_cycle ?? "monthly";
-    const amount = cycle === "yearly" ? Number(plan.yearly_price_paise) : Number(plan.monthly_price_paise);
-    if (live) {
-      await supabase
-        .from("subscriptions")
-        .update({
-          plan_id: plan.id,
-          billing_cycle: cycle,
-          amount_paise: amount,
-          order_limit: plan.monthly_order_limit,
-        })
-        .eq("id", live.id);
-      await writeSubscriptionHistory(supabase, {
-        organizationId: orgId,
-        subscriptionId: live.id,
-        fromPlanId: live.plan_id,
-        toPlanId: plan.id,
-        reason: "admin_change_plan",
-        actor: ctx.userId,
-      });
-    }
-    await writeBillingAudit(supabase, {
-      actorId: ctx.userId,
-      actorType: "SUPER_ADMIN",
-      action: "subscription.plan_changed",
+    const parsed = z
+      .object({
+        pin: z.string().min(1),
+        planId: z.string().uuid(),
+        billingCycle: z.enum(["monthly", "yearly"]).optional(),
+      })
+      .parse(body);
+    assertAdminActionPin(parsed.pin);
+    return adminAssignPlan(supabase, {
       organizationId: orgId,
+      userId: ctx.userId,
+      planId: parsed.planId,
+      billingCycle: parsed.billingCycle,
       ip: ip(request),
-      metadata: parsed,
     });
-    return { ok: true };
   }
   if (method === "POST" && action === "extend") {
     const parsed = z.object({ days: z.number().int().min(1).max(365) }).parse(body);

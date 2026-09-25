@@ -14,6 +14,8 @@ import { formatDate } from "@/lib/format";
 import { ApiError, api } from "@/lib/hooks/use-api";
 import { openLabelPdf } from "@/lib/labels/preview";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
 import type { LabelRecord, Paginated } from "@/types/api";
 
 function fileUrl(label: LabelRecord) {
@@ -64,6 +66,9 @@ export default function LabelsPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const station = usePrintStation();
+  const entitlements = usePlanEntitlements();
+  const canBulk = entitlements.allows(FEATURE.bulk);
+  const canPacking = entitlements.allows(FEATURE.packing);
   const connected = Boolean(station.data?.connected);
 
   const query = useQuery({
@@ -192,17 +197,23 @@ export default function LabelsPage() {
             <Link href="/dashboard/labels/customize">
               <Button type="button" variant="secondary">
                 <Settings2 className="size-4" />
-                Customize Label
+                {canPacking ? "Customize Label" : "Upgrade plan"}
               </Button>
             </Link>
             <Button
               type="button"
               variant="secondary"
-              disabled={selected.length === 0 || bulk.isPending}
-              onClick={() => bulk.mutate(selected)}
+              disabled={canBulk ? selected.length === 0 || bulk.isPending : false}
+              onClick={() => {
+                if (!canBulk) {
+                  window.location.href = "/dashboard/billing";
+                  return;
+                }
+                bulk.mutate(selected);
+              }}
             >
               <Download className="size-4" />
-              Bulk download
+              {canBulk ? "Bulk download" : "Upgrade plan"}
             </Button>
           </>
         }

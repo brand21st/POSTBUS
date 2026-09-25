@@ -9,6 +9,18 @@ import { Topbar } from "@/components/dashboard/topbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/hooks/use-api";
 import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { PlanLock } from "@/components/billing/plan-lock";
+
+function DashboardPlanGate({ pathname, children }: { pathname: string; children: ReactNode }) {
+  const entitlements = usePlanEntitlements();
+  const lockedFeature = entitlements.loading ? null : entitlements.lockForPath(pathname);
+  return (
+    <PlanLock locked={Boolean(lockedFeature)} feature={lockedFeature}>
+      {children}
+    </PlanLock>
+  );
+}
 
 export function DashboardShell({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -78,7 +90,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
         <NewOrderAlerts />
         <main id="main-content" className="flex-1 px-4 py-6 lg:px-8 lg:py-8">
-          <div className="mx-auto w-full max-w-[1280px]">{children}</div>
+          <div className="mx-auto w-full max-w-[1280px]">
+            <DashboardPlanGate pathname={pathname}>{children}</DashboardPlanGate>
+          </div>
         </main>
       </div>
       <MobileNav open={mobileOpen} onOpenChange={setMobileOpen} me={me.data} />

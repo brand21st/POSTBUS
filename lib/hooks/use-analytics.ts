@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
+import { FEATURE } from "@/modules/billing/entitlements";
 import { createClient } from "@/lib/supabase/client";
 import type { DashboardAnalytics } from "@/types/api";
 
@@ -20,6 +21,9 @@ export function useAnalytics() {
     refetchInterval: 10_000,
     refetchOnWindowFocus: true,
     staleTime: 0,
+    enabled:
+      me.data?.subscription?.status === "TRIAL" ||
+      (me.data?.subscription?.features ?? []).includes(FEATURE.analytics),
   });
 
   useEffect(() => {

@@ -31,6 +31,8 @@ Requires a `platform_admins` row (or `PLATFORM_ADMIN_EMAIL` matching the signed-
 | GET | `/api/admin/accounts` |
 | GET | `/api/admin/accounts/:id` |
 | POST | `/api/admin/accounts/:id/activate\|block\|suspend\|hold\|disable\|delete\|change-plan\|extend\|trial\|reset-usage` |
+
+`change-plan` requires the 6-digit Super Admin PIN and `{ planId, billingCycle? }`. It applies the catalog plan immediately (quota and price), including when the workspace is still on trial.
 | GET | `/api/admin/subscriptions` |
 | GET | `/api/admin/payments` |
 | GET/POST | `/api/admin/plans` |

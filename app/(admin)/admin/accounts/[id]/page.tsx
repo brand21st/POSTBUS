@@ -30,6 +30,7 @@ export default function AdminAccountDetailPage() {
   const subscription = query.data?.subscription as {
     status?: string;
     billing_cycle?: string;
+    plan_id?: string;
     amount_paise?: number;
     current_period_end?: string;
     plans?: { name?: string };
@@ -44,7 +45,13 @@ export default function AdminAccountDetailPage() {
         description={account?.slug}
         actions={
           <div className="flex flex-wrap items-start gap-2">
-            <AccountAdminActions accountId={params.id} accountName={account?.name} layout="toolbar" />
+            <AccountAdminActions
+              accountId={params.id}
+              accountName={account?.name}
+              currentPlanId={subscription?.plan_id}
+              currentBillingCycle={subscription?.billing_cycle}
+              layout="toolbar"
+            />
             <Button size="sm" variant="secondary" onClick={() => resetUsage.mutate()} disabled={resetUsage.isPending}>
               Reset usage
             </Button>

@@ -550,6 +550,124 @@ export async function activateSubscription(
   }
 }
 
+export async function adminAssignPlan(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    userId: string;
+    planId: string;
+    billingCycle?: "monthly" | "yearly";
+    ip?: string | null;
+  }
+) {
+  const { data: planRow, error: planError } = await supabase
+    .from("plans")
+    .select("*")
+    .eq("id", input.planId)
+    .maybeSingle();
+  if (planError || !planRow) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Plan not found.");
+  const plan = planRow as PlanRow;
+  let live = await getLiveSubscription(supabase, input.organizationId);
+  const cycle = input.billingCycle ?? live?.billing_cycle ?? "monthly";
+  const amount = amountForCycle(plan, cycle);
+  const now = new Date();
+  const period = periodForCycle(cycle, now);
+  const patch = {
+    plan_id: plan.id,
+    billing_cycle: cycle,
+    amount_paise: amount,
+    order_limit: plan.monthly_order_limit,
+    pending_plan_id: null,
+    pending_billing_cycle: null,
+  };
+  let subscriptionId = live?.id;
+  let fromStatus = live?.status ?? null;
+  let fromPlanId = live?.plan_id ?? null;
+  if (live) {
+    await supabase.from("subscriptions").update(patch).eq("id", live.id);
+  } else {
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .insert({
+        organization_id: input.organizationId,
+        ...patch,
+        status: "ACTIVE",
+        started_at: now.toISOString(),
+        current_period_start: now.toISOString(),
+        current_period_end: period.end.toISOString(),
+        renews_at: period.end.toISOString(),
+        expires_at: period.end.toISOString(),
+      })
+      .select("id")
+      .single();
+    const duplicateLive =
+      error?.code === "23505" || /one_live_per_org|duplicate key/i.test(error?.message ?? "");
+    if (duplicateLive) {
+      const existing = await getLiveSubscription(supabase, input.organizationId);
+      if (!existing) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not assign plan.");
+      }
+      live = existing;
+      subscriptionId = existing.id;
+      fromStatus = existing.status;
+      fromPlanId = existing.plan_id;
+      await supabase.from("subscriptions").update(patch).eq("id", existing.id);
+    } else if (error || !data) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not assign plan.");
+    } else {
+      subscriptionId = data.id;
+    }
+  }
+  const periodStart = (live?.current_period_start ?? now.toISOString()).slice(0, 10);
+  const periodEnd = (live?.current_period_end ?? period.end.toISOString()).slice(0, 10);
+  const { data: usage } = await supabase
+    .from("billing_usage")
+    .select("id")
+    .eq("organization_id", input.organizationId)
+    .eq("period_start", periodStart)
+    .maybeSingle();
+  if (usage?.id) {
+    await supabase
+      .from("billing_usage")
+      .update({
+        subscription_id: subscriptionId,
+        period_end: periodEnd,
+        order_limit: plan.monthly_order_limit,
+      })
+      .eq("id", usage.id);
+  } else {
+    await supabase.from("billing_usage").insert({
+      organization_id: input.organizationId,
+      subscription_id: subscriptionId,
+      period_start: periodStart,
+      period_end: periodEnd,
+      orders_used: 0,
+      order_limit: plan.monthly_order_limit,
+    });
+  }
+  await writeSubscriptionHistory(supabase, {
+    organizationId: input.organizationId,
+    subscriptionId: subscriptionId!,
+    fromStatus,
+    toStatus: live?.status ?? "ACTIVE",
+    fromPlanId,
+    toPlanId: plan.id,
+    reason: "admin_change_plan",
+    actor: input.userId,
+  });
+  await writeBillingAudit(supabase, {
+    actorId: input.userId,
+    actorType: "SUPER_ADMIN",
+    action: "subscription.plan_changed",
+    targetType: "subscription",
+    targetId: subscriptionId,
+    organizationId: input.organizationId,
+    ip: input.ip,
+    metadata: { planId: plan.id, billingCycle: cycle },
+  });
+  return { ok: true, plan: mapPlan(plan), billingCycle: cycle };
+}
+
 export async function changePlan(
   supabase: SupabaseClient,
   input: {
