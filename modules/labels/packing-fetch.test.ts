@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchPackingSlipPdf, packingCustomerFromShopifyAddress, packingMerchantFromOrganization, packingParty } from "@/modules/labels/packing-fetch";
+import { fetchPackingSlipPdf, packingCustomerFromShopifyAddress, packingMerchantFromOrganization, packingParty, packingPartyForSlip } from "@/modules/labels/packing-fetch";
 
 const goodAddress = {
   name: "Priya Nair",
@@ -40,8 +40,10 @@ function query(data: unknown) {
 function client(overrides?: {
   address?: Record<string, unknown> | null;
   customerPhone?: string;
+  org?: Record<string, unknown> | null;
 }) {
   const address = overrides?.address === undefined ? goodAddress : overrides.address;
+  const org = overrides?.org === undefined ? goodOrg : overrides.org;
   return {
     from: vi.fn((table: string) => {
       if (table === "shipments") {
@@ -67,7 +69,7 @@ function client(overrides?: {
         });
       }
       if (table === "pickup_locations") return query(null);
-      if (table === "organizations") return query(goodOrg);
+      if (table === "organizations") return query(org);
       if (table === "shopify_stores") return query({ shop_name: "Sample Store", shop_domain: "sample.myshopify.com" });
       if (table === "order_line_items") {
         return query([{ title: "Cotton Shirt", sku: "SHIRT-BLK", quantity: 1, unit_price: 799 }]);
@@ -138,6 +140,15 @@ describe("packing address sources", () => {
     expect(receiver.lines.join(" ")).toContain("14 Lake View");
     expect(receiver.phone).toBe("9876501234");
   });
+
+  it("still builds a packing party when organization street is missing", () => {
+    const sender = packingPartyForSlip(
+      packingMerchantFromOrganization({ name: "AURIMO BY NISH", city: "Ernakulam", state: "Kerala", pincode: "682311", phone: "9605658104" }),
+      "sender"
+    );
+    expect(sender.name).toBe("AURIMO BY NISH");
+    expect(sender.lines.join(" ")).toContain("Ernakulam");
+  });
 });
 
 describe("fetchPackingSlipPdf", () => {
@@ -158,9 +169,12 @@ describe("fetchPackingSlipPdf", () => {
     expect(Buffer.from(result.pdf).subarray(0, 4).toString()).toBe("%PDF");
   });
 
-  it("does not read pickup locations for the merchant address", async () => {
-    const supabase = client() as never;
-    await fetchPackingSlipPdf(supabase, "org-1", "ship-1");
-    expect(supabase.from).not.toHaveBeenCalledWith("pickup_locations");
+  it("still generates a packing slip when organization street is missing", async () => {
+    const result = await fetchPackingSlipPdf(
+      client({ org: { ...goodOrg, line1: null } }) as never,
+      "org-1",
+      "ship-1"
+    );
+    expect(Buffer.from(result.pdf).subarray(0, 4).toString()).toBe("%PDF");
   });
 });

@@ -4,7 +4,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
-import { fetchPackingSlipPdf } from "@/modules/labels/packing-fetch";
+import { persistPackingSlip } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
@@ -73,6 +73,23 @@ export async function handleLabelTemplateRoutes(
     };
   }
 
+  if (method === "POST" && slugs[0] === "labels" && slugs[2] === "packing-slip") {
+    const { data: existing } = await supabase
+      .from("labels")
+      .select("id, shipment_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", slugs[1])
+      .maybeSingle();
+    if (!existing?.shipment_id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label not found.");
+    const packing = await persistPackingSlip(supabase, ctx.organizationId, String(existing.shipment_id));
+    return {
+      id: packing.id,
+      kind: "MERCHANT",
+      shipmentId: existing.shipment_id,
+      downloadPath: `/api/v1/labels/${packing.id}/download`,
+    };
+  }
+
   if (method === "POST" && slugs[0] === "labels" && slugs[2] === "regenerate") {
     const body = (await request.json().catch(() => ({}))) as { confirm?: boolean };
     if (!body.confirm) {
@@ -94,14 +111,7 @@ export async function handleLabelTemplateRoutes(
       bytes: official.pdf,
     });
     try {
-      const packing = await fetchPackingSlipPdf(supabase, ctx.organizationId, official.shipmentId);
-      await persistLabelPdf(supabase, {
-        organizationId: ctx.organizationId,
-        shipmentId: packing.shipmentId,
-        kind: "MERCHANT",
-        bytes: packing.pdf,
-        templateSnapshot: packing.template,
-      });
+      await persistPackingSlip(supabase, ctx.organizationId, official.shipmentId, { replace: true });
     } catch (error) {
       logError("PACKING_LABEL_FAILED", {
         organizationId: ctx.organizationId,

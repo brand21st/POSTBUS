@@ -17,7 +17,7 @@ import {
 } from "@/modules/india-post/endpoints";
 import { resolveIndiaPostOrigin } from "@/modules/india-post/origin";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
-import { fetchPackingSlipPdf } from "@/modules/labels/packing-fetch";
+import { persistPackingSlip } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE, indiaPostServiceLabel } from "@/types/domain";
@@ -472,14 +472,7 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
   await supabase.from("shipments").update({ status: "LABEL_READY" }).eq("id", officialPdf.shipmentId);
 
   try {
-    const packing = await fetchPackingSlipPdf(supabase, payload.organizationId, officialPdf.shipmentId);
-    await persistLabelPdf(supabase, {
-      organizationId: payload.organizationId,
-      shipmentId: packing.shipmentId,
-      kind: "MERCHANT",
-      bytes: packing.pdf,
-      templateSnapshot: packing.template,
-    });
+    await persistPackingSlip(supabase, payload.organizationId, officialPdf.shipmentId, { replace: true });
   } catch (error) {
     logError("PACKING_LABEL_FAILED", {
       organizationId: payload.organizationId,

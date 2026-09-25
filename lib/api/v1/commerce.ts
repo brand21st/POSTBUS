@@ -116,8 +116,40 @@ export async function handleCommerceRoutes(
     if (kind) query = query.eq("kind", kind);
     const { data, count, error } = await query;
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    const items = (data ?? []).map((row) => mapLabelRow(row as Record<string, unknown>));
+    const shipmentIds = [...new Set(items.map((row) => String(row.shipment_id || row.shipmentId || "")).filter(Boolean))];
+    const packingByShipment = new Map<string, string>();
+    const indiaByShipment = new Map<string, string>();
+    if (shipmentIds.length) {
+      const { data: siblingRows } = await supabase
+        .from("labels")
+        .select("id, shipment_id, kind")
+        .eq("organization_id", ctx.organizationId)
+        .eq("status", "READY")
+        .in("shipment_id", shipmentIds)
+        .in("kind", ["MERCHANT", "INDIA_POST"])
+        .order("created_at", { ascending: false });
+      for (const row of siblingRows ?? []) {
+        const shipmentId = String(row.shipment_id || "");
+        const kind = String(row.kind || "INDIA_POST").toUpperCase();
+        if (!shipmentId) continue;
+        if (kind === "MERCHANT" && !packingByShipment.has(shipmentId)) packingByShipment.set(shipmentId, String(row.id));
+        if (kind === "INDIA_POST" && !indiaByShipment.has(shipmentId)) indiaByShipment.set(shipmentId, String(row.id));
+      }
+    }
     return {
-      items: (data ?? []).map((row) => mapLabelRow(row as Record<string, unknown>)),
+      items: items.map((row) => {
+        const shipmentId = String(row.shipment_id || row.shipmentId || "");
+        const packingLabelId = packingByShipment.get(shipmentId) ?? null;
+        const indiaPostLabelId = indiaByShipment.get(shipmentId) ?? null;
+        return {
+          ...row,
+          packingLabelId,
+          packing_label_id: packingLabelId,
+          indiaPostLabelId,
+          india_post_label_id: indiaPostLabelId,
+        };
+      }),
       page,
       pageSize,
       total: count ?? 0,
@@ -140,7 +172,11 @@ export async function handleCommerceRoutes(
       file_url: data.file_url,
       shipment_id: data.shipment_id,
     });
-    const filename = `${data.shipment_id || data.id}.pdf`;
+    const kind = String(data.kind || "INDIA_POST").toUpperCase();
+    const filename =
+      kind === "MERCHANT"
+        ? `packing-slip-${data.shipment_id || data.id}.pdf`
+        : `india-post-${data.shipment_id || data.id}.pdf`;
     if (wantsBrowserPdfPreview(request)) {
       return labelPdfViewerResponse(filename);
     }

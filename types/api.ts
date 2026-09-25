@@ -313,7 +313,10 @@ export type LabelRecord = {
   printError?: string | null;
   print_error?: string | null;
   printJob?: PrintJobRecord | null;
-  print_job?: PrintJobRecord | null;
+  packingLabelId?: string | null;
+  packing_label_id?: string | null;
+  indiaPostLabelId?: string | null;
+  india_post_label_id?: string | null;
 };
 
 export type ManifestRecord = {

@@ -2,8 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { officialAddressLines } from "@/modules/labels/official-address";
 import { loadLogoBytes } from "@/modules/labels/packing-data";
 import { renderPackingSlipPdf, type PackingLabelData, type PackingParty } from "@/modules/labels/packing-pdf";
+import { persistLabelPdf } from "@/modules/labels/persist";
 import { getLabelTemplate } from "@/modules/labels/template-service";
 import type { LabelTemplate } from "@/modules/labels/template-schema";
+import { organizationLabelSender } from "@/modules/organizations/label-sender";
 
 export type PackingPartyInput = {
   name?: string | null;
@@ -81,23 +83,67 @@ export function packingParty(input: PackingPartyInput, role: "receiver" | "sende
   };
 }
 
-export function packingMerchantFromOrganization(org?: {
-  name?: string | null;
-  phone?: string | null;
-  line1?: string | null;
-  line2?: string | null;
-  city?: string | null;
-  state?: string | null;
-  pincode?: string | null;
-} | null): PackingPartyInput {
+function cleanText(value?: string | null) {
+  const trimmed = (value ?? "").trim();
+  return isPackingPlaceholder(trimmed) ? "" : trimmed;
+}
+
+export function packingPartyForSlip(input: PackingPartyInput, role: "receiver" | "sender"): PackingParty {
+  const name = cleanText(input.name) || (role === "sender" ? "Merchant" : "Customer");
+  const pin = (input.pincode ?? "").replace(/\D/g, "");
+  const phoneDigits = (input.phone ?? "").replace(/\D/g, "");
+  const phone = phoneDigits.length > 10 ? phoneDigits.slice(-10) : phoneDigits;
   return {
-    name: org?.name ?? null,
-    phone: org?.phone ?? null,
-    line1: org?.line1 ?? null,
-    line2: org?.line2 ?? null,
-    city: org?.city ?? null,
-    state: org?.state ?? null,
-    pincode: org?.pincode ?? null,
+    name,
+    phone: phone.length === 10 && phone !== "0000000000" ? phone : "",
+    lines: officialAddressLines({
+      line1: cleanText(input.line1),
+      line2: cleanText(input.line2),
+      city: cleanText(input.city),
+      state: cleanText(input.state),
+      pin: /^\d{6}$/.test(pin) ? pin : "",
+    }),
+  };
+}
+
+export function packingMerchantFromOrganization(
+  org?: {
+    name?: string | null;
+    phone?: string | null;
+    line1?: string | null;
+    line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    pincode?: string | null;
+  } | null,
+  pickup?: {
+    name?: string | null;
+    contact_name?: string | null;
+    phone?: string | null;
+    line1?: string | null;
+    line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    pincode?: string | null;
+  } | null,
+  shopName?: string | null
+): PackingPartyInput {
+  const fallback = organizationLabelSender(org, pickup, shopName);
+  const pick = (...values: Array<string | null | undefined>) => {
+    for (const value of values) {
+      const cleaned = cleanText(value);
+      if (cleaned) return cleaned;
+    }
+    return null;
+  };
+  return {
+    name: pick(org?.name, fallback.name),
+    phone: pick(org?.phone, fallback.phone),
+    line1: pick(org?.line1, fallback.line1),
+    line2: pick(org?.line2, fallback.line2),
+    city: pick(org?.city, fallback.city),
+    state: pick(org?.state, fallback.state),
+    pincode: pick(org?.pincode, fallback.pincode),
   };
 }
 
@@ -138,8 +184,15 @@ export async function fetchPackingSlipPdf(
   const customer = asRecord(shipment.customers);
   const shopifyShipping =
     asRecord(order?.shipping_address) ?? asRecord(shipment.addresses);
-  const receiver = packingParty(packingCustomerFromShopifyAddress(shopifyShipping, customer), "receiver");
+  const receiver = packingPartyForSlip(packingCustomerFromShopifyAddress(shopifyShipping, customer), "receiver");
 
+  const { data: pickup } = await supabase
+    .from("pickup_locations")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .order("is_default", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   const { data: org } = await supabase
     .from("organizations")
     .select("name, phone, line1, line2, city, state, pincode, logo_path")
@@ -151,7 +204,10 @@ export async function fetchPackingSlipPdf(
     .eq("organization_id", organizationId)
     .maybeSingle();
 
-  const sender = packingParty(packingMerchantFromOrganization(org), "sender");
+  const sender = packingPartyForSlip(
+    packingMerchantFromOrganization(org, pickup, shop?.shop_name),
+    "sender"
+  );
 
   const orderId = String(order?.id || shipment.order_id || "");
   const { data: lineRows } = orderId
@@ -198,6 +254,37 @@ export async function fetchPackingSlipPdf(
 
   const pdf = await renderPackingSlipPdf(data);
   return { pdf: Buffer.from(pdf), shipmentId: String(shipment.id), template };
+}
+
+export async function persistPackingSlip(
+  supabase: SupabaseClient,
+  organizationId: string,
+  shipmentId: string,
+  options?: { replace?: boolean }
+) {
+  if (!options?.replace) {
+    const { data: existing } = await supabase
+      .from("labels")
+      .select("id, file_path, file_url, kind")
+      .eq("organization_id", organizationId)
+      .eq("shipment_id", shipmentId)
+      .eq("kind", "MERCHANT")
+      .eq("status", "READY")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existing?.id) {
+      return existing as { id: string; file_path: string; file_url: string | null; kind: "MERCHANT" };
+    }
+  }
+  const packing = await fetchPackingSlipPdf(supabase, organizationId, shipmentId);
+  return persistLabelPdf(supabase, {
+    organizationId,
+    shipmentId: packing.shipmentId,
+    kind: "MERCHANT",
+    bytes: packing.pdf,
+    templateSnapshot: packing.template,
+  });
 }
 
 function formatPackingDate(value: unknown) {

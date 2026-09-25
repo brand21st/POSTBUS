@@ -18,10 +18,6 @@ import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
 import type { LabelRecord, Paginated } from "@/types/api";
 
-function fileUrl(label: LabelRecord) {
-  return `/api/v1/labels/${label.id}/download`;
-}
-
 function printLabel(status?: string | null) {
   const value = (status ?? "").toUpperCase();
   if (value === "PRINTED") return { text: "Printed", badge: "PRINTED" };
@@ -99,6 +95,21 @@ export default function LabelsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const downloadPacking = useMutation({
+    mutationFn: async (row: LabelRecord) => {
+      const packingId = row.packingLabelId ?? row.packing_label_id;
+      if (packingId) {
+        window.location.href = `/api/v1/labels/${packingId}/download`;
+        return packingId;
+      }
+      const created = await api<{ id: string }>(`/api/v1/labels/${row.id}/packing-slip`, { method: "POST" });
+      await queryClient.invalidateQueries({ queryKey: ["labels"] });
+      window.location.href = `/api/v1/labels/${created.id}/download`;
+      return created.id;
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const preview = useMutation({
     mutationFn: (id: string) => openLabelPdf(id),
     onError: (error: Error) => toast.error(error.message),
@@ -146,36 +157,49 @@ export default function LabelsPage() {
       id: "actions",
       header: "Actions",
       cell: (row) => {
-        const href = fileUrl(row);
-        const ready = (row.status ?? "").toUpperCase() === "READY" && Boolean(row.id);
+        const indiaId = row.indiaPostLabelId ?? row.india_post_label_id ?? ((row.kind ?? "INDIA_POST") !== "MERCHANT" ? row.id : null);
+        const packingId = row.packingLabelId ?? row.packing_label_id ?? ((row.kind ?? "") === "MERCHANT" ? row.id : null);
+        const indiaHref = indiaId ? `/api/v1/labels/${indiaId}/download` : null;
+        const indiaReady = Boolean(indiaId);
         return (
-          <div className="flex gap-2" onClick={(event) => event.stopPropagation()}>
+          <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!ready || (preview.isPending && preview.variables === row.id)}
-              onClick={() => preview.mutate(row.id)}
+              disabled={!indiaReady || (preview.isPending && preview.variables === indiaId)}
+              onClick={() => indiaId && preview.mutate(indiaId)}
             >
               Preview
             </Button>
-            <a href={href} className={!ready ? "pointer-events-none opacity-50" : undefined}>
-              <Button type="button" variant="secondary" size="sm" disabled={!ready}>
+            <a href={indiaHref ?? undefined} className={!indiaHref ? "pointer-events-none opacity-50" : undefined}>
+              <Button type="button" variant="secondary" size="sm" disabled={!indiaHref}>
                 <Download className="size-4" />
-                Download
+                Barcode
               </Button>
             </a>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!ready || print.isPending}
+              disabled={downloadPacking.isPending}
+              onClick={() => downloadPacking.mutate(row)}
+            >
+              <Download className="size-4" />
+              {packingId ? "Packing slip" : "Create packing slip"}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!indiaReady || print.isPending}
               onClick={() => {
+                if (!indiaId) return;
                 if (connected) {
-                  print.mutate(row.id);
+                  print.mutate(indiaId);
                   return;
                 }
-                window.open(href, "_blank", "noopener,noreferrer");
+                if (indiaHref) window.open(indiaHref, "_blank", "noopener,noreferrer");
               }}
             >
               <Printer className="size-4" />
@@ -191,7 +215,7 @@ export default function LabelsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Labels"
-        description="Preview, download, or print stored label PDFs. Empty until a booking job generates one."
+        description="Download the India Post barcode label and the packing slip for each shipment."
         actions={
           <>
             <Link href="/dashboard/labels/customize">
