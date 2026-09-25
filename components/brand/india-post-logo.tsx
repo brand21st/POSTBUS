@@ -7,9 +7,9 @@ export function IndiaPostLogo({ className }: { className?: string }) {
     <Image
       src="/ind.jpg"
       alt="India Post"
-      width={120}
-      height={48}
-      className={cn("h-6 w-auto object-contain object-left", className)}
+      width={387}
+      height={252}
+      className={cn("h-12 w-auto max-w-[11rem] object-contain object-left", className)}
     />
   );
 }
