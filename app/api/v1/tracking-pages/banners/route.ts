@@ -3,12 +3,14 @@ import { requireTenant } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { apiRoute } from "@/lib/api/handler";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { assertTrackingPagePlan } from "@/modules/tracking-pages/assert-plan";
 import { bannerMetaSchema, bannerUpdateSchema } from "@/modules/tracking-pages/schema";
 import { addBanner, deleteBanner, updateBanners } from "@/modules/tracking-pages/service";
 
 export const POST = apiRoute(async (request: NextRequest) => {
   const ctx = await requireTenant("tracking.pages");
   const supabase = await createServerSupabase();
+  await assertTrackingPagePlan(supabase, ctx.organizationId);
   const contentType = request.headers.get("content-type") ?? "";
 
   if (contentType.includes("multipart/form-data")) {
@@ -34,6 +36,7 @@ export const POST = apiRoute(async (request: NextRequest) => {
 export const DELETE = apiRoute(async (request: NextRequest) => {
   const ctx = await requireTenant("tracking.pages");
   const supabase = await createServerSupabase();
+  await assertTrackingPagePlan(supabase, ctx.organizationId);
   const id = request.nextUrl.searchParams.get("id");
   if (!id) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Banner id is required.");
   return deleteBanner(supabase, ctx, id);

@@ -19,6 +19,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/hooks/use-api";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
 import {
   DEFAULT_INVOICE_APPEARANCE,
   INVOICE_PRESETS,
@@ -107,6 +109,8 @@ function ColorField({
 
 export function InvoiceEditor() {
   const queryClient = useQueryClient();
+  const entitlements = usePlanEntitlements();
+  const invoicesAllowed = entitlements.allows(FEATURE.invoices);
   const [appearance, setAppearance] = useState<InvoiceAppearance>(DEFAULT_INVOICE_APPEARANCE);
   const [gstin, setGstin] = useState("");
   const [businessEmail, setBusinessEmail] = useState("");
@@ -115,10 +119,12 @@ export function InvoiceEditor() {
 
   const settings = useQuery({
     queryKey: ["invoice-template"],
+    enabled: invoicesAllowed,
     queryFn: () => api<SettingsResponse>("/api/v1/invoice-template"),
   });
   const preview = useQuery({
     queryKey: ["invoice-template-preview"],
+    enabled: invoicesAllowed,
     queryFn: () => api<PreviewResponse>("/api/v1/invoice-template/preview-data"),
   });
 

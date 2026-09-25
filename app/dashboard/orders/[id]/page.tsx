@@ -14,13 +14,18 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { addressLine, customerName, lineItems, orderNumber } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { api } from "@/lib/hooks/use-api";
+import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
+import { api } from "@/lib/hooks/use-api";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
 import type { OrderRecord, ShipmentRecord } from "@/types/api";
 
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const entitlements = usePlanEntitlements();
+  const invoicesLocked = !entitlements.loading && !entitlements.allows(FEATURE.invoices);
 
   const order = useQuery({
     queryKey: ["order", params.id],
@@ -174,16 +179,18 @@ export default function OrderDetailPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           {record.invoice ? <StatusBadge value={record.invoice.status} /> : null}
-          <InvoiceActions
-            invoice={record.invoice}
-            onRetry={() =>
-              record.invoice &&
-              api(`/api/v1/invoices/${record.invoice.id}/retry`, { method: "POST" }).then(() => {
-                toast.success("Invoice retry queued.");
-                queryClient.invalidateQueries({ queryKey: ["order", params.id] });
-              }).catch((error: Error) => toast.error(error.message))
-            }
-          />
+          <PlanLock locked={invoicesLocked} feature={FEATURE.invoices} compact>
+            <InvoiceActions
+              invoice={record.invoice}
+              onRetry={() =>
+                record.invoice &&
+                api(`/api/v1/invoices/${record.invoice.id}/retry`, { method: "POST" }).then(() => {
+                  toast.success("Invoice retry queued.");
+                  queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+                }).catch((error: Error) => toast.error(error.message))
+              }
+            />
+          </PlanLock>
         </CardContent>
       </Card>
 

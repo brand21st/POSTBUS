@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Truck } from "lucide-react";
 import { toast } from "sonner";
+import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -14,11 +15,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
 import type { ShipmentRecord, TrackingEvent } from "@/types/api";
 
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const entitlements = usePlanEntitlements();
+  const invoicesLocked = !entitlements.loading && !entitlements.allows(FEATURE.invoices);
 
   const shipment = useQuery({
     queryKey: ["shipment", params.id],
@@ -126,16 +131,18 @@ export default function ShipmentDetailPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           {record.invoice ? <StatusBadge value={record.invoice.status} /> : null}
-          <InvoiceActions
-            invoice={record.invoice}
-            onRetry={() =>
-              record.invoice &&
-              api(`/api/v1/invoices/${record.invoice.id}/retry`, { method: "POST" }).then(() => {
-                toast.success("Invoice retry queued.");
-                queryClient.invalidateQueries({ queryKey: ["shipment", params.id] });
-              }).catch((error: Error) => toast.error(error.message))
-            }
-          />
+          <PlanLock locked={invoicesLocked} feature={FEATURE.invoices} compact>
+            <InvoiceActions
+              invoice={record.invoice}
+              onRetry={() =>
+                record.invoice &&
+                api(`/api/v1/invoices/${record.invoice.id}/retry`, { method: "POST" }).then(() => {
+                  toast.success("Invoice retry queued.");
+                  queryClient.invalidateQueries({ queryKey: ["shipment", params.id] });
+                }).catch((error: Error) => toast.error(error.message))
+              }
+            />
+          </PlanLock>
         </CardContent>
       </Card>
 

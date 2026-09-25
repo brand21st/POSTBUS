@@ -21,17 +21,22 @@ import {
 import { asPaginated, customerName } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
 import type { InvoiceRecord, Paginated } from "@/types/api";
 
 export default function InvoicesPage() {
   const [page, setPage] = useState(1);
   const [regenerate, setRegenerate] = useState<InvoiceRecord | null>(null);
   const queryClient = useQueryClient();
+  const entitlements = usePlanEntitlements();
+  const invoicesAllowed = entitlements.allows(FEATURE.invoices);
 
   const query = useQuery({
     queryKey: ["invoices", page],
     queryFn: () => api<Paginated<InvoiceRecord>>(`/api/v1/invoices?page=${page}&pageSize=20`),
-    refetchInterval: 5_000,
+    refetchInterval: invoicesAllowed ? 5_000 : false,
+    enabled: invoicesAllowed,
   });
   const list = asPaginated<InvoiceRecord>(query.data);
 

@@ -15,6 +15,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { asList } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
 import type { TrackingRecord } from "@/types/api";
 
 export function TrackingView() {
@@ -44,6 +46,8 @@ function ShipmentsPanel() {
   const searchParams = useSearchParams();
   const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const [debounced, setDebounced] = useState(query);
+  const entitlements = usePlanEntitlements();
+  const trackingAllowed = entitlements.allows(FEATURE.trackingPage);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(query.trim()), 300);
@@ -52,6 +56,7 @@ function ShipmentsPanel() {
 
   const result = useQuery({
     queryKey: ["tracking", debounced],
+    enabled: trackingAllowed,
     queryFn: () =>
       api<TrackingRecord[] | { items: TrackingRecord[] }>(
         `/api/v1/tracking?${toSearchParams({ q: debounced || undefined })}`

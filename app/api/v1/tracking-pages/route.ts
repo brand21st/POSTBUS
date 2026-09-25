@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { requireTenant } from "@/lib/api/context";
 import { apiRoute } from "@/lib/api/handler";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { assertTrackingPagePlan } from "@/modules/tracking-pages/assert-plan";
 import { createTrackingPageSchema, updateTrackingPageSchema } from "@/modules/tracking-pages/schema";
 import {
   createTrackingPage,
@@ -13,6 +14,7 @@ import {
 export const GET = apiRoute(async () => {
   const ctx = await requireTenant();
   const supabase = await createServerSupabase();
+  await assertTrackingPagePlan(supabase, ctx.organizationId);
   return getTrackingPage(supabase, ctx.organizationId);
 });
 
@@ -21,12 +23,14 @@ export const POST = apiRoute(async (request: NextRequest) => {
   const body = await request.json().catch(() => ({}));
   const parsed = createTrackingPageSchema.parse(body);
   const supabase = await createServerSupabase();
+  await assertTrackingPagePlan(supabase, ctx.organizationId);
   return createTrackingPage(supabase, ctx, parsed.subdomain, parsed.storeName);
 });
 
 export const PATCH = apiRoute(async (request: NextRequest) => {
   const ctx = await requireTenant("tracking.pages");
   const supabase = await createServerSupabase();
+  await assertTrackingPagePlan(supabase, ctx.organizationId);
   const contentType = request.headers.get("content-type") ?? "";
 
   if (contentType.includes("multipart/form-data")) {

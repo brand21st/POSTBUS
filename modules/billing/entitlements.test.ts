@@ -28,6 +28,9 @@ describe("plan entitlements", () => {
 
   it("locks premium dashboard routes", () => {
     expect(lockedFeatureForPath("/dashboard/analytics")).toBe(FEATURE.analytics);
+    expect(lockedFeatureForPath("/dashboard/invoices")).toBe(FEATURE.invoices);
+    expect(lockedFeatureForPath("/dashboard/invoices/customize")).toBe(FEATURE.invoices);
+    expect(lockedFeatureForPath("/dashboard/tracking")).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForPath("/dashboard/labels/customize")).toBe(FEATURE.packing);
     expect(lockedFeatureForPath("/dashboard/orders")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/integrations")).toBeNull();
@@ -37,6 +40,10 @@ describe("plan entitlements", () => {
 
   it("locks matching write APIs", () => {
     expect(lockedFeatureForApi("GET", "dashboard/analytics", ["dashboard", "analytics"])).toBe(FEATURE.analytics);
+    expect(lockedFeatureForApi("GET", "invoices", ["invoices"])).toBe(FEATURE.invoices);
+    expect(lockedFeatureForApi("PUT", "invoice-template", ["invoice-template"])).toBe(FEATURE.invoices);
+    expect(lockedFeatureForApi("GET", "tracking", ["tracking"])).toBe(FEATURE.trackingPage);
+    expect(lockedFeatureForApi("PATCH", "tracking-pages", ["tracking-pages"])).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForApi("POST", "labels/bulk-download", ["labels", "bulk-download"])).toBe(FEATURE.bulk);
     expect(lockedFeatureForApi("GET", "automation", ["automation"])).toBeNull();
     expect(lockedFeatureForApi("PATCH", "automation", ["automation"])).toBe(FEATURE.automation);

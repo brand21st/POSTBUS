@@ -18,6 +18,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { trackingHostSuffix } from "@/modules/tracking-pages/host";
 import { subdomainSchema, updateTrackingPageSchema } from "@/modules/tracking-pages/schema";
@@ -45,14 +47,17 @@ function availabilityLabel(reason?: SubdomainAvailability["reason"]) {
 
 export function TrackingPageEditor() {
   const me = useMe();
+  const entitlements = usePlanEntitlements();
+  const trackingAllowed = entitlements.allows(FEATURE.trackingPage);
   const role = (me.data?.role ?? "VIEWER") as MemberRole;
   const canManage = hasPermission(role, "tracking.pages");
   const pageQuery = useQuery({
     queryKey: ["tracking-page"],
+    enabled: trackingAllowed,
     queryFn: () => api<TrackingPageRecord | null>("/api/v1/tracking-pages"),
   });
 
-  if (pageQuery.isLoading) {
+  if (entitlements.loading || !trackingAllowed || pageQuery.isLoading) {
     return <p className="text-sm text-muted">Loading tracking page…</p>;
   }
 

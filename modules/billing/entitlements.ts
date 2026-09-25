@@ -15,6 +15,8 @@ export const FEATURE = {
   bulk: "Bulk shipping tools",
   automation: "Automation rules",
   manifests: "Manifest management",
+  invoices: "Invoices",
+  trackingPage: "Tracking page",
   proBundle: "Everything in Pro",
   analytics: "Operational analytics",
   support: "Priority support",
@@ -37,6 +39,8 @@ export const PRO_FEATURES: PlanFeatureName[] = [
   FEATURE.bulk,
   FEATURE.automation,
   FEATURE.manifests,
+  FEATURE.invoices,
+  FEATURE.trackingPage,
 ];
 
 export const BUSINESS_FEATURES: PlanFeatureName[] = [
@@ -51,6 +55,8 @@ export const UPGRADE_PLAN_MESSAGE = "This feature is on a higher plan. Upgrade t
 
 const NAV_FEATURES: Array<{ href: string; feature: string }> = [
   { href: "/dashboard/analytics", feature: FEATURE.analytics },
+  { href: "/dashboard/invoices", feature: FEATURE.invoices },
+  { href: "/dashboard/tracking", feature: FEATURE.trackingPage },
   { href: "/dashboard/manifests", feature: FEATURE.manifests },
   { href: "/dashboard/labels/customize", feature: FEATURE.packing },
   { href: "/dashboard/integrations/wati", feature: FEATURE.wati },
@@ -114,6 +120,8 @@ export function lockedFeatureForPath(pathname: string): string | null {
 
 export function lockedFeatureForApi(method: string, path: string, slugs: string[]): string | null {
   if (path === "dashboard/analytics") return FEATURE.analytics;
+  if (slugs[0] === "invoices" || slugs[0] === "invoice-template") return FEATURE.invoices;
+  if (slugs[0] === "tracking" || slugs[0] === "tracking-pages") return FEATURE.trackingPage;
   if (slugs[0] === "automation" && method !== "GET") return FEATURE.automation;
   if (slugs[0] === "manifests" && method !== "GET") return FEATURE.manifests;
   if (slugs[0] === "label-template" && method !== "GET") return FEATURE.packing;

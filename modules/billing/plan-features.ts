@@ -6,6 +6,8 @@ export const PLAN_FEATURE_OPTIONS = [
   "Bulk shipping tools",
   "Automation rules",
   "Manifest management",
+  "Invoices",
+  "Tracking page",
   "Everything in Pro",
   "Operational analytics",
   "Priority support",
