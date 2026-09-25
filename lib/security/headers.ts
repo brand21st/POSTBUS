@@ -22,6 +22,9 @@ export function contentSecurityPolicy() {
     "https://*.clarity.ms",
     "https://c.bing.com",
     "https://*.bing.com",
+    "https://www.google-analytics.com",
+    "https://analytics.google.com",
+    "https://region1.google-analytics.com",
     "https://static.cloudflareinsights.com",
     "https://cloudflareinsights.com",
     "https://*.myshopify.com",
@@ -39,6 +42,7 @@ export function contentSecurityPolicy() {
     "https://www.clarity.ms",
     "https://scripts.clarity.ms",
     "https://*.clarity.ms",
+    "https://www.googletagmanager.com",
     "https://static.cloudflareinsights.com",
     "https://checkout.razorpay.com",
   ].join(" ");

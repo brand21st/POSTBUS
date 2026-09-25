@@ -19,7 +19,7 @@ export default function PrivacyPage() {
         <h1 className="mt-3 text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
           Privacy Policy
         </h1>
-        <p className="mt-4 text-sm text-muted">Last updated: 18 September 2026</p>
+        <p className="mt-4 text-sm text-muted">Last updated: 26 September 2026</p>
 
         <div className="prose-legal mt-10 space-y-8 text-[15px] leading-relaxed text-foreground">
           <section>
@@ -43,8 +43,9 @@ export default function PrivacyPage() {
             <p>
               We may also receive standard technical information from your browser such as
               IP address, device type, and pages visited through hosting or analytics
-              tools if they are enabled. When enabled, PostBus uses Microsoft Clarity to
-              understand aggregate website usage and improve the user experience.
+              tools if they are enabled. PostBus uses Google Analytics to measure website
+              traffic and usage. When enabled, Microsoft Clarity helps us understand
+              aggregate website interactions and improve the user experience.
             </p>
           </section>
 
