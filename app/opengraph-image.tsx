@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "Shopify India Post Shipping Automation | PostBus";
+export const alt = "India Post shipping software for ecommerce | PostBus";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -19,13 +19,7 @@ export default function OpenGraphImage() {
           fontFamily: "sans-serif",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "16px",
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
           <div
             style={{
               width: 56,
@@ -50,20 +44,21 @@ export default function OpenGraphImage() {
           <div
             style={{
               color: "white",
-              fontSize: 64,
+              fontSize: 56,
               fontWeight: 650,
               letterSpacing: -2.5,
               lineHeight: 1.05,
-              maxWidth: 900,
+              maxWidth: 980,
             }}
           >
-            Shopify India Post shipping automation
+            Already shipping with India Post? Ship smarter with PostBus.
           </div>
-          <div style={{ color: "#A1A1AA", fontSize: 28, maxWidth: 780 }}>
-            Sync orders, book shipments, generate labels, track deliveries and send WhatsApp updates.
+          <div style={{ color: "#A1A1AA", fontSize: 26, maxWidth: 820 }}>
+            Connect your existing Customer ID. Manage orders, labels, tracking and invoices from one
+            dashboard.
           </div>
         </div>
-        <div style={{ color: "#E11D48", fontSize: 22, fontWeight: 600 }}>postbus.in</div>
+        <div style={{ color: "#E11D48", fontSize: 22, fontWeight: 600 }}>www.postbus.in</div>
       </div>
     ),
     { ...size }

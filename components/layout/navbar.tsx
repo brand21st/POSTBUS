@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowRight, ChevronDown, Menu, X } from "lucide-react";
+import { ArrowRight, Menu, X } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { buttonVariants } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
@@ -14,7 +14,8 @@ export function Navbar() {
   const pathname = usePathname();
   const [scrolled, setScrolled] = React.useState(false);
   const [open, setOpen] = React.useState(false);
-  const [openDropdown, setOpenDropdown] = React.useState<string | null>(null);
+  const menuButtonRef = React.useRef<HTMLButtonElement>(null);
+  const mobilePanelRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);
@@ -30,10 +31,40 @@ export function Navbar() {
     };
   }, [open]);
 
-  const closeMenu = React.useCallback(() => {
-    setOpen(false);
-    setOpenDropdown(null);
-  }, []);
+  React.useEffect(() => {
+    if (!open) return;
+    const focusable = mobilePanelRef.current?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    focusable?.[0]?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        menuButtonRef.current?.focus();
+      }
+      if (event.key === "Tab" && focusable?.length) {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
+  const closeMenu = React.useCallback(() => setOpen(false), []);
+
+  const isActive = (href: string) => {
+    if (href.startsWith("/#")) return pathname === "/";
+    return pathname === href;
+  };
 
   return (
     <header
@@ -46,82 +77,50 @@ export function Navbar() {
     >
       <Container>
         <div className="flex h-16 items-center justify-between gap-4 lg:h-[72px]">
-          <Logo />
+          <Logo priority />
 
           <nav className="hidden items-center gap-1 lg:flex" aria-label="Primary">
-            {navLinks.map((link) =>
-              "children" in link && link.children ? (
-                <div
-                  key={link.label}
-                  className="relative"
-                  onMouseEnter={() => setOpenDropdown(link.label)}
-                  onMouseLeave={() => setOpenDropdown(null)}
-                >
-                  <button
-                    type="button"
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:text-ink",
-                      openDropdown === link.label && "text-ink"
-                    )}
-                    aria-expanded={openDropdown === link.label}
-                  >
-                    {link.label}
-                    <ChevronDown className="size-3.5 opacity-60" />
-                  </button>
-                  {openDropdown === link.label ? (
-                    <div className="absolute left-0 top-full pt-2">
-                      <div className="min-w-[200px] rounded-2xl border border-border bg-white p-2 card-shadow-lg">
-                        {link.children.map((child) => (
-                          <Link
-                            key={child.label}
-                            href={child.href}
-                            onClick={closeMenu}
-                            className="block rounded-xl px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-soft hover:text-brand"
-                          >
-                            {child.label}
-                          </Link>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <Link
-                  key={link.label}
-                  href={link.href}
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-sm font-medium text-muted transition-colors hover:text-ink",
-                    pathname === link.href && "text-brand"
-                  )}
-                >
-                  {link.label}
-                </Link>
-              )
-            )}
+            {navLinks.map((link) => (
+              <Link
+                key={link.label}
+                href={link.href}
+                className={cn(
+                  "rounded-lg px-3.5 py-2 text-sm font-medium text-muted transition-colors hover:text-ink",
+                  isActive(link.href) && "font-semibold text-brand"
+                )}
+              >
+                {link.label}
+              </Link>
+            ))}
           </nav>
 
-          <div className="hidden items-center gap-2 lg:flex">
+          <div className="hidden items-center gap-3 lg:flex">
             <Link
               href={siteConfig.loginUrl}
-              className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+              className="px-2 py-1.5 text-sm font-medium text-muted transition-colors hover:text-ink"
             >
               Login
             </Link>
             <Link
               href={siteConfig.getStartedUrl}
-              className={cn(buttonVariants({ variant: "primary", size: "default" }), "group")}
+              className={cn(
+                buttonVariants({ variant: "primary", size: "default" }),
+                "group rounded-full shadow-sm hover:shadow"
+              )}
             >
-              Get Started
-              <ArrowRight className="transition-transform group-hover:translate-x-0.5" />
+              Start Free Trial
+              <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
             </Link>
           </div>
 
           <button
+            ref={menuButtonRef}
             type="button"
             className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border lg:hidden"
             aria-label={open ? "Close menu" : "Open menu"}
             aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
+            aria-controls="mobile-nav"
+            onClick={() => setOpen((value) => !value)}
           >
             {open ? <X className="size-5" /> : <Menu className="size-5" />}
           </button>
@@ -129,33 +128,25 @@ export function Navbar() {
       </Container>
 
       {open ? (
-        <div className="border-t border-border bg-white lg:hidden">
+        <div
+          ref={mobilePanelRef}
+          id="mobile-nav"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mobile navigation"
+          className="border-t border-border bg-white lg:hidden"
+        >
           <Container>
             <nav className="flex flex-col gap-1 py-4" aria-label="Mobile">
               {navLinks.map((link) => (
-                <div key={link.label} className="border-b border-border/70 py-2 last:border-0">
-                  <Link
-                    href={link.href}
-                    className="block px-1 py-2 text-base font-semibold text-ink"
-                    onClick={closeMenu}
-                  >
-                    {link.label}
-                  </Link>
-                  {"children" in link && link.children ? (
-                    <div className="mb-2 ml-3 flex flex-col gap-1">
-                      {link.children.map((child) => (
-                        <Link
-                          key={child.label}
-                          href={child.href}
-                          className="rounded-lg px-2 py-2 text-sm text-muted hover:bg-surface-soft hover:text-ink"
-                          onClick={closeMenu}
-                        >
-                          {child.label}
-                        </Link>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
+                <Link
+                  key={link.label}
+                  href={link.href}
+                  className="border-b border-border/70 px-1 py-3 text-base font-semibold text-ink last:border-0"
+                  onClick={closeMenu}
+                >
+                  {link.label}
+                </Link>
               ))}
               <div className="mt-3 flex flex-col gap-2">
                 <Link
@@ -167,10 +158,13 @@ export function Navbar() {
                 </Link>
                 <Link
                   href={siteConfig.getStartedUrl}
-                  className={cn(buttonVariants({ variant: "primary", size: "lg" }), "w-full")}
+                  className={cn(
+                    buttonVariants({ variant: "primary", size: "lg" }),
+                    "w-full rounded-full"
+                  )}
                   onClick={closeMenu}
                 >
-                  Get Started
+                  Start Free Trial
                 </Link>
               </div>
             </nav>

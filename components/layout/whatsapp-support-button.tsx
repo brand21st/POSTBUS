@@ -9,10 +9,10 @@ export function WhatsappSupportButton() {
       target="_blank"
       rel="noopener noreferrer"
       aria-label="WhatsApp Support"
-      className="fixed bottom-5 right-5 z-[60] flex items-center gap-2.5 rounded-full bg-[#25D366] py-3 pl-3.5 pr-4 text-white shadow-[0_8px_28px_rgb(37_211_102/0.45)] transition hover:bg-[#1ebe5d] hover:shadow-[0_10px_32px_rgb(37_211_102/0.55)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25D366] sm:bottom-6 sm:right-6"
+      className="fixed bottom-5 left-5 z-[60] flex items-center gap-2.5 rounded-full bg-[#25D366] p-3 text-white shadow-[0_8px_28px_rgb(37_211_102/0.45)] transition hover:bg-[#1ebe5d] hover:shadow-[0_10px_32px_rgb(37_211_102/0.55)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25D366] sm:bottom-6 sm:left-auto sm:right-6 sm:py-3 sm:pl-3.5 sm:pr-4"
     >
       <WhatsappIcon />
-      <span className="pr-1 text-sm font-semibold tracking-tight">WhatsApp Support</span>
+      <span className="hidden pr-1 text-sm font-semibold tracking-tight sm:inline">WhatsApp Support</span>
     </a>
   );
 }

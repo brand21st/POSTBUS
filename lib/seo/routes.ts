@@ -1,0 +1,15 @@
+export const publicRoutes = [
+  { path: "/", changeFrequency: "weekly", priority: 1 },
+  { path: "/features", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/pricing", changeFrequency: "weekly", priority: 0.8 },
+  { path: "/india-post-shipping", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/shopify-india-post", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/woocommerce-india-post", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/india-post-customer-id", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/india-post-shipping-label", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/india-post-tracking", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/about", changeFrequency: "monthly", priority: 0.5 },
+  { path: "/contact", changeFrequency: "monthly", priority: 0.5 },
+  { path: "/privacy", changeFrequency: "yearly", priority: 0.2 },
+  { path: "/terms", changeFrequency: "yearly", priority: 0.2 },
+] as const;

@@ -1,92 +1,74 @@
-import { Link2, Settings2, Truck } from "lucide-react";
-import { Reveal } from "@/components/ui/reveal";
+import Link from "next/link";
+import { ArrowRight, IdCard, Package, Printer, ShoppingBag } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { siteConfig } from "@/lib/site-config";
+import { cn } from "@/lib/utils";
 
 const steps = [
   {
     number: "01",
-    title: "Connect",
-    description: "Connect your Shopify store and India Post shipping setup.",
-    icon: Link2,
+    title: "Connect your India Post Customer ID",
+    description:
+      "Use the same Customer ID, password, service contracts, barcode range and pickup office you already use with India Post.",
+    icon: IdCard,
   },
   {
     number: "02",
-    title: "Automate",
-    description: "Choose which shipping operations PostBus should handle automatically.",
-    icon: Settings2,
+    title: "Bring orders into one workspace",
+    description:
+      "Import Shopify orders or add manual shipments. You do not need to change courier or rebuild your store.",
+    icon: ShoppingBag,
   },
   {
     number: "03",
-    title: "Ship",
+    title: "Book, label and manifest",
     description:
-      "Process orders, generate labels, create manifests and keep tracking organized.",
-    icon: Truck,
+      "Prepare India Post shipments, generate labels and organize manifests from PostBus instead of repeating portal work.",
+    icon: Printer,
+  },
+  {
+    number: "04",
+    title: "Track without extra tabs",
+    description:
+      "Keep AWB status, delivery updates and shipment history in the same dashboard your team already uses to book.",
+    icon: Package,
   },
 ] as const;
 
 export function HowItWorks() {
   return (
-    <section id="how-it-works" className="bg-white py-20 sm:py-24 lg:py-28">
+    <section id="how-it-works" className="bg-surface py-14 sm:py-20 lg:py-24">
       <Container>
-        <div className="grid items-center gap-14 lg:grid-cols-[1fr_1.05fr]">
-          <div>
-            <SectionHeading
-              align="left"
-              eyebrow="How it works"
-              title="Start shipping in minutes."
-              description="Connect once. Configure your workflow. Let PostBus handle the repetitive shipping steps."
-            />
-            <div className="mt-10 space-y-5">
-              {steps.map((step, index) => (
-                <Reveal key={step.number} delay={index * 0.08}>
-                  <div className="flex gap-4 rounded-[24px] border border-border bg-surface p-5">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand text-white">
-                      <step.icon className="size-5" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold tracking-[0.16em] text-brand">
-                        {step.number}
-                      </p>
-                      <h3 className="mt-1 text-xl font-semibold text-ink">{step.title}</h3>
-                      <p className="mt-1.5 text-sm leading-relaxed text-muted">
-                        {step.description}
-                      </p>
-                    </div>
-                  </div>
-                </Reveal>
-              ))}
-            </div>
-          </div>
-
-          <Reveal>
-            <div className="relative overflow-hidden rounded-[28px] border border-border bg-surface p-6 sm:p-8 card-shadow-lg">
-              <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-brand/10 blur-3xl" />
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">
-                Setup progress
-              </p>
-              <div className="relative mt-8 space-y-0">
-                {["Shopify connected", "India Post configured", "Automation rules ready"].map(
-                  (label, i) => (
-                    <div key={label} className="relative flex gap-4 pb-8 last:pb-0">
-                      {i < 2 ? (
-                        <span className="absolute left-[15px] top-8 h-[calc(100%-16px)] w-px bg-brand/30" />
-                      ) : null}
-                      <span className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">
-                        {i + 1}
-                      </span>
-                      <div className="rounded-2xl border border-border bg-white px-4 py-3 text-sm font-medium text-ink">
-                        {label}
-                      </div>
-                    </div>
-                  )
-                )}
+        <SectionHeading
+          eyebrow="How it works"
+          title="Keep India Post. Stop the manual shipping grind."
+          description="You already ship with India Post. PostBus sits on top of that account so booking, labels and tracking happen in one place."
+        />
+        <div className="mt-10 grid gap-4 sm:mt-12 sm:grid-cols-2 lg:grid-cols-4">
+          {steps.map((step) => (
+            <article
+              key={step.number}
+              className="rounded-[24px] border border-border bg-white p-5 sm:p-6"
+            >
+              <div className="mb-4 inline-flex size-11 items-center justify-center rounded-2xl bg-brand text-white">
+                <step.icon className="size-5" aria-hidden="true" />
               </div>
-              <div className="mt-4 rounded-2xl border border-brand/20 bg-brand/5 px-4 py-3 text-sm font-medium text-brand">
-                Ready to process your first shipment
-              </div>
-            </div>
-          </Reveal>
+              <p className="text-[11px] font-bold tracking-[0.16em] text-brand">STEP {step.number}</p>
+              <h3 className="mt-2 text-lg font-semibold tracking-tight text-ink">{step.title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{step.description}</p>
+            </article>
+          ))}
+        </div>
+        <div className="mt-8 flex justify-center">
+          <Link
+            href={siteConfig.getStartedUrl}
+            className={cn(buttonVariants({ variant: "primary", size: "lg" }), "rounded-full")}
+          >
+            Start Free Trial
+            <ArrowRight className="size-4" />
+          </Link>
         </div>
       </Container>
     </section>

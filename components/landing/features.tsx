@@ -1,9 +1,9 @@
 import {
-  Activity,
   Barcode,
   Boxes,
   FileText,
   PackageCheck,
+  ReceiptText,
   RefreshCw,
   ShoppingBag,
   Zap,
@@ -14,72 +14,73 @@ import { SectionHeading } from "@/components/ui/section-heading";
 const features = [
   {
     icon: ShoppingBag,
-    title: "Shopify Order Sync",
-    description: "Bring your Shopify orders into PostBus automatically.",
+    title: "Stop copying every order by hand",
+    description:
+      "Bring Shopify orders into a shipping workspace, or add manual shipments when an order never lived in a store.",
   },
   {
     icon: PackageCheck,
-    title: "India Post Shipment Booking",
+    title: "Book India Post shipments without the portal grind",
     description:
-      "Prepare and process shipments through your connected India Post workflow.",
-  },
-  {
-    icon: Boxes,
-    title: "Bulk Shipping",
-    description: "Process multiple orders instead of handling shipments one by one.",
+      "Prepare Speed Post and other contracted services through your connected Customer ID workflow.",
   },
   {
     icon: Barcode,
-    title: "Labels & Barcodes",
-    description: "Generate shipping labels and manage barcode workflows from one place.",
+    title: "Generate shipping labels in seconds",
+    description:
+      "Create India Post labels and manage barcode allocation from the same queue you use to book.",
+  },
+  {
+    icon: ReceiptText,
+    title: "Invoices that match the shipment",
+    description: "Create professional invoices for orders without a separate billing spreadsheet.",
   },
   {
     icon: FileText,
-    title: "Manifest Management",
-    description: "Create and manage manifests without jumping between systems.",
+    title: "Manifests without extra tools",
+    description: "Organize pickup-ready manifests instead of rebuilding the same list in another system.",
   },
   {
     icon: RefreshCw,
-    title: "Tracking Automation",
-    description: "Keep shipment tracking information organized and synchronized.",
+    title: "Know where every shipment is",
+    description:
+      "Keep AWB tracking and delivery status next to the order, instead of checking India Post one AWB at a time.",
+  },
+  {
+    icon: Boxes,
+    title: "Process a day’s shipments together",
+    description: "Move multiple orders through booking and labels instead of repeating the same clicks.",
   },
   {
     icon: Zap,
-    title: "Automation Engine",
-    description: "Turn repetitive shipping tasks into automated workflows.",
-  },
-  {
-    icon: Activity,
-    title: "Analytics",
+    title: "Automate the steps you repeat daily",
     description:
-      "Understand your shipping activity, shipment status and operational performance.",
+      "Turn repetitive booking, label and tracking tasks into rules your team can trust — including WhatsApp updates via Wati on eligible plans.",
   },
 ] as const;
 
 export function Features() {
   return (
-    <section id="features" className="bg-white py-20 sm:py-24 lg:py-28">
+    <section id="features" className="bg-surface py-14 sm:py-20 lg:py-24">
       <Container>
         <SectionHeading
-          eyebrow="Capabilities"
-          title="Everything between order and delivery."
-          description="One place for orders, shipments, labels, manifests and tracking."
+          eyebrow="What you get"
+          title="Shipping work, minus the extra tabs."
+          description="PostBus is the operations layer on top of India Post: orders in, labels out, tracking visible."
         />
-        <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {features.map((feature, index) => (
+        <div className="mt-10 grid gap-4 sm:mt-14 sm:grid-cols-2 lg:grid-cols-4">
+          {features.map((feature) => (
             <article
               key={feature.title}
-              className={`rounded-[24px] border border-border bg-white p-6 transition-all duration-200 hover:-translate-y-1 hover:border-brand/20 card-shadow ${
-                index === 0 || index === 7 ? "sm:col-span-2 lg:col-span-2" : ""
-              }`}
+              className="rounded-[24px] border border-border bg-white p-5 sm:p-6"
             >
-              <div className="mb-5 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-ink text-white">
-                <feature.icon className="size-5" />
+              <div className="mb-4 inline-flex size-11 items-center justify-center rounded-2xl bg-brand/10 text-brand">
+                <feature.icon className="size-5" aria-hidden="true" />
               </div>
-              <h3 className="text-xl font-semibold tracking-tight text-ink">{feature.title}</h3>
-              <p className="mt-3 text-sm leading-relaxed text-muted sm:text-[15px]">
-                {feature.description}
-              </p>
+              <h3 className="text-base font-semibold tracking-tight text-ink sm:text-lg">
+                {feature.title}
+              </h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{feature.description}</p>
             </article>
           ))}
         </div>

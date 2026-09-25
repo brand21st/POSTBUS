@@ -1,64 +1,21 @@
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 import { HeroBackground } from "@/components/product-ui/hero-background";
-import { HeroShippingMockup } from "@/components/product-ui/hero-shipping-mockup";
-import { buttonVariants } from "@/components/ui/button";
-import { Container } from "@/components/ui/container";
-import { siteConfig } from "@/lib/site-config";
-import { cn } from "@/lib/utils";
+import { HeroContent } from "./hero/hero-content";
+import { HeroVisual } from "./hero/hero-visual";
 
 export function Hero() {
   return (
-    <section className="relative overflow-hidden bg-white pb-16 pt-10 sm:pb-20 sm:pt-14 lg:pb-28 lg:pt-16">
+    <section className="relative overflow-hidden bg-white pb-14 pt-8 sm:pb-16 sm:pt-12 lg:pb-20 lg:pt-10">
       <HeroBackground />
-      <Container className="relative">
-        <div className="grid items-center gap-12 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14">
-          <div>
-            <p className="mb-5 inline-flex items-center rounded-full border border-brand/15 bg-brand/[0.06] px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-brand">
-              Shopify India Post shipping automation
-            </p>
-            <h1 className="hero-title text-ink text-balance">
-              Ship Every Shopify Order.
-              <br />
-              <span className="text-brand">Automatically.</span>
-            </h1>
-            <p className="mt-6 max-w-xl text-pretty text-lg leading-relaxed text-muted sm:text-xl">
-              Automate Shopify India Post shipping with PostBus. Sync orders, book
-              shipments, generate labels, automate fulfillment, track deliveries and
-              send WhatsApp updates.
-            </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Link
-                href={siteConfig.getStartedUrl}
-                className={cn(
-                  buttonVariants({ variant: "primary", size: "xl" }),
-                  "group w-full sm:w-auto"
-                )}
-              >
-                Get Started
-                <ArrowRight className="transition-transform group-hover:translate-x-0.5" />
-              </Link>
-              <Link
-                href="/#how-it-works"
-                className={cn(
-                  buttonVariants({ variant: "secondary", size: "xl" }),
-                  "w-full sm:w-auto"
-                )}
-              >
-                See How It Works
-              </Link>
-            </div>
-            <p className="mt-5 text-sm font-medium text-muted">
-              India Post Shopify integration for merchants shipping in India
-            </p>
-          </div>
-
-          <div className="relative">
-            <div className="absolute -inset-6 rounded-[36px] bg-brand/10 blur-2xl" aria-hidden />
-            <HeroShippingMockup className="relative" />
-          </div>
+      <div className="relative grid items-start gap-8 xl:grid-cols-12 xl:items-center xl:gap-0">
+        <div className="relative z-20 w-full px-5 sm:px-6 lg:px-8 xl:col-span-5 xl:pl-[max(1.25rem,calc((100vw-80rem)/2+2rem))] xl:pr-6">
+          <HeroContent />
         </div>
-      </Container>
+        <div className="relative z-0 hidden min-w-0 xl:col-span-7 xl:block xl:h-[640px] xl:-ml-28 xl:w-[calc(100%+7rem)]">
+          <HeroVisual />
+        </div>
+      </div>
     </section>
   );
 }
+
+export default Hero;

@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { Container } from "@/components/ui/container";
+import { marketingMetadata } from "@/lib/seo/metadata";
 import { siteConfig } from "@/lib/site-config";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
   title: "Privacy Policy",
   description: "Privacy Policy for PostBus — how we handle information on postbus.in.",
-  alternates: { canonical: "/privacy" },
-};
+  path: "/privacy",
+});
 
 export default function PrivacyPage() {
   return (
@@ -42,7 +43,8 @@ export default function PrivacyPage() {
             <p>
               We may also receive standard technical information from your browser such as
               IP address, device type, and pages visited through hosting or analytics
-              tools if they are enabled.
+              tools if they are enabled. When enabled, PostBus uses Microsoft Clarity to
+              understand aggregate website usage and improve the user experience.
             </p>
           </section>
 

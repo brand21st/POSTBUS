@@ -88,7 +88,9 @@ export function AccordionTrigger({
   return (
     <button
       type="button"
+      id={`accordion-trigger-${value}`}
       aria-expanded={open}
+      aria-controls={`accordion-panel-${value}`}
       onClick={() => toggle(value)}
       className={cn(
         "flex w-full items-center justify-between gap-4 py-5 text-left text-base font-semibold text-ink transition-colors hover:text-brand sm:text-lg",
@@ -120,6 +122,10 @@ export function AccordionContent({
 
   return (
     <div
+      id={`accordion-panel-${value}`}
+      role="region"
+      aria-labelledby={`accordion-trigger-${value}`}
+      hidden={!open}
       className={cn(
         "grid transition-[grid-template-rows] duration-300 ease-out",
         open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"

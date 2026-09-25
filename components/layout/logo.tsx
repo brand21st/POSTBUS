@@ -7,11 +7,13 @@ export function Logo({
   href = "/",
   light = false,
   showTagline = false,
+  priority = false,
 }: {
   className?: string;
   href?: string;
   light?: boolean;
   showTagline?: boolean;
+  priority?: boolean;
 }) {
   return (
     <Link
@@ -23,17 +25,18 @@ export function Logo({
       aria-label="PostBus home"
     >
       <Image
-        src="/src/postbus-logo.png"
-        alt="PostBus"
-        width={showTagline ? 220 : 160}
-        height={showTagline ? 64 : 40}
+        src="/images/postbus-logo-india-post-shipping.webp"
+        alt="PostBus — India Post shipping management"
+        width={500}
+        height={200}
+        loading={priority ? "eager" : "lazy"}
+        fetchPriority={priority ? "high" : "auto"}
+        sizes={showTagline ? "220px" : "120px"}
         className={cn(
           "h-9 w-auto object-contain object-left sm:h-10",
           showTagline && "h-12 sm:h-14",
-          // Logo asset is designed on black; soften the hard edge on light chrome
           !light && "rounded-md"
         )}
-        priority
       />
     </Link>
   );

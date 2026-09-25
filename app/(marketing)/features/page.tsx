@@ -11,20 +11,19 @@ import {
   Zap,
 } from "lucide-react";
 import { FinalCta } from "@/components/landing/final-cta";
-import { Workflow } from "@/components/landing/workflow";
 import { buttonVariants } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { marketingMetadata } from "@/lib/seo/metadata";
 import { siteConfig } from "@/lib/site-config";
 import { cn } from "@/lib/utils";
 
-export const metadata: Metadata = {
-  title: "Features",
+export const metadata: Metadata = marketingMetadata({
+  title: "India Post Shipping Management Features",
   description:
-    "Shopify India Post shipping automation features: order sync, India Post booking, labels, fulfillment, tracking and WhatsApp updates.",
-  keywords: [...siteConfig.keywords],
-  alternates: { canonical: "/features" },
-};
+    "India Post shipping software for ecommerce: order sync, India Post booking, labels, manifests, tracking and invoices.",
+  path: "/features",
+});
 
 const deepFeatures = [
   {
@@ -71,7 +70,7 @@ const deepFeatures = [
   },
   {
     icon: Activity,
-    title: "Operational Analytics",
+    title: "Shipping Analytics",
     description:
       "See shipping activity, status distribution and workflow performance over time.",
   },
@@ -87,14 +86,14 @@ export default function FeaturesPage() {
             as="h1"
             eyebrow="Features"
             title="Everything between order and delivery."
-            description="PostBus connects Shopify orders to India Post shipping operations — booking, labels, manifests, tracking and fulfillment — in one automation-first platform."
+            description="PostBus connects India Post Customer ID bookings to Shopify and manual orders — labels, manifests, tracking and invoices in one workspace."
             className="max-w-3xl"
           />
           <Link
             href={siteConfig.getStartedUrl}
             className={cn(buttonVariants({ variant: "primary", size: "lg" }), "mt-8 inline-flex")}
           >
-            Get Started
+            Start Free Trial
           </Link>
         </Container>
       </section>
@@ -118,7 +117,6 @@ export default function FeaturesPage() {
         </Container>
       </section>
 
-      <Workflow />
       <FinalCta />
     </>
   );

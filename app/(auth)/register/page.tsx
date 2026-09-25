@@ -57,7 +57,8 @@ export default function RegisterPage() {
     <div>
       <h1 className="text-2xl font-semibold tracking-tight text-ink">Create your account</h1>
       <p className="mt-1.5 text-sm text-muted">
-        3-day trial with every PostBus feature unlocked. Start automating Shopify shipping in a few minutes.
+        3-day trial with every PostBus feature unlocked. Connect your India Post Customer ID, then
+        add Shopify or manual orders.
       </p>
 
       <form className="mt-7 space-y-5" onSubmit={form.handleSubmit(onSubmit)}>

@@ -1,46 +1,44 @@
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
-import { buttonVariants } from "@/components/ui/button";
+import { PricingPlanGrid } from "@/components/landing/pricing-plan-grid";
 import { Container } from "@/components/ui/container";
-import { SectionHeading } from "@/components/ui/section-heading";
-import { cn } from "@/lib/utils";
+import { createServerSupabase } from "@/lib/supabase/server";
+import { mapPlan, type PlanRow } from "@/modules/billing/subscriptions";
 
-export function PricingPreview() {
+export async function PricingPreview() {
+  const supabase = await createServerSupabase();
+  const { data } = await supabase
+    .from("plans")
+    .select("*")
+    .eq("is_active", true)
+    .order("display_order", { ascending: true });
+  const plans = ((data ?? []) as PlanRow[]).map(mapPlan);
+
   return (
-    <section className="bg-white py-20 sm:py-24 lg:py-28">
+    <section id="pricing" className="bg-white py-14 sm:py-20 lg:py-24">
       <Container>
-        <SectionHeading
-          title={
-            <>
-              Simple shipping software.
-              <br />
-              Built to grow with you.
-            </>
-          }
-          description="Plans designed for growing Shopify businesses."
-        />
-        <div className="mx-auto mt-12 max-w-3xl rounded-[28px] border border-border bg-surface p-8 text-center card-shadow sm:p-10">
-          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-brand">
-            Pricing
+        <div className="mx-auto max-w-3xl text-center">
+          <p className="inline-flex rounded-full bg-brand/10 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-brand">
+            Simple pricing
           </p>
-          <p className="mt-4 text-xl font-semibold tracking-tight text-ink sm:text-2xl">
-            Choose a plan that matches your shipping volume and team.
+          <h2 className="mt-4 text-3xl font-bold tracking-tight text-ink sm:text-4xl lg:text-[42px]">
+            Choose a plan after a full-feature trial
+          </h2>
+          <p className="mt-3 text-base text-muted sm:text-lg">
+            New accounts get 3 days with every PostBus feature unlocked. Then pick a plan by
+            monthly India Post booking volume. Postage is billed by India Post, not PostBus.
           </p>
-          <p className="mx-auto mt-4 max-w-xl text-muted">
-            Start with a 3-day trial that includes every feature. Then pick the plan
-            that matches your shipping volume.
-          </p>
-          <Link
-            href="/pricing"
-            className={cn(
-              buttonVariants({ variant: "primary", size: "lg" }),
-              "group mt-8 inline-flex"
-            )}
-          >
-            View Pricing
-            <ArrowRight className="transition-transform group-hover:translate-x-0.5" />
-          </Link>
         </div>
+
+        {plans.length ? (
+          <PricingPlanGrid plans={plans} />
+        ) : (
+          <p className="mt-10 text-center text-sm text-muted">
+            Plans are loading from billing. Check{" "}
+            <a href="/pricing" className="font-semibold text-brand hover:underline">
+              the pricing page
+            </a>{" "}
+            or start a trial and choose a plan in the dashboard.
+          </p>
+        )}
       </Container>
     </section>
   );

@@ -9,7 +9,7 @@ export default function MarketingLayout({ children }: { children: ReactNode }) {
     <>
       {process.env.NEXT_PUBLIC_ENABLE_CLARITY === "true" ? <ClarityScript /> : null}
       <Navbar />
-      <main id="main-content" className="flex-1">
+      <main id="main-content" className="flex-1 pb-20 sm:pb-0">
         {children}
       </main>
       <Footer />

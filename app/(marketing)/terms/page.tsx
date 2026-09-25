@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { Container } from "@/components/ui/container";
+import { marketingMetadata } from "@/lib/seo/metadata";
 import { siteConfig } from "@/lib/site-config";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = marketingMetadata({
   title: "Terms of Service",
   description: "Terms of Service for the PostBus marketing website and product inquiries.",
-  alternates: { canonical: "/terms" },
-};
+  path: "/terms",
+});
 
 export default function TermsPage() {
   return (
@@ -33,9 +34,11 @@ export default function TermsPage() {
             <h2>2. What this site is</h2>
             <p>
               This website is a public marketing site for PostBus, a shipping automation
-              platform for Shopify merchants in India. It is not the PostBus application
-              dashboard. Product access, pricing confirmation, and service agreements are
-              handled separately during onboarding.
+              platform for ecommerce businesses in India that use an existing India Post
+              Customer ID. It supports Shopify and manual-order workflows; WooCommerce
+              integration is planned but not currently live. This is not the PostBus
+              application dashboard. Product access, pricing confirmation, and service
+              agreements are handled separately during onboarding.
             </p>
           </section>
 

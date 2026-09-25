@@ -112,10 +112,10 @@ export function PlanPicker({
                 />
               ) : (
                 <Link
-                  href={`/register?plan=${plan.slug}&cycle=${cycle}`}
+                  href="/register"
                   className={cn(buttonVariants({ variant: featured ? "primary" : "secondary", size: "lg" }), "w-full")}
                 >
-                  Get started
+                  Start Free Trial
                 </Link>
               )}
             </div>
