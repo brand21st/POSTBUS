@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { IndiaPostLogo } from "@/components/brand/india-post-logo";
+import { IndiaPostWatchTutorialLink } from "@/components/integrations/india-post-watch-tutorial-link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
@@ -198,6 +199,8 @@ export default function IndiaPostPage() {
         description="Sign in with your India Post customer ID and password, then add your post office and barcode series."
         actions={<StatusBadge value={config?.status ?? "NOT_CONNECTED"} />}
       />
+
+      <IndiaPostWatchTutorialLink />
 
       <Card>
         <CardHeader className="pb-4">
