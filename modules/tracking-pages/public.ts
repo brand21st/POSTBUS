@@ -3,6 +3,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orExact } from "@/lib/api/filters";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
+import { ingestBulkTrackingArticle, snapshotFromShipmentRow } from "@/modules/india-post/apply-tracking";
 import type { PublicTrackResult, PublicTrackingEvent } from "@/types/api";
 import { parseTrackingSubdomain } from "./host";
 import { getPublishedTrackingPage } from "./service";
@@ -144,57 +145,9 @@ async function loadStoredShipment(
   return redactShipment(row);
 }
 
-async function persistEvents(
-  organizationId: string,
-  shipmentId: string,
-  events: Array<{
-    eventCode: string;
-    eventDescription: string | null;
-    officeName: string | null;
-    occurredAt: string;
-    raw: unknown;
-  }>,
-  supabase: SupabaseClient
-) {
-  if (hasAdminClient()) {
-    const admin = createAdminClient();
-    for (const event of events) {
-      const { error } = await admin.from("tracking_events").insert({
-        organization_id: organizationId,
-        shipment_id: shipmentId,
-        event_code: event.eventCode,
-        event_description: event.eventDescription,
-        office_name: event.officeName,
-        occurred_at: event.occurredAt,
-        raw: event.raw ?? {},
-      });
-      if (error && error.code !== "23505") {
-        throw new AppError(ERROR_CODES.PROVIDER_ERROR, error.message);
-      }
-    }
-    return;
-  }
-
-  for (const event of events) {
-    const { error } = await supabase.rpc("public_insert_tracking_event", {
-      p_organization_id: organizationId,
-      p_shipment_id: shipmentId,
-      p_event_code: event.eventCode,
-      p_event_description: event.eventDescription,
-      p_office_name: event.officeName,
-      p_occurred_at: event.occurredAt,
-      p_raw: event.raw ?? {},
-    });
-    if (error) {
-      throw new AppError(ERROR_CODES.PROVIDER_ERROR, error.message);
-    }
-  }
-}
-
 async function refreshLiveTracking(
   organizationId: string,
-  shipment: NonNullable<PublicTrackResult["shipment"]>,
-  supabase: SupabaseClient
+  shipment: NonNullable<PublicTrackResult["shipment"]>
 ): Promise<{ liveTracking: LiveState; liveMessage: string | null; status?: string | null }> {
   const barcode = shipment.barcode || shipment.trackingNumber;
   if (!barcode) {
@@ -235,33 +188,39 @@ async function refreshLiveTracking(
     const result = (await provider.trackShipment([barcode])) as { data?: ProviderArticle[] };
     const article =
       result.data?.find((item) => item.booking_details?.article_number === barcode) ?? result.data?.[0];
+    const { data: row } = await admin
+      .from("shipments")
+      .select(
+        "id, organization_id, order_id, status, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
+      )
+      .eq("organization_id", organizationId)
+      .eq("id", shipment.id)
+      .maybeSingle();
+    const ingested =
+      article && row
+        ? await ingestBulkTrackingArticle(admin, {
+            organizationId,
+            shipment: snapshotFromShipmentRow(row, organizationId),
+            article,
+          })
+        : null;
     const incoming = (article?.tracking_details ?? []).map((event) => ({
       eventCode: event.event_code || event.event || "EVENT",
       eventDescription: event.event ?? null,
       officeName: event.office ?? null,
       occurredAt: eventOccurredAt(event),
-      raw: event,
     }));
-
-    if (incoming.length) {
-      await persistEvents(organizationId, shipment.id, incoming, supabase);
-    }
-
-    const delivered = article?.del_status?.del_status?.toLowerCase() === "delivered";
-    if (delivered) {
-      await admin.from("shipments").update({ status: "DELIVERED" }).eq("id", shipment.id);
-    }
 
     liveCache.set(cacheKey(organizationId, barcode), {
       expiresAt: Date.now() + LIVE_TTL_MS,
       events: incoming,
-      status: delivered ? "DELIVERED" : shipment.status,
+      status: ingested?.snapshot.status ?? shipment.status,
     });
 
     return {
       liveTracking: "ok",
       liveMessage: null,
-      status: delivered ? "DELIVERED" : undefined,
+      status: ingested?.snapshot.status ?? shipment.status,
     };
   } catch {
     return {
@@ -291,7 +250,7 @@ export async function publicTrackLookup(
     };
   }
 
-  const live = await refreshLiveTracking(page.organizationId, stored, supabase);
+  const live = await refreshLiveTracking(page.organizationId, stored);
   const refreshed =
     live.liveTracking === "ok"
       ? await loadStoredShipment(supabase, page.organizationId, query.trim())

@@ -7,7 +7,7 @@ import { Logo } from "@/components/layout/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { helpNav, sidebarNav } from "@/lib/dashboard/nav";
+import { helpNav, isNavItemActive, sidebarNav } from "@/lib/dashboard/nav";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { lockedFeatureForPath } from "@/modules/billing/entitlements";
@@ -54,10 +54,7 @@ export function Sidebar({
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label="Dashboard">
         {sidebarNav.map((item) => {
-          const active =
-            item.href === "/dashboard"
-              ? pathname === "/dashboard"
-              : pathname.startsWith(item.href);
+          const active = isNavItemActive(item.href, pathname);
           const Icon = item.icon;
           const lockedFeature = trial ? null : lockedFeatureForPath(item.href);
           const locked = Boolean(lockedFeature && !features.includes(lockedFeature));

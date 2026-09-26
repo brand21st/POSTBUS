@@ -84,6 +84,7 @@ export type ParsedIndiaPostWebhook = {
   officeName: string | null;
   customerId: string | null;
   contractId: string | null;
+  nonDeliveryReason: string | null;
   parseError: string | null;
   rawPayload: Record<string, unknown>;
 };
@@ -120,6 +121,7 @@ export function parseIndiaPostWebhook(
     officeName: null,
     customerId: null,
     contractId: null,
+    nonDeliveryReason: null,
     parseError: null,
     rawPayload: {},
   };
@@ -172,6 +174,7 @@ export function parseIndiaPostWebhook(
     officeName: asText(rawPayload.event_office_name),
     customerId: asText(rawPayload.bulk_customer_id),
     contractId: asText(rawPayload.contract_number),
+    nonDeliveryReason: asText(rawPayload.non_delivery_reason),
     parseError: null,
     rawPayload: Object.keys(picked).length ? picked : rawPayload,
   };

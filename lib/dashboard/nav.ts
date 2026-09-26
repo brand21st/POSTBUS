@@ -3,6 +3,7 @@ import {
   BarChart3,
   ShoppingBag,
   Truck,
+  PackageX,
   Tag,
   Receipt,
   ClipboardList,
@@ -27,6 +28,7 @@ export const sidebarNav: NavItem[] = [
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   { label: "Orders", href: "/dashboard/orders", icon: ShoppingBag, tour: "nav-orders" },
   { label: "Shipments", href: "/dashboard/shipments", icon: Truck, tour: "nav-shipments" },
+  { label: "NDR & RTO", href: "/dashboard/ndr-rto", icon: PackageX },
   { label: "Labels", href: "/dashboard/labels", icon: Tag, tour: "nav-labels" },
   { label: "Invoices", href: "/dashboard/invoices", icon: Receipt },
   { label: "Manifest", href: "/dashboard/manifests", icon: ClipboardList },
@@ -42,6 +44,10 @@ export const helpNav: NavItem = {
   href: "/contact",
   icon: LifeBuoy,
 };
+
+export function isNavItemActive(href: string, pathname: string) {
+  return href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
+}
 
 export function breadcrumbs(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);

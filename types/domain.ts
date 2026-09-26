@@ -63,11 +63,36 @@ export const SHIPMENT_STATUSES = [
   "IN_TRANSIT",
   "OUT_FOR_DELIVERY",
   "DELIVERED",
+  "NDR",
   "FAILED",
   "CANCELLED",
   "RTO",
 ] as const;
 export type ShipmentStatus = (typeof SHIPMENT_STATUSES)[number];
+
+export const OPERATIONAL_STATUSES = [
+  "BOOKED",
+  "DISPATCHED",
+  "IN_TRANSIT",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+  "NDR",
+  "RTO",
+  "RTO_IN_TRANSIT",
+  "RTO_DELIVERED",
+] as const;
+export type OperationalStatus = (typeof OPERATIONAL_STATUSES)[number];
+
+export const NDR_BUCKETS = [
+  "DELIVERED",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED_TODAY",
+  "NDR",
+  "RTO",
+  "RTO_IN_TRANSIT",
+  "RTO_DELIVERED",
+] as const;
+export type NdrBucket = (typeof NDR_BUCKETS)[number];
 
 export const JOB_STATUSES = [
   "PENDING",

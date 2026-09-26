@@ -21,6 +21,15 @@ import {
 } from "@/modules/organizations/branding";
 import { WEBHOOK_EVENTS } from "@/types/domain";
 
+function uniqueById<T extends { id: string }>(rows: T[]) {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+}
+
 export async function handleWorkspaceRoutes(
   request: NextRequest,
   supabase: SupabaseClient,
@@ -310,29 +319,30 @@ export async function handleWorkspaceRoutes(
   }
 
   if (key === "GET search") {
-    const q = request.nextUrl.searchParams.get("q") || "";
+    const q = (request.nextUrl.searchParams.get("q") || "").trim();
     if (q.length < 2) return { items: [] };
     const orderFilter = orIlike(["order_number", "source_order_id"], q);
     const shipmentFilter = orIlike(["barcode", "tracking_number"], q);
     const customerFilter = orIlike(["name", "phone", "email"], q);
     if (!orderFilter && !shipmentFilter && !customerFilter) return { items: [] };
-    const [{ data: orders }, { data: shipments }, { data: customers }] = await Promise.all([
+
+    const [orderResult, shipmentResult, customerResult] = await Promise.all([
       orderFilter
         ? supabase
             .from("orders")
-            .select("id, order_number, source_order_id, customers(name, phone)")
+            .select("id, order_number, source_order_id, customer_id, customers(name, phone)")
             .eq("organization_id", ctx.organizationId)
             .or(orderFilter)
             .limit(8)
-        : Promise.resolve({ data: [] }),
+        : Promise.resolve({ data: [], error: null }),
       shipmentFilter
         ? supabase
             .from("shipments")
-            .select("id, barcode, tracking_number, orders(order_number)")
+            .select("id, barcode, tracking_number, order_id, orders(order_number)")
             .eq("organization_id", ctx.organizationId)
             .or(shipmentFilter)
             .limit(8)
-        : Promise.resolve({ data: [] }),
+        : Promise.resolve({ data: [], error: null }),
       customerFilter
         ? supabase
             .from("customers")
@@ -340,11 +350,43 @@ export async function handleWorkspaceRoutes(
             .eq("organization_id", ctx.organizationId)
             .or(customerFilter)
             .limit(8)
-        : Promise.resolve({ data: [] }),
+        : Promise.resolve({ data: [], error: null }),
     ]);
+    const queryError = orderResult.error || shipmentResult.error || customerResult.error;
+    if (queryError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, queryError.message);
+
+    const customers = customerResult.data ?? [];
+    const customerIds = customers.map((item) => item.id);
+    const extraOrders =
+      customerIds.length > 0
+        ? await supabase
+            .from("orders")
+            .select("id, order_number, source_order_id, customer_id, customers(name, phone)")
+            .eq("organization_id", ctx.organizationId)
+            .in("customer_id", customerIds)
+            .order("created_at", { ascending: false })
+            .limit(8)
+        : { data: [], error: null };
+    if (extraOrders.error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, extraOrders.error.message);
+
+    const orderIds = [...(orderResult.data ?? []), ...(extraOrders.data ?? [])].map((item) => item.id);
+    const extraShipments =
+      orderIds.length > 0
+        ? await supabase
+            .from("shipments")
+            .select("id, barcode, tracking_number, order_id, orders(order_number)")
+            .eq("organization_id", ctx.organizationId)
+            .in("order_id", orderIds)
+            .limit(8)
+        : { data: [], error: null };
+    if (extraShipments.error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, extraShipments.error.message);
+
+    const orders = uniqueById([...(orderResult.data ?? []), ...(extraOrders.data ?? [])]);
+    const shipments = uniqueById([...(shipmentResult.data ?? []), ...(extraShipments.data ?? [])]);
+
     return {
       items: [
-        ...(orders ?? []).map((item) => {
+        ...orders.map((item) => {
           const customer = Array.isArray(item.customers) ? item.customers[0] : item.customers;
           return {
             id: item.id,
@@ -356,7 +398,7 @@ export async function handleWorkspaceRoutes(
             href: `/dashboard/orders/${item.id}`,
           };
         }),
-        ...(shipments ?? []).map((item) => {
+        ...shipments.map((item) => {
           const order = Array.isArray(item.orders) ? item.orders[0] : item.orders;
           return {
             id: item.id,
@@ -366,12 +408,12 @@ export async function handleWorkspaceRoutes(
             href: `/dashboard/shipments/${item.id}`,
           };
         }),
-        ...(customers ?? []).map((item) => ({
+        ...customers.map((item) => ({
           id: item.id,
           type: "customer",
           title: item.name,
           subtitle: [item.phone, item.email].filter(Boolean).join(" · "),
-          href: `/dashboard/orders?q=${encodeURIComponent(item.name)}`,
+          href: `/dashboard/orders?q=${encodeURIComponent(item.phone || item.name)}`,
         })),
       ],
     };

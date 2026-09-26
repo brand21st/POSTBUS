@@ -21,6 +21,11 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "shipments/abc/retry", ["shipments", "abc", "retry"])).toBe(
       "shipments.write"
     );
+    expect(permissionForTenantRoute("GET", "ndr-rto", ["ndr-rto"])).toBe("shipments.read");
+    expect(permissionForTenantRoute("GET", "ndr-rto/summary", ["ndr-rto", "summary"])).toBe("shipments.read");
+    expect(permissionForTenantRoute("POST", "ndr-rto/abc/sync", ["ndr-rto", "abc", "sync"])).toBe(
+      "shipments.write"
+    );
     expect(permissionForTenantRoute("POST", "manifests", ["manifests"])).toBe("manifests.write");
   });
 

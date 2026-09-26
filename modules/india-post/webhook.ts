@@ -3,10 +3,8 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError, logInfo } from "@/lib/logger";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { emitWebhook } from "@/modules/webhooks/outgoing";
-import {
-  canAdvanceShipmentStatus,
-  mapIndiaPostEventToShipmentUpdate,
-} from "@/modules/india-post/event-mapper";
+import { applyIndiaPostTracking, snapshotFromShipmentRow } from "@/modules/india-post/apply-tracking";
+import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 import {
   maskTrackingNumber,
   parseIndiaPostWebhook,
@@ -192,7 +190,9 @@ export async function processIndiaPostInboxEvent(
 
   const { data: byBarcode } = await supabase
     .from("shipments")
-    .select("id, organization_id, status, barcode, tracking_number, order_id")
+    .select(
+      "id, organization_id, status, barcode, tracking_number, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
+    )
     .eq("organization_id", organizationId)
     .eq("barcode", parsed.barcode)
     .maybeSingle();
@@ -200,7 +200,9 @@ export async function processIndiaPostInboxEvent(
     ? { data: byBarcode }
     : await supabase
         .from("shipments")
-        .select("id, organization_id, status, barcode, tracking_number, order_id")
+        .select(
+          "id, organization_id, status, barcode, tracking_number, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
+        )
         .eq("organization_id", organizationId)
         .eq("tracking_number", parsed.barcode)
         .maybeSingle();
@@ -219,104 +221,43 @@ export async function processIndiaPostInboxEvent(
     return { processed: false, reason: "unknown-shipment" };
   }
 
-  const mapped = mapIndiaPostEventToShipmentUpdate(parsed);
-  const { error: eventError } = await supabase.from("tracking_events").insert({
-    organization_id: organizationId,
-    shipment_id: shipment.id,
-    event_code: mapped.eventCode,
-    event_description: mapped.eventDescription,
-    office_name: parsed.officeName,
-    office_id: parsed.officeId,
-    occurred_at: parsed.eventTimestamp ?? inbox.received_at ?? new Date().toISOString(),
-    raw: parsed.rawPayload,
-  });
-  if (eventError && eventError.code !== "23505") {
-    throw Object.assign(new Error(eventError.message), { code: "TEMPORARY_PROVIDER_FAILURE" });
-  }
+  const applied = await applyIndiaPostTracking(
+    supabase,
+    snapshotFromShipmentRow(shipment, organizationId),
+    {
+      eventCode: parsed.eventCode || "EVENT",
+      eventDescription: parsed.eventDescription,
+      officeName: parsed.officeName,
+      officeId: parsed.officeId,
+      occurredAt: parsed.eventTimestamp ?? inbox.received_at ?? new Date().toISOString(),
+      raw: parsed.rawPayload,
+      nonDeliveryReason: parsed.nonDeliveryReason,
+    }
+  );
 
-  if (
-    mapped.shouldUpdateStatus &&
-    mapped.shipmentStatus &&
-    canAdvanceShipmentStatus(shipment.status, mapped.shipmentStatus)
-  ) {
-    await supabase
-      .from("shipments")
-      .update({ status: mapped.shipmentStatus })
-      .eq("id", shipment.id)
-      .eq("organization_id", organizationId);
-    if (shipment.order_id && (mapped.shipmentStatus === "IN_TRANSIT" || mapped.shipmentStatus === "DELIVERED")) {
-      await supabase
-        .from("orders")
-        .update({ status: mapped.shipmentStatus })
-        .eq("id", shipment.order_id)
-        .eq("organization_id", organizationId);
-      try {
-        const { enqueueWatiNotify } = await import("@/modules/wati/send");
-        await enqueueWatiNotify(
-          supabase,
-          organizationId,
-          mapped.shipmentStatus === "DELIVERED" ? "delivered" : "in_transit",
-          { shipmentId: shipment.id, orderId: shipment.order_id }
-        );
-      } catch {
-        // WhatsApp is optional; tracking updates should still persist.
-      }
-      try {
-        const { getAutomationSettings } = await import("@/modules/automation/service");
-        const automation = await getAutomationSettings(supabase, organizationId);
-        if (automation.autoShopifyFulfillment !== false) {
-          const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
-          await syncShopifyOrderStage(supabase, {
-            organizationId,
-            orderId: shipment.order_id,
-            shipmentId: shipment.id,
-            stage: mapped.shipmentStatus === "DELIVERED" ? "delivered" : "in_transit",
-          });
-        }
-      } catch {
-        // Shopify fulfillment events are optional; tracking updates should still persist.
-      }
-    }
-    if (
-      shipment.order_id &&
-      (mapped.shipmentStatus === "DELIVERED" || mapped.shipmentStatus === "IN_TRANSIT")
-    ) {
-      try {
-        const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
-        await insertOrderStageNotification(supabase, {
-          organizationId,
-          orderId: shipment.order_id,
-          event: mapped.shipmentStatus === "DELIVERED" ? "delivered" : "in_transit",
-          body: mapped.eventDescription ?? mapped.eventCode,
-        });
-      } catch {
-        // In-app alerts are optional; tracking updates should still persist.
-      }
-    } else {
-      await supabase.from("notifications").insert({
-        organization_id: organizationId,
-        type: "tracking.updated",
-        title: "Shipment tracking updated",
-        body: mapped.eventDescription ?? mapped.eventCode,
-        entity_type: "shipment",
-        entity_id: shipment.id,
-      });
-    }
-  } else if (!eventError) {
+  if (applied.orderStatus && shipment.order_id) {
+    await enqueueTrackingStageSideEffects(supabase, {
+      organizationId,
+      shipmentId: shipment.id,
+      orderId: shipment.order_id,
+      orderStatus: applied.orderStatus,
+      body: parsed.eventDescription ?? parsed.eventCode,
+    });
+  } else if (applied.inserted) {
     await supabase.from("notifications").insert({
       organization_id: organizationId,
       type: "tracking.updated",
       title: "Shipment tracking updated",
-      body: mapped.eventDescription ?? mapped.eventCode,
+      body: parsed.eventDescription ?? parsed.eventCode,
       entity_type: "shipment",
       entity_id: shipment.id,
     });
   }
 
-  if (!eventError) {
+  if (applied.inserted) {
     await emitWebhook(supabase, organizationId, "tracking.updated", {
       shipmentId: shipment.id,
-      eventCode: mapped.eventCode,
+      eventCode: parsed.eventCode,
     });
   }
 
@@ -334,9 +275,9 @@ export async function processIndiaPostInboxEvent(
     provider: "INDIA_POST",
     organizationId,
     inboxEventId: inbox.id,
-    eventCode: mapped.eventCode,
+    eventCode: parsed.eventCode,
     trackingNumber: maskTrackingNumber(parsed.barcode),
-    statusUpdated: Boolean(mapped.shouldUpdateStatus && mapped.shipmentStatus),
+    statusUpdated: applied.statusUpdated,
   });
 
   return { processed: true, shipmentId: shipment.id };

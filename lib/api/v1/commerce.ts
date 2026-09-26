@@ -15,6 +15,8 @@ import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { filterGroupedLabels, groupLabelsByShipment, paginateGroupedLabels } from "@/modules/labels/group";
 import { mapLabelRow } from "@/modules/labels/map";
 import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
+import { ndrListQuery } from "@/modules/ndr-rto/schema";
+import { getNdrSummary, listNdrShipments, syncNdrShipment } from "@/modules/ndr-rto/service";
 
 function dateRange(request: NextRequest) {
   const from = request.nextUrl.searchParams.get("from") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -81,6 +83,19 @@ export async function handleCommerceRoutes(
   if (key === "POST orders/bulk/status") {
     const body = bulkOrderStatusSchema.parse(await request.json());
     return bulkUpdateOrderStatus(supabase, ctx, body);
+  }
+
+  if (key === "GET ndr-rto/summary") {
+    return getNdrSummary(supabase, ctx);
+  }
+
+  if (key === "GET ndr-rto") {
+    const parsed = ndrListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
+    return listNdrShipments(supabase, ctx, parsed);
+  }
+
+  if (method === "POST" && slugs[0] === "ndr-rto" && slugs[1] && slugs[2] === "sync") {
+    return syncNdrShipment(supabase, ctx, slugs[1]);
   }
 
   if (key === "GET shipments") {

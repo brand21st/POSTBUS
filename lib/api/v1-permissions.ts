@@ -20,6 +20,10 @@ export function permissionForTenantRoute(
     return method === "POST" ? "shipments.write" : "shipments.read";
   }
 
+  if (root === "ndr-rto") {
+    return method === "POST" ? "shipments.write" : "shipments.read";
+  }
+
   if (root === "label-template") {
     return method === "GET" ? "labels.read" : "labels.write";
   }

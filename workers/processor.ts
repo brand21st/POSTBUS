@@ -9,6 +9,13 @@ import {
   mapAutomationSettings,
 } from "@/modules/automation/service";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
+import {
+  ingestBulkTrackingArticle,
+  snapshotFromShipmentRow,
+  TRACKING_POLL_STATUSES,
+  type BulkTrackingArticle,
+} from "@/modules/india-post/apply-tracking";
+import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 import { formatBarcode, indiaPostAcceptedArticleId, isCeptUatTestSeries } from "@/modules/india-post/barcode";
 import {
   indiaPostBookingArticle,
@@ -642,86 +649,35 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
   }
   const { data: shipments } = await supabase
     .from("shipments")
-    .select("id, barcode, status, order_id")
+    .select(
+      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
+    )
     .eq("organization_id", payload.organizationId)
     .not("barcode", "is", null)
-    .in("status", ["BOOKED", "LABEL_READY", "MANIFEST_READY", "IN_TRANSIT", "OUT_FOR_DELIVERY"]);
+    .in("status", [...TRACKING_POLL_STATUSES])
+    .or("operational_status.is.null,operational_status.neq.RTO_DELIVERED");
   const barcodes = (shipments ?? []).map((item) => item.barcode).filter(Boolean) as string[];
   if (!barcodes.length) return;
   const provider = indiaPostFromRow(connection);
   const result = (await provider.trackShipment(barcodes)) as {
-    data?: Array<{
-      booking_details?: { article_number?: string };
-      tracking_details?: Array<{ event?: string; office?: string; date?: string; time?: string }>;
-      del_status?: { del_status?: string };
-    }>;
+    data?: BulkTrackingArticle[];
   };
   for (const article of result.data ?? []) {
     const barcode = article.booking_details?.article_number;
     const shipment = shipments?.find((item) => item.barcode === barcode);
     if (!shipment) continue;
-    for (const event of article.tracking_details ?? []) {
-      const { error } = await supabase.from("tracking_events").insert({
-        organization_id: payload.organizationId,
-        shipment_id: shipment.id,
-        event_code: event.event ?? "EVENT",
-        event_description: event.event,
-        office_name: event.office,
-        occurred_at: event.date ?? new Date().toISOString(),
-        raw: event,
+    const ingested = await ingestBulkTrackingArticle(supabase, {
+      organizationId: payload.organizationId,
+      shipment: snapshotFromShipmentRow(shipment, payload.organizationId),
+      article,
+    });
+    if (ingested.orderStatus && shipment.order_id) {
+      await enqueueTrackingStageSideEffects(supabase, {
+        organizationId: payload.organizationId,
+        shipmentId: shipment.id,
+        orderId: shipment.order_id,
+        orderStatus: ingested.orderStatus,
       });
-      if (error && error.code !== "23505") throw error;
-    }
-    const delivered = article.del_status?.del_status?.toLowerCase() === "delivered";
-    const alreadyDelivered = shipment.status === "DELIVERED";
-    const alreadyMoving = ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"].includes(shipment.status);
-    let nextStage: "in_transit" | "delivered" | null = null;
-    if (delivered && !alreadyDelivered) {
-      nextStage = "delivered";
-      await supabase.from("shipments").update({ status: "DELIVERED" }).eq("id", shipment.id);
-      if (shipment.order_id) {
-        await supabase.from("orders").update({ status: "DELIVERED" }).eq("id", shipment.order_id);
-      }
-    } else if (!delivered && !alreadyMoving && (article.tracking_details?.length ?? 0) > 0) {
-      nextStage = "in_transit";
-      await supabase.from("shipments").update({ status: "IN_TRANSIT" }).eq("id", shipment.id);
-      if (shipment.order_id) {
-        await supabase.from("orders").update({ status: "IN_TRANSIT" }).eq("id", shipment.order_id);
-      }
-    }
-    if (nextStage && shipment.order_id) {
-      try {
-        const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
-        await insertOrderStageNotification(supabase, {
-          organizationId: payload.organizationId,
-          orderId: shipment.order_id,
-          event: nextStage,
-        });
-      } catch {
-        // In-app alerts are optional; tracking still updates.
-      }
-      try {
-        const { enqueueWatiNotify } = await import("@/modules/wati/send");
-        await enqueueWatiNotify(supabase, payload.organizationId, nextStage, {
-          shipmentId: shipment.id,
-          orderId: shipment.order_id,
-        });
-      } catch {
-        // WhatsApp is optional; tracking still updates.
-      }
-      if (automation.autoShopifyFulfillment) {
-        try {
-          const { syncShopifyOrderStage } = await import("@/modules/shopify/orders");
-          await syncShopifyOrderStage(supabase, {
-            organizationId: payload.organizationId,
-            orderId: shipment.order_id,
-            shipmentId: shipment.id,
-            stage: nextStage,
-          });
-        } catch {
-          // Shopify fulfillment events are optional.
-        }
-      }
     }
   }
 }

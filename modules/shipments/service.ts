@@ -125,9 +125,18 @@ export async function createShipmentsForOrders(
   for (const order of orders) {
     const current = existingByOrder.get(order.id);
     const currentStatus = (current?.status ?? "").toUpperCase();
-    const alreadyBooked = ["BOOKED", "LABEL_PENDING", "LABEL_READY", "MANIFEST_PENDING", "MANIFEST_READY", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"].includes(
-      currentStatus
-    );
+    const alreadyBooked = [
+      "BOOKED",
+      "LABEL_PENDING",
+      "LABEL_READY",
+      "MANIFEST_PENDING",
+      "MANIFEST_READY",
+      "IN_TRANSIT",
+      "OUT_FOR_DELIVERY",
+      "DELIVERED",
+      "NDR",
+      "RTO",
+    ].includes(currentStatus);
 
     if (action === "processing" && current && currentStatus !== "FAILED") {
       if (!alreadyBooked) {
@@ -322,7 +331,9 @@ export async function listShipments(
 export async function getShipment(supabase: SupabaseClient, ctx: TenantContext, id: string) {
   const { data, error } = await supabase
     .from("shipments")
-    .select("*, orders(order_number), customers(name, phone), tracking_events(*), labels(*), shipping_invoices(id, status, invoice_number, error_message, created_at)")
+    .select(
+      "*, orders(order_number, total_amount, created_at), customers(name, phone), tracking_events(*), labels(*), shipping_invoices(id, status, invoice_number, error_message, created_at), addresses!shipping_address_id(city, state, pincode), pickup_locations(city, name)"
+    )
     .eq("organization_id", ctx.organizationId)
     .eq("id", id)
     .maybeSingle();
@@ -602,8 +613,10 @@ function nestedRows(value: unknown): Record<string, unknown>[] {
 }
 
 function mapShipment(row: Record<string, unknown>) {
-  const order = row.orders as { order_number?: string } | null;
+  const order = row.orders as { order_number?: string; total_amount?: number | string; created_at?: string } | null;
   const customer = row.customers as { name?: string; phone?: string } | null;
+  const address = nestedOne(row.addresses) as { city?: string; state?: string; pincode?: string } | null;
+  const pickup = nestedOne(row.pickup_locations) as { city?: string; name?: string } | null;
   const invoice = nestedRows(row.shipping_invoices)[0];
   return {
     ...row,
@@ -612,10 +625,27 @@ function mapShipment(row: Record<string, unknown>) {
     status: row.status as string | undefined,
     orderNumber: order?.order_number,
     order_number: order?.order_number,
+    orderTotal: order?.total_amount ?? null,
+    orderCreatedAt: order?.created_at ?? null,
     customer,
+    shippingCity: address?.city ?? null,
+    shippingPincode: address?.pincode ?? null,
+    originCity: pickup?.city ?? null,
     trackingNumber: row.tracking_number,
     serviceCode: row.service_code,
     createdAt: row.created_at,
+    operationalStatus: row.operational_status,
+    lastEventCode: row.last_event_code,
+    lastEventDescription: row.last_event_description,
+    lastScanOffice: row.last_scan_office,
+    lastEventAt: row.last_event_at,
+    lastTrackedAt: row.last_tracked_at,
+    ndrReason: row.ndr_reason,
+    ndrAttemptCount: row.ndr_attempt_count,
+    ndrLastAttemptAt: row.ndr_last_attempt_at,
+    rtoReason: row.rto_reason,
+    rtoInitiatedAt: row.rto_initiated_at,
+    deliveredAt: row.delivered_at,
     invoice: invoice
       ? {
           id: invoice.id,
@@ -626,4 +656,8 @@ function mapShipment(row: Record<string, unknown>) {
         }
       : null,
   };
+}
+
+function nestedOne(value: unknown) {
+  return nestedRows(value)[0] ?? null;
 }

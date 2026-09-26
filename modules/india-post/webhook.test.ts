@@ -24,6 +24,7 @@ describe("CEPT webhook parser", () => {
     expect(parsed.officeName).toBe("KADUGODI BNPL CENTRE");
     expect(parsed.customerId).toBe("1000002954");
     expect(parsed.contractId).toBe("40000354");
+    expect(parsed.nonDeliveryReason).toBeNull();
     expect(parsed.providerEventId).toBeNull();
     expect(parsed.eventTimestamp).toBe("2025-11-09T08:37:52.000Z");
   });
@@ -85,11 +86,49 @@ describe("event mapper", () => {
   });
 
   it("does not map booked or hold events to a new status", () => {
-    for (const eventCode of ["ITEM_BOOKED", "Item Booked", "ITEM_RETURNED", "ITEM_HOLD"]) {
+    for (const eventCode of ["ITEM_BOOKED", "Item Booked", "ITEM_HOLD"]) {
       expect(mapIndiaPostEventToShipmentUpdate({ eventCode, eventDescription: null }).shouldUpdateStatus).toBe(
         false
       );
     }
+  });
+
+  it("maps out for delivery without collapsing it to in transit", () => {
+    const mapped = mapIndiaPostEventToShipmentUpdate({
+      eventCode: "ITEM_OFD",
+      eventDescription: "Out for delivery",
+    });
+    expect(mapped.operationalStatus).toBe("OUT_FOR_DELIVERY");
+    expect(mapped.shipmentStatus).toBe("OUT_FOR_DELIVERY");
+  });
+
+  it("maps a non-delivery reason to NDR", () => {
+    const mapped = mapIndiaPostEventToShipmentUpdate({
+      eventCode: "ITEM_DELIVERY",
+      eventDescription: "Delivery attempted",
+      nonDeliveryReason: "Addressee cannot be located",
+    });
+    expect(mapped.operationalStatus).toBe("NDR");
+    expect(mapped.shipmentStatus).toBe("NDR");
+    expect(mapped.ndrReason).toBe("Addressee cannot be located");
+  });
+
+  it("maps return scans to RTO and keeps return delivery off the consignee status", () => {
+    expect(mapIndiaPostEventToShipmentUpdate({ eventCode: "ITEM_RETURNED", eventDescription: null })).toEqual(
+      expect.objectContaining({ shouldUpdateStatus: true, shipmentStatus: "RTO", operationalStatus: "RTO" })
+    );
+    expect(
+      mapIndiaPostEventToShipmentUpdate({
+        eventCode: "ITEM_RTO",
+        eventDescription: "RTO in transit",
+      }).operationalStatus
+    ).toBe("RTO_IN_TRANSIT");
+    expect(
+      mapIndiaPostEventToShipmentUpdate({
+        eventCode: "ITEM_DELIVERED",
+        eventDescription: "Delivered to sender",
+      }).operationalStatus
+    ).toBe("RTO_DELIVERED");
   });
 
   it("prevents delivered shipments from being downgraded", () => {

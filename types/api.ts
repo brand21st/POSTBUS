@@ -226,6 +226,35 @@ export type ShipmentRecord = {
   bookedAt?: string | null;
   booked_at?: string | null;
   invoice?: InvoiceSummary | null;
+  operationalStatus?: string | null;
+  operational_status?: string | null;
+  lastEventCode?: string | null;
+  last_event_code?: string | null;
+  lastEventDescription?: string | null;
+  last_event_description?: string | null;
+  lastScanOffice?: string | null;
+  last_scan_office?: string | null;
+  lastEventAt?: string | null;
+  last_event_at?: string | null;
+  lastTrackedAt?: string | null;
+  last_tracked_at?: string | null;
+  ndrReason?: string | null;
+  ndr_reason?: string | null;
+  ndrAttemptCount?: number | null;
+  ndr_attempt_count?: number | null;
+  ndrLastAttemptAt?: string | null;
+  ndr_last_attempt_at?: string | null;
+  rtoReason?: string | null;
+  rto_reason?: string | null;
+  rtoInitiatedAt?: string | null;
+  rto_initiated_at?: string | null;
+  deliveredAt?: string | null;
+  delivered_at?: string | null;
+  orderTotal?: number | string | null;
+  orderCreatedAt?: string | null;
+  shippingCity?: string | null;
+  shippingPincode?: string | null;
+  originCity?: string | null;
 };
 
 export type InvoiceSummary = {
@@ -354,6 +383,21 @@ export type TrackingEvent = {
   office_name?: string;
   occurredAt?: string;
   occurred_at?: string;
+  classification?: string | null;
+};
+
+export type NdrSummary = {
+  delivered: number;
+  outForDelivery: number;
+  deliveredToday: number;
+  ndr: number;
+  rto: number;
+  rtoInTransit: number;
+  rtoDelivered: number;
+};
+
+export type NdrShipmentRecord = ShipmentRecord & {
+  events?: TrackingEvent[];
 };
 
 export type TrackingRecord = {
