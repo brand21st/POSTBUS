@@ -18,14 +18,10 @@ const SUCCESS = new Set([
 ]);
 
 const WARNING = new Set([
-  "PENDING",
-  "PROCESSING",
   "BOOKING",
   "BOOKED",
   "QUEUED",
-  "PARTIAL",
   "INCOMPLETE",
-  "COD",
   "IN_TRANSIT",
   "OUT_FOR_DELIVERY",
   "CONFIGURATION_REQUIRED",
@@ -44,6 +40,7 @@ const ERROR = new Set([
   "DISCONNECTED",
   "REVOKED",
   "UNPAID",
+  "PENDING",
   "DISABLED",
   "SUSPENDED",
   "BLOCKED",
