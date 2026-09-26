@@ -366,7 +366,7 @@ export default function IndiaPostPage() {
               const value = row?.contractId ?? "";
               const isDefault = form.defaultServiceCode === service.code;
               const stock = value.trim()
-                ? barcodeStockForService(config?.barcodeRanges, service.code)
+                ? barcodeStockForService(config?.barcodeRanges ?? [], service.code)
                 : null;
               const left = barcodesLeft(stock);
               return (
@@ -379,7 +379,8 @@ export default function IndiaPostPage() {
                     <p className="truncate text-xs text-muted">{service.description}</p>
                     {left != null && stock ? (
                       <p className="text-xs text-muted">
-                        {formatNumber(left)} barcodes left · {stock.prefix} series
+                        {formatNumber(left)} barcodes left
+                        {stock.prefix ? ` · ${stock.prefix} series` : ""}
                       </p>
                     ) : null}
                   </div>
