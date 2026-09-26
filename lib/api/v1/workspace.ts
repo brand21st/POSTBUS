@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { ilikePattern, orIlike } from "@/lib/api/filters";
+import { orIlike } from "@/lib/api/filters";
 import { getSystemHealth } from "@/lib/api/health";
 import { canAssignMemberRole } from "@/lib/api/v1-permissions";
 import {
@@ -312,55 +312,65 @@ export async function handleWorkspaceRoutes(
   if (key === "GET search") {
     const q = request.nextUrl.searchParams.get("q") || "";
     if (q.length < 2) return { items: [] };
-    const orderPattern = ilikePattern(q);
+    const orderFilter = orIlike(["order_number", "source_order_id"], q);
     const shipmentFilter = orIlike(["barcode", "tracking_number"], q);
-    const customerPattern = ilikePattern(q);
-    if (!orderPattern && !shipmentFilter && !customerPattern) return { items: [] };
+    const customerFilter = orIlike(["name", "phone", "email"], q);
+    if (!orderFilter && !shipmentFilter && !customerFilter) return { items: [] };
     const [{ data: orders }, { data: shipments }, { data: customers }] = await Promise.all([
-      orderPattern
+      orderFilter
         ? supabase
             .from("orders")
-            .select("id, order_number")
+            .select("id, order_number, source_order_id, customers(name, phone)")
             .eq("organization_id", ctx.organizationId)
-            .ilike("order_number", orderPattern)
-            .limit(5)
+            .or(orderFilter)
+            .limit(8)
         : Promise.resolve({ data: [] }),
       shipmentFilter
         ? supabase
             .from("shipments")
-            .select("id, barcode, tracking_number")
+            .select("id, barcode, tracking_number, orders(order_number)")
             .eq("organization_id", ctx.organizationId)
             .or(shipmentFilter)
-            .limit(5)
+            .limit(8)
         : Promise.resolve({ data: [] }),
-      customerPattern
+      customerFilter
         ? supabase
             .from("customers")
-            .select("id, name, phone")
+            .select("id, name, phone, email")
             .eq("organization_id", ctx.organizationId)
-            .ilike("name", customerPattern)
-            .limit(5)
+            .or(customerFilter)
+            .limit(8)
         : Promise.resolve({ data: [] }),
     ]);
     return {
       items: [
-        ...(orders ?? []).map((item) => ({
-          id: item.id,
-          type: "order",
-          title: item.order_number,
-          href: `/dashboard/orders/${item.id}`,
-        })),
-        ...(shipments ?? []).map((item) => ({
-          id: item.id,
-          type: "shipment",
-          title: item.barcode || item.tracking_number,
-          href: `/dashboard/shipments/${item.id}`,
-        })),
+        ...(orders ?? []).map((item) => {
+          const customer = Array.isArray(item.customers) ? item.customers[0] : item.customers;
+          return {
+            id: item.id,
+            type: "order",
+            title: item.order_number,
+            subtitle: [customer?.name, customer?.phone, item.source_order_id !== item.order_number ? item.source_order_id : null]
+              .filter(Boolean)
+              .join(" · "),
+            href: `/dashboard/orders/${item.id}`,
+          };
+        }),
+        ...(shipments ?? []).map((item) => {
+          const order = Array.isArray(item.orders) ? item.orders[0] : item.orders;
+          return {
+            id: item.id,
+            type: "shipment",
+            title: item.barcode || item.tracking_number,
+            subtitle: order?.order_number,
+            href: `/dashboard/shipments/${item.id}`,
+          };
+        }),
         ...(customers ?? []).map((item) => ({
           id: item.id,
           type: "customer",
           title: item.name,
-          subtitle: item.phone,
+          subtitle: [item.phone, item.email].filter(Boolean).join(" · "),
           href: `/dashboard/orders?q=${encodeURIComponent(item.name)}`,
         })),
       ],

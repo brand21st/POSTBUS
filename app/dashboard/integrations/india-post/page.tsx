@@ -18,7 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatNumber } from "@/lib/format";
+import { barcodeStockForService, barcodesLeft } from "@/modules/india-post/barcode";
 import { api } from "@/lib/hooks/use-api";
 import { Copy } from "lucide-react";
 import { IndiaPostOfficeFinder } from "@/components/integrations/india-post-office-finder";
@@ -364,6 +365,10 @@ export default function IndiaPostPage() {
               const row = form.contracts.find((item) => item.serviceCode === service.code);
               const value = row?.contractId ?? "";
               const isDefault = form.defaultServiceCode === service.code;
+              const stock = value.trim()
+                ? barcodeStockForService(config?.barcodeRanges, service.code)
+                : null;
+              const left = barcodesLeft(stock);
               return (
                 <div
                   key={service.code}
@@ -372,6 +377,11 @@ export default function IndiaPostPage() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">{service.label}</p>
                     <p className="truncate text-xs text-muted">{service.description}</p>
+                    {left != null && stock ? (
+                      <p className="text-xs text-muted">
+                        {formatNumber(left)} barcodes left · {stock.prefix} series
+                      </p>
+                    ) : null}
                   </div>
                   <Input
                     value={value}

@@ -3,8 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, ChevronRight, Menu, Search } from "lucide-react";
+import { toast } from "sonner";
 import { CommandSearch } from "@/components/dashboard/command-search";
+import { ServiceToggle } from "@/components/dashboard/service-toggle";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,10 +20,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { breadcrumbs } from "@/lib/dashboard/nav";
 import { formatRelative, initials } from "@/lib/format";
+import { api } from "@/lib/hooks/use-api";
 import { useNotifications } from "@/lib/hooks/use-notifications";
+import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { MeResponse } from "@/types/api";
+import type { IndiaPostConfig, MeResponse } from "@/types/api";
+
+const BOOKING_OPTIONS = [
+  { value: "DEFAULT", label: "Default", title: "Use the India Post default service" },
+  { value: "SP_INLAND_PARCEL", label: "SP", title: "Speed Post parcel" },
+  { value: "BUSINESS_PARCEL", label: "BP", title: "Business Parcel" },
+];
 
 export function Topbar({
   me,
@@ -31,7 +42,26 @@ export function Topbar({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const crumbs = useMemo(() => breadcrumbs(pathname), [pathname]);
+  const indiaPost = useQuery({
+    queryKey: ["india-post"],
+    queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
+  });
+  const bookingService = useMutation({
+    mutationFn: (service: string) =>
+      api("/api/v1/integrations/india-post/booking-service", {
+        method: "PATCH",
+        body: JSON.stringify({ service }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["india-post"] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const bookingValue = parcelServiceCode(indiaPost.data?.bookingServiceOverride) ?? "DEFAULT";
+  const canChangeBooking = me?.role !== "VIEWER";
   const [searchOpen, setSearchOpen] = useState(false);
   const notifications = useNotifications();
   const items = notifications.items;
@@ -91,15 +121,24 @@ export function Topbar({
       </nav>
 
       <div className="ml-auto flex items-center gap-1.5">
+        <ServiceToggle
+          label="India Post booking service"
+          value={bookingValue}
+          options={BOOKING_OPTIONS}
+          disabled={!canChangeBooking || bookingService.isPending}
+          onChange={(service) => {
+            if (service !== bookingValue) bookingService.mutate(service);
+          }}
+        />
         <div className="flex items-center" data-tour="search">
           <Button
             type="button"
             variant="secondary"
-            className="hidden h-10 w-64 justify-start text-muted md:inline-flex"
+            className="hidden h-10 w-72 justify-start font-normal text-muted md:inline-flex"
             onClick={() => setSearchOpen(true)}
           >
             <Search className="size-4" />
-            Search
+            <span className="truncate">Search orders, AWB…</span>
             <span className="ml-auto text-xs text-muted">⌘K</span>
           </Button>
           <Button

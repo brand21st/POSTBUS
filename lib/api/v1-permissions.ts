@@ -12,6 +12,7 @@ export function permissionForTenantRoute(
 
   if (root === "orders") {
     if (method === "POST" && slugs[1] === "bulk" && slugs[2] === "status") return "shipments.write";
+    if (method === "PATCH" && slugs[2] === "service") return "orders.write";
     return method === "POST" ? "orders.write" : "orders.read";
   }
 
@@ -50,6 +51,8 @@ export function permissionForTenantRoute(
 
   if (key === "PATCH automation") return "automation.manage";
   if (key === "GET automation") return undefined;
+
+  if (key === "PATCH integrations/india-post/booking-service") return "shipments.write";
 
   if (root === "integrations") {
     const readable =

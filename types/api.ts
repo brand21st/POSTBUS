@@ -188,6 +188,8 @@ export type OrderRecord = {
   created_at?: string;
   updatedAt?: string;
   updated_at?: string;
+  indiaPostService?: string | null;
+  india_post_service?: string | null;
 };
 
 export type BulkOrderStatusResult = {
@@ -567,6 +569,7 @@ export type IndiaPostConfig = {
   events_webhook_url?: string;
   contracts?: IndiaPostContract[];
   defaultServiceCode?: string;
+  bookingServiceOverride?: string | null;
   barcodeRange?: IndiaPostBarcodeRange | null;
   barcodeRanges?: IndiaPostBarcodeRange[];
 };

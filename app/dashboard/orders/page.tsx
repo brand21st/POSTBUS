@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Download, Plus, RefreshCw, Truck } from "lucide-react";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import {
   type OrderDateFilterValue,
 } from "@/components/dashboard/order-date-filter";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { ServiceToggle } from "@/components/dashboard/service-toggle";
 import { orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -52,14 +53,25 @@ import {
 } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
+import {
+  parcelServiceCode,
+  resolveOrderBookingService,
+  shipmentServiceLocked,
+} from "@/modules/india-post/booking-service";
 import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
-import type { BulkOrderStatusResult, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
+import type { BulkOrderStatusResult, IndiaPostConfig, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
+
+const PARCEL_OPTIONS = [
+  { value: "SP_INLAND_PARCEL", label: "SP", title: "Speed Post parcel" },
+  { value: "BUSINESS_PARCEL", label: "BP", title: "Business Parcel" },
+];
 
 export default function OrdersPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(searchParams.get("q") ?? "");
   const [debounced, setDebounced] = useState("");
   const [status, setStatus] = useState("all");
   const [source, setSource] = useState("all");
@@ -67,6 +79,11 @@ export default function OrdersPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [dateFilter, setDateFilter] = useState<OrderDateFilterValue>({ kind: "all" });
   const [confirmFulfill, setConfirmFulfill] = useState(false);
+
+  useEffect(() => {
+    const q = searchParams.get("q") ?? "";
+    setSearch(q);
+  }, [searchParams]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -79,6 +96,10 @@ export default function OrdersPage() {
   const integrations = useQuery({
     queryKey: ["integrations"],
     queryFn: () => api<IntegrationsResponse>("/api/v1/integrations"),
+  });
+  const indiaPost = useQuery({
+    queryKey: ["india-post"],
+    queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
   });
   const shopify = integrations.data?.shopify;
   const shopifyStatus = (shopify?.status ?? "").toUpperCase();
@@ -235,6 +256,18 @@ export default function OrdersPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const setService = useMutation({
+    mutationFn: ({ orderId, service }: { orderId: string; service: string }) =>
+      api(`/api/v1/orders/${orderId}/service`, {
+        method: "PATCH",
+        body: JSON.stringify({ service }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const bulkFulfill = useMutation({
     mutationFn: (orderIds: string[]) =>
       api<BulkOrderStatusResult>("/api/v1/orders/bulk/status", {
@@ -325,6 +358,32 @@ export default function OrdersPage() {
       id: "created",
       header: "Created",
       cell: (row) => formatDate(row.createdAt ?? row.created_at, true),
+    },
+    {
+      id: "service",
+      header: "Service",
+      cell: (row) => {
+        const effective = resolveOrderBookingService({
+          orderService: row.indiaPostService ?? row.india_post_service,
+          workspaceOverride: indiaPost.data?.bookingServiceOverride,
+          defaultService: indiaPost.data?.defaultServiceCode,
+        });
+        const locked = shipmentServiceLocked(row.shipment?.status);
+        const pending = setService.isPending && setService.variables?.orderId === row.id;
+        return (
+          <ServiceToggle
+            label={`India Post service for ${orderNumber(row)}`}
+            value={parcelServiceCode(effective) ?? ""}
+            options={PARCEL_OPTIONS}
+            disabled={locked || pending}
+            onChange={(service) => {
+              if (service !== (row.indiaPostService ?? row.india_post_service)) {
+                setService.mutate({ orderId: row.id, service });
+              }
+            }}
+          />
+        );
+      },
     },
     {
       id: "actions",

@@ -96,6 +96,34 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
   };
 }
 
+export type BarcodeStock = {
+  prefix: string;
+  suffix: string;
+  startNumber: number;
+  endNumber: number;
+  nextNumber: number;
+  serviceCode?: string | null;
+};
+
+/** Unused articles in an allotted series, including the next number still available. */
+export function barcodesLeft(range: Pick<BarcodeStock, "endNumber" | "nextNumber"> | null | undefined) {
+  if (!range) return null;
+  const end = Number(range.endNumber);
+  const next = Number(range.nextNumber);
+  if (!Number.isInteger(end) || !Number.isInteger(next)) return null;
+  return Math.max(0, end - next + 1);
+}
+
+/** A service uses its own series when one is saved, otherwise the shared series. */
+export function barcodeStockForService(ranges: BarcodeStock[] | null | undefined, serviceCode: string) {
+  const list = ranges ?? [];
+  return (
+    list.find((range) => range.serviceCode === serviceCode) ??
+    list.find((range) => !range.serviceCode) ??
+    null
+  );
+}
+
 /** Serials from the CEPT UAT document. Prefix ET or CL still must not be used on production. */
 export function isCeptUatTestSeries(prefix: string, startNumber: number, endNumber: number) {
   void prefix;

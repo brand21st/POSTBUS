@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  barcodeStockForService,
+  barcodesLeft,
   formatBarcode,
   indiaPostAcceptedArticleId,
   indiaPostPublicTrackingUrl,
@@ -20,6 +22,28 @@ describe("formatBarcode", () => {
 
   it("matches the live Kolenchery Business Parcel article", () => {
     expect(formatBarcode("CL", 55697399, "IN")).toBe("CL556973995IN");
+  });
+});
+
+describe("barcodesLeft", () => {
+  const shared = {
+    prefix: "CL",
+    suffix: "IN",
+    startNumber: 55697399,
+    endNumber: 55697999,
+    nextNumber: 55697399,
+    serviceCode: null,
+  };
+
+  it("counts the unused serials in an allotted series", () => {
+    expect(barcodesLeft(shared)).toBe(601);
+    expect(barcodesLeft({ ...shared, nextNumber: 55698000 })).toBe(0);
+  });
+
+  it("uses a service series before the shared series", () => {
+    const business = { ...shared, prefix: "ET", serviceCode: "BUSINESS_PARCEL", nextNumber: 55697990 };
+    expect(barcodeStockForService([shared, business], "BUSINESS_PARCEL")?.prefix).toBe("ET");
+    expect(barcodesLeft(barcodeStockForService([shared, business], "SP_INLAND_PARCEL"))).toBe(601);
   });
 });
 

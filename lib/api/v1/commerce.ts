@@ -9,7 +9,7 @@ import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
 import { bulkOrderStatusSchema, createOrderSchema, orderListQuery } from "@/modules/orders/schema";
-import { createManualOrder, exportOrdersCsv, getOrder, listOrders } from "@/modules/orders/service";
+import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { filterGroupedLabels, groupLabelsByShipment, paginateGroupedLabels } from "@/modules/labels/group";
@@ -58,6 +58,11 @@ export async function handleCommerceRoutes(
         "Content-Disposition": "attachment; filename=orders.csv",
       },
     });
+  }
+
+  if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "service") {
+    const body = await request.json();
+    return setOrderBookingService(supabase, ctx, slugs[1], String(body.service ?? ""));
   }
 
   if (method === "GET" && slugs[0] === "orders" && slugs[1]) {

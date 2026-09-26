@@ -4,7 +4,9 @@ import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
 import type { createOrderSchema, orderListQuery } from "@/modules/orders/schema";
+import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { settleOrderPayment } from "@/modules/orders/payment";
+import { syncOpenShipmentsService } from "@/modules/shipments/service";
 
 type CreateInput = z.infer<typeof createOrderSchema>;
 
@@ -32,7 +34,7 @@ export async function listOrders(
   let builder = supabase
     .from("orders")
     .select(
-      "*, customers(id, name, phone, email), order_line_items(id, title, sku, quantity, unit_price), shipments(id, status, barcode, tracking_number)",
+      "*, customers(id, name, phone, email), order_line_items(id, title, sku, quantity, unit_price), shipments(id, status, barcode, tracking_number, service_code, created_at)",
       { count: "exact" }
     )
     .eq("organization_id", ctx.organizationId)
@@ -187,6 +189,49 @@ function insertAddress(
     });
 }
 
+function preferredShipment(shipments: Array<Record<string, unknown>>) {
+  const ranked = [...shipments].sort((left, right) =>
+    String(right.created_at ?? "").localeCompare(String(left.created_at ?? ""))
+  );
+  return ranked.find((item) => String(item.status ?? "").toUpperCase() !== "CANCELLED") ?? ranked[0] ?? null;
+}
+
+export async function setOrderBookingService(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  serviceCode: string
+) {
+  const service = parcelServiceCode(serviceCode);
+  if (!service) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose Speed Post parcel or Business Parcel.");
+  }
+  const { data, error } = await supabase
+    .from("orders")
+    .update({ india_post_service: service })
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+
+  const { data: shipments, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId)
+    .in("status", ["DRAFT", "QUEUED", "FAILED"]);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+  await syncOpenShipmentsService(
+    supabase,
+    ctx.organizationId,
+    (shipments ?? []).map((item) => item.id as string),
+    service
+  );
+  return { id: orderId, indiaPostService: service };
+}
+
 function mapOrder(row: Record<string, unknown>) {
   const customer = row.customers as { name?: string; phone?: string; email?: string } | null;
   const items = (row.order_line_items as Array<Record<string, unknown>> | undefined) ?? [];
@@ -208,13 +253,14 @@ function mapOrder(row: Record<string, unknown>) {
     codAmount: row.cod_amount,
     cod_amount: row.cod_amount,
     createdAt: row.created_at,
+    indiaPostService: row.india_post_service ?? null,
     customer: customer
       ? { name: customer.name, phone: customer.phone, email: customer.email }
       : null,
     customerName: customer?.name ?? null,
     lineItems: items,
     items: items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
-    shipment: shipments[0] ?? null,
+    shipment: preferredShipment(shipments),
     invoice: invoices[0]
       ? {
           id: invoices[0].id,

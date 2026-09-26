@@ -3,9 +3,56 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
+import { resolveOrderBookingService, shipmentServiceLocked } from "@/modules/india-post/booking-service";
 import { resolveDefaultServiceCode } from "@/modules/india-post/contracts";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { INDIA_POST_SERVICES } from "@/types/domain";
+
+const OPEN_SHIPMENT_STATUSES = ["DRAFT", "QUEUED", "FAILED"] as const;
+
+function assertIndiaPostService(serviceCode: string) {
+  if (!INDIA_POST_SERVICES.some((service) => service.code === serviceCode)) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `${serviceCode} is not a service India Post accepts.`
+    );
+  }
+}
+
+export async function workspaceBookingChoice(supabase: SupabaseClient, organizationId: string) {
+  const [{ data }, defaultService] = await Promise.all([
+    supabase
+      .from("india_post_connections")
+      .select("booking_service_override")
+      .eq("organization_id", organizationId)
+      .maybeSingle(),
+    resolveDefaultServiceCode(supabase, organizationId),
+  ]);
+  return {
+    workspaceOverride: (data?.booking_service_override as string | null) ?? null,
+    defaultService,
+  };
+}
+
+export async function syncOpenShipmentsService(
+  supabase: SupabaseClient,
+  organizationId: string,
+  shipmentIds: string[],
+  serviceCode: string
+) {
+  if (!shipmentIds.length) return;
+  assertIndiaPostService(serviceCode);
+  for (let index = 0; index < shipmentIds.length; index += 200) {
+    const chunk = shipmentIds.slice(index, index + 200);
+    const { error } = await supabase
+      .from("shipments")
+      .update({ service_code: serviceCode })
+      .eq("organization_id", organizationId)
+      .in("id", chunk)
+      .in("status", [...OPEN_SHIPMENT_STATUSES]);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+}
 
 export async function createShipmentsForOrders(
   supabase: SupabaseClient,
@@ -59,13 +106,19 @@ export async function createShipmentsForOrders(
     }
   }
 
-  const serviceCode = extras?.serviceCode?.trim() || (await resolveDefaultServiceCode(supabase, ctx.organizationId));
-  if (!INDIA_POST_SERVICES.some((service) => service.code === serviceCode)) {
-    throw new AppError(
-      ERROR_CODES.VALIDATION_ERROR,
-      `${serviceCode} is not a service India Post accepts.`
-    );
-  }
+  const explicitService = extras?.serviceCode?.trim() || "";
+  if (explicitService) assertIndiaPostService(explicitService);
+  const bookingChoice = explicitService ? null : await workspaceBookingChoice(supabase, ctx.organizationId);
+  const serviceFor = (order: { india_post_service?: string | null }) => {
+    if (explicitService) return explicitService;
+    const resolved = resolveOrderBookingService({
+      orderService: order.india_post_service,
+      workspaceOverride: bookingChoice?.workspaceOverride,
+      defaultService: bookingChoice?.defaultService,
+    });
+    assertIndiaPostService(resolved);
+    return resolved;
+  };
 
   const created = [];
   const skipped = [];
@@ -119,6 +172,7 @@ export async function createShipmentsForOrders(
           last_error_code: null,
           payment_mode: collect.payment_mode,
           cod_amount: collect.cod_amount,
+          service_code: serviceFor(order),
         })
         .eq("id", current.id);
       const job = await createBackgroundJob(supabase, {
@@ -151,7 +205,7 @@ export async function createShipmentsForOrders(
         order_id: order.id,
         customer_id: order.customer_id,
         shipping_address_id: order.shipping_address_id,
-        service_code: serviceCode,
+        service_code: serviceFor(order),
         payment_mode: collect.payment_mode,
         cod_amount: collect.cod_amount,
         weight_grams: weight,
@@ -281,12 +335,33 @@ export async function getShipment(supabase: SupabaseClient, ctx: TenantContext, 
 }
 
 export async function retryShipment(supabase: SupabaseClient, ctx: TenantContext, id: string) {
-  await getShipment(supabase, ctx, id);
+  const shipment = await getShipment(supabase, ctx, id);
   const { checkQuota } = await import("@/modules/billing/usage");
   await checkQuota(supabase, ctx.organizationId, 1);
+  const orderId = shipment.orderId ?? shipment.order_id ?? "";
+  let serviceCode: string | undefined;
+  if (orderId && !shipmentServiceLocked(String(shipment.status ?? ""))) {
+    const { data: order } = await supabase
+      .from("orders")
+      .select("india_post_service")
+      .eq("id", orderId)
+      .maybeSingle();
+    const choice = await workspaceBookingChoice(supabase, ctx.organizationId);
+    serviceCode = resolveOrderBookingService({
+      orderService: order?.india_post_service,
+      workspaceOverride: choice.workspaceOverride,
+      defaultService: choice.defaultService,
+    });
+    assertIndiaPostService(serviceCode);
+  }
   await supabase
     .from("shipments")
-    .update({ status: "QUEUED", last_error: null, last_error_code: null })
+    .update({
+      status: "QUEUED",
+      last_error: null,
+      last_error_code: null,
+      ...(serviceCode ? { service_code: serviceCode } : {}),
+    })
     .eq("id", id);
   const job = await createBackgroundJob(supabase, {
     organizationId: ctx.organizationId,
@@ -532,6 +607,9 @@ function mapShipment(row: Record<string, unknown>) {
   const invoice = nestedRows(row.shipping_invoices)[0];
   return {
     ...row,
+    orderId: row.order_id as string | undefined,
+    order_id: row.order_id as string | undefined,
+    status: row.status as string | undefined,
     orderNumber: order?.order_number,
     order_number: order?.order_number,
     customer,

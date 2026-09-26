@@ -9,7 +9,9 @@ import type { IndiaPostOffice } from "@/modules/india-post/endpoints";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
 import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
+import { parcelServiceCode, resolveOrderBookingService } from "@/modules/india-post/booking-service";
 import { listContracts, saveContracts } from "@/modules/india-post/contracts";
+import { syncOpenShipmentsService, workspaceBookingChoice } from "@/modules/shipments/service";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 import {
   createShopifyOAuthState,
@@ -409,6 +411,7 @@ export async function handleIntegrationRoutes(
       contracts,
       defaultServiceCode:
         contracts.find((contract) => contract.isDefault)?.serviceCode ?? DEFAULT_INDIA_POST_SERVICE,
+      bookingServiceOverride: parcelServiceCode(data?.booking_service_override),
       barcodeRange: range
         ? {
             prefix: range.prefix,
@@ -428,6 +431,42 @@ export async function handleIntegrationRoutes(
         serviceCode: item.service_code ?? null,
       })),
     };
+  }
+
+  if (key === "PATCH integrations/india-post/booking-service") {
+    const body = await request.json();
+    const requested = body.service === "DEFAULT" || body.service == null ? null : parcelServiceCode(String(body.service));
+    if (body.service && body.service !== "DEFAULT" && !requested) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose Default, Speed Post parcel, or Business Parcel.");
+    }
+    const { error } = await supabase.from("india_post_connections").upsert(
+      {
+        organization_id: ctx.organizationId,
+        booking_service_override: requested,
+      },
+      { onConflict: "organization_id" }
+    );
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+
+    const choice = await workspaceBookingChoice(supabase, ctx.organizationId);
+    const serviceCode = resolveOrderBookingService({
+      workspaceOverride: choice.workspaceOverride,
+      defaultService: choice.defaultService,
+    });
+    const { data: openShipments, error: openError } = await supabase
+      .from("shipments")
+      .select("id, orders!inner(india_post_service)")
+      .eq("organization_id", ctx.organizationId)
+      .in("status", ["DRAFT", "QUEUED", "FAILED"])
+      .is("orders.india_post_service", null);
+    if (openError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, openError.message);
+    await syncOpenShipmentsService(
+      supabase,
+      ctx.organizationId,
+      (openShipments ?? []).map((item) => item.id as string),
+      serviceCode
+    );
+    return { bookingServiceOverride: requested, serviceCode };
   }
 
   if (key === "PUT integrations/india-post" || key === "POST integrations/india-post" || key === "PATCH integrations/india-post") {
