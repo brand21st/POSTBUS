@@ -1,4 +1,4 @@
-import { officialDrawRect, pagePreset } from "@/modules/labels/page-presets";
+import { pagePreset } from "@/modules/labels/page-presets";
 
 export type OfficialLockedElement = {
   id: string;
@@ -55,30 +55,4 @@ export function officialElement(id: string) {
   const found = OFFICIAL_LOCKED_ELEMENTS.find((item) => item.id === id);
   if (!found) throw new Error(`Unknown official label element: ${id}`);
   return found;
-}
-
-/** Address rewrite box: right of the QR, above the booking footer, below the PIN strip. */
-export function indiaPostPartyOverlayRect(pageWidth: number, pageHeight: number) {
-  const a6 = pagePreset("A6");
-  const placed = officialDrawRect(pageWidth, pageHeight, a6.widthPt, a6.heightPt);
-  const qr = mapOfficialRect(officialElement("qrCode"), placed);
-  const booking = mapOfficialRect(officialElement("bookingInfo"), placed);
-  const pin = mapOfficialRect(officialElement("pinRange"), placed);
-  const receiver = mapOfficialRect(officialElement("receiver"), placed);
-  const sender = mapOfficialRect(officialElement("sender"), placed);
-  const scale = placed.width / a6.widthPt;
-  const gap = 8 * scale;
-  const x = qr.x + qr.width + gap;
-  const y = Math.max(Math.min(qr.y, sender.y), booking.y + booking.height + gap);
-  // CEPT can render the first receiver line at the very top of its mapped
-  // receiver box. Cover that full band while retaining the template's gap
-  // before the PIN strip.
-  const top = Math.min(pin.y, Math.max(qr.y + qr.height, receiver.y + receiver.height));
-  const right = placed.x + placed.width - 12 * scale;
-  return {
-    x,
-    y,
-    width: Math.max(24, right - x),
-    height: Math.max(24, top - y),
-  };
 }
