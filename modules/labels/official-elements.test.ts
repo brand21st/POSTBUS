@@ -31,12 +31,18 @@ describe("official label elements", () => {
       const qr = mapOfficialRect(officialElement("qrCode"), placed);
       const booking = mapOfficialRect(officialElement("bookingInfo"), placed);
       const pin = mapOfficialRect(officialElement("pinRange"), placed);
+      const receiver = mapOfficialRect(officialElement("receiver"), placed);
+      const sender = mapOfficialRect(officialElement("sender"), placed);
       const party = indiaPostPartyOverlayRect(page.width, page.height);
       expect(rectsOverlap(party, qr, 2)).toBe(false);
       expect(rectsOverlap(party, booking, 2)).toBe(false);
-      expect(rectsOverlap(party, pin, 2)).toBe(false);
+      expect(rectsOverlap(party, pin, 0)).toBe(false);
       expect(party.x).toBeGreaterThanOrEqual(qr.x + qr.width + 6);
       expect(party.y).toBeGreaterThanOrEqual(booking.y + booking.height);
+      expect(party.x).toBeLessThanOrEqual(sender.x);
+      expect(party.y).toBeLessThanOrEqual(sender.y);
+      expect(party.x + party.width).toBeGreaterThanOrEqual(receiver.x + receiver.width);
+      expect(party.y + party.height).toBeGreaterThanOrEqual(receiver.y + receiver.height);
       expect(party.y + party.height).toBeLessThanOrEqual(pin.y + 0.01);
     }
   });

@@ -1,7 +1,11 @@
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { officialAddressLines, overlayIndiaPostPartyBox } from "@/modules/labels/official-address";
-import { indiaPostPartyOverlayRect, officialElement } from "@/modules/labels/official-elements";
+import {
+  indiaPostPartyOverlayRect,
+  mapOfficialRect,
+  officialElement,
+} from "@/modules/labels/official-elements";
 import { pagePreset } from "@/modules/labels/page-presets";
 
 const SAMPLE_BOX = {
@@ -40,6 +44,30 @@ describe("overlayIndiaPostPartyBox", () => {
     });
     const pdf = await PDFDocument.load(bytes);
     expect(pdf.getPageCount()).toBe(1);
+    expect(Buffer.from(bytes).subarray(0, 4).toString()).toBe("%PDF");
+  });
+
+  it("covers a CEPT receiver line at the top of the original address box", async () => {
+    const a6 = pagePreset("A6");
+    const source = await PDFDocument.create();
+    const page = source.addPage([a6.widthPt, a6.heightPt]);
+    const font = await source.embedFont(StandardFonts.HelveticaBold);
+    const receiver = mapOfficialRect(officialElement("receiver"), {
+      x: 0,
+      y: 0,
+      width: a6.widthPt,
+      height: a6.heightPt,
+    });
+    page.drawText("RECEIVER:CEPT DUPLICATE ADDRESS", {
+      x: receiver.x,
+      y: receiver.y + receiver.height - 6,
+      size: 6,
+      font,
+    });
+
+    const bytes = await overlayIndiaPostPartyBox(await source.save(), SAMPLE_BOX);
+    const overlay = indiaPostPartyOverlayRect(a6.widthPt, a6.heightPt);
+    expect(overlay.y + overlay.height).toBeGreaterThanOrEqual(receiver.y + receiver.height);
     expect(Buffer.from(bytes).subarray(0, 4).toString()).toBe("%PDF");
   });
 
