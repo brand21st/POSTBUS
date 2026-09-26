@@ -97,11 +97,11 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
 }
 
 export type BarcodeStock = {
-  prefix: string;
-  suffix: string;
-  startNumber: number;
-  endNumber: number;
-  nextNumber: number;
+  prefix?: string | null;
+  suffix?: string | null;
+  startNumber?: number;
+  endNumber?: number;
+  nextNumber?: number;
   serviceCode?: string | null;
 };
 
@@ -115,7 +115,7 @@ export function barcodesLeft(range: Pick<BarcodeStock, "endNumber" | "nextNumber
 }
 
 /** A service uses its own series when one is saved, otherwise the shared series. */
-export function barcodeStockForService(ranges: BarcodeStock[] | null | undefined, serviceCode: string) {
+export function barcodeStockForService(ranges: readonly BarcodeStock[] | null | undefined, serviceCode: string) {
   const list = ranges ?? [];
   return (
     list.find((range) => range.serviceCode === serviceCode) ??
