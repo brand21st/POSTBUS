@@ -58,6 +58,7 @@ export function InvoicePreview({
           <Meta label="Invoice No" value={data.invoiceNumber} />
           <Meta label="Invoice Date" value={data.invoiceDate} />
           <Meta label="Order No" value={data.orderNumber} />
+          <Meta label="Shipment ID" value={data.shipmentNumber} />
           <Meta label="Tracking" value={data.trackingNumber} />
         </div>
 
@@ -90,13 +91,13 @@ export function InvoicePreview({
           </tbody>
         </table>
 
-        <div className="ml-auto w-44 space-y-1 text-[11px]">
+        <div className="ml-auto w-44 space-y-1 pt-2 text-[11px]">
           <Row label="Subtotal" value={formatCurrency(data.subtotal, data.currency)} />
           {data.discount ? <Row label="Discount" value={formatCurrency(data.discount, data.currency)} /> : null}
           {data.shippingAmount ? <Row label="Shipping" value={formatCurrency(data.shippingAmount, data.currency)} /> : null}
           {data.taxAmount ? <Row label="Tax" value={formatCurrency(data.taxAmount, data.currency)} /> : null}
           <div
-            className="mt-1 flex items-center justify-between rounded px-2 py-1.5 font-semibold"
+            className="mt-3 flex items-center justify-between rounded px-2 py-1.5 font-semibold"
             style={{ background: appearance.totalHighlightColor, color: totalText }}
           >
             <span>Total</span>

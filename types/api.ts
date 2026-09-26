@@ -279,6 +279,7 @@ export type InvoicePreviewData = {
   orderNumber: string;
   orderDate: string;
   shipmentId: string;
+  shipmentNumber: string;
   trackingNumber: string;
   paymentMethod: string;
   paymentStatus: string;

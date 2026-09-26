@@ -40,6 +40,7 @@ export type InvoiceViewModel = {
   orderNumber: string;
   orderDate: string;
   shipmentId: string;
+  shipmentNumber: string;
   trackingNumber: string;
   paymentMethod: string;
   paymentStatus: string;
@@ -71,6 +72,7 @@ export const SAMPLE_INVOICE_DATA: InvoiceViewModel = {
   orderNumber: "#12345",
   orderDate: "23 Sep 2026",
   shipmentId: "sample",
+  shipmentNumber: "SHP-000001",
   trackingNumber: "CL556974806IN",
   paymentMethod: "COD",
   paymentStatus: "COD",
@@ -82,10 +84,10 @@ export const SAMPLE_INVOICE_DATA: InvoiceViewModel = {
     lines: [],
   },
   billing: {
-    name: "Priya Nair",
-    phone: "9876501234",
+    name: "Sample Store",
+    phone: "9876543210",
     email: "",
-    lines: ["14 Lake View", "Ernakulam, Kerala 682016"],
+    lines: ["12 Market Road", "Kochi, Kerala 682311"],
   },
   shipping: {
     name: "Priya Nair",
@@ -143,6 +145,22 @@ function partyFrom(
   return { name, phone, email, lines };
 }
 
+export function formatShipmentNumber(value: unknown) {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 1) return "";
+  return `SHP-${String(number).padStart(6, "0")}`;
+}
+
+export function organizationInvoiceParty(
+  source: Record<string, unknown> | null,
+  businessEmail: string | null | undefined = ""
+): InvoiceParty {
+  return {
+    ...partyFrom(source),
+    email: (businessEmail ?? "").trim(),
+  };
+}
+
 export function invoicePreviewPayload(data: InvoiceViewModel) {
   return {
     storeName: data.storeName,
@@ -157,6 +175,7 @@ export function invoicePreviewPayload(data: InvoiceViewModel) {
     orderNumber: data.orderNumber,
     orderDate: data.orderDate,
     shipmentId: data.shipmentId,
+    shipmentNumber: data.shipmentNumber,
     trackingNumber: data.trackingNumber,
     paymentMethod: data.paymentMethod,
     paymentStatus: data.paymentStatus,
@@ -208,7 +227,7 @@ export async function invoiceDataForShipment(
 ): Promise<InvoiceViewModel> {
   const { data: shipment, error } = await supabase
     .from("shipments")
-    .select("id, order_id, barcode, tracking_number, payment_mode, cod_amount")
+    .select("id, shipment_number, order_id, barcode, tracking_number, payment_mode, cod_amount")
     .eq("organization_id", organizationId)
     .eq("id", shipmentId)
     .maybeSingle();
@@ -218,7 +237,7 @@ export async function invoiceDataForShipment(
   const { data: orderRow, error: orderError } = await supabase
     .from("orders")
     .select(
-      "id, order_number, created_at, subtotal, discount, shipping_amount, tax_amount, total_amount, payment_status, currency, customers(name, phone, email), billing_address:addresses!billing_address_id(*), shipping_address:addresses!shipping_address_id(*), order_line_items(title, sku, quantity, unit_price)"
+      "id, order_number, created_at, subtotal, discount, shipping_amount, tax_amount, total_amount, payment_status, currency, customers(name, phone, email), shipping_address:addresses!shipping_address_id(*), order_line_items(title, sku, quantity, unit_price)"
     )
     .eq("organization_id", organizationId)
     .eq("id", shipment.order_id)
@@ -239,8 +258,8 @@ export async function invoiceDataForShipment(
   const logo = await loadLogoBytes(supabase, org?.logo_path);
   const storeWebsite = await resolveStoreWebsite(supabase, organizationId, settings.website);
   const customer = asRecord(order?.customers);
-  const billing = partyFrom(asRecord(order?.billing_address), String(customer?.name || ""));
-  const shipping = partyFrom(asRecord(order?.shipping_address), String(customer?.name || billing.name));
+  const billing = organizationInvoiceParty(asRecord(org), settings.businessEmail);
+  const shipping = partyFrom(asRecord(order?.shipping_address), String(customer?.name || ""));
   const items = (Array.isArray(order?.order_line_items) ? order.order_line_items : []).map((item) => {
     const row = item as { title?: string; sku?: string | null; quantity?: number; unit_price?: number | string };
     const quantity = Number(row.quantity) || 1;
@@ -274,13 +293,14 @@ export async function invoiceDataForShipment(
     orderNumber: String(order?.order_number || ""),
     orderDate: formatDisplayDate(typeof order?.created_at === "string" ? order.created_at : null),
     shipmentId: String(shipment.id),
+    shipmentNumber: formatShipmentNumber(shipment.shipment_number),
     trackingNumber: String(shipment.tracking_number || shipment.barcode || ""),
     paymentMethod: paymentMode || "—",
     paymentStatus: String(order?.payment_status || paymentMode || "—"),
     currency: String(order?.currency || "INR"),
     customer: {
-      name: String(customer?.name || billing.name || shipping.name || "Customer"),
-      phone: String(customer?.phone || billing.phone || shipping.phone || ""),
+      name: String(customer?.name || shipping.name || "Customer"),
+      phone: String(customer?.phone || shipping.phone || ""),
       email: String(customer?.email || ""),
       lines: [],
     },
@@ -333,6 +353,7 @@ export async function invoicePreviewData(
   const logo = await loadLogoBytes(supabase, org?.logo_path);
   const storeWebsite =
     (await resolveStoreWebsite(supabase, organizationId, settings.website)) || SAMPLE_INVOICE_DATA.storeWebsite;
+  const organization = organizationInvoiceParty(asRecord(org), settings.businessEmail);
   return {
     sample: true,
     shipmentId: null as string | null,
@@ -344,17 +365,10 @@ export async function invoicePreviewData(
       storeEmail: settings.businessEmail || "",
       storeGstin: settings.gstin || "",
       storeWebsite,
-      storeAddress: [
-        [org?.line1, org?.line2].filter(Boolean).join(", "),
-        [org?.city, org?.state, org?.pincode].filter(Boolean).join(", "),
-      ].filter(Boolean).length
-        ? [
-            [org?.line1, org?.line2].filter(Boolean).join(", "),
-            [org?.city, org?.state, org?.pincode].filter(Boolean).join(", "),
-          ].filter(Boolean)
-        : SAMPLE_INVOICE_DATA.storeAddress,
+      storeAddress: organization.lines.length ? organization.lines : SAMPLE_INVOICE_DATA.storeAddress,
       logoBytes: logo?.bytes ?? null,
       logoMime: logo?.mime ?? null,
+      billing: organization.name ? organization : SAMPLE_INVOICE_DATA.billing,
     } satisfies InvoiceViewModel,
   };
 }

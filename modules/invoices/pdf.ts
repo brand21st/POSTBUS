@@ -168,7 +168,7 @@ export async function renderInvoicePdf(data: InvoiceViewModel) {
     ["Invoice Date", data.invoiceDate],
     ["Order No", data.orderNumber],
     ["Order Date", data.orderDate],
-    ["Shipment ID", data.shipmentId && data.shipmentId !== "sample" ? data.shipmentId : ""],
+    ["Shipment ID", data.shipmentNumber],
     ["Payment", `${data.paymentMethod}${data.paymentStatus && data.paymentStatus !== data.paymentMethod ? ` · ${data.paymentStatus}` : ""}`],
   ].filter(([, value]) => value);
   meta.forEach((pair, index) => {
@@ -240,7 +240,7 @@ export async function renderInvoicePdf(data: InvoiceViewModel) {
     y -= rowHeight;
   }
 
-  y -= 8;
+  y -= 18;
   const totals: Array<[string, number, boolean]> = [
     ["Subtotal", data.subtotal, false],
     ...(data.discount ? [["Discount", data.discount, false] as [string, number, boolean]] : []),
@@ -252,6 +252,7 @@ export async function renderInvoicePdf(data: InvoiceViewModel) {
 
   for (const [label, amount, highlight] of totals) {
     if (highlight) {
+      y -= 8;
       page.drawRectangle({ x: tableLeft + tableWidth - 220, y: y - 6, width: 220, height: 22, color: totalBg });
       page.drawText(label, { x: tableLeft + tableWidth - 210, y: y, size: 10, font: bold, color: totalText });
       drawRight(page, bold, money(amount, data.currency), cols.total, y, 10, totalText);
