@@ -5,7 +5,7 @@ import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { saveLabelPdf } from "@/modules/labels/storage";
 import type { LabelTemplate } from "@/modules/labels/template-schema";
 
-export type LabelKind = "INDIA_POST" | "MERCHANT";
+export type LabelKind = "INDIA_POST" | "MERCHANT" | "CUSTOM_SHIPPING";
 
 const SIGNED_URL_SECONDS = 60 * 60 * 24 * 365;
 

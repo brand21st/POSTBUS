@@ -34,6 +34,7 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForPath("/dashboard/invoices/customize")).toBe(FEATURE.invoices);
     expect(lockedFeatureForPath("/dashboard/tracking")).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForPath("/dashboard/labels/customize")).toBe(FEATURE.packing);
+    expect(lockedFeatureForPath("/dashboard/labels/templates")).toBe(FEATURE.packing);
     expect(lockedFeatureForPath("/dashboard/orders")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/integrations")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/automation")).toBeNull();

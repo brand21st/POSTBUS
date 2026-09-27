@@ -158,7 +158,9 @@ export async function handleCommerceRoutes(
     const filename =
       kind === "MERCHANT"
         ? `packing-slip-${data.shipment_id || data.id}.pdf`
-        : `india-post-${data.shipment_id || data.id}.pdf`;
+        : kind === "CUSTOM_SHIPPING"
+          ? `shipping-label-${data.shipment_id || data.id}.pdf`
+          : `india-post-${data.shipment_id || data.id}.pdf`;
     if (wantsBrowserPdfPreview(request)) {
       return labelPdfViewerResponse(filename);
     }

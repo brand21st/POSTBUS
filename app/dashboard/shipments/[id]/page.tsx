@@ -57,6 +57,51 @@ export default function ShipmentDetailPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const openCustomLabel = async (shipmentId: string, mode: "preview" | "download" | "print") => {
+    if (mode === "print") {
+      try {
+        const printed = await api<{ connected?: boolean; downloadPath?: string; message?: string }>(
+          "/api/v1/label-template/custom-print",
+          { method: "POST", body: JSON.stringify({ shipmentId }) }
+        );
+        if (!printed.connected && printed.downloadPath) {
+          window.open(printed.downloadPath, "_blank", "noopener,noreferrer");
+        }
+        toast.success(printed.message || "Shipping label sent to the printer.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not print the shipping label.");
+      }
+      return;
+    }
+    const response = await fetch(`/api/v1/label-template/custom-${mode}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shipmentId }),
+    });
+    if (!response.ok || !(response.headers.get("Content-Type") ?? "").includes("application/pdf")) {
+      let message = "Could not open the shipping label.";
+      try {
+        const payload = (await response.json()) as { message?: string };
+        message = payload.message || message;
+      } catch {
+        // keep default
+      }
+      toast.error(message);
+      return;
+    }
+    const blob = await response.blob();
+    const href = URL.createObjectURL(blob);
+    if (mode === "download") {
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `shipping-label-${shipmentId}.pdf`;
+      link.click();
+      return;
+    }
+    window.open(href, "_blank", "noopener,noreferrer");
+  };
+
   const recordForHash = shipment.data;
   useEffect(() => {
     if (!recordForHash) return;
@@ -130,6 +175,15 @@ export default function ShipmentDetailPage() {
                 Refresh tracking
               </Button>
             ) : null}
+            <Button type="button" variant="secondary" onClick={() => void openCustomLabel(params.id, "preview")}>
+              Preview label
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => void openCustomLabel(params.id, "download")}>
+              Download label
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => void openCustomLabel(params.id, "print")}>
+              Print label
+            </Button>
             <Button type="button" variant="secondary" onClick={() => retry.mutate()} disabled={retry.isPending}>
               <RotateCcw className="size-4" />
               Retry

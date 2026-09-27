@@ -364,6 +364,11 @@ export default function LabelsPage() {
         description="One row per shipment. Print both sends the barcode (A6) and packing slip (A4)."
         actions={
           <>
+            <Link href="/dashboard/labels/templates">
+              <Button type="button" variant="secondary">
+                Shipping templates
+              </Button>
+            </Link>
             <Link href="/dashboard/labels/customize">
               <Button type="button" variant="secondary">
                 <Settings2 className="size-4" />

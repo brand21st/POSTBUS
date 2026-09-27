@@ -43,6 +43,17 @@ describe("groupLabelsByShipment", () => {
     expect(grouped[1].packingLabelId).toBeNull();
   });
 
+  it("does not treat a custom shipping label as the official barcode", () => {
+    const grouped = groupLabelsByShipment([
+      mapped({ id: "custom-1", kind: "CUSTOM_SHIPPING", shipment_id: "ship-1", status: "READY" }),
+      mapped({ id: "bar-1", kind: "INDIA_POST", shipment_id: "ship-1", status: "READY" }),
+      mapped({ id: "pack-1", kind: "MERCHANT", shipment_id: "ship-1", status: "READY" }),
+    ]);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0].indiaPostLabelId).toBe("bar-1");
+    expect(grouped[0].packingLabelId).toBe("pack-1");
+  });
+
   it("filters complete versus incomplete shipment rows", () => {
     const grouped = groupLabelsByShipment([
       mapped({ id: "bar-1", kind: "INDIA_POST", shipment_id: "ship-1", status: "READY" }),

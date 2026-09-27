@@ -14,6 +14,10 @@ describe("official India Post label generation", () => {
     expect(fetchSource).not.toContain("overlayIndiaPostPartyBox");
     expect(fetchSource).not.toContain("officialAddressLines");
     expect(fetchSource).not.toContain("drawRectangle");
+    expect(source).not.toContain("india-post-barcode-image");
+    expect(source).not.toContain("packing-pdf");
+    expect(fetchSource).not.toContain("india-post-barcode-image");
+    expect(fetchSource).not.toContain("packing-pdf");
   });
 
   it("preserves every byte returned by CEPT", () => {

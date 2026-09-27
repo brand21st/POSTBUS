@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { hashSecret, randomToken, safeEqual } from "@/lib/security/crypto";
-import { isPaperSizeId, agentPaperSize } from "@/modules/labels/page-presets";
+import { isPaperSizeId, agentPaperSize, printMediaForPage } from "@/modules/labels/page-presets";
 import { paperSizeForLabelKind } from "@/modules/labels/print-targets";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 
@@ -514,10 +514,31 @@ export async function claimNextPrintJob(supabase: SupabaseClient, agent: PrintAg
       .maybeSingle();
     if (!claimed) continue;
 
+    const { data: labelFile } = await supabase
+      .from("labels")
+      .select("kind, template_snapshot")
+      .eq("organization_id", agent.organizationId)
+      .eq("id", claimed.label_id)
+      .maybeSingle();
+    const snapshot = labelFile?.template_snapshot as { page?: { widthPt?: number; heightPt?: number; widthMm?: number; heightMm?: number } } | null;
+    const page = snapshot?.page;
+    const customPage =
+      String(labelFile?.kind || "").toUpperCase() === "CUSTOM_SHIPPING" &&
+      page &&
+      Number(page.widthPt) > 0 &&
+      Number(page.heightPt) > 0
+        ? printMediaForPage({
+            widthPt: Number(page.widthPt),
+            heightPt: Number(page.heightPt),
+            widthMm: page.widthMm,
+            heightMm: page.heightMm,
+          })
+        : null;
+
     return {
       job: mapPrintJob(claimed as PrintJobRow),
-      paperSize: agentPaperSize(claimed.paper_size || settings.paperSize),
-      orientation: settings.orientation,
+      paperSize: customPage?.paperSize || agentPaperSize(claimed.paper_size || settings.paperSize),
+      orientation: customPage?.orientation || "portrait",
       copies: Number(claimed.copies) || settings.copies,
     };
   }

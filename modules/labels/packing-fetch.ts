@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { articleIdFromShipment } from "@/modules/labels/india-post-barcode-image";
 import { officialAddressLines } from "@/modules/labels/official-address";
 import { loadLogoBytes } from "@/modules/labels/packing-data";
 import { renderPackingSlipPdf, type PackingLabelData, type PackingParty, packingItemName } from "@/modules/labels/packing-pdf";
@@ -8,15 +9,20 @@ import type { LabelTemplate } from "@/modules/labels/template-schema";
 import { notifyLabelsReadyIfComplete } from "@/lib/notifications/labels-ready";
 import { logError } from "@/lib/logger";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
+import { indiaPostServiceLabel } from "@/types/domain";
 
 export type PackingPartyInput = {
   name?: string | null;
   line1?: string | null;
   line2?: string | null;
   city?: string | null;
+  district?: string | null;
   state?: string | null;
   pincode?: string | null;
+  country?: string | null;
   phone?: string | null;
+  altMobile?: string | null;
+  email?: string | null;
 };
 
 function validationError(message: string): Error {
@@ -82,6 +88,14 @@ export function packingParty(input: PackingPartyInput, role: "receiver" | "sende
       state,
       pin,
     }),
+    street: [line1, (input.line2 ?? "").trim()].filter(Boolean).join(", "),
+    city,
+    state,
+    pincode: pin,
+    district: (input.district ?? "").trim(),
+    country: (input.country ?? "").trim(),
+    altMobile: (input.altMobile ?? "").trim(),
+    email: (input.email ?? "").trim(),
   };
 }
 
@@ -105,6 +119,14 @@ export function packingPartyForSlip(input: PackingPartyInput, role: "receiver" |
       state: cleanText(input.state),
       pin: /^\d{6}$/.test(pin) ? pin : "",
     }),
+    street: [cleanText(input.line1), cleanText(input.line2)].filter(Boolean).join(", "),
+    city: cleanText(input.city),
+    district: cleanText(input.district),
+    state: cleanText(input.state),
+    pincode: /^\d{6}$/.test(pin) ? pin : "",
+    country: cleanText(input.country),
+    altMobile: cleanText(input.altMobile),
+    email: cleanText(input.email),
   };
 }
 
@@ -162,10 +184,41 @@ export function packingCustomerFromShopifyAddress(
     state: text(shopifyAddress?.state) ?? text(shopifyAddress?.province),
     pincode: text(shopifyAddress?.pincode) ?? text(shopifyAddress?.zip),
     phone: String(shopifyAddress?.phone || customer?.phone || "").trim() || null,
+    email: String(customer?.email || shopifyAddress?.email || "").trim() || null,
   };
 }
 
-export async function fetchPackingSlipPdf(
+async function indiaPostLabelIdentity(
+  supabase: SupabaseClient,
+  organizationId: string,
+  serviceCode: unknown
+) {
+  const code = String(serviceCode ?? "").trim();
+  let contractId = "";
+  if (code) {
+    const { data: contract } = await supabase
+      .from("india_post_contracts")
+      .select("contract_id")
+      .eq("organization_id", organizationId)
+      .eq("service_code", code)
+      .eq("is_active", true)
+      .maybeSingle();
+    contractId = String(contract?.contract_id ?? "").trim();
+  }
+
+  const { data: connection } = await supabase
+    .from("india_post_connections")
+    .select("contract_id, bulk_customer_id")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (!contractId) contractId = String(connection?.contract_id ?? "").trim();
+  return {
+    contractId,
+    customerId: String(connection?.bulk_customer_id ?? "").trim(),
+  };
+}
+
+export async function loadPackingLabelData(
   supabase: SupabaseClient,
   organizationId: string,
   shipmentId: string
@@ -173,7 +226,7 @@ export async function fetchPackingSlipPdf(
   const { data: shipment } = await supabase
     .from("shipments")
     .select(
-      "id, order_id, payment_mode, cod_amount, orders(id, order_number, source_order_id, created_at, payment_status, subtotal, discount, shipping_amount, total_amount, metadata, shipping_address:addresses!shipping_address_id(*), billing_address:addresses!billing_address_id(*)), customers(name, phone), addresses:shipping_address_id(*)"
+      "id, order_id, payment_mode, cod_amount, barcode, tracking_number, service_code, weight_grams, length_cm, width_cm, height_cm, orders(id, order_number, source_order_id, created_at, payment_status, subtotal, discount, shipping_amount, total_amount, metadata, shipping_address:addresses!shipping_address_id(*), billing_address:addresses!billing_address_id(*)), customers(name, phone, email), addresses:shipping_address_id(*)"
     )
     .eq("id", shipmentId)
     .eq("organization_id", organizationId)
@@ -215,16 +268,27 @@ export async function fetchPackingSlipPdf(
   const { data: lineRows } = orderId
     ? await supabase
         .from("order_line_items")
-        .select("title, sku, quantity, unit_price")
+        .select("title, sku, quantity, unit_price, weight_grams")
         .eq("order_id", orderId)
         .eq("organization_id", organizationId)
-    : { data: [] as Array<{ title?: string; sku?: string | null; quantity?: number; unit_price?: number }> };
+    : {
+        data: [] as Array<{
+          title?: string;
+          sku?: string | null;
+          quantity?: number;
+          unit_price?: number;
+          weight_grams?: number | null;
+        }>,
+      };
 
   const items = (lineRows ?? []).map((item) => ({
     title: packingItemName(item),
     sku: item.sku ?? null,
+    description: null,
     quantity: Number(item.quantity) || 1,
     unitPrice: moneyNumber(item.unit_price),
+    weightGrams: Number(item.weight_grams) > 0 ? Number(item.weight_grams) : null,
+    note: null,
   }));
 
   const paymentMode = String(shipment.payment_mode || order?.payment_status || "").toUpperCase();
@@ -252,10 +316,27 @@ export async function fetchPackingSlipPdf(
     sender,
     logoBytes: logo?.bytes ?? null,
     logoMime: logo?.mime ?? null,
+    articleId: articleIdFromShipment(shipment),
+    articleType: shipment.service_code ? indiaPostServiceLabel(String(shipment.service_code)) : "",
+    ...(await indiaPostLabelIdentity(supabase, organizationId, shipment.service_code)),
+    paymentMode: paymentMode,
+    weightGrams: Number(shipment.weight_grams) > 0 ? Number(shipment.weight_grams) : null,
+    lengthCm: Number(shipment.length_cm) > 0 ? Number(shipment.length_cm) : null,
+    widthCm: Number(shipment.width_cm) > 0 ? Number(shipment.width_cm) : null,
+    heightCm: Number(shipment.height_cm) > 0 ? Number(shipment.height_cm) : null,
   };
 
-  const pdf = await renderPackingSlipPdf(data);
-  return { pdf: Buffer.from(pdf), shipmentId: String(shipment.id), template };
+  return { data, shipmentId: String(shipment.id), template };
+}
+
+export async function fetchPackingSlipPdf(
+  supabase: SupabaseClient,
+  organizationId: string,
+  shipmentId: string
+) {
+  const loaded = await loadPackingLabelData(supabase, organizationId, shipmentId);
+  const pdf = await renderPackingSlipPdf(loaded.data);
+  return { pdf: Buffer.from(pdf), shipmentId: loaded.shipmentId, template: loaded.template };
 }
 
 export async function persistPackingSlip(

@@ -1,7 +1,8 @@
 export type ShipmentPrintTarget = "both" | "barcode" | "packing";
 
 export function paperSizeForLabelKind(kind?: string | null) {
-  return String(kind || "INDIA_POST").toUpperCase() === "MERCHANT" ? "A4" : "A6";
+  const value = String(kind || "INDIA_POST").toUpperCase();
+  return value === "MERCHANT" || value === "CUSTOM_SHIPPING" ? "A4" : "A6";
 }
 
 export function shipmentPrintJobs(
@@ -15,8 +16,11 @@ export function shipmentPrintJobs(
   },
   target: ShipmentPrintTarget
 ) {
+  const kind = String(row.kind ?? "INDIA_POST").toUpperCase();
   const barcodeId =
-    row.indiaPostLabelId ?? row.india_post_label_id ?? ((row.kind ?? "INDIA_POST") !== "MERCHANT" ? row.id : null);
+    row.indiaPostLabelId ??
+    row.india_post_label_id ??
+    (kind === "MERCHANT" || kind === "CUSTOM_SHIPPING" ? null : row.id);
   const packingId =
     row.packingLabelId ?? row.packing_label_id ?? ((row.kind ?? "") === "MERCHANT" ? row.id : null);
   const jobs: Array<{ id: string; paperSize: "A6" | "A4"; kind: "barcode" | "packing" }> = [];

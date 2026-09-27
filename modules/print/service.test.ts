@@ -34,6 +34,7 @@ function printClient(state: {
   settings?: { selected_printer_name: string | null };
   agent?: { printers: string[]; token_hash?: string; token_prefix?: string };
   insertErrors?: Array<{ code?: string; message?: string } | null>;
+  labels?: Array<{ id: string; kind: string; template_snapshot: unknown }>;
 }) {
   const settings = {
     organization_id: "org-1",
@@ -56,6 +57,20 @@ function printClient(state: {
           }),
           insert: () => ({
             select: () => ({ single: async () => ({ data: settings, error: null }) }),
+          }),
+        };
+      }
+      if (table === "labels") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: (_column: string, id: string) => ({
+                maybeSingle: async () => ({
+                  data: state.labels?.find((label) => label.id === id) ?? null,
+                  error: null,
+                }),
+              }),
+            }),
           }),
         };
       }
@@ -256,7 +271,88 @@ describe("print jobs", () => {
       organizationId: "org-1",
     });
     expect(claimed?.paperSize).toBe("A5");
+    expect(claimed?.orientation).toBe("portrait");
     expect(claimed?.copies).toBe(2);
+  });
+
+  it("claims a custom label at the template page size and orientation", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "MANUAL",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          paper_size: "A4",
+          copies: 1,
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+      agent: { printers: ["Epson TM"] },
+      labels: [
+        {
+          id: "label-1",
+          kind: "CUSTOM_SHIPPING",
+          template_snapshot: {
+            page: { widthMm: 297, heightMm: 210, widthPt: 841.89, heightPt: 595.28 },
+          },
+        },
+      ],
+    };
+    const claimed = await claimNextPrintJob(printClient(state) as never, {
+      agentId: "agent-1",
+      organizationId: "org-1",
+    });
+    expect(claimed?.paperSize).toBe("A4");
+    expect(claimed?.orientation).toBe("landscape");
+  });
+
+  it("keeps official and packing jobs portrait when a landscape snapshot is stored", async () => {
+    for (const kind of ["INDIA_POST", "MERCHANT"] as const) {
+      const state = {
+        jobs: [
+          {
+            id: "job-1",
+            organization_id: "org-1",
+            shipment_id: "ship-1",
+            label_id: "label-1",
+            printer_name: "Epson TM",
+            source: "MANUAL",
+            status: "PENDING",
+            error_message: null,
+            claimed_at: null,
+            printed_at: null,
+            created_at: new Date().toISOString(),
+            paper_size: kind === "INDIA_POST" ? "A6" : "A4",
+            copies: 1,
+          },
+        ] as Job[],
+        settings: { selected_printer_name: "Epson TM" },
+        agent: { printers: ["Epson TM"] },
+        labels: [
+          {
+            id: "label-1",
+            kind,
+            template_snapshot: {
+              page: { widthMm: 297, heightMm: 210, widthPt: 841.89, heightPt: 595.28 },
+            },
+          },
+        ],
+      };
+      const claimed = await claimNextPrintJob(printClient(state) as never, {
+        agentId: "agent-1",
+        organizationId: "org-1",
+      });
+      expect(claimed?.orientation).toBe("portrait");
+      expect(claimed?.paperSize).toBe(kind === "INDIA_POST" ? "A6" : "A4");
+    }
   });
 
   it("does not claim a job when the selected printer is offline", async () => {

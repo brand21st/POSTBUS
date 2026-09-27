@@ -26,6 +26,22 @@ export function isPaperSizeId(value: string | null | undefined): value is PaperS
   return PAPER_SIZE_IDS.includes(value as PaperSizeId);
 }
 
+export type SizeChoice = PaperSizeId | "custom";
+
+export function sizeChoiceForPage(page: {
+  widthPt: number;
+  heightPt: number;
+  widthMm?: number;
+  heightMm?: number;
+}): SizeChoice {
+  const widthMm = page.widthMm ?? (page.widthPt * 25.4) / 72;
+  const heightMm = page.heightMm ?? (page.heightPt * 25.4) / 72;
+  const match = PAGE_PRESETS.find(
+    (preset) => Math.abs(preset.widthMm - widthMm) < 1 && Math.abs(preset.heightMm - heightMm) < 1
+  );
+  return match?.id ?? "custom";
+}
+
 export function pagePreset(id: string | null | undefined): PagePreset {
   return PAGE_PRESETS.find((item) => item.id === id) ?? PAGE_PRESETS[0];
 }
@@ -50,4 +66,39 @@ export function officialDrawRect(
 export function agentPaperSize(id: string | null | undefined) {
   const preset = pagePreset(id);
   return preset.id === "4x6" ? "4x6" : preset.id;
+}
+
+export function printMediaForPage(page: {
+  widthPt: number;
+  heightPt: number;
+  widthMm?: number;
+  heightMm?: number;
+}) {
+  const widthMm = page.widthMm ?? (page.widthPt * 25.4) / 72;
+  const heightMm = page.heightMm ?? (page.heightPt * 25.4) / 72;
+  const portrait = PAGE_PRESETS.find(
+    (preset) => Math.abs(preset.widthMm - widthMm) < 1 && Math.abs(preset.heightMm - heightMm) < 1
+  );
+  if (portrait) return { paperSize: portrait.id, orientation: "portrait" as const };
+  const landscape = PAGE_PRESETS.find(
+    (preset) => Math.abs(preset.widthMm - heightMm) < 1 && Math.abs(preset.heightMm - widthMm) < 1
+  );
+  if (landscape) return { paperSize: landscape.id, orientation: "landscape" as const };
+
+  let best = PAGE_PRESETS[0];
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const preset of PAGE_PRESETS) {
+    const score = Math.min(
+      Math.abs(preset.widthMm - widthMm) + Math.abs(preset.heightMm - heightMm),
+      Math.abs(preset.heightMm - widthMm) + Math.abs(preset.widthMm - heightMm)
+    );
+    if (score < bestScore) {
+      best = preset;
+      bestScore = score;
+    }
+  }
+  return {
+    paperSize: best.id,
+    orientation: widthMm > heightMm ? ("landscape" as const) : ("portrait" as const),
+  };
 }

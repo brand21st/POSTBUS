@@ -5,6 +5,7 @@ describe("shipment print targets", () => {
   it("sends the barcode to A6 and the packing slip to A4", () => {
     expect(paperSizeForLabelKind("INDIA_POST")).toBe("A6");
     expect(paperSizeForLabelKind("MERCHANT")).toBe("A4");
+    expect(paperSizeForLabelKind("CUSTOM_SHIPPING")).toBe("A4");
     expect(
       shipmentPrintJobs(
         { id: "bar-1", indiaPostLabelId: "bar-1", packingLabelId: "pack-1", kind: "INDIA_POST" },
@@ -21,5 +22,6 @@ describe("shipment print targets", () => {
       shipmentPrintLabel({ id: "bar-1", indiaPostLabelId: "bar-1", packingLabelId: "pack-1" })
     ).toBe("Print both");
     expect(shipmentPrintLabel({ id: "bar-1", indiaPostLabelId: "bar-1" })).toBe("Print barcode");
+    expect(shipmentPrintJobs({ id: "custom-1", kind: "CUSTOM_SHIPPING" }, "barcode")).toEqual([]);
   });
 });

@@ -11,8 +11,15 @@ export type MappedLabelRow = ReturnType<typeof mapLabelRow> & {
   barcode_status?: string | null;
 };
 
+function labelRole(kind?: string | null) {
+  const value = String(kind || "INDIA_POST").toUpperCase();
+  if (value === "MERCHANT") return "merchant";
+  if (value === "CUSTOM_SHIPPING") return "custom";
+  return "india";
+}
+
 function isMerchant(kind?: string | null) {
-  return String(kind || "INDIA_POST").toUpperCase() === "MERCHANT";
+  return labelRole(kind) === "merchant";
 }
 
 function shipmentKey(row: { shipmentId?: string; shipment_id?: string; id?: string }) {
@@ -30,6 +37,7 @@ export function groupLabelsByShipment(rows: ReturnType<typeof mapLabelRow>[]): M
   const groups = new Map<string, MappedLabelRow>();
 
   for (const row of rows) {
+    if (labelRole(row.kind) === "custom") continue;
     const key = shipmentKey(row);
     const merchant = isMerchant(row.kind);
     const existing = groups.get(key);

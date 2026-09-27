@@ -59,6 +59,7 @@ const NAV_FEATURES: Array<{ href: string; feature: string }> = [
   { href: "/dashboard/tracking", feature: FEATURE.trackingPage },
   { href: "/dashboard/manifests", feature: FEATURE.manifests },
   { href: "/dashboard/labels/customize", feature: FEATURE.packing },
+  { href: "/dashboard/labels/templates", feature: FEATURE.packing },
   { href: "/dashboard/integrations/wati", feature: FEATURE.wati },
   { href: "/dashboard/integrations/india-post", feature: FEATURE.indiaPost },
   { href: "/dashboard/integrations/shopify", feature: FEATURE.shopify },

@@ -3,6 +3,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
+import {
+  customLabelBarcodePng,
+  loadCustomShippingLabel,
+  previewFromPacking,
+  printCustomShippingLabel,
+  renderCustomShippingLabel,
+  type CustomLabelRequest,
+} from "@/modules/labels/custom-label-service";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
@@ -49,6 +57,49 @@ export async function handleLabelTemplateRoutes(
         "Content-Disposition": 'inline; filename="india-post-label.pdf"',
       },
     });
+  }
+
+  if (key === "GET label-template/barcode") {
+    const barcode = await customLabelBarcodePng(supabase, ctx.organizationId, customLabelQuery(request));
+    if (!barcode.png) {
+      return { articleId: "", shipmentId: barcode.shipmentId };
+    }
+    return new NextResponse(new Uint8Array(barcode.png), {
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "private, no-store",
+      },
+    });
+  }
+
+  if (key === "GET label-template/custom-data") {
+    const loaded = await loadCustomShippingLabel(supabase, ctx.organizationId, customLabelQuery(request));
+    return { preview: previewFromPacking(loaded.data, loaded.shipmentId) };
+  }
+
+  if (key === "POST label-template/custom-preview" || key === "POST label-template/custom-download") {
+    const body = await readCustomLabelBody(request);
+    const rendered = await renderCustomShippingLabel(supabase, ctx.organizationId, body);
+    const filename = `shipping-label-${rendered.shipmentId}.pdf`;
+    const disposition = key.endsWith("custom-download") ? "attachment" : "inline";
+    return new NextResponse(new Uint8Array(rendered.pdf), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `${disposition}; filename="${filename}"`,
+      },
+    });
+  }
+
+  if (key === "POST label-template/custom-print") {
+    const body = await readCustomLabelBody(request);
+    const printed = await printCustomShippingLabel(supabase, ctx, body);
+    return {
+      labelId: printed.labelId,
+      job: printed.job,
+      connected: printed.connected,
+      downloadPath: printed.downloadPath,
+      message: printed.message,
+    };
   }
 
   if (key === "POST label-template/print-test") {
@@ -130,6 +181,38 @@ export async function handleLabelTemplateRoutes(
     return { id: created.id, kind: "INDIA_POST", message: "A new India Post label and packing slip were generated." };
   }
 
+  return null;
+}
+
+function customLabelQuery(request: NextRequest): CustomLabelRequest {
+  return {
+    shipmentId: request.nextUrl.searchParams.get("shipmentId"),
+    orderId: request.nextUrl.searchParams.get("orderId"),
+    templateId: request.nextUrl.searchParams.get("templateId"),
+    paymentPreview: paymentPreview(request.nextUrl.searchParams.get("paymentPreview")),
+  };
+}
+
+async function readCustomLabelBody(request: NextRequest): Promise<CustomLabelRequest> {
+  const body = (await request.json().catch(() => ({}))) as {
+    shipmentId?: string;
+    orderId?: string;
+    templateId?: string;
+    paymentPreview?: string;
+    template?: unknown;
+  };
+  return {
+    shipmentId: body.shipmentId,
+    orderId: body.orderId,
+    templateId: body.templateId,
+    paymentPreview: paymentPreview(body.paymentPreview),
+    template: body.template,
+  };
+}
+
+function paymentPreview(value?: string | null): "COD" | "PREPAID" | null {
+  const mode = (value ?? "").toUpperCase();
+  if (mode === "COD" || mode === "PREPAID") return mode;
   return null;
 }
 

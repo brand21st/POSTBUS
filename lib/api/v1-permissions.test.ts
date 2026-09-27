@@ -78,6 +78,18 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "label-template/print-test", ["label-template", "print-test"])).toBe(
       "labels.write"
     );
+    expect(
+      permissionForTenantRoute("POST", "label-template/custom-preview", ["label-template", "custom-preview"])
+    ).toBe("labels.read");
+    expect(
+      permissionForTenantRoute("POST", "label-template/custom-download", ["label-template", "custom-download"])
+    ).toBe("labels.read");
+    expect(permissionForTenantRoute("POST", "label-template/custom-print", ["label-template", "custom-print"])).toBe(
+      "labels.write"
+    );
+    expect(permissionForTenantRoute("GET", "label-template/custom-data", ["label-template", "custom-data"])).toBe(
+      "labels.read"
+    );
     expect(permissionForTenantRoute("GET", "notifications", ["notifications"])).toBeUndefined();
     expect(permissionForTenantRoute("GET", "billing", ["billing"])).toBeUndefined();
     expect(permissionForTenantRoute("GET", "billing/plans", ["billing", "plans"])).toBeUndefined();

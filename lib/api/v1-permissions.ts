@@ -25,7 +25,9 @@ export function permissionForTenantRoute(
   }
 
   if (root === "label-template") {
-    return method === "GET" ? "labels.read" : "labels.write";
+    if (method === "GET") return "labels.read";
+    if (slugs[1] === "custom-preview" || slugs[1] === "custom-download") return "labels.read";
+    return "labels.write";
   }
 
   if (root === "invoice-template") {
