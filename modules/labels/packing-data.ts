@@ -10,8 +10,9 @@ export const SAMPLE_PACKING_DATA: PackingLabelData = {
   shopifyOrderNumber: "1001",
   orderDate: "2 October 2018",
   items: [
-    { title: "Cotton Shirt", sku: "SHIRT-BLK", quantity: 2, unitPrice: 799 },
-    { title: "Black Jeans", sku: "JEAN-BLK", quantity: 1, unitPrice: 999 },
+    { title: "Demo product 1", sku: null, quantity: 2, unitPrice: 599, weightGrams: 180 },
+    { title: "Demo product 2", sku: null, quantity: 1, unitPrice: 149, weightGrams: 100 },
+    { title: "Demo product 3", sku: null, quantity: 1, unitPrice: 299, weightGrams: 220 },
   ],
   subtotal: 2597,
   shipping: 0,
@@ -49,6 +50,15 @@ export const SAMPLE_PACKING_DATA: PackingLabelData = {
   logoBytes: null,
   logoMime: null,
   logoUrl: null,
+  articleId: "",
+  articleType: "Speed Post parcel",
+  contractId: "",
+  customerId: "",
+  paymentMode: "COD",
+  weightGrams: 500,
+  lengthCm: 30,
+  widthCm: 20,
+  heightCm: 4,
 };
 
 function logoMimeFor(path: string, mime: string) {

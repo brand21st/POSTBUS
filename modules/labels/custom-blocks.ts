@@ -442,6 +442,37 @@ export function codBlockHeight(
   return gap * 2 + Math.max(1, lines.length) * lineHeight;
 }
 
+export function bookedBlockText(
+  id: string,
+  preview: CustomLabelPreview,
+  element?: { content?: string }
+): string {
+  if (isCustomTextId(id)) return element?.content?.trim() || "";
+  if (id === "customerId") return customerIdLine(preview.customerId);
+  if (id === "articleType") return articleContractLine(preview.articleType, preview.contractId);
+  if (id === "serviceContractId") return serviceContractLine(preview.contractId);
+  if (id === "indiaPostBarcode") return preview.articleId.trim() || "India Post tracking number not available";
+  if (id === "orderIdDate") {
+    const order = preview.orderNumber ? `Order ID: ${preview.orderNumber}` : "";
+    const date = preview.orderDate ? `Date: ${preview.orderDate}` : "";
+    return [order, date].filter(Boolean).join(", ");
+  }
+  if (id === "parcelSize") return parcelSizeLines(preview, true).join("\n");
+  if (id === "codAmount") return codAmountLines(preview.codAmount).join("\n");
+  if (id === "prepaid") return "PRE PAID";
+  if (id === "fromAddress") {
+    if (preview.fromParts) {
+      return addressLineTexts({ headingText: "From/ Return Address" }, preview.fromParts).join("\n");
+    }
+    return ["From/ Return Address", ...preview.fromLines].filter(Boolean).join("\n");
+  }
+  if (id === "shipTo") {
+    return addressLineTexts({ headingText: "Ship To:" }, preview.shipParts ?? SAMPLE_SHIP_PARTS).join("\n");
+  }
+  if (id === "products") return productTableLines(preview.items, undefined, { includeTotal: true, total: preview.total }).join("\n");
+  return "";
+}
+
 export function blockPreviewLines(
   id: string,
   preview: CustomLabelPreview | null,
@@ -449,11 +480,11 @@ export function blockPreviewLines(
 ): string[] {
   if (isCustomTextId(id)) {
     const text = element?.content?.trim();
-    return text ? text.split("\n") : ["Custom text"];
+    return text ? text.split("\n") : preview ? [] : ["Custom text"];
   }
   if (id === "indiaPostBarcode") {
     if (!preview) return [];
-    return preview.articleId ? [preview.articleId] : ["India Post tracking number not available"];
+    return [bookedBlockText(id, preview)];
   }
   if (!preview) {
     if (id === "shipTo") return addressLineTexts(undefined, SAMPLE_SHIP_PARTS);
@@ -469,24 +500,6 @@ export function blockPreviewLines(
     if (id === "merchantLogo") return ["Logo"];
     return [];
   }
-  if (id === "shipTo") return addressLineTexts(undefined, preview.shipParts ?? SAMPLE_SHIP_PARTS);
-  if (id === "fromAddress") return ["From/ Return Address", ...preview.fromLines];
-  if (id === "customerId") return [customerIdLine(preview.customerId) || "Customer ID"];
-  if (id === "articleType") {
-    return [articleContractLine(preview.articleType, preview.contractId) || "Article type"];
-  }
-  if (id === "serviceContractId") {
-    return [serviceContractLine(preview.contractId) || "Service contract ID not available"];
-  }
-  if (id === "orderIdDate") {
-    return [`Order ID: ${preview.orderNumber || "—"}, Date: ${preview.orderDate || "—"}`];
-  }
-  if (id === "parcelSize") return parcelSizeLines(preview, true);
-  if (id === "codAmount") return codAmountLines(preview.codAmount);
-  if (id === "prepaid") return ["PRE PAID"];
-  if (id === "products") {
-    return productTableLines(preview.items, undefined, { includeTotal: true, total: preview.total });
-  }
-  if (id === "merchantLogo") return ["Logo"];
-  return [];
+  const text = bookedBlockText(id, preview, element);
+  return text ? text.split("\n") : [];
 }

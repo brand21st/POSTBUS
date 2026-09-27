@@ -9,6 +9,7 @@ import {
   previewFromPacking,
   printCustomShippingLabel,
   renderCustomShippingLabel,
+  renderSampleCustomShippingLabel,
   type CustomLabelRequest,
 } from "@/modules/labels/custom-label-service";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
@@ -85,8 +86,14 @@ export async function handleLabelTemplateRoutes(
 
   if (key === "POST label-template/custom-preview" || key === "POST label-template/custom-download") {
     const body = await readCustomLabelBody(request);
-    const rendered = await renderCustomShippingLabel(supabase, ctx.organizationId, body);
-    const filename = `shipping-label-${rendered.shipmentId}.pdf`;
+    const hasTarget = Boolean(body.shipmentId?.trim() || body.orderId?.trim());
+    if (!hasTarget && key.endsWith("custom-download")) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Load an order to download the shipping label.");
+    }
+    const rendered = hasTarget
+      ? await renderCustomShippingLabel(supabase, ctx.organizationId, body)
+      : await renderSampleCustomShippingLabel(supabase, ctx.organizationId, body);
+    const filename = `shipping-label-${rendered.shipmentId || "preview"}.pdf`;
     const disposition = key.endsWith("custom-download") ? "attachment" : "inline";
     return new NextResponse(new Uint8Array(rendered.pdf), {
       headers: {

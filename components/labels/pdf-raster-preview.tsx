@@ -7,19 +7,16 @@ type PdfRasterPreviewProps = {
   title: string;
 };
 
-export function usePdfFirstPageUrl(bytes: ArrayBuffer | undefined) {
+export function usePdfFirstPageUrl(bytes: ArrayBuffer | Uint8Array | undefined) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!bytes) {
-      setUrl(null);
       setError(null);
       return;
     }
     let cancelled = false;
-    let objectUrl: string | null = null;
-    setUrl(null);
     setError(null);
     (async () => {
       const pdfjs = await import("pdfjs-dist");
@@ -32,17 +29,23 @@ export function usePdfFirstPageUrl(bytes: ArrayBuffer | undefined) {
       if (!context) throw new Error("Could not draw the label.");
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      await page.render({ canvas, viewport }).promise;
+      await page.render({ canvas, canvasContext: context, viewport }).promise;
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
       if (!blob) throw new Error("Could not draw the label.");
-      objectUrl = URL.createObjectURL(blob);
-      if (!cancelled) setUrl(objectUrl);
+      const objectUrl = URL.createObjectURL(blob);
+      if (cancelled) {
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      setUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return objectUrl;
+      });
     })().catch((cause: unknown) => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not show the PDF.");
     });
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [bytes]);
 
@@ -72,7 +75,7 @@ export function PdfRasterPreview({ bytes, title }: PdfRasterPreviewProps) {
         if (!context) throw new Error("Could not draw the label.");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-        await page.render({ canvas, viewport }).promise;
+        await page.render({ canvas, canvasContext: context, viewport }).promise;
         const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
         if (!blob) continue;
         const url = URL.createObjectURL(blob);

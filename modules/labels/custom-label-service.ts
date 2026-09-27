@@ -6,11 +6,13 @@ import { addressLineTexts, addressPartsFromParty } from "@/modules/labels/addres
 import { indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
 import { loadPackingLabelData } from "@/modules/labels/packing-fetch";
 import { renderMerchantLabelPdf, type PackingLabelData } from "@/modules/labels/packing-pdf";
+import { loadLogoBytes, SAMPLE_PACKING_DATA } from "@/modules/labels/packing-data";
 import { persistLabelPdf } from "@/modules/labels/persist";
 import { enqueueManualPrintJob, getPrintStation } from "@/modules/print/service";
 import { getLabelTemplate } from "@/modules/labels/template-service";
 import { printMediaForPage } from "@/modules/labels/page-presets";
 import { parseLabelTemplate, selectLabelTemplate, type LabelTemplate } from "@/modules/labels/template-schema";
+import { organizationLogoUrl } from "@/modules/organizations/branding";
 
 export type CustomLabelRequest = {
   shipmentId?: string | null;
@@ -123,6 +125,34 @@ function applyPaymentPreview(data: PackingLabelData, paymentPreview?: string | n
     paymentMode: paymentPreview,
     paymentMethod: paymentPreview,
   };
+}
+
+export async function renderSampleCustomShippingLabel(
+  supabase: SupabaseClient,
+  organizationId: string,
+  input: CustomLabelRequest
+) {
+  const stored = input.template
+    ? parseLabelTemplate(input.template)
+    : await getLabelTemplate(supabase, organizationId);
+  const template = selectLabelTemplate(stored, input.templateId);
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("logo_path")
+    .eq("id", organizationId)
+    .maybeSingle();
+  const logo = await loadLogoBytes(supabase, org?.logo_path);
+  const data = applyPaymentPreview(
+    {
+      ...SAMPLE_PACKING_DATA,
+      logoBytes: logo?.bytes ?? null,
+      logoMime: logo?.mime ?? null,
+      logoUrl: organizationLogoUrl(org?.logo_path),
+    },
+    input.paymentPreview
+  );
+  const pdf = Buffer.from(await renderMerchantLabelPdf(template, data));
+  return { shipmentId: "", template, data, pdf };
 }
 
 export async function loadCustomShippingLabel(

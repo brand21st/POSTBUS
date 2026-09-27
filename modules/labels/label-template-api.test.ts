@@ -305,6 +305,12 @@ describe("label template API", () => {
     expect(encoded).toEqual([]);
   });
 
+  it("renders a sample custom preview PDF without a shipment", async () => {
+    const preview = await call("POST", "label-template/custom-preview", { paymentPreview: "PREPAID" });
+    const bytes = await pdfBytes(preview);
+    expect(bytes.subarray(0, 4).toString()).toBe("%PDF");
+  });
+
   it("returns custom preview data for a booked shipment", async () => {
     const loaded = (await call("GET", "label-template/custom-data", undefined, "shipmentId=ship-1")) as {
       preview: { orderNumber: string; customerId: string; items: Array<{ title: string }>; logoUrl?: string | null };

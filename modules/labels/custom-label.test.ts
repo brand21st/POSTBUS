@@ -6,7 +6,7 @@ import { orderNumberCandidates, previewFromPacking } from "@/modules/labels/cust
 import { articleIdFromShipment, indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
 import { SAMPLE_SHIP_PARTS, addressLineTexts, addressPartsFromParty, composeAddressLines, defaultAddressLayout, wrapAddressRuns } from "@/modules/labels/address-layout";
 import { SAMPLE_PACKING_DATA, loadLogoBytes } from "@/modules/labels/packing-data";
-import { articleContractLine, amountInIndianRupees, blockPreviewLines, createCustomTextElement, CUSTOM_LABEL_BLOCKS, customerIdLine, LABEL_GENERATED_FROM, nextCustomTextId, parcelSizeLines, productTable, productTableHeight, wrapProductCell, serviceContractLine, type CustomLabelPreview } from "@/modules/labels/custom-blocks";
+import { articleContractLine, amountInIndianRupees, blockPreviewLines, bookedBlockText, createCustomTextElement, CUSTOM_LABEL_BLOCKS, customerIdLine, LABEL_GENERATED_FROM, nextCustomTextId, parcelSizeLines, productTable, productTableHeight, wrapProductCell, serviceContractLine, type CustomLabelPreview } from "@/modules/labels/custom-blocks";
 import { indiaPostVolumetricWeightGrams } from "@/modules/india-post/endpoints";
 import { customBlockVisibility, renderMerchantLabelPdf } from "@/modules/labels/packing-pdf";
 import { printMediaForPage, sizeChoiceForPage } from "@/modules/labels/page-presets";
@@ -332,9 +332,7 @@ describe("india post barcode block", () => {
     };
     expect(blockPreviewLines("serviceContractId", null)).toEqual(["Contract ID"]);
     expect(blockPreviewLines("serviceContractId", preview)).toEqual(["Contract ID: 41793509"]);
-    expect(blockPreviewLines("serviceContractId", { ...preview, contractId: "" })).toEqual([
-      "Service contract ID not available",
-    ]);
+    expect(blockPreviewLines("serviceContractId", { ...preview, contractId: "" })).toEqual([]);
     expect(serviceContractLine("41793509")).toBe("Contract ID: 41793509");
     expect(serviceContractLine("")).toBe("");
     expect(articleContractLine("Business Parcel", "41793509")).toBe("Business Parcel : 41793509");
@@ -672,13 +670,67 @@ describe("india post barcode block", () => {
     expect(pdf).toContain("COD");
     expect(pdf).toContain("Rupees Two Thousand Five Hundred Ninety Seven Only");
     expect(pdf).not.toContain("PRE PAID");
-    expect(pdf).toContain("Cotton Shirt");
+    expect(pdf).toContain("Demo product 1");
     expect(pdf).toContain("From/ Return Address");
     expect(pdf).toContain("Ship To:");
     expect(pdf).toContain("Handle with care");
     expect(pdf).toContain("Second note");
     expect(pdf).toContain(LABEL_GENERATED_FROM);
     expect(pdf).toContain("CL556974029IN");
+  });
+
+  it("maps booked-order canvas lines onto the same merchant PDF strings", async () => {
+    const data = {
+      ...SAMPLE_PACKING_DATA,
+      paymentMode: "PREPAID",
+      paymentMethod: "Prepaid",
+      articleId: "CL556974029IN",
+      articleType: "BUSINESS_PARCEL",
+      contractId: "41793509",
+      customerId: "1788590988",
+      orderNumber: "2268",
+      orderDate: "27 September 2026",
+      weightGrams: 500,
+      lengthCm: 30,
+      widthCm: 20,
+      heightCm: 4,
+    };
+    const preview = previewFromPacking(data, "e1e2a885-c1f1-4a99-9d3a-5d7e4035dc20");
+    expect(blockPreviewLines("customerId", null)).toEqual(["Customer ID"]);
+    expect(blockPreviewLines("indiaPostBarcode", null)).toEqual([]);
+    expect(blockPreviewLines("customerId", { ...preview, customerId: "" })).toEqual([]);
+    expect(bookedBlockText("indiaPostBarcode", { ...preview, articleId: "" })).toBe(
+      "India Post tracking number not available"
+    );
+
+    const template = indiaPostLabelTemplate();
+    const visibility = customBlockVisibility(template, data);
+    expect(visibility).toMatchObject({ barcode: true, cod: false, prepaid: true });
+    const pdf = await pdfContents(await renderMerchantLabelPdf(template, data));
+    for (const id of Object.keys(template.elements)) {
+      const element = template.elements[id];
+      if (!element?.visible) continue;
+      if (id === "labelBorder" || id === "merchantLogo" || id === "indiaPostBarcode") continue;
+      if (id === "codAmount" && !visibility.cod) continue;
+      if (id === "prepaid" && !visibility.prepaid) continue;
+      const text = bookedBlockText(id, preview, element);
+      if (id === "fromAddress" || id === "shipTo") {
+        const heading = text.split("\n")[0];
+        if (heading) expect(pdf).toContain(heading);
+        continue;
+      }
+      if (id === "products") {
+        expect(pdf).toContain("Demo product 1");
+        continue;
+      }
+      for (const line of text.split("\n").filter(Boolean)) {
+        expect(pdf).toContain(line);
+      }
+    }
+    expect(pdf).toContain("CL556974029IN");
+    expect(pdf).toContain("PRE PAID");
+    expect(pdf).toContain("Sample Store");
+    expect(pdf).toContain("Priya Nair");
   });
 
   it("matches an order number with or without a hash", () => {

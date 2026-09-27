@@ -32,6 +32,7 @@ import {
   PRODUCT_COLUMNS,
   PRODUCT_SAMPLE_LINES,
   blockPreviewLines,
+  bookedBlockText,
   createCustomTextElement,
   customTextBlockHeight,
   customTextIds,
@@ -220,7 +221,7 @@ function AddressBlockPreview({
   heading: string;
 }) {
   const composed = composeAddressLines(element.addressLayout, parts, heading);
-  const fontSize = (element.fontSize ?? 11) * scale;
+  const fontSize = (element.fontSize ?? 9) * scale;
   const gap = mmToPtLayout(composed.layout.lineGapMm) * scale;
   const rule = mmToPtLayout(composed.layout.separatorThicknessMm) * scale;
   const align = element.align ?? "left";
@@ -814,6 +815,32 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const draftTemplate = () => {
+    const template = templates.data?.template;
+    if (!template || !elements || !page) return null;
+    const library = template.library?.length ? [...template.library] : null;
+    if (!library || templateId === "active") {
+      return {
+        ...template,
+        templateVersion: Math.max(template.templateVersion, 5),
+        page,
+        elements,
+      };
+    }
+    const updated = library.map((item) =>
+      item.id === templateId ? { ...item, name: name.trim() || item.name, page, elements } : item
+    );
+    const active = updated.find((item) => item.isDefault) ?? updated[0];
+    const editingDefault = active.id === templateId;
+    return {
+      ...template,
+      templateVersion: Math.max(template.templateVersion, 5),
+      library: updated,
+      page: editingDefault ? page : active.page,
+      elements: editingDefault ? elements : active.elements,
+    };
+  };
+
   if (!page || !elements) {
     return <p className="p-6 text-sm text-muted">Loading template…</p>;
   }
@@ -890,39 +917,13 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
     updateElement(id, autoBox && shorter ? { ...elements[id], ...next, autoHeight: false } : next);
   };
 
-  const draftTemplate = () => {
-    const template = templates.data?.template;
-    if (!template || !elements || !page) return null;
-    const library = template.library?.length ? [...template.library] : null;
-    if (!library || templateId === "active") {
-      return {
-        ...template,
-        templateVersion: Math.max(template.templateVersion, 5),
-        page,
-        elements,
-      };
-    }
-    const updated = library.map((item) =>
-      item.id === templateId ? { ...item, name: name.trim() || item.name, page, elements } : item
-    );
-    const active = updated.find((item) => item.isDefault) ?? updated[0];
-    const editingDefault = active.id === templateId;
-    return {
-      ...template,
-      templateVersion: Math.max(template.templateVersion, 5),
-      library: updated,
-      page: editingDefault ? page : active.page,
-      elements: editingDefault ? elements : active.elements,
-    };
-  };
-
   const persist = () => {
     const next = draftTemplate();
     if (next) save.mutate(next);
   };
 
   const openPdf = async (path: "custom-preview" | "custom-download" | "custom-print") => {
-    if (!shipmentId && !orderId.trim()) {
+    if (path !== "custom-preview" && !shipmentId && !orderId.trim()) {
       toast.error("Load an order before previewing the label.");
       return;
     }
@@ -1215,6 +1216,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
               if (!element?.visible) return null;
               const faded =
                 (block.id === "codAmount" && !codPreview) || (block.id === "prepaid" && codPreview);
+              if (faded) return null;
               const left = element.x * scale;
               const top = (heightPt - element.y - element.height) * scale;
               const lines = blockPreviewLines(block.id, preview, element);
@@ -1233,8 +1235,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                           "overflow-hidden border",
                           spaceHeld || panning ? "cursor-grab" : "cursor-grab active:cursor-grabbing"
                         ),
-                    !isBorder && (selected === block.id ? "border-brand" : "border-transparent"),
-                    faded && "opacity-40"
+                    !isBorder && (selected === block.id ? "border-brand" : "border-transparent")
                   )}
                   style={{
                     left,
@@ -1315,6 +1316,10 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                           src={`/api/v1/label-template/barcode?shipmentId=${encodeURIComponent(shipmentId)}`}
                           className="max-h-[70%] max-w-full object-contain"
                         />
+                      ) : preview ? (
+                        <p className="font-semibold" style={{ fontSize: (element.fontSize ?? 10) * scale }}>
+                          {bookedBlockText("indiaPostBarcode", preview)}
+                        </p>
                       ) : (
                         <div className="w-full border border-dashed border-neutral-400 px-2 py-3 text-neutral-500">
                           India Post barcode
@@ -1322,20 +1327,24 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                       )}
                       {element.showArticleText !== false ? (
                         <p className="mt-1 font-semibold" style={{ fontSize: (element.fontSize ?? 11) * scale }}>
-                          {preview?.articleId || "Tracking number prints here"}
+                          {preview ? preview.articleId : "Tracking number prints here"}
                         </p>
                       ) : null}
                     </div>
                   ) : block.id === "merchantLogo" ? (
                     <div
-                      className="flex h-full w-full items-center justify-center overflow-hidden bg-white"
+                      className="flex h-full w-full items-end justify-start overflow-hidden bg-white"
                       style={{ padding: (element.gap ?? 0) * scale }}
                     >
                       {storeLogoUrl ? (
                         // Same public organization logo as Settings → Organization.
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img alt="Organization logo" src={storeLogoUrl} className="h-full w-full object-contain" />
-                      ) : (
+                        <img
+                          alt="Organization logo"
+                          src={storeLogoUrl}
+                          className="max-h-full max-w-full object-contain object-left-bottom"
+                        />
+                      ) : preview ? null : (
                         <p className="text-neutral-500">Store logo</p>
                       )}
                     </div>
@@ -1369,8 +1378,8 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                       style={{
                         textAlign: element.align ?? "left",
                         fontWeight: element.fontWeight ?? "normal",
-                        fontSize: (element.fontSize ?? 10) * scale,
-                        lineHeight: `${((element.fontSize ?? 10) + (element.lineGap ?? 2)) * scale}px`,
+                        fontSize: (element.fontSize ?? 9) * scale,
+                        lineHeight: `${((element.fontSize ?? 9) + (element.lineGap ?? 2)) * scale}px`,
                         padding: (element.gap ?? 0) * scale,
                       }}
                     >
