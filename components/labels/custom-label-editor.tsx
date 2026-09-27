@@ -65,7 +65,7 @@ import {
   type TemplateElement,
 } from "@/modules/labels/template-schema";
 
-type TemplateResponse = { template: LabelTemplate };
+type TemplateResponse = { template: LabelTemplate; logoUrl?: string | null };
 type PreviewResponse = { preview: CustomLabelPreview };
 
 function mmToPt(mm: number) {
@@ -291,6 +291,7 @@ function BlockProperties({
   page,
   onChange,
   onRemove,
+  storeLogoUrl,
 }: {
   id: string;
   label: string;
@@ -298,6 +299,7 @@ function BlockProperties({
   page: LabelTemplate["page"];
   onChange: (patch: Partial<TemplateElement>) => void;
   onRemove?: () => void;
+  storeLogoUrl?: string | null;
 }) {
   const box = elementBoxMm(element, page.heightPt);
   const rounded = (value: number) => Math.round(value * 10) / 10;
@@ -579,7 +581,14 @@ function BlockProperties({
         </>
       ) : null}
       {logo ? (
-        <PropertyNumber label="Gap" min={0} max={40} value={element.gap ?? 0} onValue={(gap) => onChange({ gap })} />
+        <>
+          {storeLogoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img alt="Organization logo" src={storeLogoUrl} className="h-16 w-16 rounded-lg border border-border object-contain" />
+          ) : null}
+          <p className="text-xs text-muted">This block prints the logo from Settings → Organization.</p>
+          <PropertyNumber label="Gap" min={0} max={40} value={element.gap ?? 0} onValue={(gap) => onChange({ gap })} />
+        </>
       ) : null}
       {positionOnly || shipTo ? null : (
         <>
@@ -813,6 +822,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   const heightPt = page.heightPt;
   const fitScale = Math.min(1.1, 760 / widthPt);
   const scale = fitScale * zoom;
+  const storeLogoUrl = preview?.logoUrl || templates.data?.logoUrl || null;
   const sizeChoice = page.paperSize === "custom" ? "custom" : sizeChoiceForPage(page);
   const selectedElement = elements[selected];
   const codPreview = paymentPreview === "COD";
@@ -1316,6 +1326,19 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                         </p>
                       ) : null}
                     </div>
+                  ) : block.id === "merchantLogo" ? (
+                    <div
+                      className="flex h-full w-full items-center justify-center overflow-hidden bg-white"
+                      style={{ padding: (element.gap ?? 0) * scale }}
+                    >
+                      {storeLogoUrl ? (
+                        // Same public organization logo as Settings → Organization.
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img alt="Organization logo" src={storeLogoUrl} className="h-full w-full object-contain" />
+                      ) : (
+                        <p className="text-neutral-500">Store logo</p>
+                      )}
+                    </div>
                   ) : block.id === "shipTo" || block.id === "fromAddress" ? (
                     <AddressBlockPreview
                       element={element}
@@ -1403,6 +1426,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
               element={selectedElement}
               page={page}
               onChange={(patch) => updateElement(selected, patch)}
+              storeLogoUrl={storeLogoUrl}
               onRemove={selected !== "customText" && isCustomTextId(selected) ? () => removeCustomText(selected) : undefined}
             />
           ) : (

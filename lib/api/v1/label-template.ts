@@ -18,6 +18,7 @@ import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
 import { parseLabelTemplate } from "@/modules/labels/template-schema";
 import { getLabelTemplate, saveLabelTemplate } from "@/modules/labels/template-service";
+import { organizationLogoUrl } from "@/modules/organizations/branding";
 import { enqueueManualPrintJob, getPrintStation, updatePrintSettings } from "@/modules/print/service";
 
 export async function handleLabelTemplateRoutes(
@@ -30,7 +31,12 @@ export async function handleLabelTemplateRoutes(
 ) {
   if (key === "GET label-template") {
     const template = await getLabelTemplate(supabase, ctx.organizationId);
-    return { template };
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("logo_path")
+      .eq("id", ctx.organizationId)
+      .maybeSingle();
+    return { template, logoUrl: organizationLogoUrl(org?.logo_path) };
   }
 
   if (key === "PUT label-template") {

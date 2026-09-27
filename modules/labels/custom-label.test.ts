@@ -2,10 +2,10 @@ import { decodePDFRawStream, PDFDict, PDFDocument, PDFName, PDFRawStream } from 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { orderNumberCandidates } from "@/modules/labels/custom-label-service";
+import { orderNumberCandidates, previewFromPacking } from "@/modules/labels/custom-label-service";
 import { articleIdFromShipment, indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
 import { SAMPLE_SHIP_PARTS, addressLineTexts, addressPartsFromParty, composeAddressLines, defaultAddressLayout, wrapAddressRuns } from "@/modules/labels/address-layout";
-import { SAMPLE_PACKING_DATA } from "@/modules/labels/packing-data";
+import { SAMPLE_PACKING_DATA, loadLogoBytes } from "@/modules/labels/packing-data";
 import { articleContractLine, amountInIndianRupees, blockPreviewLines, createCustomTextElement, CUSTOM_LABEL_BLOCKS, customerIdLine, LABEL_GENERATED_FROM, nextCustomTextId, parcelSizeLines, productTable, productTableHeight, wrapProductCell, serviceContractLine, type CustomLabelPreview } from "@/modules/labels/custom-blocks";
 import { indiaPostVolumetricWeightGrams } from "@/modules/india-post/endpoints";
 import { customBlockVisibility, renderMerchantLabelPdf } from "@/modules/labels/packing-pdf";
@@ -189,6 +189,26 @@ describe("india post barcode block", () => {
     const pdf = await pdfContents(await renderMerchantLabelPdf(indiaPostLabelTemplate(), SAMPLE_PACKING_DATA));
     expect(pdf).toContain(LABEL_GENERATED_FROM);
     expect(LABEL_GENERATED_FROM).toBe("Label Generated From www.postbus.in");
+  });
+
+  it("maps the organization logo onto custom preview and PDF bytes", async () => {
+    const logoUrl = "https://example.supabase.co/storage/v1/object/public/organization-assets/org-a/logo.png";
+    const preview = previewFromPacking({ ...SAMPLE_PACKING_DATA, logoUrl }, "ship-1");
+    expect(preview.logoUrl).toBe(logoUrl);
+
+    const previous = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+    const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(png, { status: 200, headers: { "content-type": "image/png" } });
+    const loaded = await loadLogoBytes(
+      { storage: { from: () => ({ download: async () => ({ data: null }) }) } } as never,
+      "org-a/logo.png"
+    );
+    expect(loaded?.mime).toBe("image/png");
+    expect(Array.from(loaded?.bytes ?? [])).toEqual(Array.from(png));
+    globalThis.fetch = originalFetch;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = previous;
   });
 
   it("uses custom size for 297 by 210 and A4 for 210 by 297", () => {

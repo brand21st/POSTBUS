@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PackingLabelData } from "@/modules/labels/packing-pdf";
+import { organizationLogoStoragePath, organizationLogoUrl } from "@/modules/organizations/branding";
 
 export const SAMPLE_PACKING_DATA: PackingLabelData = {
   storeName: "Sample Store",
@@ -47,16 +48,40 @@ export const SAMPLE_PACKING_DATA: PackingLabelData = {
   },
   logoBytes: null,
   logoMime: null,
+  logoUrl: null,
 };
+
+function logoMimeFor(path: string, mime: string) {
+  if (/png/i.test(mime) || /\.png$/i.test(path)) return mime || "image/png";
+  if (/jpe?g/i.test(mime) || /\.jpe?g$/i.test(path)) return mime || "image/jpeg";
+  if (/webp/i.test(mime) || /\.webp$/i.test(path)) return mime || "image/webp";
+  return "";
+}
 
 export async function loadLogoBytes(
   supabase: SupabaseClient,
   logoPath: string | null | undefined
 ): Promise<{ bytes: Uint8Array; mime: string } | null> {
   if (!logoPath) return null;
-  const downloaded = await supabase.storage.from("organization-assets").download(logoPath);
-  if (!downloaded.data) return null;
-  const mime = downloaded.data.type || "";
-  if (!/png|jpe?g/i.test(mime) && !/\.(png|jpe?g)$/i.test(logoPath)) return null;
-  return { bytes: new Uint8Array(await downloaded.data.arrayBuffer()), mime: mime || "image/png" };
+  const storagePath = organizationLogoStoragePath(logoPath);
+  if (storagePath) {
+    const downloaded = await supabase.storage.from("organization-assets").download(storagePath);
+    if (downloaded.data) {
+      const mime = logoMimeFor(storagePath, downloaded.data.type || "");
+      if (/png|jpe?g/i.test(mime)) {
+        return { bytes: new Uint8Array(await downloaded.data.arrayBuffer()), mime: mime || "image/png" };
+      }
+    }
+  }
+  const url = organizationLogoUrl(storagePath ?? logoPath);
+  if (!url) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const mime = logoMimeFor(storagePath ?? logoPath, response.headers.get("content-type") || "");
+    if (!/png|jpe?g/i.test(mime)) return null;
+    return { bytes: new Uint8Array(await response.arrayBuffer()), mime };
+  } catch {
+    return null;
+  }
 }

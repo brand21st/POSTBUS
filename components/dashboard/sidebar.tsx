@@ -37,7 +37,7 @@ export function Sidebar({
     <aside
       data-tour="nav"
       className={cn(
-        "flex h-full flex-col border-r border-border bg-card transition-[width] duration-200",
+        "sticky top-0 flex h-svh shrink-0 flex-col border-r border-border bg-card transition-[width] duration-200",
         collapsed ? "w-[76px]" : "w-[260px]",
         className
       )}
@@ -52,7 +52,7 @@ export function Sidebar({
         )}
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label="Dashboard">
+      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label="Dashboard">
         {sidebarNav.map((item) => {
           const active = isNavItemActive(item.href, pathname);
           const Icon = item.icon;
@@ -82,7 +82,7 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="space-y-3 px-3 pb-4">
+      <div className="mt-auto space-y-3 px-3 pb-4">
         <Separator />
         <Link
           href={helpNav.href}

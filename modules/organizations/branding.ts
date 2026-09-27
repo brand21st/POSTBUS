@@ -20,6 +20,15 @@ export type OrganizationIdentityRow = {
   logo_path?: string | null;
 };
 
+export function organizationLogoStoragePath(path: string | null | undefined) {
+  if (!path) return null;
+  if (!path.startsWith("http://") && !path.startsWith("https://")) return path;
+  const marker = `/storage/v1/object/public/${BUCKET}/`;
+  const index = path.indexOf(marker);
+  if (index < 0) return null;
+  return decodeURIComponent(path.slice(index + marker.length).split("?")[0]);
+}
+
 export function organizationLogoUrl(path: string | null | undefined) {
   if (!path) return null;
   if (path.startsWith("http://") || path.startsWith("https://")) return path;

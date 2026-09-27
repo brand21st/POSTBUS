@@ -115,6 +115,7 @@ export type CustomLabelPreview = {
   lengthCm?: number | null;
   widthCm?: number | null;
   heightCm?: number | null;
+  logoUrl?: string | null;
 };
 
 export type ProductColumnId = "name" | "sku" | "description" | "qty" | "weight" | "price" | "note";

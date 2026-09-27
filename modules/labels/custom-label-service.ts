@@ -49,6 +49,7 @@ export function previewFromPacking(data: PackingLabelData, shipmentId: string): 
     lengthCm: data.lengthCm,
     widthCm: data.widthCm,
     heightCm: data.heightCm,
+    logoUrl: data.logoUrl ?? null,
   };
 }
 

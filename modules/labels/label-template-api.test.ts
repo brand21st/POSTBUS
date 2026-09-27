@@ -106,7 +106,7 @@ function supabase() {
           city: "Thrissur",
           state: "Kerala",
           pincode: "680001",
-          logo_path: null,
+          logo_path: "org-a/logo-179.png",
         });
       }
       if (table === "order_line_items") {
@@ -144,6 +144,7 @@ beforeEach(() => {
   printCalls.length = 0;
   labelOps.length = 0;
   labels = null;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
   template = indiaPostLabelTemplate();
   shipment = {
     id: "ship-1",
@@ -208,7 +209,10 @@ describe("label template API", () => {
       },
     ];
     await call("PUT", "label-template", { template });
-    const loaded = (await call("GET", "label-template")) as { template: LabelTemplate };
+    const loaded = (await call("GET", "label-template")) as { template: LabelTemplate; logoUrl?: string | null };
+    expect(loaded.logoUrl).toBe(
+      "https://example.supabase.co/storage/v1/object/public/organization-assets/org-a/logo-179.png"
+    );
     expect(loaded.template.library?.[0].name).toBe("India Post");
     expect(loaded.template.library?.[0].elements.indiaPostBarcode).toMatchObject({
       x: 422,
@@ -303,11 +307,14 @@ describe("label template API", () => {
 
   it("returns custom preview data for a booked shipment", async () => {
     const loaded = (await call("GET", "label-template/custom-data", undefined, "shipmentId=ship-1")) as {
-      preview: { orderNumber: string; customerId: string; items: Array<{ title: string }> };
+      preview: { orderNumber: string; customerId: string; items: Array<{ title: string }>; logoUrl?: string | null };
     };
     expect(loaded.preview.orderNumber).toBe("246072");
     expect(loaded.preview.items[0]?.title).toBe("TEST 3");
     expect(loaded.preview.customerId).toBe("");
+    expect(loaded.preview.logoUrl).toBe(
+      "https://example.supabase.co/storage/v1/object/public/organization-assets/org-a/logo-179.png"
+    );
   });
 
   it("returns a barcode PNG for a valid article and an empty id otherwise", async () => {

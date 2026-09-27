@@ -67,6 +67,7 @@ export type PackingLabelData = {
   billing?: PackingParty | null;
   logoBytes?: Uint8Array | null;
   logoMime?: string | null;
+  logoUrl?: string | null;
   articleId?: string;
   articleType?: string;
   contractId?: string;

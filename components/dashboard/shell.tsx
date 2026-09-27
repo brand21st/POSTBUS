@@ -59,7 +59,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   if (me.isLoading) {
     return (
       <div className="flex min-h-screen bg-surface">
-        <div className="hidden w-[260px] border-r border-border bg-card p-4 lg:block">
+        <div className="hidden h-svh w-[260px] shrink-0 border-r border-border bg-card p-4 lg:block">
           <Skeleton className="h-8 w-32" />
           <div className="mt-8 space-y-3">
             {Array.from({ length: 8 }).map((_, index) => (

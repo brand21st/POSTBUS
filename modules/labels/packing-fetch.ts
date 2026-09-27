@@ -9,6 +9,7 @@ import type { LabelTemplate } from "@/modules/labels/template-schema";
 import { notifyLabelsReadyIfComplete } from "@/lib/notifications/labels-ready";
 import { logError } from "@/lib/logger";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
+import { organizationLogoUrl } from "@/modules/organizations/branding";
 import { indiaPostServiceLabel } from "@/types/domain";
 
 export type PackingPartyInput = {
@@ -316,6 +317,7 @@ export async function loadPackingLabelData(
     sender,
     logoBytes: logo?.bytes ?? null,
     logoMime: logo?.mime ?? null,
+    logoUrl: organizationLogoUrl(org?.logo_path),
     articleId: articleIdFromShipment(shipment),
     articleType: shipment.service_code ? indiaPostServiceLabel(String(shipment.service_code)) : "",
     ...(await indiaPostLabelIdentity(supabase, organizationId, shipment.service_code)),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { updateOrganizationSchema } from "@/lib/api/v1-schemas";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
-import { mapOrganizationSettings } from "@/modules/organizations/branding";
+import { mapOrganizationSettings, organizationLogoStoragePath } from "@/modules/organizations/branding";
 
 describe("organizationLabelSender", () => {
   it("prefers organization identity over pickup and shop", () => {
@@ -81,6 +81,8 @@ describe("mapOrganizationSettings", () => {
       logo_path: "org-1/logo-1.png",
     });
     expect(mapped.logoUrl).toBe("https://example.supabase.co/storage/v1/object/public/organization-assets/org-1/logo-1.png");
+    expect(organizationLogoStoragePath("org-1/logo-1.png")).toBe("org-1/logo-1.png");
+    expect(organizationLogoStoragePath(mapped.logoUrl)).toBe("org-1/logo-1.png");
     process.env.NEXT_PUBLIC_SUPABASE_URL = previous;
   });
 });
