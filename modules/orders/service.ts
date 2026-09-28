@@ -3,12 +3,15 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
-import type { createOrderSchema, orderListQuery } from "@/modules/orders/schema";
+import type { createOrderSchema, orderListQuery, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { settleOrderPayment } from "@/modules/orders/payment";
+import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { syncOpenShipmentsService } from "@/modules/shipments/service";
 
 type CreateInput = z.infer<typeof createOrderSchema>;
+
+const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
 function orderDateBoundary(value: string, endOfDay: boolean) {
   if (value.includes("T")) return value;
@@ -232,6 +235,90 @@ export async function setOrderBookingService(
   return { id: orderId, indiaPostService: service };
 }
 
+export async function updateOrderWeights(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  input: z.infer<typeof updateOrderWeightsSchema>
+) {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, orderError.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+
+  const { data: shipments, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("id, status")
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+  const shipmentRows = (shipments ?? []) as Array<{ id: string; status?: string | null }>;
+  const locked = shipmentRows.some((row) => !OPEN_WEIGHT_SHIPMENT_STATUSES.has((row.status ?? "").toUpperCase()));
+  if (locked) {
+    throw new AppError(ERROR_CODES.CONFLICT, "Weight is locked after India Post booking.");
+  }
+
+  const { data: lines, error: lineError } = await supabase
+    .from("order_line_items")
+    .select("id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId);
+  if (lineError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, lineError.message);
+  const lineIds = new Set((lines ?? []).map((row) => row.id as string));
+  for (const item of input.lineItems) {
+    if (!lineIds.has(item.id)) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "One of the products is not on this order.");
+    }
+  }
+
+  for (const item of input.lineItems) {
+    const { error } = await supabase
+      .from("order_line_items")
+      .update({
+        weight_grams: item.weightGrams > 0 ? item.weightGrams : null,
+        weight_edited: (item.weightMode ?? "manual") === "manual",
+      })
+      .eq("organization_id", ctx.organizationId)
+      .eq("order_id", orderId)
+      .eq("id", item.id);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+
+  const parcelWeightGrams = input.parcelWeightMode === "manual" ? input.parcelWeightGrams ?? null : null;
+  const { error: weightError } = await supabase
+    .from("orders")
+    .update({
+      parcel_weight_mode: input.parcelWeightMode,
+      parcel_weight_grams: parcelWeightGrams,
+    })
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId);
+  if (weightError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, weightError.message);
+
+  const boxWeight = bookingBoxWeightGrams({
+    parcelWeightMode: input.parcelWeightMode,
+    parcelWeightGrams,
+    lineItems: input.lineItems,
+  });
+  const openIds = shipmentRows
+    .filter((row) => ["DRAFT", "QUEUED", "FAILED"].includes((row.status ?? "").toUpperCase()))
+    .map((row) => row.id);
+  if (openIds.length) {
+    const { error } = await supabase
+      .from("shipments")
+      .update({ weight_grams: boxWeight })
+      .eq("organization_id", ctx.organizationId)
+      .in("id", openIds);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+
+  return getOrder(supabase, ctx, orderId);
+}
+
 function mapOrder(row: Record<string, unknown>) {
   const customer = row.customers as { name?: string; phone?: string; email?: string } | null;
   const items = (row.order_line_items as Array<Record<string, unknown>> | undefined) ?? [];
@@ -254,6 +341,8 @@ function mapOrder(row: Record<string, unknown>) {
     cod_amount: row.cod_amount,
     createdAt: row.created_at,
     indiaPostService: row.india_post_service ?? null,
+    parcelWeightMode: row.parcel_weight_mode ?? "auto",
+    parcelWeightGrams: row.parcel_weight_grams ?? null,
     customer: customer
       ? { name: customer.name, phone: customer.phone, email: customer.email }
       : null,

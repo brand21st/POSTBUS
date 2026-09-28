@@ -320,6 +320,7 @@ function trackedOrderClient(options: {
   existingOrderId?: string | null;
   orderStatus?: string;
   shipments?: Array<{ status: string }>;
+  lineItems?: unknown;
   inserts: Array<{ table: string; payload: unknown }>;
   deletes: string[];
 }) {
@@ -333,6 +334,7 @@ function trackedOrderClient(options: {
       } else if (table === "customers") data = { id: "cust-1" };
       else if (table === "addresses") data = { id: "addr-1" };
       else if (table === "shipments") data = options.shipments ?? [];
+      else if (table === "order_line_items") data = options.lineItems ?? {};
       const payload = { data, error: null };
       const self: Record<string, unknown> = {};
       self.select = () => self;
@@ -396,6 +398,30 @@ describe("shopify line item weight persistence", () => {
     expect(deletes).toContain("order_line_items");
     const items = inserts.find((row) => row.table === "order_line_items");
     expect(items?.payload).toEqual([expect.objectContaining({ weight_grams: 500 })]);
+  });
+
+  it("keeps a manually edited product weight when Shopify updates the order", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const supabase = trackedOrderClient({
+      existingOrderId: "ord-1",
+      orderStatus: "READY",
+      lineItems: [{ title: "Kurta", sku: null, weight_grams: 800, weight_edited: true }],
+      inserts,
+      deletes: [],
+    });
+    const result = await upsertShopifyOrder(supabase as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        line_items: [{ title: "Kurta", quantity: 1, price: "499", grams: 200 }],
+      },
+    });
+    expect(result.updated).toBe(true);
+    const items = inserts.find((row) => row.table === "order_line_items");
+    expect(items?.payload).toEqual([
+      expect.objectContaining({ title: "Kurta", weight_grams: 800, weight_edited: true }),
+    ]);
   });
 
   it("leaves line items alone once a shipment is queued or the order is booked", async () => {

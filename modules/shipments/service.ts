@@ -6,6 +6,7 @@ import { createBackgroundJob } from "@/modules/jobs/service";
 import { resolveOrderBookingService, shipmentServiceLocked } from "@/modules/india-post/booking-service";
 import { resolveDefaultServiceCode } from "@/modules/india-post/contracts";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
+import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { INDIA_POST_SERVICES } from "@/types/domain";
 
 const OPEN_SHIPMENT_STATUSES = ["DRAFT", "QUEUED", "FAILED"] as const;
@@ -137,6 +138,13 @@ export async function createShipmentsForOrders(
       "NDR",
       "RTO",
     ].includes(currentStatus);
+    const items = (order.order_line_items as Array<{ quantity: number; weight_grams?: number }>) ?? [];
+    const weight = bookingBoxWeightGrams({
+      parcelWeightMode: order.parcel_weight_mode as string | null,
+      parcelWeightGrams: order.parcel_weight_grams as number | null,
+      lineItems: items,
+      explicitGrams: extras?.weightGrams,
+    });
 
     if (action === "processing" && current && currentStatus !== "FAILED") {
       if (!alreadyBooked) {
@@ -182,6 +190,7 @@ export async function createShipmentsForOrders(
           payment_mode: collect.payment_mode,
           cod_amount: collect.cod_amount,
           service_code: serviceFor(order),
+          weight_grams: weight,
         })
         .eq("id", current.id);
       const job = await createBackgroundJob(supabase, {
@@ -199,12 +208,6 @@ export async function createShipmentsForOrders(
       skipped.push(order.id);
       continue;
     }
-
-    const items = (order.order_line_items as Array<{ quantity: number; weight_grams?: number }>) ?? [];
-    const weight =
-      extras?.weightGrams ||
-      items.reduce((sum, item) => sum + (item.weight_grams || 100) * item.quantity, 0) ||
-      100;
 
     const collect = shipmentCollectFromOrder(order);
     const { data: shipment, error: shipError } = await supabase

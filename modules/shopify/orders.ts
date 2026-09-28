@@ -401,7 +401,33 @@ function shopifyLineItemRows(organizationId: string, orderId: string, lineItems:
     quantity: Number(item.quantity ?? 1),
     unit_price: Number(item.price ?? 0),
     weight_grams: shopifyLineItemWeightGrams(item),
+    weight_edited: false,
   }));
+}
+
+function shopifyWeightKey(title?: string | null, sku?: string | null) {
+  return `${String(title ?? "").trim().toLowerCase()}|${String(sku ?? "").trim().toLowerCase()}`;
+}
+
+export function preserveEditedShopifyLineWeights<T extends { title: string; sku: string | null; weight_grams: number | null }>(
+  rows: T[],
+  existing: Array<{
+    title?: string | null;
+    sku?: string | null;
+    weight_grams?: number | null;
+    weight_edited?: boolean | null;
+  }>
+) {
+  const edited = new Map<string, number | null>();
+  for (const row of existing) {
+    if (!row.weight_edited) continue;
+    edited.set(shopifyWeightKey(row.title, row.sku), row.weight_grams ?? null);
+  }
+  return rows.map((row) => {
+    const key = shopifyWeightKey(row.title, row.sku);
+    if (!edited.has(key)) return row;
+    return { ...row, weight_grams: edited.get(key) ?? null, weight_edited: true };
+  });
 }
 
 async function refreshShopifyLineItems(
@@ -428,6 +454,18 @@ async function refreshShopifyLineItems(
   );
   if (locked) return;
 
+  const { data: existingItems, error: itemsReadError } = await supabase
+    .from("order_line_items")
+    .select("title, sku, weight_grams, weight_edited")
+    .eq("organization_id", input.organizationId)
+    .eq("order_id", input.orderId);
+  if (itemsReadError) return;
+
+  const rows = preserveEditedShopifyLineWeights(
+    shopifyLineItemRows(input.organizationId, input.orderId, input.lineItems),
+    Array.isArray(existingItems) ? existingItems : []
+  );
+
   const { error: deleteError } = await supabase
     .from("order_line_items")
     .delete()
@@ -435,9 +473,7 @@ async function refreshShopifyLineItems(
     .eq("order_id", input.orderId);
   if (deleteError) throw new Error(deleteError.message);
 
-  const { error: itemsError } = await supabase
-    .from("order_line_items")
-    .insert(shopifyLineItemRows(input.organizationId, input.orderId, input.lineItems));
+  const { error: itemsError } = await supabase.from("order_line_items").insert(rows);
   if (itemsError) throw new Error(itemsError.message);
 }
 

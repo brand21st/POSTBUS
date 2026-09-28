@@ -8,8 +8,8 @@ import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
-import { bulkOrderStatusSchema, createOrderSchema, orderListQuery } from "@/modules/orders/schema";
-import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService } from "@/modules/orders/service";
+import { bulkOrderStatusSchema, createOrderSchema, orderListQuery, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { filterGroupedLabels, groupLabelsByShipment, paginateGroupedLabels } from "@/modules/labels/group";
@@ -65,6 +65,11 @@ export async function handleCommerceRoutes(
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "service") {
     const body = await request.json();
     return setOrderBookingService(supabase, ctx, slugs[1], String(body.service ?? ""));
+  }
+
+  if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "weights") {
+    const body = updateOrderWeightsSchema.parse(await request.json());
+    return updateOrderWeights(supabase, ctx, slugs[1], body);
   }
 
   if (method === "GET" && slugs[0] === "orders" && slugs[1]) {

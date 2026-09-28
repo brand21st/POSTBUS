@@ -65,6 +65,30 @@ export const createOrderSchema = z.object({
   }
 });
 
+export const updateOrderWeightsSchema = z
+  .object({
+    parcelWeightMode: z.enum(["auto", "manual"]),
+    parcelWeightGrams: z.coerce.number().int().min(1).optional(),
+    lineItems: z
+      .array(
+        z.object({
+          id: z.string().uuid(),
+          weightGrams: z.coerce.number().int().min(0),
+          weightMode: z.enum(["auto", "manual"]).optional(),
+        })
+      )
+      .min(1),
+  })
+  .superRefine((value, ctx) => {
+    if (value.parcelWeightMode === "manual" && value.parcelWeightGrams == null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["parcelWeightGrams"],
+        message: "Enter the box weight in grams.",
+      });
+    }
+  });
+
 export const orderListQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
