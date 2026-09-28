@@ -373,6 +373,24 @@ export function selectLabelTemplate(template: LabelTemplate, templateId?: string
   return { ...template, page: found.page, elements: found.elements };
 }
 
+export function withEditorDraft(
+  stored: LabelTemplate,
+  templateId: string,
+  draft: { name: string; page: LabelTemplate["page"]; elements: LabelTemplate["elements"] }
+): LabelTemplate {
+  const library = stored.library?.length ? [...stored.library] : null;
+  const nextLibrary = library?.map((item) =>
+    item.id === templateId ? { ...item, name: draft.name.trim() || item.name, page: draft.page, elements: draft.elements } : item
+  );
+  return {
+    ...stored,
+    templateVersion: Math.max(stored.templateVersion, 5),
+    library: nextLibrary ?? stored.library,
+    page: draft.page,
+    elements: draft.elements,
+  };
+}
+
 const DEFAULT_VISIBLE: MerchantElementId[] = [
   "merchantLogo",
   "receiverName",

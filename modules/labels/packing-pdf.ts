@@ -1,17 +1,14 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { addressPartsFromParty, composeAddressLines, helveticaTextWidth, mmToPt, wrapAddressRuns, type AddressLayout } from "@/modules/labels/address-layout";
-import { articleContractLine, codBlockHeight, codAmountLines, customTextBlockHeight, customTextIds, customerIdLine, isCodPayment, isCustomTextId, LABEL_GENERATED_FROM, LABEL_GENERATED_FROM_SIZE, parcelSizeLines, productColumnWidths, productTable, productTableHeight, wrapProductCell, serviceContractLine } from "@/modules/labels/custom-blocks";
+import { articleContractLine, codAmountLines, customTextIds, customerIdLine, isCodPayment, isCustomTextId, LABEL_GENERATED_FROM, LABEL_GENERATED_FROM_SIZE, parcelSizeLines, productColumnWidths, productTable, wrapProductCell, serviceContractLine } from "@/modules/labels/custom-blocks";
 import { indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
 import { pagePreset } from "@/modules/labels/page-presets";
 import {
   MERCHANT_ELEMENT_IDS,
-  fitAddressBox,
-  growAutoHeightBox,
   labelPageSize,
   horizontalLineBars,
   parseLabelTemplate,
   type LabelTemplate,
-  type MerchantElementId,
   type TemplateElement,
 } from "@/modules/labels/template-schema";
 
@@ -573,86 +570,41 @@ export async function drawMerchantFields(
     });
     if (id === "products") {
       const includeTotal = !template.elements.total?.visible;
-      const fitted = growAutoHeightBox(
-        element,
-        template.page,
-        productTableHeight(element, data.items, { includeTotal, total: data.total })
-      );
-      const grown = box(fitted);
-      page.drawRectangle({
-        x: grown.x,
-        y: grown.y,
-        width: grown.width,
-        height: grown.height,
-        color: rgb(1, 1, 1),
-      });
-      drawProductTable(page, font, bold, fitted, data, grown, size, includeTotal);
+      drawProductTable(page, font, bold, element, data, placed, size, includeTotal);
       continue;
     }
     if (id === "codAmount") {
-      const fitted = growAutoHeightBox(element, template.page, codBlockHeight(element, data.codAmount));
-      const grown = box(fitted);
-      page.drawRectangle({
-        x: grown.x,
-        y: grown.y,
-        width: grown.width,
-        height: grown.height,
-        color: rgb(1, 1, 1),
-      });
       drawMultiline(page, font, codAmountLines(data.codAmount).join("\n"), {
-        x: grown.x,
-        y: grown.y,
-        width: grown.width,
-        height: grown.height,
+        x: placed.x,
+        y: placed.y,
+        width: placed.width,
+        height: placed.height,
         size,
         align,
-        lineGap: fitted.lineGap,
-        gap: fitted.gap,
+        lineGap: element.lineGap,
+        gap: element.gap,
       });
       continue;
     }
     if (isCustomTextId(id)) {
       const text = element.content?.trim() || "";
       if (!text) continue;
-      const fitted = growAutoHeightBox(element, template.page, customTextBlockHeight(element, text));
-      const grown = box(fitted);
-      page.drawRectangle({
-        x: grown.x,
-        y: grown.y,
-        width: grown.width,
-        height: grown.height,
-        color: rgb(1, 1, 1),
-      });
       drawMultiline(page, font, text, {
-        x: grown.x,
-        y: grown.y,
-        width: grown.width,
-        height: grown.height,
+        x: placed.x,
+        y: placed.y,
+        width: placed.width,
+        height: placed.height,
         size,
         align,
-        lineGap: fitted.lineGap,
-        gap: fitted.gap,
+        lineGap: element.lineGap,
+        gap: element.gap,
       });
       continue;
     }
     if (id === "shipTo" || id === "fromAddress") {
       const party = id === "shipTo" ? data.receiver : data.sender;
       const heading = id === "fromAddress" ? "From/ Return Address" : "Ship To:";
-      const fitted = fitAddressBox(
-        { ...element, addressLayout: element.addressLayout ?? undefined },
-        template.page,
-        addressPartsFromParty(party),
-        element.addressLayout?.headingText?.trim() || heading
-      );
-      const grown = box(fitted);
-      page.drawRectangle({
-        x: grown.x,
-        y: grown.y,
-        width: grown.width,
-        height: grown.height,
-        color: rgb(1, 1, 1),
-      });
-      drawAddressBlock(page, { regular, bold, italic, boldItalic }, fitted, party, grown, size, align, heading);
+      drawAddressBlock(page, { regular, bold, italic, boldItalic }, element, party, placed, size, align, heading);
       continue;
     }
     const text = valueFor(id, data, template);

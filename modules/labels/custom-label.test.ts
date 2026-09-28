@@ -22,6 +22,8 @@ import {
   MERCHANT_ELEMENT_IDS,
   normalizeHLines,
   parseLabelTemplate,
+  selectLabelTemplate,
+  withEditorDraft,
 } from "@/modules/labels/template-schema";
 
 async function pdfContents(bytes: Uint8Array) {
@@ -98,6 +100,35 @@ describe("india post barcode block", () => {
     });
     expect(parsed.page.widthMm).toBe(297);
     expect(parsed.page.heightMm).toBe(210);
+  });
+
+  it("prints the editor page when India Post is not the workspace default", async () => {
+    const india = indiaPostLabelTemplate();
+    const packing = defaultLabelTemplate("A6");
+    packing.library = [
+      { id: "default", name: "Default", isDefault: true, page: packing.page, elements: packing.elements },
+      {
+        id: "07e7edfd-f119-47b1-8b7a-1ab9e0cf397c",
+        name: "India Post",
+        isDefault: false,
+        page: india.page,
+        elements: india.elements,
+      },
+    ];
+    const parsed = parseLabelTemplate(
+      withEditorDraft(packing, "07e7edfd-f119-47b1-8b7a-1ab9e0cf397c", {
+        name: "India Post",
+        page: india.page,
+        elements: india.elements,
+      })
+    );
+    expect(parsed.page.widthMm).toBe(297);
+    expect(parsed.page.heightMm).toBe(210);
+    const selected = selectLabelTemplate(parsed, "07e7edfd-f119-47b1-8b7a-1ab9e0cf397c");
+    const pdf = await PDFDocument.load(await renderMerchantLabelPdf(selected, SAMPLE_PACKING_DATA));
+    const size = pdf.getPages()[0].getSize();
+    expect(size.width).toBeCloseTo(india.page.widthPt, 1);
+    expect(size.height).toBeCloseTo(india.page.heightPt, 1);
   });
 
   it("uses the shipment tracking number before the barcode column", () => {

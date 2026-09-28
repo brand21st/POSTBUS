@@ -306,7 +306,7 @@ export function addressContentHeight(
   const composed = composeAddressLines(element.addressLayout, parts, headingText);
   const gap = element.gap ?? 0;
   const inner = Math.max(8, element.width - gap * 2);
-  const size = element.fontSize ?? 10;
+  const size = element.fontSize ?? 9;
   const measure = (text: string, run: Pick<AddressRun, "bold" | "italic">) => helveticaTextWidth(text, size, run.bold);
   const headingLines = composed.heading ? wrapAddressRuns([composed.heading], inner, measure) : [];
   const body = composed.lines.flatMap((line) => wrapAddressRuns(line, inner, measure));

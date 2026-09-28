@@ -66,8 +66,9 @@ export async function resolveCustomLabelShipment(
   organizationId: string,
   input: CustomLabelRequest
 ) {
+  const orderKey = (input.orderId ?? "").trim();
   const shipmentId = (input.shipmentId ?? "").trim();
-  if (shipmentId) {
+  if (!orderKey && shipmentId) {
     const { data } = await supabase
       .from("shipments")
       .select("id")
@@ -78,7 +79,6 @@ export async function resolveCustomLabelShipment(
     return String(data.id);
   }
 
-  const orderKey = (input.orderId ?? "").trim();
   if (!orderKey) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Load an order to preview the shipping label.");
   }

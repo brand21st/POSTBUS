@@ -61,6 +61,7 @@ import {
   fitLabelBorderToPage,
   fullPageBorderRect,
   normalizeHLines,
+  withEditorDraft,
   type LabelTemplate,
   type NamedLabelTemplate,
   type TemplateElement,
@@ -818,27 +819,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   const draftTemplate = () => {
     const template = templates.data?.template;
     if (!template || !elements || !page) return null;
-    const library = template.library?.length ? [...template.library] : null;
-    if (!library || templateId === "active") {
-      return {
-        ...template,
-        templateVersion: Math.max(template.templateVersion, 5),
-        page,
-        elements,
-      };
-    }
-    const updated = library.map((item) =>
-      item.id === templateId ? { ...item, name: name.trim() || item.name, page, elements } : item
-    );
-    const active = updated.find((item) => item.isDefault) ?? updated[0];
-    const editingDefault = active.id === templateId;
-    return {
-      ...template,
-      templateVersion: Math.max(template.templateVersion, 5),
-      library: updated,
-      page: editingDefault ? page : active.page,
-      elements: editingDefault ? elements : active.elements,
-    };
+    return withEditorDraft(template, templateId, { name, page, elements });
   };
 
   if (!page || !elements) {
@@ -923,14 +904,15 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   };
 
   const openPdf = async (path: "custom-preview" | "custom-download" | "custom-print") => {
-    if (path !== "custom-preview" && !shipmentId && !orderId.trim()) {
+    const lookupOrder = preview?.orderNumber || orderId.trim();
+    if (path !== "custom-preview" && !preview?.shipmentId && !lookupOrder && !shipmentId) {
       toast.error("Load an order before previewing the label.");
       return;
     }
     const draft = draftTemplate();
     const body = {
-      shipmentId,
-      orderId: orderId.trim() || undefined,
+      shipmentId: preview?.shipmentId ?? (lookupOrder ? undefined : shipmentId),
+      orderId: preview?.shipmentId ? undefined : lookupOrder || undefined,
       templateId: templateId === "active" ? undefined : templateId,
       paymentPreview,
       template: draft,
@@ -967,7 +949,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
       return;
     }
     const blob = await response.blob();
-    window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+    window.open(URL.createObjectURL(blob), "postbus-custom-label-pdf", "noopener,noreferrer");
   };
 
   const groups = ["Layout", "Header", "Content"] as const;
