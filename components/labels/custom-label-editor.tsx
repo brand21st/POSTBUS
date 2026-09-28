@@ -26,7 +26,7 @@ import {
   productColumnVisible,
   type CustomLabelPreview,
 } from "@/modules/labels/custom-blocks";
-import { clampRect, snapToSafeMargin, SAFE_MARGIN_PT } from "@/modules/labels/collision";
+import { clampRect, SAFE_MARGIN_PT, snapToGuides, type GuideLine } from "@/modules/labels/collision";
 import { packingForEditor } from "@/modules/labels/layout/editor-data";
 import { layoutLabel, WATERMARK_ID } from "@/modules/labels/layout/layout";
 import { mmFromPt, ptFromMm, storedFromTopLeft, topLeftFromStored } from "@/modules/labels/layout/units";
@@ -493,6 +493,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   zoomRef.current = zoom;
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
+  const [guides, setGuides] = useState<GuideLine[]>([]);
   const spaceHeldRef = useRef(false);
   const pan = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const drag = useRef<{
@@ -570,9 +571,11 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
       pane.scrollTop = active.scrollTop - (event.clientY - active.startY);
     };
     const onUp = () => {
-      if (!pan.current) return;
-      pan.current = null;
-      setPanning(false);
+      if (pan.current) {
+        pan.current = null;
+        setPanning(false);
+      }
+      setGuides([]);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -731,11 +734,15 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
       active.mode === "resize"
         ? { ...originTop, width: originTop.width + dx, height: originTop.height + dy }
         : { ...originTop, x: originTop.x + dx, y: originTop.y + dy };
+    const others = (layout?.blocks ?? [])
+      .filter((block) => block.id !== id && block.id !== "labelBorder" && block.id !== WATERMARK_ID)
+      .map((block) => ({ x: block.x, y: block.y, width: block.width, height: block.height }));
     const guided =
       id === "labelBorder" || id === WATERMARK_ID
-        ? nextTop
-        : snapToSafeMargin(nextTop, widthPt, heightPt, { resize: active.mode === "resize" });
-    const next = clampRect(storedFromTopLeft(heightPt, guided), widthPt, heightPt);
+        ? { rect: nextTop, guides: [] as GuideLine[] }
+        : snapToGuides(nextTop, others, widthPt, heightPt, { resize: active.mode === "resize" });
+    setGuides(guided.guides);
+    const next = clampRect(storedFromTopLeft(heightPt, guided.rect), widthPt, heightPt);
     const autoBox = usesAutoHeight(id);
     const shorter = active.mode === "resize" && next.height + 0.5 < active.origin.height;
     updateElement(id, autoBox && shorter ? { ...elements[id], ...next, autoHeight: false } : next);
@@ -1038,6 +1045,26 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                 boxShadow: `0 0 0 ${SAFE_MARGIN_PT * scale}px rgba(185, 28, 28, 0.08)`,
               }}
             />
+            {guides.map((guide, index) => {
+              const start = Math.min(guide.from, guide.to) * scale;
+              const span = Math.abs(guide.to - guide.from) * scale;
+              const vertical = guide.axis === "x";
+              return (
+                <div
+                  key={`${guide.kind}-${guide.axis}-${guide.at}-${index}`}
+                  aria-hidden
+                  className="pointer-events-none absolute border-dashed border-sky-600"
+                  style={{
+                    left: vertical ? guide.at * scale : start,
+                    top: vertical ? start : guide.at * scale,
+                    width: vertical ? 0 : span,
+                    height: vertical ? span : 0,
+                    borderLeftWidth: vertical ? 1 : 0,
+                    borderTopWidth: vertical ? 0 : 1,
+                  }}
+                />
+              );
+            })}
             {layout ? (
               <LabelLayoutPaint
                 layout={layout}
@@ -1051,6 +1078,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                 onPointerMove={onPointerMove}
                 onPointerUp={() => {
                   drag.current = null;
+                  setGuides([]);
                 }}
                 onResizeStart={onResizeStart}
               />

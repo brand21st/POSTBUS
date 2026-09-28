@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SAFE_MARGIN_PT, entersPrinterMargin, overlapsAny, snapRect, snapToSafeMargin } from "@/modules/labels/collision";
+import { SAFE_MARGIN_PT, entersPrinterMargin, overlapsAny, snapRect, snapToGuides, snapToSafeMargin } from "@/modules/labels/collision";
 
 describe("label collision", () => {
   it("detects overlapping rects", () => {
@@ -32,5 +32,40 @@ describe("label collision", () => {
   it("reports blocks that cross the printer margin", () => {
     expect(entersPrinterMargin({ x: 0, y: 40, width: 20, height: 20 }, 300, 400)).toBe(true);
     expect(entersPrinterMargin({ x: SAFE_MARGIN_PT, y: SAFE_MARGIN_PT, width: 40, height: 20 }, 300, 400)).toBe(false);
+  });
+
+  it("snaps to another block edge, ignores a far edge, and matches a gap once", () => {
+    const aligned = snapToGuides({ x: 52, y: 80, width: 30, height: 20 }, [{ x: 50, y: 10, width: 40, height: 20 }], 300, 400);
+    expect(aligned.rect.x).toBe(50);
+    expect(aligned.guides.some((guide) => guide.kind === "edge" && guide.axis === "x" && guide.at === 50)).toBe(true);
+
+    const far = snapToGuides({ x: 80, y: 80, width: 30, height: 20 }, [{ x: 50, y: 10, width: 40, height: 20 }], 300, 400);
+    expect(far.rect.x).toBe(80);
+    expect(far.guides.filter((guide) => guide.axis === "x")).toHaveLength(0);
+
+    const spaced = snapToGuides(
+      { x: 112, y: 10, width: 30, height: 30 },
+      [
+        { x: 10, y: 10, width: 40, height: 30 },
+        { x: 62, y: 10, width: 40, height: 30 },
+      ],
+      400,
+      400
+    );
+    expect(spaced.rect.x).toBe(114);
+    expect(spaced.guides.some((guide) => guide.kind === "gap")).toBe(true);
+
+    const both = snapToGuides(
+      { x: 42, y: 80, width: 176, height: 20 },
+      [
+        { x: 10, y: 10, width: 30, height: 20 },
+        { x: 220, y: 10, width: 20, height: 20 },
+      ],
+      400,
+      400
+    );
+    expect([40, 44]).toContain(both.rect.x);
+    expect(both.rect.width).toBe(176);
+    expect(both.guides.filter((guide) => guide.axis === "x")).toHaveLength(1);
   });
 });
