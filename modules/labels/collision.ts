@@ -1,9 +1,15 @@
+import { ptFromMm } from "@/modules/labels/layout/units";
+
 export type Rect = {
   x: number;
   y: number;
   width: number;
   height: number;
 };
+
+/** Unprintable edge on 4×6 and A6 printers. */
+export const SAFE_MARGIN_PT = ptFromMm(3);
+export const SAFE_MARGIN_SNAP_PT = 4;
 
 export function rectsOverlap(a: Rect, b: Rect, gap = 2) {
   return (
@@ -25,8 +31,55 @@ export function clampRect(rect: Rect, pageWidth: number, pageHeight: number): Re
   };
 }
 
-export function overlapsAny(rect: Rect, others: Rect[]) {
-  return others.some((other) => rectsOverlap(rect, other));
+function nearerEdge(distanceA: number, distanceB: number, threshold: number) {
+  if (distanceA <= threshold && distanceA <= distanceB) return "a" as const;
+  if (distanceB <= threshold) return "b" as const;
+  return null;
+}
+
+/** Pull a top-left rect onto the print-safe inset. One edge per axis, so a wide block is not pulled both ways. */
+export function snapToSafeMargin(
+  rect: Rect,
+  pageWidth: number,
+  pageHeight: number,
+  options?: { resize?: boolean; margin?: number; threshold?: number }
+): Rect {
+  const margin = options?.margin ?? SAFE_MARGIN_PT;
+  const threshold = options?.threshold ?? SAFE_MARGIN_SNAP_PT;
+  const rightGuide = pageWidth - margin;
+  const bottomGuide = pageHeight - margin;
+  let { x, y, width, height } = rect;
+
+  if (options?.resize) {
+    if (Math.abs(x + width - rightGuide) <= threshold) width = Math.max(1, rightGuide - x);
+    if (Math.abs(y + height - bottomGuide) <= threshold) height = Math.max(1, bottomGuide - y);
+    return { x, y, width, height };
+  }
+
+  const horizontal = nearerEdge(Math.abs(x - margin), Math.abs(x + width - rightGuide), threshold);
+  if (horizontal === "a") x = margin;
+  if (horizontal === "b") x = rightGuide - width;
+  const vertical = nearerEdge(Math.abs(y - margin), Math.abs(y + height - bottomGuide), threshold);
+  if (vertical === "a") y = margin;
+  if (vertical === "b") y = bottomGuide - height;
+  return { x, y, width, height };
+}
+
+export function entersPrinterMargin(
+  rect: Rect,
+  pageWidth: number,
+  pageHeight: number,
+  margin = SAFE_MARGIN_PT
+) {
+  return (
+    rect.x < margin - 0.05 ||
+    rect.y < margin - 0.05 ||
+    rect.x + rect.width > pageWidth - margin + 0.05 ||
+    rect.y + rect.height > pageHeight - margin + 0.05
+  );
+}
+
+export function overlapsAny(rect: Rect, others: Rect[]) {  return others.some((other) => rectsOverlap(rect, other));
 }
 
 export function snapRect(

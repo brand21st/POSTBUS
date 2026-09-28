@@ -1,5 +1,6 @@
 import type { LabelLayout, LayoutBlock } from "@/modules/labels/layout/layout";
 import { WATERMARK_ID } from "@/modules/labels/layout/layout";
+import { entersPrinterMargin } from "@/modules/labels/collision";
 
 export type LayoutWarning = {
   level: "info" | "warning";
@@ -27,6 +28,8 @@ export function validateLabel(layout: LabelLayout): LayoutWarning[] {
     }
     if (block.x < -0.05 || block.y < -0.05 || block.x + block.width > page.widthPt + 0.05 || block.y + block.height > page.heightPt + 0.05) {
       warnings.push({ level: "warning", ids: [block.id], message: `${block.id} extends outside the page.` });
+    } else if (block.kind !== "border" && entersPrinterMargin(block, page.widthPt, page.heightPt)) {
+      warnings.push({ level: "warning", ids: [block.id], message: `${block.id} extends into the printer margin.` });
     }
     if (block.fontSize != null && (block.fontSize < 6 || block.fontSize > 36)) {
       warnings.push({ level: "warning", ids: [block.id], message: `${block.id} uses a font size outside 6–36 pt.` });

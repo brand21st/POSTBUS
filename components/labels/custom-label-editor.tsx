@@ -26,9 +26,9 @@ import {
   productColumnVisible,
   type CustomLabelPreview,
 } from "@/modules/labels/custom-blocks";
-import { clampRect } from "@/modules/labels/collision";
+import { clampRect, snapToSafeMargin, SAFE_MARGIN_PT } from "@/modules/labels/collision";
 import { packingForEditor } from "@/modules/labels/layout/editor-data";
-import { layoutLabel } from "@/modules/labels/layout/layout";
+import { layoutLabel, WATERMARK_ID } from "@/modules/labels/layout/layout";
 import { mmFromPt, ptFromMm, storedFromTopLeft, topLeftFromStored } from "@/modules/labels/layout/units";
 import { validateLabel } from "@/modules/labels/layout/validate";
 import { PAGE_PRESETS, isPaperSizeId, pagePreset, sizeChoiceForPage } from "@/modules/labels/page-presets";
@@ -731,7 +731,11 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
       active.mode === "resize"
         ? { ...originTop, width: originTop.width + dx, height: originTop.height + dy }
         : { ...originTop, x: originTop.x + dx, y: originTop.y + dy };
-    const next = clampRect(storedFromTopLeft(heightPt, nextTop), widthPt, heightPt);
+    const guided =
+      id === "labelBorder" || id === WATERMARK_ID
+        ? nextTop
+        : snapToSafeMargin(nextTop, widthPt, heightPt, { resize: active.mode === "resize" });
+    const next = clampRect(storedFromTopLeft(heightPt, guided), widthPt, heightPt);
     const autoBox = usesAutoHeight(id);
     const shorter = active.mode === "resize" && next.height + 0.5 < active.origin.height;
     updateElement(id, autoBox && shorter ? { ...elements[id], ...next, autoHeight: false } : next);
@@ -1023,7 +1027,18 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
             style={{ width: widthPt * scale, height: heightPt * scale }}
             onPointerDown={onCanvasPointerDown}
           >
-                        {layout ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute border border-dashed border-red-700/50"
+              style={{
+                left: SAFE_MARGIN_PT * scale,
+                top: SAFE_MARGIN_PT * scale,
+                right: SAFE_MARGIN_PT * scale,
+                bottom: SAFE_MARGIN_PT * scale,
+                boxShadow: `0 0 0 ${SAFE_MARGIN_PT * scale}px rgba(185, 28, 28, 0.08)`,
+              }}
+            />
+            {layout ? (
               <LabelLayoutPaint
                 layout={layout}
                 scale={scale}

@@ -157,6 +157,8 @@ describe("layoutLabel", () => {
     template.elements.customerId = { ...template.elements.shipTo, visible: true };
     const overlap = validateLabel(layoutLabel(template, data));
     expect(overlap.some((warning) => warning.level === "info" && warning.ids.includes("customerId"))).toBe(true);
+    expect(overlap.some((warning) => warning.ids.includes("products") && warning.message.includes("printer margin"))).toBe(true);
+    expect(overlap.some((warning) => warning.ids.includes("labelBorder") && warning.message.includes("printer margin"))).toBe(false);
     expect(template.elements.shipTo.x).toBe(indiaPostLabelTemplate().elements.shipTo.x);
   });
 
