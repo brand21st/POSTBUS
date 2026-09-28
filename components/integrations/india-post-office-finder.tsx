@@ -94,7 +94,6 @@ export function IndiaPostOfficeFinder({
                   )}
                   onClick={() => {
                     onOfficeIdChange(office.officeId);
-                    toast.success(`Office ID ${office.officeId} selected.`);
                   }}
                 >
                   <span className="min-w-0">

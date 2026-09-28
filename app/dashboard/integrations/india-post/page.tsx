@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { IndiaPostLogo } from "@/components/brand/india-post-logo";
@@ -118,47 +118,86 @@ export default function IndiaPostPage() {
     }));
   }
 
-  const filledContracts = form.contracts.filter(
-    (contract) =>
-      contract.contractId.trim() &&
-      INDIA_POST_SERVICES.some((service) => service.code === contract.serviceCode)
+  const savedOfficeId = String(
+    config?.pickupDropoffOfficeId ?? config?.pickup_dropoff_office_id ?? ""
   );
 
+  const saveOffice = useMutation({
+    mutationFn: (officeId: string) =>
+      api<{ pickupDropoffOfficeId: string | null }>("/api/v1/integrations/india-post/office", {
+        method: "PATCH",
+        body: JSON.stringify({ pickupDropoffOfficeId: officeId }),
+      }),
+    onSuccess: (data) => {
+      const saved = data.pickupDropoffOfficeId ?? "";
+      setForm((current) => ({ ...current, pickupDropoffOfficeId: saved }));
+      queryClient.setQueryData<IndiaPostConfig>(["india-post"], (current) =>
+        current ? { ...current, pickupDropoffOfficeId: saved, pickup_dropoff_office_id: saved } : current
+      );
+      toast.success(saved ? `Office ID ${saved} saved.` : "Office ID cleared.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const officeSaveFlight = useRef<string | null>(null);
+
+  function persistOfficeId(value: string, options?: { force?: boolean }) {
+    const next = value.replace(/\D/g, "").slice(0, 8);
+    if (next && next.length !== 8) {
+      setForm((current) => ({ ...current, pickupDropoffOfficeId: savedOfficeId }));
+      toast.error("Office ID is 8 digits.");
+      return;
+    }
+    if (!options?.force && next === savedOfficeId) return;
+    if (officeSaveFlight.current === next) return;
+    officeSaveFlight.current = next;
+    saveOffice.mutate(next, {
+      onSettled: () => {
+        if (officeSaveFlight.current === next) officeSaveFlight.current = null;
+      },
+    });
+  }
+
   const save = useMutation({
-    mutationFn: () => {
-      const customerId = form.customerId.trim();
-      if (productionBlocked) {
+    mutationFn: (snapshot: FormState) => {
+      const customerId = snapshot.customerId.trim();
+      const snapshotContracts = snapshot.contracts.filter(
+        (contract) =>
+          contract.contractId.trim() &&
+          INDIA_POST_SERVICES.some((service) => service.code === contract.serviceCode)
+      );
+      if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
         throw new Error("Live booking is not ready yet. Keep Test selected.");
       }
       if (!customerId && !hasSecrets) {
         throw new Error("Enter your India Post customer ID.");
       }
-      if (!hasSecrets && !form.password.trim()) {
+      if (!hasSecrets && !snapshot.password.trim()) {
         throw new Error("Enter your India Post password.");
       }
       return api<IndiaPostConfig>("/api/v1/integrations/india-post", {
         method: "POST",
         body: JSON.stringify({
-          environment: form.environment,
+          environment: snapshot.environment,
           username: replaceSecrets || !hasSecrets ? customerId || undefined : undefined,
-          password: replaceSecrets || !hasSecrets ? form.password || undefined : undefined,
+          password: replaceSecrets || !hasSecrets ? snapshot.password || undefined : undefined,
           bulkCustomerId: customerId || undefined,
-          pickupDropoffOfficeId: form.pickupDropoffOfficeId.trim() || undefined,
-          contracts: filledContracts.length
-            ? filledContracts.map((contract) => ({
+          pickupDropoffOfficeId: snapshot.pickupDropoffOfficeId.trim() || undefined,
+          contracts: snapshotContracts.length
+            ? snapshotContracts.map((contract) => ({
                 serviceCode: contract.serviceCode,
                 contractId: contract.contractId.trim(),
-                isDefault: contract.serviceCode === form.defaultServiceCode,
+                isDefault: contract.serviceCode === snapshot.defaultServiceCode,
               }))
             : undefined,
-          barcodeRange: form.prefix.trim()
+          barcodeRange: snapshot.prefix.trim()
             ? {
-                prefix: form.prefix.trim(),
-                suffix: form.suffix.trim() || "IN",
-                startNumber: Number(form.startNumber),
-                endNumber: Number(form.endNumber),
+                prefix: snapshot.prefix.trim(),
+                suffix: snapshot.suffix.trim() || "IN",
+                startNumber: Number(snapshot.startNumber),
+                endNumber: Number(snapshot.endNumber),
                 serviceCode:
-                  form.rangeServiceCode === ANY_SERVICE ? null : form.rangeServiceCode,
+                  snapshot.rangeServiceCode === ANY_SERVICE ? null : snapshot.rangeServiceCode,
               }
             : undefined,
         }),
@@ -280,7 +319,7 @@ export default function IndiaPostPage() {
           ) : null}
         </CardContent>
         <CardFooter className="flex flex-wrap gap-2 border-t border-border pt-4">
-          <Button type="button" onClick={() => save.mutate()} disabled={save.isPending}>
+          <Button type="button" onClick={() => save.mutate(form)} disabled={save.isPending}>
             {save.isPending ? "Saving…" : "Save & connect"}
           </Button>
           <Button type="button" variant="secondary" onClick={() => verify.mutate()} disabled={verify.isPending}>
@@ -306,13 +345,28 @@ export default function IndiaPostPage() {
               value={form.pickupDropoffOfficeId}
               placeholder="22660454"
               onChange={(value) => set("pickupDropoffOfficeId", value.replace(/\D/g, "").slice(0, 8))}
+              onBlur={(value) => persistOfficeId(value)}
             />
             <IndiaPostOfficeFinder
               officeId={form.pickupDropoffOfficeId}
-              onOfficeIdChange={(value) => set("pickupDropoffOfficeId", value)}
+              onOfficeIdChange={(value) => {
+                const next = value.replace(/\D/g, "").slice(0, 8);
+                set("pickupDropoffOfficeId", next);
+                persistOfficeId(next);
+              }}
               canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
             />
           </CardContent>
+          <CardFooter className="border-t border-border pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => persistOfficeId(form.pickupDropoffOfficeId, { force: true })}
+              disabled={saveOffice.isPending}
+            >
+              {saveOffice.isPending ? "Saving…" : "Save office ID"}
+            </Button>
+          </CardFooter>
         </Card>
 
         <Card>
@@ -473,6 +527,7 @@ function Field({
   label,
   value,
   onChange,
+  onBlur,
   type = "text",
   autoComplete,
   placeholder,
@@ -480,6 +535,7 @@ function Field({
   label: string;
   value: string;
   onChange: (value: string) => void;
+  onBlur?: (value: string) => void;
   type?: string;
   autoComplete?: string;
   placeholder?: string;
@@ -493,6 +549,7 @@ function Field({
         placeholder={placeholder}
         autoComplete={autoComplete}
         onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur ? (event) => onBlur(event.target.value) : undefined}
       />
     </div>
   );

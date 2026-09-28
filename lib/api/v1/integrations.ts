@@ -45,6 +45,15 @@ import {
   saveWatiConnection,
 } from "@/modules/wati/service";
 
+function normalizePickupOfficeId(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "").slice(0, 8);
+  if (!digits) return null;
+  if (digits.length !== 8) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Office ID is 8 digits.");
+  }
+  return digits;
+}
+
 export async function handleIntegrationRoutes(
   request: NextRequest,
   supabase: SupabaseClient,
@@ -467,6 +476,31 @@ export async function handleIntegrationRoutes(
       serviceCode
     );
     return { bookingServiceOverride: requested, serviceCode };
+  }
+
+  if (key === "PATCH integrations/india-post/office") {
+    const body = await request.json().catch(() => ({}));
+    const officeId = normalizePickupOfficeId(body.pickupDropoffOfficeId ?? body.pickup_dropoff_office_id);
+    const { data: existing, error: existingError } = await supabase
+      .from("india_post_connections")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (existingError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingError.message);
+    if (!existing) {
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        "Save your India Post customer ID and password first."
+      );
+    }
+    const { data, error } = await supabase
+      .from("india_post_connections")
+      .update({ pickup_dropoff_office_id: officeId })
+      .eq("organization_id", ctx.organizationId)
+      .select("pickup_dropoff_office_id")
+      .single();
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    return { pickupDropoffOfficeId: data?.pickup_dropoff_office_id ?? null };
   }
 
   if (key === "PUT integrations/india-post" || key === "POST integrations/india-post" || key === "PATCH integrations/india-post") {

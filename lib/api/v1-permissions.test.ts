@@ -41,6 +41,9 @@ describe("permissionForTenantRoute", () => {
     expect(
       permissionForTenantRoute("GET", "integrations/india-post/offices", ["integrations", "india-post", "offices"])
     ).toBeUndefined();
+    expect(
+      permissionForTenantRoute("PATCH", "integrations/india-post/office", ["integrations", "india-post", "office"])
+    ).toBe("integrations.manage");
     expect(permissionForTenantRoute("POST", "integrations/wati", ["integrations", "wati"])).toBe(
       "integrations.manage"
     );
