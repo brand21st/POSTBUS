@@ -98,7 +98,7 @@ export function defaultAddressLayout(headingText = "Ship To:"): AddressLayout {
     headingBold: true,
     headingItalic: false,
     lineGapMm: 5.5,
-    separatorThicknessMm: 0.35,
+    separatorThicknessMm: 0,
     sameLineSeparator: ",",
     fields: FIELD_META.map(defaultField),
   };
@@ -113,9 +113,7 @@ export function normalizeAddressLayout(layout?: Partial<AddressLayout> | null, h
     headingBold: layout?.headingBold ?? base.headingBold,
     headingItalic: layout?.headingItalic ?? base.headingItalic,
     lineGapMm: Number.isFinite(layout?.lineGapMm) ? Number(layout?.lineGapMm) : base.lineGapMm,
-    separatorThicknessMm: Number.isFinite(layout?.separatorThicknessMm)
-      ? Number(layout?.separatorThicknessMm)
-      : base.separatorThicknessMm,
+    separatorThicknessMm: 0,
     sameLineSeparator: layout?.sameLineSeparator ?? base.sameLineSeparator,
     fields: FIELD_META.map((meta) => {
       const saved = incoming.get(meta.id);
@@ -311,9 +309,5 @@ export function addressContentHeight(
   const headingLines = composed.heading ? wrapAddressRuns([composed.heading], inner, measure) : [];
   const body = composed.lines.flatMap((line) => wrapAddressRuns(line, inner, measure));
   const lineGap = mmToPt(composed.layout.lineGapMm);
-  const rule =
-    composed.heading && composed.layout.separatorThicknessMm > 0
-      ? Math.max(2, mmToPt(composed.layout.separatorThicknessMm) + 2)
-      : 0;
-  return gap * 2 + (headingLines.length + body.length) * (size + lineGap) + rule;
+  return gap * 2 + (headingLines.length + body.length) * (size + lineGap);
 }

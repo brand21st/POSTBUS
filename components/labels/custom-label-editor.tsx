@@ -218,7 +218,6 @@ function AddressBlockPreview({
   const composed = composeAddressLines(element.addressLayout, parts, heading);
   const fontSize = (element.fontSize ?? 9) * scale;
   const gap = mmToPtLayout(composed.layout.lineGapMm) * scale;
-  const rule = mmToPtLayout(composed.layout.separatorThicknessMm) * scale;
   const align = element.align ?? "left";
   const inner = Math.max(8, width - (element.gap ?? 0) * scale * 2);
   const measure = (text: string, run: Pick<AddressRun, "bold" | "italic">) => helveticaTextWidth(text, fontSize, run.bold);
@@ -238,9 +237,6 @@ function AddressBlockPreview({
       {headingLines.map((runs, index) => (
         <AddressRunLine key={`head-${index}`} runs={runs} />
       ))}
-      {composed.heading && rule > 0 ? (
-        <div className="bg-neutral-900" style={{ height: Math.max(1, rule), margin: `${Math.max(1, gap / 4)}px 0` }} />
-      ) : null}
       {body.map((runs, index) => (
         <AddressRunLine key={`line-${index}`} runs={runs} />
       ))}
@@ -396,14 +392,6 @@ function BlockProperties({
             step={0.1}
             value={layout.lineGapMm}
             onValue={(lineGapMm) => patchLayout({ ...layout, lineGapMm })}
-          />
-          <PropertyNumber
-            label="Separator thickness (mm)"
-            min={0}
-            max={2}
-            step={0.05}
-            value={layout.separatorThicknessMm}
-            onValue={(separatorThicknessMm) => patchLayout({ ...layout, separatorThicknessMm })}
           />
           <label className="block space-y-1">
             <span className="text-muted">Same-line separator</span>
@@ -1199,17 +1187,18 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                   {isBorder
                     ? normalizeHLines(element.hLines, heightPt).map((line, index) => {
                         if (!line.visible) return null;
-                        const borderTopMm = ptToMm(heightPt - element.y - element.height);
+                        const inset = stroke;
                         const gapPx = mmToPt(element.hLineGapMm ?? 0) * scale;
                         const thickness = Math.max(0.25, element.hLineWidth ?? element.borderWidth ?? 1) * scale;
+                        const borderTopPx = (heightPt - element.y - element.height) * scale;
                         return (
                           <div
                             key={`hline-${index}`}
                             className="absolute bg-neutral-900"
                             style={{
-                              left: gapPx,
-                              right: gapPx,
-                              top: mmToPt(Math.max(0, line.yMm - borderTopMm)) * scale,
+                              left: gapPx - inset,
+                              right: gapPx - inset,
+                              top: mmToPt(line.yMm) * scale - borderTopPx - inset,
                               height: thickness,
                             }}
                           />

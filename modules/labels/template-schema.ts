@@ -207,12 +207,16 @@ export function horizontalLineBars(
   const gap = Math.max(0, mmToPt(border.hLineGapMm ?? 0));
   return normalizeHLines(border.hLines, pageHeightPt)
     .filter((line) => line.visible)
-    .map((line) => ({
-      x: border.x + gap,
-      y: Math.max(0, pageHeightPt - mmToPt(line.yMm) - stroke),
-      width: Math.max(0, border.width - gap * 2),
-      height: stroke,
-    }));
+    .map((line) => {
+      const topPt = mmToPt(line.yMm);
+      return {
+        x: border.x + gap,
+        y: Math.max(0, pageHeightPt - topPt - stroke),
+        width: Math.max(0, border.width - gap * 2),
+        height: stroke,
+        yMm: line.yMm,
+      };
+    });
 }
 
 export function fitLabelBorderToPage(
@@ -616,8 +620,8 @@ export function arrangeIndiaPostBands(
       ...fullPageBorderRect(page),
       hLineGapMm: border.hLineGapMm ?? 0,
       hLineWidth: border.hLineWidth ?? border.borderWidth ?? 1,
-      hLines: INDIA_POST_A6_MM.hLines.map((yMm) => ({
-        visible: true,
+      hLines: INDIA_POST_A6_MM.hLines.map((yMm, index) => ({
+        visible: index !== 4,
         yMm: Math.round(yMm * scaleY * 10) / 10,
       })),
     };
@@ -671,7 +675,7 @@ export function indiaPostLabelTemplate(): LabelTemplate {
     addressLayout: {
       ...defaultAddressLayout("Ship To:"),
       lineGapMm: 1.8,
-      separatorThicknessMm: 0.05,
+      separatorThicknessMm: 0,
     },
   });
   show("fromAddress", {
@@ -679,7 +683,7 @@ export function indiaPostLabelTemplate(): LabelTemplate {
     addressLayout: {
       ...defaultAddressLayout("From/ Return Address"),
       lineGapMm: 1.4,
-      separatorThicknessMm: 0.35,
+      separatorThicknessMm: 0,
     },
   });
   show("products", {

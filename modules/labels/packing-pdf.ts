@@ -393,20 +393,6 @@ function drawAddressBlock(
   };
   const wrappedHeading = composed.heading ? wrapAddressRuns([composed.heading], box.width, measure) : [];
   wrappedHeading.forEach((runs) => drawRuns(runs));
-  const rule = mmToPt(composed.layout.separatorThicknessMm);
-  if (composed.heading && rule > 0) {
-    const ruleY = baseline - Math.max(1, rule);
-    if (ruleY >= box.y) {
-      page.drawRectangle({
-        x: box.x,
-        y: ruleY,
-        width: box.width,
-        height: rule,
-        color: ink,
-      });
-      baseline = ruleY - lineGap;
-    }
-  }
   composed.lines.forEach((runs) => wrapAddressRuns(runs, box.width, measure).forEach((line) => drawRuns(line)));
 }
 

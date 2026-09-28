@@ -617,6 +617,30 @@ describe("india post barcode block", () => {
     expect(pdf).toContain(bars[0]?.y.toFixed(2).replace(/0+$/, "").replace(/\.$/, "") || "missing");
   });
 
+  it("prints A6 border lines at the Properties Y millimetres", async () => {
+    const template = indiaPostLabelTemplate();
+    const expected = [
+      { visible: true, yMm: 23.7 },
+      { visible: true, yMm: 35.5 },
+      { visible: true, yMm: 50.4 },
+      { visible: true, yMm: 86 },
+      { visible: false, yMm: 119.1 },
+    ];
+    expect(template.elements.labelBorder.hLines).toEqual(expected);
+    const bars = horizontalLineBars(template.elements.labelBorder, template.page.heightPt);
+    expect(bars).toHaveLength(4);
+    const visible = expected.filter((line) => line.visible);
+    bars.forEach((bar, index) => {
+      const topMm = ((template.page.heightPt - bar.y - bar.height) * 25.4) / 72;
+      expect(topMm).toBeCloseTo(visible[index]?.yMm ?? 0, 1);
+      expect(bar.height).toBe(template.elements.labelBorder.hLineWidth ?? template.elements.labelBorder.borderWidth ?? 1);
+    });
+    const pdf = await pdfContents(await renderMerchantLabelPdf(template, SAMPLE_PACKING_DATA));
+    for (const bar of bars) {
+      expect(pdf).toMatch(new RegExp(`1 0 0 1 0 ${Math.floor(bar.y)}\\.\\d+ cm`));
+    }
+  });
+
   it("round-trips label border thickness into the PDF stroke", async () => {
     const template = indiaPostLabelTemplate();
     template.elements.labelBorder = { ...template.elements.labelBorder, borderWidth: 3 };
