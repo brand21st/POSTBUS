@@ -45,6 +45,45 @@ export function formatBarcode(prefix: string, serialNumber: number, suffix: stri
   return `${prefix}${serial}${indiaPostS10CheckDigit(serial)}${suffix}`;
 }
 
+/**
+ * An allotment may be the 8-digit serial, or the 9-digit number India Post prints
+ * (that serial plus its check digit). Either way the stored value is the serial.
+ */
+function serialFromAllotment(name: string, raw: number | string) {
+  const text = String(raw ?? "").trim();
+  if (!/^\d+$/.test(text)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${name} must be a whole number above zero.`);
+  }
+  if (text.length > BARCODE_SERIAL_DIGITS + 1) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `${name} cannot be longer than ${BARCODE_SERIAL_DIGITS + 1} digits.`
+    );
+  }
+
+  if (text.length === BARCODE_SERIAL_DIGITS + 1) {
+    const serialDigits = text.slice(0, BARCODE_SERIAL_DIGITS);
+    const expected = indiaPostS10CheckDigit(serialDigits);
+    if (Number(text[BARCODE_SERIAL_DIGITS]) !== expected) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        `${name} check digit does not match. The last digit should be ${expected}.`
+      );
+    }
+    const serial = Number(serialDigits);
+    if (serial < 1) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${name} must be a whole number above zero.`);
+    }
+    return serial;
+  }
+
+  const value = Number(text);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_NUMBER) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${name} must be a whole number above zero.`);
+  }
+  return value;
+}
+
 export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
   const prefix = (input.prefix ?? "").trim().toUpperCase();
   const suffix = ((input.suffix ?? "IN") || "IN").trim().toUpperCase();
@@ -62,23 +101,8 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
     );
   }
 
-  const startNumber = Number(input.startNumber);
-  const endNumber = Number(input.endNumber);
-
-  for (const [name, value] of [
-    ["Start number", startNumber],
-    ["End number", endNumber],
-  ] as const) {
-    if (!Number.isInteger(value) || value < 1) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${name} must be a whole number above zero.`);
-    }
-    if (value > MAX_NUMBER) {
-      throw new AppError(
-        ERROR_CODES.VALIDATION_ERROR,
-        `${name} cannot be longer than ${BARCODE_SERIAL_DIGITS} digits.`
-      );
-    }
-  }
+  const startNumber = serialFromAllotment("Start number", input.startNumber);
+  const endNumber = serialFromAllotment("End number", input.endNumber);
 
   if (endNumber < startNumber) {
     throw new AppError(

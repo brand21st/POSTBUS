@@ -319,7 +319,7 @@ export default function IndiaPostPage() {
           <CardHeader className="pb-4">
             <CardTitle>Barcode range</CardTitle>
             <CardDescription className="mt-1">
-              The article number series from your India Post allotment. We add the check digit — for example CL 55697399 becomes CL556973995IN.
+              The article number series from your India Post allotment. Paste the 9-digit number — the last digit is the check digit, and we verify it — or the 8-digit serial. For example 556973995 is CL556973995IN.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -352,12 +352,14 @@ export default function IndiaPostPage() {
             <Field
               label="Start number"
               value={form.startNumber}
-              onChange={(value) => set("startNumber", value)}
+              placeholder="556973995"
+              onChange={(value) => set("startNumber", value.replace(/\D/g, "").slice(0, 9))}
             />
             <Field
               label="End number"
               value={form.endNumber}
-              onChange={(value) => set("endNumber", value)}
+              placeholder="556979998"
+              onChange={(value) => set("endNumber", value.replace(/\D/g, "").slice(0, 9))}
             />
           </CardContent>
         </Card>

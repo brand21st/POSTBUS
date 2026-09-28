@@ -89,8 +89,24 @@ describe("parseBarcodeRange", () => {
     expect(() => parseBarcodeRange({ ...valid, endNumber: "abc" })).toThrow(/whole number/);
   });
 
-  it("rejects numbers longer than eight digits", () => {
-    expect(() => parseBarcodeRange({ ...valid, endNumber: 100_000_000 })).toThrow(/8 digits/);
+  it("accepts a 9-digit allotment number and stores the 8-digit serial", () => {
+    expect(
+      parseBarcodeRange({
+        prefix: "CL",
+        suffix: "IN",
+        startNumber: 556973995,
+        endNumber: "556979998",
+      })
+    ).toMatchObject({ startNumber: 55697399, endNumber: 55697999 });
+  });
+
+  it("rejects a 9-digit number whose check digit is wrong", () => {
+    expect(() => parseBarcodeRange({ ...valid, endNumber: 556973996 })).toThrow(/check digit/);
+    expect(() => parseBarcodeRange({ ...valid, endNumber: 556973996 })).toThrow(/should be 5/);
+  });
+
+  it("rejects numbers longer than nine digits", () => {
+    expect(() => parseBarcodeRange({ ...valid, endNumber: 1_000_000_000 })).toThrow(/9 digits/);
   });
 
   it("rejects an end below the start", () => {
