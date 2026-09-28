@@ -1,38 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { LabelLayoutPaint } from "@/components/labels/label-layout-paint";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
-import {
-  ADDRESS_FIELD_OPTIONS,
-  SAMPLE_FROM_PARTS,
-  SAMPLE_SHIP_PARTS,
-  composeAddressLines,
-  helveticaTextWidth,
-  mmToPt as mmToPtLayout,
-  normalizeAddressLayout,
-  wrapAddressRuns,
-  type AddressFieldConfig,
-  type AddressLayout,
-  type AddressParts,
-  type AddressRun,
-} from "@/modules/labels/address-layout";
+import { ADDRESS_FIELD_OPTIONS, normalizeAddressLayout, type AddressFieldConfig, type AddressLayout } from "@/modules/labels/address-layout";
 import {
   CUSTOM_TEXT_LIMIT,
-  LABEL_GENERATED_FROM,
-  LABEL_GENERATED_FROM_SIZE,
   PRODUCT_COLUMNS,
-  PRODUCT_SAMPLE_LINES,
-  blockPreviewLines,
-  bookedBlockText,
   createCustomTextElement,
   customTextIds,
   customTextLabel,
@@ -41,12 +24,13 @@ import {
   isCustomTextId,
   nextCustomTextId,
   productColumnVisible,
-  productTable,
   type CustomLabelPreview,
-  type ProductColumnFlags,
-  type ProductLine,
 } from "@/modules/labels/custom-blocks";
 import { clampRect } from "@/modules/labels/collision";
+import { packingForEditor } from "@/modules/labels/layout/editor-data";
+import { layoutLabel } from "@/modules/labels/layout/layout";
+import { mmFromPt, ptFromMm, storedFromTopLeft, topLeftFromStored } from "@/modules/labels/layout/units";
+import { validateLabel } from "@/modules/labels/layout/validate";
 import { PAGE_PRESETS, isPaperSizeId, pagePreset, sizeChoiceForPage } from "@/modules/labels/page-presets";
 import {
   applyPaperSize,
@@ -63,14 +47,6 @@ import {
 
 type TemplateResponse = { template: LabelTemplate; logoUrl?: string | null };
 type PreviewResponse = { preview: CustomLabelPreview };
-
-function mmToPt(mm: number) {
-  return (mm * 72) / 25.4;
-}
-
-function ptToMm(pt: number) {
-  return (pt * 25.4) / 72;
-}
 
 const CANVAS_ZOOM_MIN = 0.25;
 const CANVAS_ZOOM_MAX = 4;
@@ -102,146 +78,6 @@ function entryFor(template: LabelTemplate, templateId: string): NamedLabelTempla
     page: template.page,
     elements: template.elements,
   };
-}
-
-function ProductTablePreview({
-  flags,
-  items,
-  total,
-  includeTotal,
-  fontSize,
-  lineHeight,
-  gap,
-  align,
-  bold,
-}: {
-  flags: ProductColumnFlags;
-  items: ProductLine[];
-  total?: number;
-  includeTotal: boolean;
-  fontSize: number;
-  lineHeight: number;
-  gap: number;
-  align: "left" | "center" | "right";
-  bold: boolean;
-}) {
-  const table = productTable(items, flags, { includeTotal, total });
-  if (!table.columns.length) return null;
-  return (
-    <table
-      className="h-full w-full border-collapse"
-      style={{ fontSize, lineHeight: `${lineHeight}px`, textAlign: align, fontFamily: "Helvetica, Arial, sans-serif", fontWeight: bold ? 700 : 400, padding: gap }}
-    >
-      <thead>
-        <tr className="bg-slate-100">
-          {table.columns.map((column) => (
-            <th key={column.id} className="border border-slate-300 px-1 font-semibold">
-              {column.label}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {table.rows.map((row, index) => (
-          <tr key={`${row.cells.join("-")}-${index}`}>
-            {row.cells.map((cell, cellIndex) => (
-                <td
-                  key={`${table.columns[cellIndex]?.id ?? cellIndex}-${index}`}
-                  className={cn("whitespace-normal break-words border border-slate-300 px-1", row.bold && "font-semibold")}
-                >
-                  {cell}
-                </td>
-              ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-const STATIC_TEXT_BLOCKS = new Set(["promotionalMessage", "returnPolicy", "customerSupport"]);
-
-function usesAutoHeight(id: string) {
-  return id === "fromAddress" || id === "shipTo" || id === "products" || id === "codAmount" || isCustomTextId(id);
-}
-
-function StyleToggle({
-  label,
-  pressed,
-  onToggle,
-}: {
-  label: string;
-  pressed: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={pressed}
-      className={cn(
-        "flex size-8 items-center justify-center rounded-lg border text-sm font-semibold",
-        pressed ? "border-brand bg-brand text-white" : "border-border bg-card text-foreground"
-      )}
-      onClick={onToggle}
-    >
-      {label === "Bold" ? "B" : "I"}
-    </button>
-  );
-}
-
-function AddressRunLine({ runs }: { runs: AddressRun[] }) {
-  return (
-    <p>
-      {runs.map((run, runIndex) => (
-        <span key={`${run.text}-${runIndex}`} style={{ fontWeight: run.bold ? 700 : 400, fontStyle: run.italic ? "italic" : "normal" }}>
-          {run.text}
-        </span>
-      ))}
-    </p>
-  );
-}
-
-function AddressBlockPreview({
-  element,
-  parts,
-  scale,
-  width,
-  heading,
-}: {
-  element: TemplateElement;
-  parts: AddressParts;
-  scale: number;
-  width: number;
-  heading: string;
-}) {
-  const composed = composeAddressLines(element.addressLayout, parts, heading);
-  const fontSize = (element.fontSize ?? 9) * scale;
-  const gap = mmToPtLayout(composed.layout.lineGapMm) * scale;
-  const align = element.align ?? "left";
-  const inner = Math.max(8, width - (element.gap ?? 0) * scale * 2);
-  const measure = (text: string, run: Pick<AddressRun, "bold" | "italic">) => helveticaTextWidth(text, fontSize, run.bold);
-  const headingLines = composed.heading ? wrapAddressRuns([composed.heading], inner, measure) : [];
-  const body = composed.lines.flatMap((line) => wrapAddressRuns(line, inner, measure));
-  return (
-    <div
-      className="h-full w-full overflow-hidden"
-      style={{
-        textAlign: align,
-        fontFamily: "Helvetica, Arial, sans-serif",
-        fontSize,
-        lineHeight: `${fontSize + gap}px`,
-        padding: (element.gap ?? 0) * scale,
-      }}
-    >
-      {headingLines.map((runs, index) => (
-        <AddressRunLine key={`head-${index}`} runs={runs} />
-      ))}
-      {body.map((runs, index) => (
-        <AddressRunLine key={`line-${index}`} runs={runs} />
-      ))}
-    </div>
-  );
 }
 
 function PropertyNumber({
@@ -277,6 +113,37 @@ function PropertyNumber({
   );
 }
 
+const STATIC_TEXT_BLOCKS = new Set(["promotionalMessage", "returnPolicy", "customerSupport"]);
+
+function usesAutoHeight(id: string) {
+  return id === "fromAddress" || id === "shipTo" || id === "products" || id === "codAmount" || isCustomTextId(id);
+}
+
+function StyleToggle({
+  label,
+  pressed,
+  onToggle,
+}: {
+  label: string;
+  pressed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={pressed}
+      className={cn(
+        "flex size-8 items-center justify-center rounded-lg border text-sm font-semibold",
+        pressed ? "border-brand bg-brand text-white" : "border-border bg-card text-foreground"
+      )}
+      onClick={onToggle}
+    >
+      {label === "Bold" ? "B" : "I"}
+    </button>
+  );
+}
+
 function BlockProperties({
   id,
   label,
@@ -285,6 +152,7 @@ function BlockProperties({
   onChange,
   onRemove,
   storeLogoUrl,
+  warnings = [],
 }: {
   id: string;
   label: string;
@@ -293,6 +161,7 @@ function BlockProperties({
   onChange: (patch: Partial<TemplateElement>) => void;
   onRemove?: () => void;
   storeLogoUrl?: string | null;
+  warnings?: string[];
 }) {
   const box = elementBoxMm(element, page.heightPt);
   const rounded = (value: number) => Math.round(value * 10) / 10;
@@ -336,6 +205,13 @@ function BlockProperties({
   return (
     <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto text-sm">
       <p className="font-medium">{label}</p>
+      {warnings.length ? (
+        <ul className="space-y-1 text-xs text-amber-700">
+          {warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
       {fromAddress || shipTo || id === "products" || id === "codAmount" || isCustomTextId(id) ? (
         <label className="flex items-center gap-2">
           <Checkbox
@@ -610,6 +486,8 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   const [paymentPreview, setPaymentPreview] = useState<"COD" | "PREPAID">("PREPAID");
   const [preview, setPreview] = useState<CustomLabelPreview | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [logoPx, setLogoPx] = useState<{ width: number; height: number } | null>(null);
+  const [barcodePx, setBarcodePx] = useState<{ width: number; height: number } | null>(null);
   const canvasPane = useRef<HTMLDivElement>(null);
   const zoomRef = useRef(1);
   zoomRef.current = zoom;
@@ -629,16 +507,9 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
     const template = templates.data?.template;
     if (!template || page) return;
     const entry = entryFor(template, templateId);
-    const choice = entry.page.paperSize === "custom" ? "custom" : sizeChoiceForPage(entry.page);
-    const widthMm = Math.round(entry.page.widthMm ?? ptToMm(entry.page.widthPt));
-    const heightMm = Math.round(entry.page.heightMm ?? ptToMm(entry.page.heightPt));
     setName(entry.name);
-    const nextPage =
-      choice === "custom"
-        ? { ...entry.page, paperSize: "custom" as const, widthMm, heightMm, widthPt: mmToPt(widthMm), heightPt: mmToPt(heightMm) }
-        : entry.page;
-    setPage(nextPage);
-    setElements(fitLabelBorderToPage(entry.elements, nextPage));
+    setPage(entry.page);
+    setElements(fitLabelBorderToPage(entry.elements, entry.page));
   }, [templates.data, templateId, page]);
 
   useEffect(() => {
@@ -740,6 +611,31 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const storeLogoUrl = preview?.logoUrl || templates.data?.logoUrl || null;
+  const barcodeUrl = preview?.articleId && shipmentId ? `/api/v1/label-template/barcode?shipmentId=${encodeURIComponent(shipmentId)}` : null;
+  const layout = useMemo(() => {
+    if (!page || !elements) return null;
+    return layoutLabel({ templateVersion: Math.max(templates.data?.template.templateVersion ?? 5, 5), page, elements }, packingForEditor(preview, paymentPreview), {
+      logo: storeLogoUrl ? logoPx : null,
+      barcode: barcodeUrl ? barcodePx : null,
+    });
+  }, [page, elements, preview, paymentPreview, logoPx, barcodePx, storeLogoUrl, barcodeUrl, templates.data?.template.templateVersion]);
+  const layoutWarnings = useMemo(() => (layout ? validateLabel(layout) : []), [layout]);
+
+  useEffect(() => {
+    if (!storeLogoUrl) return;
+    const image = new Image();
+    image.onload = () => setLogoPx({ width: image.naturalWidth, height: image.naturalHeight });
+    image.src = storeLogoUrl;
+  }, [storeLogoUrl]);
+
+  useEffect(() => {
+    if (!barcodeUrl) return;
+    const image = new Image();
+    image.onload = () => setBarcodePx({ width: image.naturalWidth, height: image.naturalHeight });
+    image.src = barcodeUrl;
+  }, [barcodeUrl]);
+
   const draftTemplate = () => {
     const template = templates.data?.template;
     if (!template || !elements || !page) return null;
@@ -754,10 +650,8 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   const heightPt = page.heightPt;
   const fitScale = Math.min(1.1, 760 / widthPt);
   const scale = fitScale * zoom;
-  const storeLogoUrl = preview?.logoUrl || templates.data?.logoUrl || null;
   const sizeChoice = page.paperSize === "custom" ? "custom" : sizeChoiceForPage(page);
   const selectedElement = elements[selected];
-  const codPreview = paymentPreview === "COD";
 
   const updateElement = (id: string, patch: Partial<TemplateElement>) => {
     setElements((current) => {
@@ -781,6 +675,43 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
     setPanning(true);
   };
 
+  const onBlockPointerDown = (id: string, event: React.PointerEvent<HTMLElement>) => {
+    if (spaceHeldRef.current || event.button === 1) {
+      startPan(event);
+      return;
+    }
+    const element = elements[id];
+    if (!element) return;
+    event.stopPropagation();
+    setSelected(id);
+    drag.current = { id, mode: "move", startX: event.clientX, startY: event.clientY, origin: element };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // The move still tracks the pointer when capture is unavailable.
+    }
+  };
+
+  const onResizeStart = (id: string, event: React.PointerEvent<HTMLElement>) => {
+    if (spaceHeldRef.current || event.button === 1) {
+      startPan(event);
+      return;
+    }
+    const element = elements[id];
+    if (!element) return;
+    event.stopPropagation();
+    const placed = layout?.blocks.find((block) => block.id === id);
+    const origin = placed
+      ? { ...element, ...storedFromTopLeft(heightPt, { x: placed.x, y: placed.y, width: placed.width, height: placed.height }) }
+      : element;
+    drag.current = { id, mode: "resize", startX: event.clientX, startY: event.clientY, origin };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Resize still follows the pointer when capture is unavailable.
+    }
+  };
+
   const onCanvasPointerDown = (event: React.PointerEvent<HTMLElement>) => {
     if (spaceHeldRef.current || event.button === 1) {
       startPan(event);
@@ -795,28 +726,12 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
     if (!active || active.id !== id || !elements[id]) return;
     const dx = (event.clientX - active.startX) / scale;
     const dy = (event.clientY - active.startY) / scale;
-    const next =
+    const originTop = topLeftFromStored(heightPt, active.origin);
+    const nextTop =
       active.mode === "resize"
-        ? clampRect(
-            {
-              x: active.origin.x,
-              y: active.origin.y - dy,
-              width: active.origin.width + dx,
-              height: active.origin.height + dy,
-            },
-            widthPt,
-            heightPt
-          )
-        : clampRect(
-            {
-              x: active.origin.x + dx,
-              y: active.origin.y - dy,
-              width: active.origin.width,
-              height: active.origin.height,
-            },
-            widthPt,
-            heightPt
-          );
+        ? { ...originTop, width: originTop.width + dx, height: originTop.height + dy }
+        : { ...originTop, x: originTop.x + dx, y: originTop.y + dy };
+    const next = clampRect(storedFromTopLeft(heightPt, nextTop), widthPt, heightPt);
     const autoBox = usesAutoHeight(id);
     const shorter = active.mode === "resize" && next.height + 0.5 < active.origin.height;
     updateElement(id, autoBox && shorter ? { ...elements[id], ...next, autoHeight: false } : next);
@@ -925,15 +840,13 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
             value={sizeChoice}
             onValueChange={(value) => {
               if (value === "custom") {
-                const widthMm = Math.round(page.widthMm ?? ptToMm(page.widthPt));
-                const heightMm = Math.round(page.heightMm ?? ptToMm(page.heightPt));
+                const widthMm = page.widthMm ?? mmFromPt(page.widthPt);
+                const heightMm = page.heightMm ?? mmFromPt(page.heightPt);
                 const nextPage = {
                   ...page,
                   paperSize: "custom" as const,
                   widthMm,
                   heightMm,
-                  widthPt: mmToPt(widthMm),
-                  heightPt: mmToPt(heightMm),
                 };
                 setPage(nextPage);
                 setElements(fitLabelBorderToPage(elements, nextPage));
@@ -969,11 +882,11 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
               <Input
                 type="number"
                 min={50}
-                value={Math.round(page.widthMm ?? ptToMm(page.widthPt))}
+                value={Math.round(page.widthMm ?? mmFromPt(page.widthPt))}
                 onChange={(event) => {
                   const widthMm = Number(event.target.value);
                   if (!Number.isFinite(widthMm) || widthMm < 50) return;
-                  const nextPage = { ...page, paperSize: "custom" as const, widthMm, widthPt: mmToPt(widthMm) };
+                  const nextPage = { ...page, paperSize: "custom" as const, widthMm, widthPt: ptFromMm(widthMm) };
                   setPage(nextPage);
                   setElements(fitLabelBorderToPage(elements, nextPage));
                 }}
@@ -984,11 +897,11 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
               <Input
                 type="number"
                 min={50}
-                value={Math.round(page.heightMm ?? ptToMm(page.heightPt))}
+                value={Math.round(page.heightMm ?? mmFromPt(page.heightPt))}
                 onChange={(event) => {
                   const heightMm = Number(event.target.value);
                   if (!Number.isFinite(heightMm) || heightMm < 50) return;
-                  const nextPage = { ...page, paperSize: "custom" as const, heightMm, heightPt: mmToPt(heightMm) };
+                  const nextPage = { ...page, paperSize: "custom" as const, heightMm, heightPt: ptFromMm(heightMm) };
                   setPage(nextPage);
                   setElements(fitLabelBorderToPage(elements, nextPage));
                 }}
@@ -1110,228 +1023,24 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
             style={{ width: widthPt * scale, height: heightPt * scale }}
             onPointerDown={onCanvasPointerDown}
           >
-            <p
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 top-0 z-10 text-center leading-none text-slate-500"
-              style={{ fontSize: LABEL_GENERATED_FROM_SIZE * scale, paddingTop: 3 * scale }}
-            >
-              {LABEL_GENERATED_FROM}
-            </p>
-            {labelBlocks.map((block) => {
-              const element = elements[block.id];
-              if (!element?.visible) return null;
-              const faded =
-                (block.id === "codAmount" && !codPreview) || (block.id === "prepaid" && codPreview);
-              if (faded) return null;
-              const left = element.x * scale;
-              const top = (heightPt - element.y - element.height) * scale;
-              const lines = blockPreviewLines(block.id, preview, element);
-              const isBorder = block.id === "labelBorder";
-              const stroke = Math.max(0.5, element.borderWidth ?? 1) * scale;
-              return (
-                <div
-                  key={block.id}
-                  role="button"
-                  tabIndex={0}
-                  className={cn(
-                    "absolute text-[11px] leading-tight",
-                    isBorder
-                      ? "pointer-events-none box-border"
-                      : cn(
-                          "overflow-hidden border",
-                          spaceHeld || panning ? "cursor-grab" : "cursor-grab active:cursor-grabbing"
-                        ),
-                    !isBorder && (selected === block.id ? "border-brand" : "border-transparent")
-                  )}
-                  style={{
-                    left,
-                    top,
-                    width: element.width * scale,
-                    height: element.height * scale,
-                    ...(isBorder
-                      ? {
-                          borderStyle: "solid",
-                          borderColor: "#111827",
-                          borderWidth: stroke,
-                          outline: selected === block.id ? "2px solid var(--brand)" : undefined,
-                          outlineOffset: 2,
-                        }
-                      : {}),
-                  }}
-                  onPointerDown={(event) => {
-                    if (block.id === "labelBorder") return;
-                    if (spaceHeldRef.current || event.button === 1) {
-                      startPan(event);
-                      return;
-                    }
-                    event.stopPropagation();
-                    setSelected(block.id);
-                    drag.current = {
-                      id: block.id,
-                      mode: "move",
-                      startX: event.clientX,
-                      startY: event.clientY,
-                      origin: element,
-                    };
-                    try {
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                    } catch {
-                      // The move still tracks the pointer when capture is unavailable.
-                    }
-                  }}
-                  onPointerMove={(event) => onPointerMove(block.id, event)}
-                  onPointerUp={() => {
-                    drag.current = null;
-                  }}
-                >
-                  {isBorder
-                    ? normalizeHLines(element.hLines, heightPt).map((line, index) => {
-                        if (!line.visible) return null;
-                        const inset = stroke;
-                        const gapPx = mmToPt(element.hLineGapMm ?? 0) * scale;
-                        const thickness = Math.max(0.25, element.hLineWidth ?? element.borderWidth ?? 1) * scale;
-                        const borderTopPx = (heightPt - element.y - element.height) * scale;
-                        return (
-                          <div
-                            key={`hline-${index}`}
-                            className="absolute bg-neutral-900"
-                            style={{
-                              left: gapPx - inset,
-                              right: gapPx - inset,
-                              top: mmToPt(line.yMm) * scale - borderTopPx - inset,
-                              height: thickness,
-                            }}
-                          />
-                        );
-                      })
-                    : null}
-                  {block.id === "indiaPostBarcode" ? (
-                    <div
-                      className="flex h-full flex-col justify-center px-1"
-                      style={{
-                        textAlign: element.align ?? "center",
-                        fontFamily: "Helvetica, Arial, sans-serif",
-                        alignItems: element.align === "left" ? "flex-start" : element.align === "right" ? "flex-end" : "center",
-                        fontWeight: element.fontWeight === "bold" ? 700 : 600,
-                        padding: (element.gap ?? 0) * scale,
-                      }}
-                    >
-                      {preview?.articleId && shipmentId ? (
-                        // The image is generated on the server from the shipment article number.
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          alt={preview.articleId}
-                          src={`/api/v1/label-template/barcode?shipmentId=${encodeURIComponent(shipmentId)}`}
-                          className="max-h-[70%] max-w-full object-contain"
-                        />
-                      ) : preview ? (
-                        <p className="font-semibold" style={{ fontSize: (element.fontSize ?? 10) * scale }}>
-                          {bookedBlockText("indiaPostBarcode", preview)}
-                        </p>
-                      ) : (
-                        <div className="w-full border border-dashed border-neutral-400 px-2 py-3 text-neutral-500">
-                          India Post barcode
-                        </div>
-                      )}
-                      {element.showArticleText !== false ? (
-                        <p className="mt-1 font-semibold" style={{ fontSize: (element.fontSize ?? 11) * scale }}>
-                          {preview ? preview.articleId : "Tracking number prints here"}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : block.id === "merchantLogo" ? (
-                    <div
-                      className="flex h-full w-full items-end justify-start overflow-hidden bg-white"
-                      style={{ padding: (element.gap ?? 0) * scale }}
-                    >
-                      {storeLogoUrl ? (
-                        // Same public organization logo as Settings → Organization.
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          alt="Organization logo"
-                          src={storeLogoUrl}
-                          className="max-h-full max-w-full object-contain object-left-bottom"
-                        />
-                      ) : preview ? null : (
-                        <p className="text-neutral-500">Store logo</p>
-                      )}
-                    </div>
-                  ) : block.id === "shipTo" || block.id === "fromAddress" ? (
-                    <AddressBlockPreview
-                      element={element}
-                      parts={
-                        block.id === "shipTo"
-                          ? (preview?.shipParts ?? SAMPLE_SHIP_PARTS)
-                          : (preview?.fromParts ?? SAMPLE_FROM_PARTS)
-                      }
-                      scale={scale}
-                      width={element.width * scale}
-                      heading={block.id === "fromAddress" ? "From/ Return Address" : "Ship To:"}
-                    />
-                  ) : block.id === "products" ? (
-                    <ProductTablePreview
-                      flags={element}
-                      items={preview ? preview.items : PRODUCT_SAMPLE_LINES}
-                      total={preview?.total}
-                      includeTotal={!elements.total?.visible}
-                      fontSize={(element.fontSize ?? 9) * scale}
-                      lineHeight={((element.fontSize ?? 9) + (element.lineGap ?? 2)) * scale}
-                      gap={(element.gap ?? 0) * scale}
-                      align={element.align ?? "left"}
-                      bold={element.fontWeight === "bold"}
-                    />
-                  ) : block.id === "labelBorder" ? null : (
-                    <div
-                      className="h-full w-full overflow-hidden"
-                      style={{
-                        textAlign: element.align ?? "left",
-                        fontFamily: "Helvetica, Arial, sans-serif",
-                        fontWeight: element.fontWeight ?? "normal",
-                        fontSize: (element.fontSize ?? 9) * scale,
-                        lineHeight: `${((element.fontSize ?? 9) + (element.lineGap ?? 2)) * scale}px`,
-                        padding: (element.gap ?? 0) * scale,
-                      }}
-                    >
-                      {lines.map((line, index) => (
-                        <p key={`${block.id}-${index}`} className="whitespace-normal break-words">
-                          {line}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                  {selected === block.id && block.id !== "labelBorder" ? (
-                    <button
-                      type="button"
-                      aria-label="Resize block"
-                      className="absolute bottom-0 right-0 size-3 cursor-se-resize bg-brand"
-                      onPointerDown={(event) => {
-                        if (spaceHeldRef.current || event.button === 1) {
-                          startPan(event);
-                          return;
-                        }
-                        event.stopPropagation();
-                        drag.current = {
-                          id: block.id,
-                          mode: "resize",
-                          startX: event.clientX,
-                          startY: event.clientY,
-                          origin: element,
-                        };
-                        try {
-                          event.currentTarget.setPointerCapture(event.pointerId);
-                        } catch {
-                          // Resize still follows the pointer when capture is unavailable.
-                        }
-                      }}
-                      onPointerMove={(event) => onPointerMove(block.id, event)}
-                      onPointerUp={() => {
-                        drag.current = null;
-                      }}
-                    />
-                  ) : null}
-                </div>
-              );
-            })}
+                        {layout ? (
+              <LabelLayoutPaint
+                layout={layout}
+                scale={scale}
+                selected={selected}
+                spaceHeld={spaceHeld}
+                panning={panning}
+                logoUrl={storeLogoUrl}
+                barcodeUrl={barcodeUrl}
+                onPointerDown={onBlockPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={() => {
+                  drag.current = null;
+                }}
+                onResizeStart={onResizeStart}
+              />
+            ) : null}
+
           </div>
           </div>
         </div>
@@ -1346,6 +1055,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
               onChange={(patch) => updateElement(selected, patch)}
               storeLogoUrl={storeLogoUrl}
               onRemove={selected !== "customText" && isCustomTextId(selected) ? () => removeCustomText(selected) : undefined}
+              warnings={layoutWarnings.filter((warning) => warning.ids.includes(selected)).map((warning) => warning.message)}
             />
           ) : (
             <p className="mt-4 text-sm text-muted">Select a block to edit it. Drag to move, and drag the corner to resize.</p>

@@ -1,3 +1,5 @@
+import { mmFromPt } from "@/modules/labels/layout/units";
+
 export const THERMAL_DPI = 203;
 
 export type LabelRasterPlan = {
@@ -22,8 +24,8 @@ export function labelRasterPlan(input: {
     throw new Error("The label page size is invalid.");
   }
   const scale = dpi / 72;
-  const widthMm = (input.widthPt * 25.4) / 72;
-  const heightMm = (input.heightPt * 25.4) / 72;
+  const widthMm = mmFromPt(input.widthPt);
+  const heightMm = mmFromPt(input.heightPt);
   if (widthMm - input.maxWidthMm > 0.5) {
     throw new Error("This label is wider than the printer can print. It was not resized.");
   }

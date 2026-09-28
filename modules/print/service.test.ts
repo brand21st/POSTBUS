@@ -313,6 +313,8 @@ describe("print jobs", () => {
     });
     expect(claimed?.paperSize).toBe("A4");
     expect(claimed?.orientation).toBe("landscape");
+    expect(claimed?.widthMm).toBeCloseTo(297, 1);
+    expect(claimed?.heightMm).toBeCloseTo(210, 1);
   });
 
   it("keeps official and packing jobs portrait when a landscape snapshot is stored", async () => {

@@ -50,11 +50,13 @@ describe("packing label template", () => {
     }
   });
 
-  it("puts logo, products, and price in the extra band on A5", () => {
+  it("puts products and price in the extra band and the logo in the top-left corner on A5", () => {
     const template = applyPaperSize(defaultLabelTemplate("A6"), "A5");
     const extra = officialDrawRect(template.page.widthPt, template.page.heightPt).y;
     expect(extra).toBeGreaterThan(80);
-    expect(template.elements.merchantLogo.y + template.elements.merchantLogo.height).toBeLessThanOrEqual(extra + 0.5);
+    const logo = template.elements.merchantLogo;
+    expect(logo.x).toBeLessThanOrEqual(8);
+    expect(template.page.heightPt - (logo.y + logo.height)).toBeLessThanOrEqual(8);
     expect(template.elements.products.y + template.elements.products.height).toBeLessThanOrEqual(extra + 0.5);
     expect(template.elements.total.y + template.elements.total.height).toBeLessThanOrEqual(extra + 0.5);
   });

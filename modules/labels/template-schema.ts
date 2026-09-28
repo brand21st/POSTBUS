@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { addressContentHeight, defaultAddressLayout, type AddressParts } from "@/modules/labels/address-layout";
 import { clampRect } from "@/modules/labels/collision";
+import { mmFromPt, ptFromMm } from "@/modules/labels/layout/units";
 import { PAGE_PRESETS, officialDrawRect, pagePreset, type PagePreset, type PaperSizeId } from "@/modules/labels/page-presets";
 
 export const MERCHANT_ELEMENT_IDS = [
@@ -156,11 +157,11 @@ export type TemplateElement = z.infer<typeof elementSchema>;
 export type NamedLabelTemplate = z.infer<typeof namedTemplateSchema>;
 
 function mmToPt(mm: number) {
-  return (mm * 72) / 25.4;
+  return ptFromMm(mm);
 }
 
 function ptToMm(pt: number) {
-  return (pt * 25.4) / 72;
+  return mmFromPt(pt);
 }
 
 export function elementBoxMm(element: Pick<TemplateElement, "x" | "y" | "width" | "height">, pageHeightPt: number) {
@@ -276,6 +277,20 @@ export function elementBoxFromMm(
   return clampRect({ x, y: page.heightPt - yFromTop - height, width, height }, page.widthPt, page.heightPt);
 }
 
+function barcodeTopRight(page: LabelTemplate["page"]): TemplateElement {
+  const inset = 8;
+  const width = ptFromMm(48.3);
+  const height = ptFromMm(23.7);
+  return hiddenBlock(page, {
+    x: Math.max(0, page.widthPt - inset - width),
+    y: Math.max(0, page.heightPt - inset - height),
+    width: Math.min(width, Math.max(16, page.widthPt - inset)),
+    height,
+    align: "right",
+    showArticleText: true,
+  });
+}
+
 function hiddenBlock(
   page: LabelTemplate["page"],
   rect?: Partial<TemplateElement>
@@ -338,7 +353,8 @@ function withIndependentBlocks(
   const next = { ...elements };
   for (const id of INDEPENDENT_BLOCK_IDS) {
     if (next[id]) continue;
-    if (id === "serviceContractId") next[id] = serviceContractPlacement(next, page);
+    if (id === "indiaPostBarcode") next[id] = barcodeTopRight(page);
+    else if (id === "serviceContractId") next[id] = serviceContractPlacement(next, page);
     else if (id === "customerId") {
       next[id] = {
         ...hiddenBlock(page, { fontSize: 11, fontWeight: "bold" }),
@@ -408,6 +424,21 @@ const DEFAULT_VISIBLE: MerchantElementId[] = [
   "total",
 ];
 
+function pinLogoTopLeft(page: { widthPt: number; heightPt: number }, elements: LabelTemplate["elements"]) {
+  const logo = elements.merchantLogo;
+  if (!logo) return;
+  const inset = 8;
+  const width = 90;
+  const height = 36;
+  Object.assign(logo, {
+    x: inset,
+    y: Math.max(0, page.heightPt - inset - height),
+    width: Math.min(width, Math.max(16, page.widthPt - inset * 2)),
+    height,
+    visible: true,
+  });
+}
+
 function placeOverlayFields(page: PagePreset, elements: LabelTemplate["elements"]) {
   const official = officialDrawRect(page.widthPt, page.heightPt);
   const extra = official.y;
@@ -434,15 +465,15 @@ function placeOverlayFields(page: PagePreset, elements: LabelTemplate["elements"
       });
       y -= 8;
     };
-    put("merchantLogo", 40, { width: 96, height: 40 });
     put("orderNumber", 16);
     const productHeight = Math.min(96, Math.max(36, y - 32));
     put("products", productHeight);
     put("total", 16);
+    pinLogoTopLeft(page, elements);
     return elements;
   }
 
-  Object.assign(elements.merchantLogo, { x: 14, y: 268, width: 40, height: 16, visible: true });
+  pinLogoTopLeft(page, elements);
   Object.assign(elements.orderNumber, {
     x: 58,
     y: 270,
@@ -561,7 +592,7 @@ const INDIA_POST_A6_MM = {
   widthMm: 105,
   heightMm: 148,
   merchantLogo: { xMm: 1.8, yMm: 4.2, widthMm: 26.1, heightMm: 8.7 },
-  indiaPostBarcode: { xMm: 55.4, yMm: 3.1, widthMm: 48.3, heightMm: 23.7 },
+  indiaPostBarcode: { xMm: 105 - mmFromPt(8) - 48.3, yMm: mmFromPt(8), widthMm: 48.3, heightMm: 23.7 },
   customerId: { xMm: 1.3, yMm: 24.1, widthMm: 48.3, heightMm: 11.8 },
   articleType: { xMm: 64, yMm: 25, widthMm: 38.1, heightMm: 10.4 },
   orderIdDate: { xMm: 1.6, yMm: 31.1, widthMm: 25.3, heightMm: 4.2 },

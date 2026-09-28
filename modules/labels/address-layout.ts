@@ -1,6 +1,8 @@
-export function mmToPt(mm: number) {
-  return (mm * 72) / 25.4;
-}
+import { measureHelvetica } from "@/modules/labels/layout/measure";
+import { lineStep, wrapRuns } from "@/modules/labels/layout/text";
+import { ptFromMm } from "@/modules/labels/layout/units";
+
+export { ptFromMm as mmToPt } from "@/modules/labels/layout/units";
 
 export const ADDRESS_FIELD_IDS = [
   "name",
@@ -303,11 +305,11 @@ export function addressContentHeight(
 ) {
   const composed = composeAddressLines(element.addressLayout, parts, headingText);
   const gap = element.gap ?? 0;
-  const inner = Math.max(8, element.width - gap * 2);
+  const inner = Math.max(0, element.width - gap * 2);
   const size = element.fontSize ?? 9;
-  const measure = (text: string, run: Pick<AddressRun, "bold" | "italic">) => helveticaTextWidth(text, size, run.bold);
-  const headingLines = composed.heading ? wrapAddressRuns([composed.heading], inner, measure) : [];
-  const body = composed.lines.flatMap((line) => wrapAddressRuns(line, inner, measure));
-  const lineGap = mmToPt(composed.layout.lineGapMm);
-  return gap * 2 + (headingLines.length + body.length) * (size + lineGap);
+  const measure = (text: string, run: Pick<AddressRun, "bold" | "italic">) =>
+    measureHelvetica(text, size, run.bold ? "bold" : "normal", run.italic);
+  const headingLines = composed.heading ? wrapRuns([composed.heading], inner, measure) : [];
+  const body = composed.lines.flatMap((line) => wrapRuns(line, inner, measure));
+  return gap * 2 + (headingLines.length + body.length) * lineStep(size, ptFromMm(composed.layout.lineGapMm));
 }

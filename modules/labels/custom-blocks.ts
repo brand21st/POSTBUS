@@ -1,5 +1,8 @@
+import { MERCHANT_ELEMENT_IDS } from "@/modules/labels/template-schema";
 import { clampRect } from "@/modules/labels/collision";
-import { addressLineTexts, helveticaTextWidth, SAMPLE_SHIP_PARTS, wrapAddressRuns, type AddressParts } from "@/modules/labels/address-layout";
+import { measureHelvetica } from "@/modules/labels/layout/measure";
+import { wrapText } from "@/modules/labels/layout/text";
+import { addressLineTexts, SAMPLE_SHIP_PARTS, type AddressParts } from "@/modules/labels/address-layout";
 
 export const LABEL_GENERATED_FROM = "Label Generated From www.postbus.in";
 export const LABEL_GENERATED_FROM_SIZE = 6;
@@ -63,8 +66,38 @@ export function editorLabelBlocks(elements: Record<string, unknown>): CustomLabe
   const extras = customTextIds(elements)
     .filter((id) => id !== "customText")
     .map((id) => ({ id, label: customTextLabel(id), group: "Content" as const }));
-  return [...CUSTOM_LABEL_BLOCKS, ...extras];
+  const shown = new Set([...CUSTOM_LABEL_BLOCKS.map((block) => block.id), ...extras.map((block) => block.id)]);
+  const legacy = MERCHANT_ELEMENT_IDS.filter((id) => {
+    if (shown.has(id)) return false;
+    const element = elements[id] as { visible?: boolean } | undefined;
+    return Boolean(element?.visible);
+  }).map((id) => ({ id, label: LEGACY_BLOCK_LABELS[id] ?? id, group: "Content" as const }));
+  return [...CUSTOM_LABEL_BLOCKS, ...extras, ...legacy];
 }
+
+const LEGACY_BLOCK_LABELS: Record<string, string> = {
+  receiverName: "Receiver name",
+  receiverAddress: "Receiver address",
+  receiverPhone: "Receiver phone",
+  senderName: "Sender name",
+  senderAddress: "Sender address",
+  senderPhone: "Sender phone",
+  storeName: "Store name",
+  storePhone: "Store phone",
+  storeWebsite: "Store website",
+  orderNumber: "Order number",
+  shopifyOrderNumber: "Shopify order number",
+  subtotal: "Subtotal",
+  shipping: "Shipping",
+  discount: "Discount",
+  total: "Total",
+  paymentMethod: "Payment method",
+  customerNote: "Customer note",
+  promotionalMessage: "Promotional message",
+  returnAddress: "Return address",
+  returnPolicy: "Return policy",
+  customerSupport: "Customer support",
+};
 
 export function createCustomTextElement(page: { widthPt: number; heightPt: number }, index: number) {
   const height = 28;
@@ -90,9 +123,9 @@ export function customTextBlockHeight(
   const size = element.fontSize ?? 9;
   const lineHeight = size + (element.lineGap ?? 2);
   const bold = element.fontWeight === "bold";
-  const source = text.trim() ? text.split("\n") : ["Custom text"];
-  const lines = source.flatMap((line) => wrapPlainText(line || " ", inner, size, bold));
-  return gap * 2 + Math.max(1, lines.length) * lineHeight;
+  const source = text.trim() ? text.split("\n") : [];
+  const lines = source.flatMap((line) => wrapText(line || " ", inner, (value) => measureHelvetica(value, size, bold ? "bold" : "normal")));
+  return gap * 2 + Math.max(source.length ? 1 : 0, lines.length) * lineHeight;
 }
 
 export type CustomLabelPreview = {
@@ -195,10 +228,9 @@ export const PRODUCT_COLUMN_FLEX: Record<ProductColumnId, number> = {
 };
 
 export function wrapProductCell(text: string, maxWidth: number, fontSize: number, bold = false) {
-  const lines = wrapAddressRuns([{ text, bold, italic: false }], Math.max(4, maxWidth), (value, run) =>
-    helveticaTextWidth(value, fontSize, run.bold)
+  return wrapText(text, Math.max(0, maxWidth), (value) => measureHelvetica(value, fontSize, bold ? "bold" : "normal")).filter(
+    (line) => line.length > 0
   );
-  return lines.map((runs) => runs.map((run) => run.text).join("")).filter((line) => line.length > 0);
 }
 
 export function productColumnWidths(columns: Array<{ id: ProductColumnId }>, innerWidth: number) {
@@ -233,7 +265,7 @@ export function productTableHeight(
   const rowHeight = (cells: string[], bold = false) => {
     const lines = Math.max(
       1,
-      ...cells.map((cell, index) => wrapProductCell(cell, Math.max(4, (widths[index] ?? inner) - 6), size, bold).length)
+      ...cells.map((cell, index) => wrapProductCell(cell, Math.max(0, (widths[index] ?? inner) - 6), size, bold).length)
     );
     return lines * lineHeight + pad;
   };
@@ -424,9 +456,7 @@ export function codAmountLines(amount: number) {
 }
 
 export function wrapPlainText(text: string, maxWidth: number, fontSize: number, bold = false) {
-  return wrapAddressRuns([{ text, bold, italic: false }], Math.max(4, maxWidth), (value, run) =>
-    helveticaTextWidth(value, fontSize, run.bold)
-  ).map((runs) => runs.map((run) => run.text).join(""));
+  return wrapText(text, Math.max(0, maxWidth), (value) => measureHelvetica(value, fontSize, bold ? "bold" : "normal"));
 }
 
 export function codBlockHeight(
@@ -438,7 +468,7 @@ export function codBlockHeight(
   const size = element.fontSize ?? 10;
   const lineHeight = size + (element.lineGap ?? 2);
   const bold = element.fontWeight === "bold";
-  const lines = codAmountLines(amount).flatMap((line) => wrapPlainText(line, Math.max(8, inner * 0.9), size, bold));
+  const lines = codAmountLines(amount).flatMap((line) => wrapPlainText(line, inner, size, bold));
   return gap * 2 + Math.max(1, lines.length) * lineHeight + lineHeight;
 }
 

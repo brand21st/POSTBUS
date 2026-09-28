@@ -1,3 +1,5 @@
+import { mmFromPt, ptFromMm } from "@/modules/labels/layout/units";
+
 export const PAPER_SIZE_IDS = ["A6", "4x6", "A5", "A4"] as const;
 
 export type PaperSizeId = (typeof PAPER_SIZE_IDS)[number];
@@ -11,15 +13,11 @@ export type PagePreset = {
   heightPt: number;
 };
 
-function mmToPt(mm: number) {
-  return (mm * 72) / 25.4;
-}
-
 export const PAGE_PRESETS: PagePreset[] = [
-  { id: "A6", label: "A6 (105 × 148 mm)", widthMm: 105, heightMm: 148, widthPt: mmToPt(105), heightPt: mmToPt(148) },
-  { id: "4x6", label: "4 × 6 in (102 × 152 mm)", widthMm: 102, heightMm: 152, widthPt: mmToPt(102), heightPt: mmToPt(152) },
-  { id: "A5", label: "A5 (148 × 210 mm)", widthMm: 148, heightMm: 210, widthPt: mmToPt(148), heightPt: mmToPt(210) },
-  { id: "A4", label: "A4 (210 × 297 mm)", widthMm: 210, heightMm: 297, widthPt: mmToPt(210), heightPt: mmToPt(297) },
+  { id: "A6", label: "A6 (105 × 148 mm)", widthMm: 105, heightMm: 148, widthPt: ptFromMm(105), heightPt: ptFromMm(148) },
+  { id: "4x6", label: "4 × 6 in (102 × 152 mm)", widthMm: 102, heightMm: 152, widthPt: ptFromMm(102), heightPt: ptFromMm(152) },
+  { id: "A5", label: "A5 (148 × 210 mm)", widthMm: 148, heightMm: 210, widthPt: ptFromMm(148), heightPt: ptFromMm(210) },
+  { id: "A4", label: "A4 (210 × 297 mm)", widthMm: 210, heightMm: 297, widthPt: ptFromMm(210), heightPt: ptFromMm(297) },
 ];
 
 export function isPaperSizeId(value: string | null | undefined): value is PaperSizeId {
@@ -34,8 +32,8 @@ export function sizeChoiceForPage(page: {
   widthMm?: number;
   heightMm?: number;
 }): SizeChoice {
-  const widthMm = page.widthMm ?? (page.widthPt * 25.4) / 72;
-  const heightMm = page.heightMm ?? (page.heightPt * 25.4) / 72;
+  const widthMm = page.widthMm ?? mmFromPt(page.widthPt);
+  const heightMm = page.heightMm ?? mmFromPt(page.heightPt);
   const match = PAGE_PRESETS.find(
     (preset) => Math.abs(preset.widthMm - widthMm) < 1 && Math.abs(preset.heightMm - heightMm) < 1
   );
@@ -74,8 +72,8 @@ export function printMediaForPage(page: {
   widthMm?: number;
   heightMm?: number;
 }) {
-  const widthMm = page.widthMm ?? (page.widthPt * 25.4) / 72;
-  const heightMm = page.heightMm ?? (page.heightPt * 25.4) / 72;
+  const widthMm = page.widthMm ?? mmFromPt(page.widthPt);
+  const heightMm = page.heightMm ?? mmFromPt(page.heightPt);
   const portrait = PAGE_PRESETS.find(
     (preset) => Math.abs(preset.widthMm - widthMm) < 1 && Math.abs(preset.heightMm - heightMm) < 1
   );

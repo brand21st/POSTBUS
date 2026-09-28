@@ -282,6 +282,12 @@ body {
   border: 1px solid var(--border);
 }
 
+.label-layout-text {
+  font-family: Helvetica, "Nimbus Sans", "TeX Gyre Heros", Arial, sans-serif;
+  font-kerning: none;
+  font-synthesis: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

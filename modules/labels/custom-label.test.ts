@@ -256,7 +256,7 @@ describe("india post barcode block", () => {
     expect(sizeChoiceForPage(defaultLabelTemplate("A4").page)).toBe("A4");
     const boxes = {
       merchantLogo: { xMm: 1.8, yMm: 4.2, widthMm: 26.1, heightMm: 8.7 },
-      indiaPostBarcode: { xMm: 55.4, yMm: 3.1, widthMm: 48.3, heightMm: 23.7 },
+      indiaPostBarcode: { xMm: 105 - (8 * 25.4) / 72 - 48.3, yMm: (8 * 25.4) / 72, widthMm: 48.3, heightMm: 23.7 },
       customerId: { xMm: 1.3, yMm: 24.1, widthMm: 48.3, heightMm: 11.8 },
       articleType: { xMm: 64, yMm: 25, widthMm: 38.1, heightMm: 10.4 },
       orderIdDate: { xMm: 1.6, yMm: 31.1, widthMm: 25.3, heightMm: 4.2 },

@@ -4,6 +4,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logInfo } from "@/lib/logger";
 import { hashSecret, randomToken, safeEqual } from "@/lib/security/crypto";
 import { isPaperSizeId, agentPaperSize, printMediaForPage } from "@/modules/labels/page-presets";
+import { mmFromPt } from "@/modules/labels/layout/units";
 import { paperSizeForLabelKind } from "@/modules/labels/print-targets";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { getDefaultWebusbPrinter, type PrintDelivery } from "@/modules/print/printers";
@@ -567,6 +568,8 @@ export async function claimNextPrintJob(supabase: SupabaseClient, agent: PrintAg
       paperSize: customPage?.paperSize || agentPaperSize(claimed.paper_size || settings.paperSize),
       orientation: customPage?.orientation || "portrait",
       copies: Number(claimed.copies) || settings.copies,
+      widthMm: customPage ? mmFromPt(Number(page?.widthPt)) : undefined,
+      heightMm: customPage ? mmFromPt(Number(page?.heightPt)) : undefined,
     };
   }
   return null;
