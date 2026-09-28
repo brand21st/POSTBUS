@@ -469,6 +469,31 @@ export type PrintStation = {
   last_seen_at?: string | null;
   offlineMessage?: string | null;
   offline_message?: string | null;
+  defaultDelivery?: "webusb" | "agent";
+  default_delivery?: "webusb" | "agent";
+};
+
+export type SavedPrinter = {
+  id: string;
+  displayName: string;
+  display_name?: string;
+  connectionType?: "webusb" | "agent";
+  connection_type?: "webusb" | "agent";
+  deviceKey: string;
+  device_key?: string;
+  protocol?: "tspl" | "zpl" | "escpos" | "unknown";
+  isDefault?: boolean;
+  is_default?: boolean;
+  lastSeenAt?: string | null;
+  last_seen_at?: string | null;
+};
+
+export type PrintingConfiguration = {
+  printers: SavedPrinter[];
+  autoLabelPrinting?: boolean;
+  auto_label_printing?: boolean;
+  labelSizeLabel?: string;
+  label_size_label?: string;
 };
 
 export type PrintJobRecord = {

@@ -52,6 +52,7 @@ export function usePrintStation() {
           () => {
             void queryClient.invalidateQueries({ queryKey: PRINT_STATION_QUERY_KEY });
             void queryClient.invalidateQueries({ queryKey: ["labels"] });
+            void queryClient.invalidateQueries({ queryKey: ["webusb-print-jobs"] });
           }
         )
         .subscribe();

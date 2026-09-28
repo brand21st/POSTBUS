@@ -52,3 +52,32 @@ export const createWebhookEndpointSchema = z.object({
   url: z.string().trim().url(),
   events: z.array(z.string().min(1)).optional(),
 });
+
+export const registerPrinterSchema = z.object({
+  displayName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .transform((value) => value.replace(/[\u0000-\u001f]/g, ""))
+    .refine((value) => value.trim().length > 0, { message: "Enter a printer name." }),
+  deviceKey: z
+    .string()
+    .trim()
+    .regex(/^[a-f0-9]{64}$/i, "Invalid printer.")
+    .transform((value) => value.toLowerCase()),
+  protocol: z.literal("tspl"),
+});
+
+export const printerPresenceSchema = z.object({
+  state: z.enum(["connected", "disconnected"]),
+});
+
+export const printerEventSchema = z.object({
+  event: z.enum(["test_requested", "test_succeeded", "test_failed"]),
+});
+
+export const completeWebusbJobSchema = z.object({
+  status: z.enum(["PRINTED", "FAILED", "PENDING"]),
+  errorMessage: z.string().trim().max(200).optional(),
+});

@@ -1,10 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { logInfo } from "@/lib/logger";
 import { hashSecret, randomToken, safeEqual } from "@/lib/security/crypto";
 import { isPaperSizeId, agentPaperSize, printMediaForPage } from "@/modules/labels/page-presets";
 import { paperSizeForLabelKind } from "@/modules/labels/print-targets";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
+import { getDefaultWebusbPrinter, type PrintDelivery } from "@/modules/print/printers";
 
 export const PRINT_AGENT_ONLINE_MS = 30_000;
 export const PRINTING_STALE_MS = 120_000;
@@ -51,6 +53,7 @@ export type PrintJobRow = {
   created_at: string;
   paper_size?: string | null;
   copies?: number | null;
+  delivery?: string | null;
 };
 
 export type PrintStation = {
@@ -65,6 +68,7 @@ export type PrintStation = {
   tokenPrefix: string | null;
   lastSeenAt: string | null;
   offlineMessage: string | null;
+  defaultDelivery: "webusb" | "agent";
 };
 
 export type PrintAgentContext = {
@@ -75,6 +79,20 @@ export type PrintAgentContext = {
 function asPrinterList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function jobDelivery(job: { delivery?: string | null }): PrintDelivery {
+  return job.delivery === "webusb" ? "webusb" : "agent";
+}
+
+async function printTarget(
+  supabase: SupabaseClient,
+  organizationId: string,
+  selectedPrinterName: string | null
+): Promise<{ delivery: PrintDelivery; printerName: string | null }> {
+  const usb = await getDefaultWebusbPrinter(supabase, organizationId);
+  if (usb) return { delivery: "webusb", printerName: usb.displayName };
+  return { delivery: "agent", printerName: selectedPrinterName };
 }
 
 function uniqueViolation(error: { code?: string; message?: string } | null) {
@@ -240,6 +258,7 @@ export async function getPrintStation(
     .eq("organization_id", organizationId)
     .maybeSingle();
 
+  const usbDefault = await getDefaultWebusbPrinter(supabase, organizationId);
   const printerNames = asPrinterList(agent?.printers);
   const connected = isPrintAgentOnline(agent?.last_seen_at) && printerNames.length > 0;
   const selected = settings.selectedPrinterName;
@@ -267,7 +286,10 @@ export async function getPrintStation(
     agentName: agent?.name ?? null,
     tokenPrefix: agent?.token_prefix ?? null,
     lastSeenAt: agent?.last_seen_at ?? null,
-    offlineMessage,
+    offlineMessage: usbDefault
+      ? "Direct USB printing is the default. Manage it in Settings → Printing."
+      : offlineMessage,
+    defaultDelivery: usbDefault ? "webusb" : "agent",
   };
 }
 
@@ -400,15 +422,17 @@ export async function enqueueAutoPrintJob(
   if (existing) return existing as PrintJobRow;
 
   const settings = await getPrintSettings(supabase, input.organizationId);
+  const target = await printTarget(supabase, input.organizationId, settings.selectedPrinterName);
   const insert = {
     organization_id: input.organizationId,
     shipment_id: input.shipmentId,
     label_id: input.labelId,
-    printer_name: settings.selectedPrinterName,
+    printer_name: target.printerName,
     source: "AUTO" as const,
     status: "PENDING" as const,
     paper_size: input.paperSize || settings.paperSize,
     copies: input.copies || settings.copies,
+    delivery: target.delivery,
   };
   const { data, error } = await supabase.from("print_jobs").insert(insert).select("*").single();
   if (data) return data as PrintJobRow;
@@ -444,6 +468,7 @@ export async function enqueueManualPrintJob(
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "The label PDF is not ready to print yet.");
   }
   const settings = await getPrintSettings(supabase, ctx.organizationId);
+  const target = await printTarget(supabase, ctx.organizationId, settings.selectedPrinterName);
   const paperSize = options?.paperSize || paperSizeForLabelKind(label.kind);
   if (paperSize && !isPaperSizeId(paperSize)) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, 4x6, A5, or A4.");
@@ -455,11 +480,12 @@ export async function enqueueManualPrintJob(
       organization_id: ctx.organizationId,
       shipment_id: label.shipment_id,
       label_id: label.id,
-      printer_name: settings.selectedPrinterName,
+      printer_name: target.printerName,
       source: "MANUAL",
       status: "PENDING",
       paper_size: paperSize,
       copies,
+      delivery: target.delivery,
     })
     .select("*")
     .single();
@@ -495,6 +521,7 @@ export async function claimNextPrintJob(supabase: SupabaseClient, agent: PrintAg
   }
 
   for (const job of (jobs ?? []) as PrintJobRow[]) {
+    if (jobDelivery(job) === "webusb") continue;
     const printerName =
       job.printer_name && printers.includes(job.printer_name) ? job.printer_name : targetPrinter;
     if (!printerName || !printers.includes(printerName)) continue;
@@ -549,7 +576,8 @@ export async function completePrintJob(
   supabase: SupabaseClient,
   agent: PrintAgentContext,
   jobId: string,
-  result: { status: "PRINTED" | "FAILED" | "PENDING"; errorMessage?: string | null }
+  result: { status: "PRINTED" | "FAILED" | "PENDING"; errorMessage?: string | null },
+  options?: { delivery?: PrintDelivery }
 ) {
   const { data: job } = await supabase
     .from("print_jobs")
@@ -559,6 +587,15 @@ export async function completePrintJob(
     .maybeSingle();
   if (!job) {
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Print job not found.");
+  }
+  const expectedDelivery = options?.delivery ?? "agent";
+  if (jobDelivery(job as PrintJobRow) !== expectedDelivery) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      expectedDelivery === "webusb"
+        ? "This label is queued for the print agent."
+        : "This label is queued for direct USB printing."
+    );
   }
   if (job.status === "PRINTED") return mapPrintJob(job as PrintJobRow);
   if (job.status !== "PRINTING" && job.status !== "PENDING") {
@@ -608,7 +645,8 @@ export async function completePrintJob(
 export async function loadPrintJobPdf(
   supabase: SupabaseClient,
   agent: PrintAgentContext,
-  jobId: string
+  jobId: string,
+  options?: { delivery?: PrintDelivery }
 ): Promise<{ bytes: Buffer; filename: string; job: PrintJobRow }> {
   const { data: job } = await supabase
     .from("print_jobs")
@@ -620,6 +658,10 @@ export async function loadPrintJobPdf(
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Print job not found.");
   }
   if (job.organization_id !== agent.organizationId) {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "You do not have access to this label.");
+  }
+  const expectedDelivery = options?.delivery ?? "agent";
+  if (jobDelivery(job as PrintJobRow) !== expectedDelivery) {
     throw new AppError(ERROR_CODES.FORBIDDEN, "You do not have access to this label.");
   }
 
@@ -660,6 +702,98 @@ export async function loadPrintJobPdf(
       .eq("organization_id", agent.organizationId);
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "The label PDF is not available to print.");
   }
+}
+
+export async function listPendingWebusbJobs(supabase: SupabaseClient, organizationId: string) {
+  const { data, error } = await supabase
+    .from("print_jobs")
+    .select("id, status, source, printer_name, created_at, delivery, copies")
+    .eq("organization_id", organizationId)
+    .eq("status", "PENDING")
+    .eq("delivery", "webusb")
+    .order("created_at", { ascending: true })
+    .limit(5);
+  if (error) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Could not load print jobs.");
+  }
+  return ((data ?? []) as PrintJobRow[]).map((row) => ({
+    id: row.id,
+    status: row.status,
+    source: row.source,
+    printerName: row.printer_name,
+    createdAt: row.created_at,
+    copies: Number(row.copies) || 1,
+  }));
+}
+
+export async function claimWebusbPrintJob(supabase: SupabaseClient, ctx: TenantContext, jobId: string) {
+  const { data: job, error } = await supabase
+    .from("print_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (error) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Could not load the print job.");
+  }
+  if (!job) {
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Print job not found.");
+  }
+  if (jobDelivery(job as PrintJobRow) !== "webusb") {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This label is queued for the print agent.");
+  }
+  if (job.status !== "PENDING") {
+    throw new AppError(ERROR_CODES.CONFLICT, "This label is already printing.");
+  }
+
+  const { data: claimed } = await supabase
+    .from("print_jobs")
+    .update({
+      status: "PRINTING",
+      claimed_at: new Date().toISOString(),
+      error_message: null,
+    })
+    .eq("id", jobId)
+    .eq("organization_id", ctx.organizationId)
+    .eq("status", "PENDING")
+    .select("*")
+    .maybeSingle();
+  if (!claimed) {
+    throw new AppError(ERROR_CODES.CONFLICT, "This label is already printing.");
+  }
+
+  logInfo("print.requested", { organizationId: ctx.organizationId, jobId });
+  const loaded = await loadPrintJobPdf(
+    supabase,
+    { agentId: "webusb", organizationId: ctx.organizationId },
+    jobId,
+    { delivery: "webusb" }
+  );
+  return {
+    job: mapPrintJob(claimed as PrintJobRow),
+    copies: Number(claimed.copies) || 1,
+    pdfBase64: loaded.bytes.toString("base64"),
+    filename: loaded.filename,
+  };
+}
+
+export async function completeWebusbPrintJob(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  jobId: string,
+  result: { status: "PRINTED" | "FAILED" | "PENDING"; errorMessage?: string | null }
+) {
+  const job = await completePrintJob(
+    supabase,
+    { agentId: "webusb", organizationId: ctx.organizationId },
+    jobId,
+    result,
+    { delivery: "webusb" }
+  );
+  const event =
+    result.status === "PRINTED" ? "print.succeeded" : result.status === "FAILED" ? "print.failed" : "print.requested";
+  logInfo(event, { organizationId: ctx.organizationId, jobId, delivery: "webusb" });
+  return job;
 }
 
 export function latestPrintJob(jobs: { created_at?: string; createdAt?: string }[] | null | undefined) {

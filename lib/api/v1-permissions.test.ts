@@ -58,6 +58,24 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("GET", "automation", ["automation"])).toBeUndefined();
     expect(permissionForTenantRoute("GET", "print-station", ["print-station"])).toBeUndefined();
     expect(permissionForTenantRoute("PATCH", "print-station", ["print-station"])).toBe("automation.manage");
+    expect(permissionForTenantRoute("GET", "printers", ["printers"])).toBeUndefined();
+    expect(permissionForTenantRoute("POST", "printers", ["printers"])).toBe("automation.manage");
+    expect(permissionForTenantRoute("PATCH", "printers/printer-1", ["printers", "printer-1"])).toBe(
+      "automation.manage"
+    );
+    expect(permissionForTenantRoute("DELETE", "printers/printer-1", ["printers", "printer-1"])).toBe(
+      "automation.manage"
+    );
+    expect(permissionForTenantRoute("POST", "printers/printer-1/presence", ["printers", "printer-1", "presence"])).toBe(
+      "labels.write"
+    );
+    expect(permissionForTenantRoute("GET", "print-jobs", ["print-jobs"])).toBe("labels.read");
+    expect(permissionForTenantRoute("POST", "print-jobs/job-1/claim", ["print-jobs", "job-1", "claim"])).toBe(
+      "labels.write"
+    );
+    expect(permissionForTenantRoute("POST", "print-jobs/job-1/complete", ["print-jobs", "job-1", "complete"])).toBe(
+      "labels.write"
+    );
     expect(permissionForTenantRoute("POST", "labels/abc/print", ["labels", "abc", "print"])).toBe(
       "labels.write"
     );

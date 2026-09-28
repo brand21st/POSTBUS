@@ -17,6 +17,10 @@ const SECRET_KEYS = [
   "credential",
   "webhook_secret",
   "razorpay",
+  "device_key",
+  "devicekey",
+  "serial_number",
+  "serialnumber",
 ];
 
 export function redact(value: unknown): unknown {

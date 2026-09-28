@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
 import { toast } from "sonner";
@@ -45,6 +46,7 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
     stationField(station, "autoPrintMerchant", "auto_print_merchant") ?? true
   );
   const offlineMessage = String(stationField(station, "offlineMessage", "offline_message") ?? "");
+  const usbDefault = stationField(station, "defaultDelivery", "default_delivery") === "webusb";
   const [token, setToken] = useState<string | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
 
@@ -74,8 +76,19 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
   return (
     <>
       <CardContent className="space-y-4 pt-0 text-sm">
+        <p className="text-xs text-muted">
+          USB label printers are connected in{" "}
+          <Link href="/dashboard/settings?tab=printing" className="font-medium text-foreground underline">
+            Settings → Printing
+          </Link>
+          .
+        </p>
         {enabled ? (
-          connected && selected ? (
+          usbDefault ? (
+            <p className="text-xs text-muted">
+              Direct USB printing is the default. A connected browser prints new labels on that printer.
+            </p>
+          ) : connected && selected ? (
             <div className="space-y-1">
               <p>
                 Printer: <span className="font-medium text-foreground">{selected}</span>

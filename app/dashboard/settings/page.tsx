@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { PrintingSettings } from "@/components/dashboard/printing-settings";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,19 +27,28 @@ import { MEMBER_ROLES, type MemberRole } from "@/types/domain";
 import type { InviteRecord, MemberRecord, OrganizationSettings } from "@/types/api";
 
 export default function SettingsPage() {
+  const [tab, setTab] = useState("organization");
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "printing") {
+      setTab("printing");
+    }
+  }, []);
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Organization, access, security, and notification preferences."
+        description="Organization, access, security, notifications, and printing."
       />
-      <Tabs defaultValue="organization" className="space-y-6">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
         <TabsList className="flex h-auto w-full flex-wrap justify-start">
           <TabsTrigger value="organization">Organization</TabsTrigger>
           <TabsTrigger value="members">Members</TabsTrigger>
           <TabsTrigger value="roles">Roles</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          <TabsTrigger value="printing">Printing</TabsTrigger>
         </TabsList>
         <TabsContent value="organization">
           <OrganizationSection />
@@ -54,6 +64,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="notifications">
           <NotificationsSection />
+        </TabsContent>
+        <TabsContent value="printing">
+          <PrintingSettings />
         </TabsContent>
       </Tabs>
     </div>

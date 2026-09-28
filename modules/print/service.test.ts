@@ -219,6 +219,7 @@ describe("print jobs", () => {
     });
     expect(job.source).toBe("AUTO");
     expect(job.status).toBe("PENDING");
+    expect(job.delivery).toBe("agent");
     expect(state.jobs).toHaveLength(1);
   });
 
@@ -441,11 +442,85 @@ describe("print jobs", () => {
     ).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
   });
 
+  it("does not claim a direct USB job", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "usb-job",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Xprinter",
+          source: "AUTO",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          delivery: "webusb",
+        },
+        {
+          id: "agent-job",
+          organization_id: "org-1",
+          shipment_id: "ship-2",
+          label_id: "label-2",
+          printer_name: "Epson TM",
+          source: "AUTO",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          delivery: "agent",
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+      agent: { printers: ["Epson TM"] },
+    };
+    const claimed = await claimNextPrintJob(printClient(state) as never, {
+      agentId: "agent-1",
+      organizationId: "org-1",
+    });
+    expect(claimed?.job.id).toBe("agent-job");
+    expect(state.jobs[0].status).toBe("PENDING");
+    expect(state.jobs[1].status).toBe("PRINTING");
+  });
+
+  it("does not let the print agent finish a direct USB job", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "usb-job",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Xprinter",
+          source: "AUTO",
+          status: "PRINTING",
+          error_message: null,
+          claimed_at: new Date().toISOString(),
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          delivery: "webusb",
+        },
+      ] as Job[],
+    };
+    const { completePrintJob } = await import("@/modules/print/service");
+    await expect(
+      completePrintJob(printClient(state) as never, { agentId: "agent-1", organizationId: "org-1" }, "usb-job", {
+        status: "PRINTED",
+      })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(state.jobs[0].status).toBe("PRINTING");
+  });
+
   it("only exposes print-agent API paths", () => {
     expect(isPrintAgentApiPath("print-agent/heartbeat")).toBe(true);
     expect(isPrintAgentApiPath("print-agent/jobs/claim")).toBe(true);
     expect(isPrintAgentApiPath("print-jobs/job-1/pdf")).toBe(true);
     expect(isPrintAgentApiPath("print-jobs/job-1")).toBe(true);
+    expect(isPrintAgentApiPath("print-jobs/job-1/claim")).toBe(false);
+    expect(isPrintAgentApiPath("print-jobs/job-1/complete")).toBe(false);
     expect(isPrintAgentApiPath("print-station")).toBe(false);
     expect(isPrintAgentApiPath("labels/job-1/download")).toBe(false);
   });

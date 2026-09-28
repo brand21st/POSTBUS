@@ -50,6 +50,17 @@ export function permissionForTenantRoute(
     return "automation.manage";
   }
 
+  if (root === "printers") {
+    if (method === "GET") return undefined;
+    if (method === "POST" && slugs[2] === "presence") return "labels.write";
+    return "automation.manage";
+  }
+
+  if (root === "print-jobs") {
+    if (method === "GET") return "labels.read";
+    if (slugs[2] === "claim" || slugs[2] === "complete") return "labels.write";
+  }
+
   if (root === "manifests") {
     return method === "POST" ? "manifests.write" : "manifests.read";
   }

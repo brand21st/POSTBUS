@@ -1,18 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import {
+  completeWebusbJobSchema,
+  printerEventSchema,
+  printerPresenceSchema,
+  registerPrinterSchema,
+} from "@/lib/api/v1-schemas";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import {
   authenticatePrintAgent,
   claimNextPrintJob,
+  claimWebusbPrintJob,
   completePrintJob,
+  completeWebusbPrintJob,
   getPrintStation,
   heartbeatPrintAgent,
   isPrintAgentApiPath,
+  listPendingWebusbJobs,
   loadPrintJobPdf,
   rotatePrintAgentToken,
   updatePrintSettings,
 } from "@/modules/print/service";
+import {
+  listPrinters,
+  recordPrinterEvent,
+  recordPrinterPresence,
+  registerPrinter,
+  removePrinter,
+  setDefaultPrinter,
+} from "@/modules/print/printers";
 
 export { isPrintAgentApiPath };
 
@@ -71,6 +88,46 @@ export async function handlePrintStationRoutes(
   method: string,
   slugs: string[]
 ) {
+  if (key === "GET printers") {
+    return listPrinters(supabase, ctx.organizationId);
+  }
+
+  if (key === "POST printers") {
+    const body = registerPrinterSchema.parse(await request.json().catch(() => ({})));
+    return registerPrinter(supabase, ctx, body);
+  }
+
+  if (method === "PATCH" && slugs[0] === "printers" && slugs[1] && !slugs[2]) {
+    return setDefaultPrinter(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "DELETE" && slugs[0] === "printers" && slugs[1] && !slugs[2]) {
+    return removePrinter(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "printers" && slugs[1] && slugs[2] === "presence") {
+    const body = printerPresenceSchema.parse(await request.json().catch(() => ({})));
+    return recordPrinterPresence(supabase, ctx, slugs[1], body.state);
+  }
+
+  if (method === "POST" && slugs[0] === "printers" && slugs[1] && slugs[2] === "events") {
+    const body = printerEventSchema.parse(await request.json().catch(() => ({})));
+    return recordPrinterEvent(supabase, ctx, slugs[1], body.event);
+  }
+
+  if (method === "GET" && slugs[0] === "print-jobs" && !slugs[1]) {
+    return listPendingWebusbJobs(supabase, ctx.organizationId);
+  }
+
+  if (method === "POST" && slugs[0] === "print-jobs" && slugs[1] && slugs[2] === "claim") {
+    return claimWebusbPrintJob(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "print-jobs" && slugs[1] && slugs[2] === "complete") {
+    const body = completeWebusbJobSchema.parse(await request.json().catch(() => ({})));
+    return completeWebusbPrintJob(supabase, ctx, slugs[1], body);
+  }
+
   if (key === "GET print-station") {
     return getPrintStation(supabase, ctx.organizationId);
   }
@@ -104,16 +161,20 @@ export async function handlePrintStationRoutes(
     const body = (await request.json().catch(() => ({}))) as { paperSize?: string };
     const job = await enqueueManualPrintJob(supabase, ctx, slugs[1], { paperSize: body.paperSize });
     const station = await getPrintStation(supabase, ctx.organizationId);
+    const usb = job.delivery === "webusb";
     return {
       job: {
         id: job.id,
         status: job.status,
         source: job.source,
+        delivery: job.delivery ?? "agent",
       },
-      connected: station.connected,
-      message: station.connected
-        ? "Sent to the printer."
-        : "Printer unavailable. The job will print when the printer reconnects.",
+      connected: usb ? false : station.connected,
+      message: usb
+        ? "Queued for direct USB printing."
+        : station.connected
+          ? "Sent to the printer."
+          : "Printer unavailable. The job will print when the printer reconnects.",
     };
   }
 

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MobileNav } from "@/components/dashboard/mobile-nav";
 import { ProductTour } from "@/components/dashboard/product-tour";
 import { NewOrderAlerts } from "@/components/dashboard/new-order-alerts";
+import { WebusbJobListener } from "@/components/dashboard/webusb-job-listener";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -90,6 +91,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
         <NewOrderAlerts />
+        <WebusbJobListener />
         <main id="main-content" className="flex-1 px-4 py-6 lg:px-8 lg:py-8">
           <div className="mx-auto w-full max-w-[1280px]">
             <DashboardPlanGate pathname={pathname}>{children}</DashboardPlanGate>

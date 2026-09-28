@@ -220,5 +220,16 @@ export async function updateAutomationSettings(
     after: updates,
   });
 
+  if (typeof updates.auto_label_printing === "boolean") {
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "printing.auto_toggled",
+      entity_type: "automation_settings",
+      entity_id: ctx.organizationId,
+      after: { auto_label_printing: updates.auto_label_printing },
+    });
+  }
+
   return mapAutomationSettings(data as AutomationRow);
 }
