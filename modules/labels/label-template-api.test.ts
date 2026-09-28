@@ -349,8 +349,8 @@ describe("label template API", () => {
   it("stores the custom page snapshot when printing a custom label", async () => {
     await call("POST", "label-template/custom-print", { shipmentId: "ship-1" });
     expect(persisted.at(-1)).toEqual({ kind: "CUSTOM_SHIPPING", shipmentId: "ship-1" });
-    expect(snapshots.at(-1)).toMatchObject({ page: { widthMm: 297, heightMm: 210 } });
-    expect(printCalls.at(-1)?.paperSize).toBe("A4");
+    expect(snapshots.at(-1)).toMatchObject({ page: { widthMm: 105, heightMm: 148 } });
+    expect(printCalls.at(-1)?.paperSize).toBe("A6");
   });
 
   it("prints the official India Post label on A6 without a custom PDF", async () => {

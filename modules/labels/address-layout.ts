@@ -310,7 +310,7 @@ export function addressContentHeight(
   const measure = (text: string, run: Pick<AddressRun, "bold" | "italic">) => helveticaTextWidth(text, size, run.bold);
   const headingLines = composed.heading ? wrapAddressRuns([composed.heading], inner, measure) : [];
   const body = composed.lines.flatMap((line) => wrapAddressRuns(line, inner, measure));
-  const lineGap = composed.layout.lineGapMm > 0 ? mmToPt(composed.layout.lineGapMm) : (element.lineGap ?? 2);
+  const lineGap = mmToPt(composed.layout.lineGapMm);
   const rule =
     composed.heading && composed.layout.separatorThicknessMm > 0
       ? Math.max(2, mmToPt(composed.layout.separatorThicknessMm) + 2)

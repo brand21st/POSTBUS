@@ -553,58 +553,61 @@ export function defaultLabelTemplate(paperSize: PaperSizeId = "A5"): LabelTempla
   });
 }
 
-function placeBand(
+const INDIA_POST_A6_MM = {
+  widthMm: 105,
+  heightMm: 148,
+  merchantLogo: { xMm: 1.8, yMm: 4.2, widthMm: 26.1, heightMm: 8.7 },
+  indiaPostBarcode: { xMm: 55.4, yMm: 3.1, widthMm: 48.3, heightMm: 23.7 },
+  customerId: { xMm: 1.3, yMm: 24.1, widthMm: 48.3, heightMm: 11.8 },
+  articleType: { xMm: 64, yMm: 25, widthMm: 38.1, heightMm: 10.4 },
+  orderIdDate: { xMm: 1.6, yMm: 31.1, widthMm: 25.3, heightMm: 4.2 },
+  parcelSize: { xMm: 1.7, yMm: 36, widthMm: 33.3, heightMm: 12.7 },
+  prepaid: { xMm: 53.8, yMm: 37.9, widthMm: 48.3, heightMm: 20.7 },
+  shipTo: { xMm: 0.7, yMm: 50.4, widthMm: 99.9, heightMm: 49 },
+  fromAddress: { xMm: 0, yMm: 86, widthMm: 105, heightMm: 32.5 },
+  products: { xMm: 0, yMm: 119.1, widthMm: 105, heightMm: 13.7 },
+  hLines: [23.7, 35.5, 50.4, 86, 119.1],
+} as const;
+
+function placeMm(
   elements: LabelTemplate["elements"],
-  page: { widthPt: number; heightPt: number },
+  page: { widthPt: number; heightPt: number; widthMm?: number; heightMm?: number },
   id: string,
-  rect: { x: number; y: number; width: number; height: number }
+  mm: { xMm: number; yMm: number; widthMm: number; heightMm: number },
+  scaleX: number,
+  scaleY: number
 ) {
   const current = elements[id];
   if (!current) return;
-  elements[id] = { ...current, ...clampRect(rect, page.widthPt, page.heightPt) };
+  elements[id] = {
+    ...current,
+    ...elementBoxFromMm(current, page, {
+      xMm: mm.xMm * scaleX,
+      yMm: mm.yMm * scaleY,
+      widthMm: mm.widthMm * scaleX,
+      heightMm: mm.heightMm * scaleY,
+    }),
+  };
 }
 
 export function arrangeIndiaPostBands(
   elements: LabelTemplate["elements"],
-  page: { widthPt: number; heightPt: number }
+  page: { widthPt: number; heightPt: number; widthMm?: number; heightMm?: number }
 ): LabelTemplate["elements"] {
   const next = { ...elements };
-  const margin = 8;
-  const inner = Math.max(48, page.widthPt - margin * 2);
-  const half = Math.max(24, (inner - 8) / 2);
-  const right = margin + half + 8;
-  const height = page.heightPt;
-  const shares = [0.16, 0.08, 0.14, 0.24, 0.18];
-  const heights = shares.map((share) => height * share);
-  const productHeight = Math.max(12, height - heights.reduce((sum, value) => sum + value, 0));
-  let top = height;
-  const take = (bandHeight: number) => {
-    top -= bandHeight;
-    return top;
-  };
-
-  const barcodeY = take(heights[0]);
-  placeBand(next, page, "merchantLogo", { x: margin, y: barcodeY, width: half, height: heights[0] });
-  placeBand(next, page, "indiaPostBarcode", { x: right, y: barcodeY, width: half, height: heights[0] });
-
-  const identityY = take(heights[1]);
-  placeBand(next, page, "customerId", { x: margin, y: identityY, width: half, height: heights[1] });
-  placeBand(next, page, "articleType", { x: right, y: identityY, width: half, height: heights[1] });
-
-  const bookingHeight = heights[2];
-  const bookingY = take(bookingHeight);
-  const rowHeight = Math.max(12, bookingHeight / 2);
-  placeBand(next, page, "orderIdDate", { x: margin, y: bookingY + rowHeight, width: half, height: rowHeight });
-  placeBand(next, page, "parcelSize", { x: margin, y: bookingY, width: half, height: rowHeight });
-  placeBand(next, page, "codAmount", { x: right, y: bookingY, width: half, height: bookingHeight });
-  placeBand(next, page, "prepaid", { x: right, y: bookingY, width: half, height: bookingHeight });
-
-  const shipY = take(heights[3]);
-  placeBand(next, page, "shipTo", { x: margin, y: shipY, width: inner, height: heights[3] });
-  const fromY = take(heights[4]);
-  placeBand(next, page, "fromAddress", { x: margin, y: fromY, width: inner, height: heights[4] });
-  const productsY = take(productHeight);
-  placeBand(next, page, "products", { x: margin, y: productsY, width: inner, height: productHeight });
+  const scaleX = (page.widthMm ?? ptToMm(page.widthPt)) / INDIA_POST_A6_MM.widthMm;
+  const scaleY = (page.heightMm ?? ptToMm(page.heightPt)) / INDIA_POST_A6_MM.heightMm;
+  placeMm(next, page, "merchantLogo", INDIA_POST_A6_MM.merchantLogo, scaleX, scaleY);
+  placeMm(next, page, "indiaPostBarcode", INDIA_POST_A6_MM.indiaPostBarcode, scaleX, scaleY);
+  placeMm(next, page, "customerId", INDIA_POST_A6_MM.customerId, scaleX, scaleY);
+  placeMm(next, page, "articleType", INDIA_POST_A6_MM.articleType, scaleX, scaleY);
+  placeMm(next, page, "orderIdDate", INDIA_POST_A6_MM.orderIdDate, scaleX, scaleY);
+  placeMm(next, page, "parcelSize", INDIA_POST_A6_MM.parcelSize, scaleX, scaleY);
+  placeMm(next, page, "codAmount", INDIA_POST_A6_MM.prepaid, scaleX, scaleY);
+  placeMm(next, page, "prepaid", INDIA_POST_A6_MM.prepaid, scaleX, scaleY);
+  placeMm(next, page, "shipTo", INDIA_POST_A6_MM.shipTo, scaleX, scaleY);
+  placeMm(next, page, "fromAddress", INDIA_POST_A6_MM.fromAddress, scaleX, scaleY);
+  placeMm(next, page, "products", INDIA_POST_A6_MM.products, scaleX, scaleY);
 
   const border = next.labelBorder;
   if (border) {
@@ -613,9 +616,9 @@ export function arrangeIndiaPostBands(
       ...fullPageBorderRect(page),
       hLineGapMm: border.hLineGapMm ?? 0,
       hLineWidth: border.hLineWidth ?? border.borderWidth ?? 1,
-      hLines: [0.16, 0.24, 0.38, 0.62, 0.8].map((share) => ({
+      hLines: INDIA_POST_A6_MM.hLines.map((yMm) => ({
         visible: true,
-        yMm: Math.round(ptToMm(height * share) * 10) / 10,
+        yMm: Math.round(yMm * scaleY * 10) / 10,
       })),
     };
   }
@@ -623,11 +626,15 @@ export function arrangeIndiaPostBands(
 }
 
 export function indiaPostLabelTemplate(): LabelTemplate {
-  const widthMm = 297;
-  const heightMm = 210;
-  const widthPt = mmToPt(widthMm);
-  const heightPt = mmToPt(heightMm);
-  const base = defaultLabelTemplate("A4");
+  const preset = pagePreset("A6");
+  const page = {
+    paperSize: preset.id,
+    widthPt: preset.widthPt,
+    heightPt: preset.heightPt,
+    widthMm: preset.widthMm,
+    heightMm: preset.heightMm,
+  };
+  const base = defaultLabelTemplate("A6");
   const elements: LabelTemplate["elements"] = {};
   for (const [id, element] of Object.entries(base.elements)) {
     elements[id] = { ...element, visible: false };
@@ -641,6 +648,8 @@ export function indiaPostLabelTemplate(): LabelTemplate {
       fontSize: 10,
       fontWeight: "normal",
       align: "left",
+      lineGap: 2,
+      gap: 0,
       showArticleText: true,
       ...extra,
     };
@@ -648,9 +657,9 @@ export function indiaPostLabelTemplate(): LabelTemplate {
 
   show("labelBorder", { borderWidth: 1 });
   show("merchantLogo");
-  show("indiaPostBarcode", { align: "center", fontSize: 11, fontWeight: "bold", showArticleText: true });
+  show("indiaPostBarcode", { align: "center", fontSize: 14, fontWeight: "bold", showArticleText: true });
   show("customerId", { fontWeight: "bold", fontSize: 11 });
-  show("articleType", { fontWeight: "bold", fontSize: 11, align: "right" });
+  show("articleType", { fontWeight: "bold", fontSize: 11, align: "left" });
   show("orderIdDate");
   show("parcelSize");
   show("codAmount", { align: "right", fontWeight: "bold", autoHeight: true });
@@ -659,15 +668,23 @@ export function indiaPostLabelTemplate(): LabelTemplate {
     fontSize: 11,
     fontWeight: "bold",
     autoHeight: true,
-    addressLayout: defaultAddressLayout("Ship To:"),
+    addressLayout: {
+      ...defaultAddressLayout("Ship To:"),
+      lineGapMm: 1.8,
+      separatorThicknessMm: 0.05,
+    },
   });
   show("fromAddress", {
-    autoHeight: true,
-    addressLayout: defaultAddressLayout("From/ Return Address"),
+    autoHeight: false,
+    addressLayout: {
+      ...defaultAddressLayout("From/ Return Address"),
+      lineGapMm: 1.4,
+      separatorThicknessMm: 0.35,
+    },
   });
   show("products", {
-    fontSize: 9,
-    autoHeight: true,
+    fontSize: 7,
+    autoHeight: false,
     showName: true,
     showSku: false,
     showDescription: false,
@@ -677,7 +694,6 @@ export function indiaPostLabelTemplate(): LabelTemplate {
     showCustomNote: false,
   });
 
-  const page = { paperSize: "custom" as const, widthPt, heightPt, widthMm, heightMm };
   return {
     templateVersion: 5,
     page,
@@ -711,7 +727,13 @@ export function applyPaperSize(template: LabelTemplate, paperSize: PaperSizeId):
   const next = ensureIndependentBlocks({
     ...template,
     templateVersion: Math.max(template.templateVersion, 4),
-    page: { paperSize: page.id, widthPt: page.widthPt, heightPt: page.heightPt },
+    page: {
+      paperSize: page.id,
+      widthPt: page.widthPt,
+      heightPt: page.heightPt,
+      widthMm: page.widthMm,
+      heightMm: page.heightMm,
+    },
     elements,
   });
   const indiaPost =

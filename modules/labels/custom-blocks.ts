@@ -228,7 +228,7 @@ export function productTableHeight(
   const inner = Math.max(8, element.width - gap * 2);
   const size = element.fontSize ?? 9;
   const lineHeight = size + (element.lineGap ?? 2);
-  const pad = 4;
+  const pad = 1;
   const widths = productColumnWidths(table.columns, inner);
   const rowHeight = (cells: string[], bold = false) => {
     const lines = Math.max(
@@ -438,8 +438,8 @@ export function codBlockHeight(
   const size = element.fontSize ?? 10;
   const lineHeight = size + (element.lineGap ?? 2);
   const bold = element.fontWeight === "bold";
-  const lines = codAmountLines(amount).flatMap((line) => wrapPlainText(line, inner, size, bold));
-  return gap * 2 + Math.max(1, lines.length) * lineHeight;
+  const lines = codAmountLines(amount).flatMap((line) => wrapPlainText(line, Math.max(8, inner * 0.9), size, bold));
+  return gap * 2 + Math.max(1, lines.length) * lineHeight + lineHeight;
 }
 
 export function bookedBlockText(

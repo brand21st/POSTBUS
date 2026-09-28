@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { orderNumberCandidates, previewFromPacking } from "@/modules/labels/custom-label-service";
 import { articleIdFromShipment, indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
-import { SAMPLE_SHIP_PARTS, addressLineTexts, addressPartsFromParty, composeAddressLines, defaultAddressLayout, wrapAddressRuns } from "@/modules/labels/address-layout";
+import { SAMPLE_FROM_PARTS, SAMPLE_SHIP_PARTS, addressContentHeight, addressLineTexts, addressPartsFromParty, composeAddressLines, defaultAddressLayout, wrapAddressRuns } from "@/modules/labels/address-layout";
 import { SAMPLE_PACKING_DATA, loadLogoBytes } from "@/modules/labels/packing-data";
 import { articleContractLine, amountInIndianRupees, blockPreviewLines, bookedBlockText, createCustomTextElement, CUSTOM_LABEL_BLOCKS, customerIdLine, LABEL_GENERATED_FROM, nextCustomTextId, parcelSizeLines, productTable, productTableHeight, wrapProductCell, serviceContractLine, type CustomLabelPreview } from "@/modules/labels/custom-blocks";
 import { indiaPostVolumetricWeightGrams } from "@/modules/india-post/endpoints";
@@ -29,16 +29,21 @@ import {
 async function pdfContents(bytes: Uint8Array) {
   const pdf = await PDFDocument.load(bytes);
   const parts: string[] = [];
+  const painted: string[] = [];
   for (const [, object] of pdf.context.enumerateIndirectObjects()) {
     if (!(object instanceof PDFRawStream)) continue;
     const text = Buffer.from(decodePDFRawStream(object).decode()).toString("latin1");
-    parts.push(
-      text.replace(/<([0-9A-Fa-f]+)>/g, (token, hex: string) =>
-        hex.length % 2 === 0 ? Buffer.from(hex, "hex").toString("latin1") : token
-      )
+    const decoded = text.replace(/<([0-9A-Fa-f]+)>/g, (token, hex: string) =>
+      hex.length % 2 === 0 ? Buffer.from(hex, "hex").toString("latin1") : token
     );
+    parts.push(decoded);
+    for (const line of decoded.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed.endsWith("Tj")) continue;
+      painted.push(trimmed.replace(/\s+Tj$/, "").replace(/^\(|\)$/g, "").trim());
+    }
   }
-  return parts.join("\n");
+  return `${parts.join("\n")}\n${painted.join(" ")}`;
 }
 
 async function imageCount(bytes: Uint8Array) {
@@ -98,8 +103,8 @@ describe("india post barcode block", () => {
       fontSize: 12,
       showArticleText: true,
     });
-    expect(parsed.page.widthMm).toBe(297);
-    expect(parsed.page.heightMm).toBe(210);
+    expect(parsed.page.widthMm).toBe(105);
+    expect(parsed.page.heightMm).toBe(148);
   });
 
   it("prints the editor page when India Post is not the workspace default", async () => {
@@ -122,8 +127,8 @@ describe("india post barcode block", () => {
         elements: india.elements,
       })
     );
-    expect(parsed.page.widthMm).toBe(297);
-    expect(parsed.page.heightMm).toBe(210);
+    expect(parsed.page.widthMm).toBe(105);
+    expect(parsed.page.heightMm).toBe(148);
     const selected = selectLabelTemplate(parsed, "07e7edfd-f119-47b1-8b7a-1ab9e0cf397c");
     const pdf = await PDFDocument.load(await renderMerchantLabelPdf(selected, SAMPLE_PACKING_DATA));
     const size = pdf.getPages()[0].getSize();
@@ -242,20 +247,39 @@ describe("india post barcode block", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = previous;
   });
 
-  it("uses custom size for 297 by 210 and A4 for 210 by 297", () => {
+  it("uses A6 so Properties millimetres match the downloaded PDF", () => {
     const indiaPost = indiaPostLabelTemplate();
-    expect(indiaPost.page.paperSize).toBe("custom");
-    expect(indiaPost.page.widthMm).toBe(297);
-    expect(indiaPost.page.heightMm).toBe(210);
-    expect(sizeChoiceForPage(indiaPost.page)).toBe("custom");
+    expect(indiaPost.page.paperSize).toBe("A6");
+    expect(indiaPost.page.widthMm).toBe(105);
+    expect(indiaPost.page.heightMm).toBe(148);
+    expect(sizeChoiceForPage(indiaPost.page)).toBe("A6");
     expect(sizeChoiceForPage(defaultLabelTemplate("A4").page)).toBe("A4");
+    const boxes = {
+      merchantLogo: { xMm: 1.8, yMm: 4.2, widthMm: 26.1, heightMm: 8.7 },
+      indiaPostBarcode: { xMm: 55.4, yMm: 3.1, widthMm: 48.3, heightMm: 23.7 },
+      customerId: { xMm: 1.3, yMm: 24.1, widthMm: 48.3, heightMm: 11.8 },
+      articleType: { xMm: 64, yMm: 25, widthMm: 38.1, heightMm: 10.4 },
+      orderIdDate: { xMm: 1.6, yMm: 31.1, widthMm: 25.3, heightMm: 4.2 },
+      parcelSize: { xMm: 1.7, yMm: 36, widthMm: 33.3, heightMm: 12.7 },
+      prepaid: { xMm: 53.8, yMm: 37.9, widthMm: 48.3, heightMm: 20.7 },
+      shipTo: { xMm: 0.7, yMm: 50.4, widthMm: 99.9, heightMm: 49 },
+      fromAddress: { xMm: 0, yMm: 86, widthMm: 105, heightMm: 32.5 },
+      products: { xMm: 0, yMm: 119.1, widthMm: 105, heightMm: 13.7 },
+    } as const;
+    for (const [id, mm] of Object.entries(boxes)) {
+      const box = elementBoxMm(indiaPost.elements[id], indiaPost.page.heightPt);
+      expect(box.xMm, id).toBeCloseTo(mm.xMm, 1);
+      expect(box.yMm, id).toBeCloseTo(mm.yMm, 1);
+      expect(box.widthMm, id).toBeCloseTo(mm.widthMm, 1);
+      expect(box.heightMm, id).toBeCloseTo(mm.heightMm, 1);
+    }
     const legacy = parseLabelTemplate({
       templateVersion: 4,
       page: { paperSize: "A4", widthPt: 595.28, heightPt: 841.89 },
       elements: defaultLabelTemplate("A4").elements,
     });
     expect(legacy.page.paperSize).toBe("A4");
-    expect(parseLabelTemplate(indiaPost).page.paperSize).toBe("custom");
+    expect(parseLabelTemplate(indiaPost).page.paperSize).toBe("A6");
   });
 
   it("shows product name, quantity, weight, and price in columns", async () => {
@@ -401,7 +425,7 @@ describe("india post barcode block", () => {
     const order = template.elements.orderIdDate;
     const parcel = template.elements.parcelSize;
     expect(parcel.visible).toBe(true);
-    expect(parcel.x).toBe(order.x);
+    expect(parcel.x).toBeCloseTo(order.x, 0);
     expect(parcel.y).toBeLessThan(order.y);
 
     const saved = {
@@ -506,6 +530,25 @@ describe("india post barcode block", () => {
     expect(pdf).toContain("14 Tf");
   });
 
+  it("adjusts From / Seller address line gap in millimetres", async () => {
+    const tight = defaultAddressLayout("From/ Return Address");
+    tight.lineGapMm = 1;
+    const loose = { ...tight, lineGapMm: 8 };
+    const box = { width: 220, fontSize: 9, addressLayout: tight };
+    expect(addressContentHeight({ ...box, addressLayout: loose }, SAMPLE_FROM_PARTS, "From/ Return Address")).toBeGreaterThan(
+      addressContentHeight(box, SAMPLE_FROM_PARTS, "From/ Return Address")
+    );
+
+    const template = indiaPostLabelTemplate();
+    template.elements.fromAddress = { ...template.elements.fromAddress, addressLayout: loose, fontSize: 9 };
+    const parsed = parseLabelTemplate(template);
+    expect(parsed.elements.fromAddress.addressLayout?.lineGapMm).toBe(8);
+    expect(parsed.elements.fromAddress.addressLayout?.headingText).toBe("From/ Return Address");
+    const pdf = await pdfContents(await renderMerchantLabelPdf(parsed, SAMPLE_PACKING_DATA));
+    expect(pdf).toContain("From/ Return Address");
+    expect(pdf).toContain("Sample Store");
+  });
+
   it("fits the label border to the full page", () => {
     const template = indiaPostLabelTemplate();
     expect(template.elements.labelBorder).toMatchObject({
@@ -586,7 +629,7 @@ describe("india post barcode block", () => {
 
   it("maps a template page to the printer paper and orientation", () => {
     const wide = indiaPostLabelTemplate();
-    expect(printMediaForPage(wide.page)).toEqual({ paperSize: "A4", orientation: "landscape" });
+    expect(printMediaForPage(wide.page)).toEqual({ paperSize: "A6", orientation: "portrait" });
     expect(printMediaForPage(defaultLabelTemplate("A6").page)).toEqual({ paperSize: "A6", orientation: "portrait" });
     expect(printMediaForPage(defaultLabelTemplate("4x6").page)).toEqual({ paperSize: "4x6", orientation: "portrait" });
   });
@@ -603,11 +646,11 @@ describe("india post barcode block", () => {
     const template = indiaPostLabelTemplate();
     const street = "42 MG Road, Near City Mall, Opposite the Old Railway Station";
     const grown = fitAddressBox(
-      { ...template.elements.shipTo, width: 120, autoHeight: true },
+      { ...template.elements.shipTo, width: 120, height: 24, autoHeight: true },
       template.page,
       { ...SAMPLE_SHIP_PARTS, street }
     );
-    expect(grown.height).toBeGreaterThan(template.elements.shipTo.height);
+    expect(grown.height).toBeGreaterThan(24);
     const manual = fitAddressBox({ ...grown, height: 24, autoHeight: false }, template.page, SAMPLE_SHIP_PARTS);
     expect(manual.height).toBe(24);
     expect(manual.autoHeight).toBe(false);
@@ -748,6 +791,10 @@ describe("india post barcode block", () => {
       if (id === "fromAddress" || id === "shipTo") {
         const heading = text.split("\n")[0];
         if (heading) expect(pdf).toContain(heading);
+        continue;
+      }
+      if (id === "orderIdDate") {
+        expect(pdf).toContain("Order ID: 2268");
         continue;
       }
       if (id === "products") {

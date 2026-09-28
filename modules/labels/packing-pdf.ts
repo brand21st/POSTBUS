@@ -1,10 +1,12 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { addressPartsFromParty, composeAddressLines, helveticaTextWidth, mmToPt, wrapAddressRuns, type AddressLayout } from "@/modules/labels/address-layout";
-import { articleContractLine, codAmountLines, customTextIds, customerIdLine, isCodPayment, isCustomTextId, LABEL_GENERATED_FROM, LABEL_GENERATED_FROM_SIZE, parcelSizeLines, productColumnWidths, productTable, wrapProductCell, serviceContractLine } from "@/modules/labels/custom-blocks";
+import { articleContractLine, codAmountLines, codBlockHeight, customTextBlockHeight, customTextIds, customerIdLine, isCodPayment, isCustomTextId, LABEL_GENERATED_FROM, LABEL_GENERATED_FROM_SIZE, parcelSizeLines, productColumnWidths, productTable, productTableHeight, wrapProductCell, serviceContractLine } from "@/modules/labels/custom-blocks";
 import { indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
 import { pagePreset } from "@/modules/labels/page-presets";
 import {
   MERCHANT_ELEMENT_IDS,
+  fitAddressBox,
+  growAutoHeightBox,
   labelPageSize,
   horizontalLineBars,
   parseLabelTemplate,
@@ -129,16 +131,15 @@ function drawWrapped(
   const box = insetTextBox(opts);
   const lines = wrapLines(font, text, opts.size, box.width);
   const lineHeight = opts.size + (opts.lineGap ?? 2);
-  const maxLines = Math.max(1, Math.floor(box.height / lineHeight));
-  const shown = lines.slice(0, maxLines);
+  const shown = lines;
   shown.forEach((line, index) => {
     const width = font.widthOfTextAtSize(line, opts.size);
     let x = box.x;
     if (opts.align === "center") x = box.x + (box.width - width) / 2;
     if (opts.align === "right") x = box.x + box.width - width;
-    const y = box.y + box.height - (index + 1) * lineHeight;
-    if (y < box.y) return;
-    page.drawText(line, { x: Math.max(0, x), y, size: opts.size, font, color: rgb(0.07, 0.09, 0.15) });
+    const y = box.y + box.height - opts.size - index * lineHeight;
+    if (y + opts.size * 0.2 < box.y) return;
+    page.drawText(line, { x: Math.max(0, x), y: Math.max(box.y, y), size: opts.size, font, color: rgb(0.07, 0.09, 0.15) });
   });
 }
 
@@ -167,7 +168,7 @@ function drawProductTable(
   const table = productTable(data.items, element, { includeTotal, total: data.total });
   if (!table.columns.length) return;
   const lineHeight = size + (element.lineGap ?? 2);
-  const rowPad = 4;
+  const rowPad = 1;
   const widths = productColumnWidths(table.columns, frame.width);
   const border = rgb(0.75, 0.78, 0.84);
   const headerFill = rgb(0.9, 0.93, 0.97);
@@ -330,15 +331,14 @@ function drawMultiline(
   const box = insetTextBox(opts);
   const chunks = text.split("\n").flatMap((line) => wrapLines(font, line, opts.size, box.width));
   const lineHeight = opts.size + (opts.lineGap ?? 2);
-  const maxLines = Math.max(1, Math.floor(box.height / lineHeight));
-  chunks.slice(0, maxLines).forEach((line, index) => {
+  chunks.forEach((line, index) => {
     const width = font.widthOfTextAtSize(line, opts.size);
     let x = box.x;
     if (opts.align === "center") x = box.x + (box.width - width) / 2;
     if (opts.align === "right") x = box.x + box.width - width;
-    const y = box.y + box.height - (index + 1) * lineHeight;
-    if (y < box.y) return;
-    page.drawText(line, { x: Math.max(0, x), y, size: opts.size, font, color: rgb(0.07, 0.09, 0.15) });
+    const y = box.y + box.height - opts.size - index * lineHeight;
+    if (y + opts.size * 0.2 < box.y) return;
+    page.drawText(line, { x: Math.max(0, x), y: Math.max(box.y, y), size: opts.size, font, color: rgb(0.07, 0.09, 0.15) });
   });
 }
 
@@ -362,14 +362,14 @@ function drawAddressBlock(
   const heading = element.addressLayout?.headingText?.trim() || headingText;
   const composed = composeAddressLines(element.addressLayout as AddressLayout | undefined, addressPartsFromParty(party), heading);
   const box = insetTextBox({ ...placed, gap: element.gap });
-  const lineGap = composed.layout.lineGapMm > 0 ? mmToPt(composed.layout.lineGapMm) : (element.lineGap ?? 2);
+  const lineGap = mmToPt(composed.layout.lineGapMm);
   const lineHeight = size + lineGap;
-  let top = box.y + box.height;
+  let baseline = box.y + box.height - size;
   const ink = rgb(0.07, 0.09, 0.15);
   const measure = (text: string, run: { bold: boolean }) => helveticaTextWidth(text, size, run.bold);
   const drawRuns = (runs: { text: string; bold: boolean; italic: boolean }[]) => {
-    top -= lineHeight;
-    if (top < box.y) return;
+    if (baseline + size * 0.2 < box.y) return;
+    const y = Math.max(box.y, baseline);
     const widths = runs.map((run) => pickAddressFont(fonts.regular, fonts.bold, fonts.italic, fonts.boldItalic, run).widthOfTextAtSize(run.text, size));
     const total = widths.reduce((sum, width) => sum + width, 0);
     let x = box.x;
@@ -377,23 +377,25 @@ function drawAddressBlock(
     if (align === "right") x = box.x + Math.max(0, box.width - total);
     runs.forEach((run, index) => {
       const font = pickAddressFont(fonts.regular, fonts.bold, fonts.italic, fonts.boldItalic, run);
-      page.drawText(run.text, { x: Math.max(0, x), y: top, size, font, color: ink });
+      page.drawText(run.text, { x: Math.max(0, x), y, size, font, color: ink });
       x += widths[index] ?? 0;
     });
+    baseline -= lineHeight;
   };
   const wrappedHeading = composed.heading ? wrapAddressRuns([composed.heading], box.width, measure) : [];
   wrappedHeading.forEach((runs) => drawRuns(runs));
   const rule = mmToPt(composed.layout.separatorThicknessMm);
   if (composed.heading && rule > 0) {
-    top -= Math.max(2, rule + 2);
-    if (top >= box.y) {
+    const ruleY = baseline - Math.max(1, rule);
+    if (ruleY >= box.y) {
       page.drawRectangle({
         x: box.x,
-        y: top,
+        y: ruleY,
         width: box.width,
         height: rule,
         color: ink,
       });
+      baseline = ruleY - lineGap;
     }
   }
   composed.lines.forEach((runs) => wrapAddressRuns(runs, box.width, measure).forEach((line) => drawRuns(line)));
@@ -439,40 +441,88 @@ async function drawIndiaPostBarcode(
     return;
   }
   const image = await document.embedPng(png);
-  const caption = showText ? size + 6 : 0;
-  const barHeight = Math.max(8, placed.height - caption);
-  const scale = Math.min(placed.width / image.width, barHeight / image.height);
+  const pad = Math.max(0, element.gap ?? 0);
+  const inner = insetTextBox({ ...placed, gap: pad });
+  const caption = showText ? size + 4 : 0;
+  const barMax = Math.max(8, inner.height * (showText ? 0.7 : 1) - 2);
+  const scale = Math.min(inner.width / image.width, barMax / image.height);
   const width = image.width * scale;
   const height = image.height * scale;
-  let x = placed.x;
-  if (align === "center") x = placed.x + (placed.width - width) / 2;
-  if (align === "right") x = placed.x + placed.width - width;
+  const groupHeight = height + caption;
+  const groupBottom = inner.y + Math.max(0, (inner.height - groupHeight) / 2);
+  let x = inner.x;
+  if (align === "center") x = inner.x + (inner.width - width) / 2;
+  if (align === "right") x = inner.x + inner.width - width;
   page.drawImage(image, {
     x,
-    y: placed.y + caption + Math.max(0, (barHeight - height) / 2),
+    y: groupBottom + caption,
     width,
     height,
   });
   if (!showText) return;
   drawMultiline(page, font, article, {
-    x: placed.x,
-    y: placed.y,
-    width: placed.width,
-    height: caption + 2,
+    x: inner.x,
+    y: groupBottom,
+    width: inner.width,
+    height: caption,
     size,
     align,
     lineGap: element.lineGap,
-    gap: element.gap,
+    gap: 0,
   });
+}
+
+function applyLabelAutoHeight(template: LabelTemplate, data: PackingLabelData): LabelTemplate {
+  const page = template.page;
+  const next = { ...template.elements };
+  if (next.shipTo && next.shipTo.autoHeight !== false) {
+    next.shipTo = fitAddressBox(
+      next.shipTo,
+      page,
+      addressPartsFromParty(data.receiver),
+      next.shipTo.addressLayout?.headingText || "Ship To:"
+    );
+  }
+  if (next.fromAddress && next.fromAddress.autoHeight !== false) {
+    next.fromAddress = fitAddressBox(
+      next.fromAddress,
+      page,
+      addressPartsFromParty(data.sender),
+      next.fromAddress.addressLayout?.headingText || "From/ Return Address"
+    );
+  }
+  if (next.products && next.products.autoHeight !== false) {
+    const fitted = growAutoHeightBox(
+      next.products,
+      page,
+      productTableHeight(next.products, data.items, {
+        includeTotal: !next.total?.visible,
+        total: data.total,
+      })
+    );
+    next.products = { ...next.products, ...fitted };
+  }
+  if (next.codAmount && next.codAmount.autoHeight !== false) {
+    const fitted = growAutoHeightBox(next.codAmount, page, codBlockHeight(next.codAmount, data.codAmount));
+    next.codAmount = { ...next.codAmount, ...fitted };
+  }
+  for (const id of customTextIds(next)) {
+    const block = next[id];
+    if (!block || block.autoHeight === false) continue;
+    const fitted = growAutoHeightBox(block, page, customTextBlockHeight(block, block.content ?? ""));
+    next[id] = { ...block, ...fitted };
+  }
+  return { ...template, elements: next };
 }
 
 export async function drawMerchantFields(
   document: PDFDocument,
   page: PDFPage,
-  template: LabelTemplate,
+  templateInput: LabelTemplate,
   data: PackingLabelData,
   opts?: { scaleX?: number; scaleY?: number }
 ) {
+  const template = applyLabelAutoHeight(templateInput, data);
   const scaleX = opts?.scaleX ?? 1;
   const scaleY = opts?.scaleY ?? 1;
   const regular = await document.embedFont(StandardFonts.Helvetica);
@@ -561,13 +611,6 @@ export async function drawMerchantFields(
       await drawIndiaPostBarcode(document, page, element, data, placed, font);
       continue;
     }
-    page.drawRectangle({
-      x: placed.x,
-      y: placed.y,
-      width: placed.width,
-      height: placed.height,
-      color: rgb(1, 1, 1),
-    });
     if (id === "products") {
       const includeTotal = !template.elements.total?.visible;
       drawProductTable(page, font, bold, element, data, placed, size, includeTotal);

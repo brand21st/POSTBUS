@@ -315,9 +315,14 @@ function BlockProperties({
   const logo = id === "merchantLogo";
   const barcode = id === "indiaPostBarcode";
   const shipTo = id === "shipTo";
-  const showType = !positionOnly && !logo && !shipTo;
+  const fromAddress = id === "fromAddress";
+  const addressBlock = shipTo || fromAddress;
+  const showType = !positionOnly && !logo && !addressBlock;
   const showSpacing = showType && !barcode;
-  const layout = normalizeAddressLayout(element.addressLayout);
+  const layout = normalizeAddressLayout(
+    element.addressLayout,
+    fromAddress ? "From/ Return Address" : "Ship To:"
+  );
   const patchLayout = (next: AddressLayout) => onChange({ addressLayout: next });
   const moveField = (index: number, direction: -1 | 1) => {
     const fields = [...layout.fields];
@@ -340,7 +345,7 @@ function BlockProperties({
   return (
     <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto text-sm">
       <p className="font-medium">{label}</p>
-      {id === "fromAddress" || shipTo || id === "products" || id === "codAmount" || isCustomTextId(id) ? (
+      {fromAddress || shipTo || id === "products" || id === "codAmount" || isCustomTextId(id) ? (
         <label className="flex items-center gap-2">
           <Checkbox
             checked={element.autoHeight !== false}
@@ -349,7 +354,7 @@ function BlockProperties({
           Auto height
         </label>
       ) : null}
-      {shipTo ? (
+      {addressBlock ? (
         <>
           <PropertyNumber label="X (mm)" min={0} step={0.1} value={rounded(box.xMm)} onValue={(xMm) => setMm({ xMm })} />
           <PropertyNumber label="Y (mm)" min={0} step={0.1} value={rounded(box.yMm)} onValue={(yMm) => setMm({ yMm })} />
@@ -592,7 +597,7 @@ function BlockProperties({
           <PropertyNumber label="Gap" min={0} max={40} value={element.gap ?? 0} onValue={(gap) => onChange({ gap })} />
         </>
       ) : null}
-      {positionOnly || shipTo ? null : (
+      {positionOnly || addressBlock ? null : (
         <>
           <PropertyNumber label="Width mm" min={1} step={0.1} value={rounded(box.widthMm)} onValue={(widthMm) => setMm({ widthMm })} />
           <PropertyNumber label="Height mm" min={1} step={0.1} value={rounded(box.heightMm)} onValue={(heightMm) => setMm({ heightMm })} />
