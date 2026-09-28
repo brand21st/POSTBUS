@@ -15,8 +15,8 @@ export function rectsOverlap(a: Rect, b: Rect, gap = 2) {
 }
 
 export function clampRect(rect: Rect, pageWidth: number, pageHeight: number): Rect {
-  const width = Math.min(Math.max(24, rect.width), pageWidth);
-  const height = Math.min(Math.max(12, rect.height), pageHeight);
+  const width = Math.min(Math.max(1, rect.width), pageWidth);
+  const height = Math.min(Math.max(1, rect.height), pageHeight);
   return {
     width,
     height,

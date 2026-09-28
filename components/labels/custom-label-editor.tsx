@@ -34,7 +34,6 @@ import {
   blockPreviewLines,
   bookedBlockText,
   createCustomTextElement,
-  customTextBlockHeight,
   customTextIds,
   customTextLabel,
   editorLabelBlocks,
@@ -43,8 +42,6 @@ import {
   nextCustomTextId,
   productColumnVisible,
   productTable,
-  productTableHeight,
-  codBlockHeight,
   type CustomLabelPreview,
   type ProductColumnFlags,
   type ProductLine,
@@ -53,10 +50,7 @@ import { clampRect } from "@/modules/labels/collision";
 import { PAGE_PRESETS, isPaperSizeId, pagePreset, sizeChoiceForPage } from "@/modules/labels/page-presets";
 import {
   applyPaperSize,
-  arrangeIndiaPostBands,
   elementBoxFromMm,
-  fitAddressBox,
-  growAutoHeightBox,
   elementBoxMm,
   fitLabelBorderToPage,
   fullPageBorderRect,
@@ -136,7 +130,7 @@ function ProductTablePreview({
   return (
     <table
       className="h-full w-full border-collapse"
-      style={{ fontSize, lineHeight: `${lineHeight}px`, textAlign: align, fontWeight: bold ? 700 : 400, padding: gap }}
+      style={{ fontSize, lineHeight: `${lineHeight}px`, textAlign: align, fontFamily: "Helvetica, Arial, sans-serif", fontWeight: bold ? 700 : 400, padding: gap }}
     >
       <thead>
         <tr className="bg-slate-100">
@@ -235,6 +229,7 @@ function AddressBlockPreview({
       className="h-full w-full overflow-hidden"
       style={{
         textAlign: align,
+        fontFamily: "Helvetica, Arial, sans-serif",
         fontSize,
         lineHeight: `${fontSize + gap}px`,
         padding: (element.gap ?? 0) * scale,
@@ -655,72 +650,8 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
         ? { ...entry.page, paperSize: "custom" as const, widthMm, heightMm, widthPt: mmToPt(widthMm), heightPt: mmToPt(heightMm) }
         : entry.page;
     setPage(nextPage);
-    const indiaPost =
-      entry.elements.indiaPostBarcode?.visible || entry.elements.shipTo?.visible || entry.elements.customerId?.visible;
-    if (!indiaPost) {
-      setElements(fitLabelBorderToPage(entry.elements, nextPage));
-      return;
-    }
-    const stacked = { ...entry.elements };
-    if (stacked.customerId) stacked.customerId = { ...stacked.customerId, visible: true, fontWeight: "bold", fontSize: 11 };
-    if (stacked.serviceContractId) stacked.serviceContractId = { ...stacked.serviceContractId, visible: false };
-    if (stacked.codAmount) stacked.codAmount = { ...stacked.codAmount, visible: true, align: "right", fontWeight: "bold" };
-    if (stacked.prepaid) stacked.prepaid = { ...stacked.prepaid, visible: true, align: "right", fontWeight: "bold" };
-    setElements(arrangeIndiaPostBands(stacked, nextPage));
+    setElements(fitLabelBorderToPage(entry.elements, nextPage));
   }, [templates.data, templateId, page]);
-
-  useEffect(() => {
-    if (!elements || !page) return;
-    setElements((current) => {
-      if (!current) return current;
-      let changed = false;
-      const next = { ...current };
-      const grow = (id: "fromAddress" | "shipTo", parts: AddressParts, heading: string) => {
-        const element = next[id];
-        if (!element || element.autoHeight === false) return;
-        const fitted = fitAddressBox(element, page, parts, heading);
-        if (fitted.height > element.height + 0.5) {
-          next[id] = fitted;
-          changed = true;
-        }
-      };
-      grow("shipTo", preview?.shipParts ?? SAMPLE_SHIP_PARTS, "Ship To:");
-      grow("fromAddress", preview?.fromParts ?? SAMPLE_FROM_PARTS, "From/ Return Address");
-      const products = next.products;
-      if (products && products.autoHeight !== false) {
-        const fitted = growAutoHeightBox(
-          products,
-          page,
-          productTableHeight(products, preview ? preview.items : PRODUCT_SAMPLE_LINES, {
-            includeTotal: !next.total?.visible,
-            total: preview?.total,
-          })
-        );
-        if (fitted.height > products.height + 0.5) {
-          next.products = { ...products, ...fitted };
-          changed = true;
-        }
-      }
-      const cod = next.codAmount;
-      if (cod && cod.autoHeight !== false) {
-        const fitted = growAutoHeightBox(cod, page, codBlockHeight(cod, preview?.codAmount ?? 2597));
-        if (fitted.height > cod.height + 0.5) {
-          next.codAmount = { ...cod, ...fitted };
-          changed = true;
-        }
-      }
-      for (const id of customTextIds(next)) {
-        const block = next[id];
-        if (!block || block.autoHeight === false) continue;
-        const fitted = growAutoHeightBox(block, page, customTextBlockHeight(block, block.content ?? ""));
-        if (fitted.height > block.height + 0.5) {
-          next[id] = { ...block, ...fitted };
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [page, preview, elements]);
 
   useEffect(() => {
     const pane = canvasPane.current;
@@ -1290,6 +1221,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                       className="flex h-full flex-col justify-center px-1"
                       style={{
                         textAlign: element.align ?? "center",
+                        fontFamily: "Helvetica, Arial, sans-serif",
                         alignItems: element.align === "left" ? "flex-start" : element.align === "right" ? "flex-end" : "center",
                         fontWeight: element.fontWeight === "bold" ? 700 : 600,
                         padding: (element.gap ?? 0) * scale,
@@ -1364,6 +1296,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                       className="h-full w-full overflow-hidden"
                       style={{
                         textAlign: element.align ?? "left",
+                        fontFamily: "Helvetica, Arial, sans-serif",
                         fontWeight: element.fontWeight ?? "normal",
                         fontSize: (element.fontSize ?? 9) * scale,
                         lineHeight: `${((element.fontSize ?? 9) + (element.lineGap ?? 2)) * scale}px`,

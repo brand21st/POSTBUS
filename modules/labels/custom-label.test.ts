@@ -247,7 +247,7 @@ describe("india post barcode block", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = previous;
   });
 
-  it("uses A6 so Properties millimetres match the downloaded PDF", () => {
+  it("uses A6 so Properties millimetres match the downloaded PDF", async () => {
     const indiaPost = indiaPostLabelTemplate();
     expect(indiaPost.page.paperSize).toBe("A6");
     expect(indiaPost.page.widthMm).toBe(105);
@@ -273,6 +273,12 @@ describe("india post barcode block", () => {
       expect(box.widthMm, id).toBeCloseTo(mm.widthMm, 1);
       expect(box.heightMm, id).toBeCloseTo(mm.heightMm, 1);
     }
+    const short = elementBoxFromMm(indiaPost.elements.orderIdDate, indiaPost.page, { heightMm: 4.2 });
+    expect(elementBoxMm(short, indiaPost.page.heightPt).heightMm).toBeCloseTo(4.2, 1);
+    const rendered = await PDFDocument.load(await renderMerchantLabelPdf(indiaPost, SAMPLE_PACKING_DATA));
+    const size = rendered.getPages()[0].getSize();
+    expect(size.width).toBeCloseTo(indiaPost.page.widthPt, 1);
+    expect(size.height).toBeCloseTo(indiaPost.page.heightPt, 1);
     const legacy = parseLabelTemplate({
       templateVersion: 4,
       page: { paperSize: "A4", widthPt: 595.28, heightPt: 841.89 },
@@ -341,7 +347,17 @@ describe("india post barcode block", () => {
     expect(manual.height).toBe(24);
     const pdf = await pdfContents(
       await renderMerchantLabelPdf(
-        { ...template, elements: { ...template.elements, products: { ...template.elements.products, width: 140, autoHeight: true } } },
+        {
+          ...template,
+          elements: {
+            ...template.elements,
+            products: growAutoHeightBox(
+              { ...template.elements.products, width: 140, autoHeight: true },
+              template.page,
+              productTableHeight({ ...template.elements.products, width: 140 }, items, { includeTotal: true, total: 10 })
+            ),
+          },
+        },
         { ...SAMPLE_PACKING_DATA, items, total: 10 }
       )
     );

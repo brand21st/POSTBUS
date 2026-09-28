@@ -1,12 +1,21 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import {
+  PDFDocument,
+  StandardFonts,
+  clip,
+  endPath,
+  popGraphicsState,
+  pushGraphicsState,
+  rectangle,
+  rgb,
+  type PDFFont,
+  type PDFPage,
+} from "pdf-lib";
 import { addressPartsFromParty, composeAddressLines, helveticaTextWidth, mmToPt, wrapAddressRuns, type AddressLayout } from "@/modules/labels/address-layout";
-import { articleContractLine, codAmountLines, codBlockHeight, customTextBlockHeight, customTextIds, customerIdLine, isCodPayment, isCustomTextId, LABEL_GENERATED_FROM, LABEL_GENERATED_FROM_SIZE, parcelSizeLines, productColumnWidths, productTable, productTableHeight, wrapProductCell, serviceContractLine } from "@/modules/labels/custom-blocks";
+import { articleContractLine, codAmountLines, customTextIds, customerIdLine, isCodPayment, isCustomTextId, LABEL_GENERATED_FROM, LABEL_GENERATED_FROM_SIZE, parcelSizeLines, productColumnWidths, productTable, wrapProductCell, serviceContractLine } from "@/modules/labels/custom-blocks";
 import { indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
 import { pagePreset } from "@/modules/labels/page-presets";
 import {
   MERCHANT_ELEMENT_IDS,
-  fitAddressBox,
-  growAutoHeightBox,
   labelPageSize,
   horizontalLineBars,
   parseLabelTemplate,
@@ -148,8 +157,8 @@ function insetTextBox(opts: { x: number; y: number; width: number; height: numbe
   return {
     x: opts.x + pad,
     y: opts.y + pad,
-    width: Math.max(4, opts.width - pad * 2),
-    height: Math.max(4, opts.height - pad * 2),
+    width: Math.max(0.5, opts.width - pad * 2),
+    height: Math.max(0.5, opts.height - pad * 2),
   };
 }
 
@@ -472,57 +481,26 @@ async function drawIndiaPostBarcode(
   });
 }
 
-function applyLabelAutoHeight(template: LabelTemplate, data: PackingLabelData): LabelTemplate {
-  const page = template.page;
-  const next = { ...template.elements };
-  if (next.shipTo && next.shipTo.autoHeight !== false) {
-    next.shipTo = fitAddressBox(
-      next.shipTo,
-      page,
-      addressPartsFromParty(data.receiver),
-      next.shipTo.addressLayout?.headingText || "Ship To:"
-    );
-  }
-  if (next.fromAddress && next.fromAddress.autoHeight !== false) {
-    next.fromAddress = fitAddressBox(
-      next.fromAddress,
-      page,
-      addressPartsFromParty(data.sender),
-      next.fromAddress.addressLayout?.headingText || "From/ Return Address"
-    );
-  }
-  if (next.products && next.products.autoHeight !== false) {
-    const fitted = growAutoHeightBox(
-      next.products,
-      page,
-      productTableHeight(next.products, data.items, {
-        includeTotal: !next.total?.visible,
-        total: data.total,
-      })
-    );
-    next.products = { ...next.products, ...fitted };
-  }
-  if (next.codAmount && next.codAmount.autoHeight !== false) {
-    const fitted = growAutoHeightBox(next.codAmount, page, codBlockHeight(next.codAmount, data.codAmount));
-    next.codAmount = { ...next.codAmount, ...fitted };
-  }
-  for (const id of customTextIds(next)) {
-    const block = next[id];
-    if (!block || block.autoHeight === false) continue;
-    const fitted = growAutoHeightBox(block, page, customTextBlockHeight(block, block.content ?? ""));
-    next[id] = { ...block, ...fitted };
-  }
-  return { ...template, elements: next };
+function clipBox(page: PDFPage, box: { x: number; y: number; width: number; height: number }) {
+  page.pushOperators(
+    pushGraphicsState(),
+    rectangle(box.x, box.y, Math.max(0.5, box.width), Math.max(0.5, box.height)),
+    clip(),
+    endPath()
+  );
+}
+
+function unclip(page: PDFPage) {
+  page.pushOperators(popGraphicsState());
 }
 
 export async function drawMerchantFields(
   document: PDFDocument,
   page: PDFPage,
-  templateInput: LabelTemplate,
+  template: LabelTemplate,
   data: PackingLabelData,
   opts?: { scaleX?: number; scaleY?: number }
 ) {
-  const template = applyLabelAutoHeight(templateInput, data);
   const scaleX = opts?.scaleX ?? 1;
   const scaleY = opts?.scaleY ?? 1;
   const regular = await document.embedFont(StandardFonts.Helvetica);
@@ -575,19 +553,17 @@ export async function drawMerchantFields(
         const pad = Math.max(0, logo.gap ?? 0);
         const inner = insetTextBox({ ...placed, gap: pad });
         const scale = Math.min(inner.width / image.width, inner.height / image.height, 1);
-        page.drawRectangle({
-          x: placed.x,
-          y: placed.y,
-          width: placed.width,
-          height: placed.height,
-          color: rgb(1, 1, 1),
-        });
-        page.drawImage(image, {
-          x: inner.x,
-          y: inner.y,
-          width: image.width * scale,
-          height: image.height * scale,
-        });
+        clipBox(page, placed);
+        try {
+          page.drawImage(image, {
+            x: inner.x,
+            y: inner.y,
+            width: image.width * scale,
+            height: image.height * scale,
+          });
+        } finally {
+          unclip(page);
+        }
       }
     } catch {
       // Skip a bad logo rather than failing the label.
@@ -607,32 +583,55 @@ export async function drawMerchantFields(
     const font = element.fontWeight === "bold" ? bold : regular;
     const size = (element.fontSize ?? 9) * Math.min(scaleX, scaleY);
     const align = element.align ?? "left";
-    if (id === "indiaPostBarcode") {
-      await drawIndiaPostBarcode(document, page, element, data, placed, font);
-      continue;
-    }
-    if (id === "products") {
-      const includeTotal = !template.elements.total?.visible;
-      drawProductTable(page, font, bold, element, data, placed, size, includeTotal);
-      continue;
-    }
-    if (id === "codAmount") {
-      drawMultiline(page, font, codAmountLines(data.codAmount).join("\n"), {
-        x: placed.x,
-        y: placed.y,
-        width: placed.width,
-        height: placed.height,
-        size,
-        align,
-        lineGap: element.lineGap,
-        gap: element.gap,
-      });
-      continue;
-    }
-    if (isCustomTextId(id)) {
-      const text = element.content?.trim() || "";
+    clipBox(page, placed);
+    try {
+      if (id === "indiaPostBarcode") {
+        await drawIndiaPostBarcode(document, page, element, data, placed, font);
+        continue;
+      }
+      if (id === "products") {
+        const includeTotal = !template.elements.total?.visible;
+        drawProductTable(page, font, bold, element, data, placed, size, includeTotal);
+        continue;
+      }
+      if (id === "codAmount") {
+        drawMultiline(page, font, codAmountLines(data.codAmount).join("\n"), {
+          x: placed.x,
+          y: placed.y,
+          width: placed.width,
+          height: placed.height,
+          size,
+          align,
+          lineGap: element.lineGap,
+          gap: element.gap,
+        });
+        continue;
+      }
+      if (isCustomTextId(id)) {
+        const text = element.content?.trim() || "";
+        if (!text) continue;
+        drawMultiline(page, font, text, {
+          x: placed.x,
+          y: placed.y,
+          width: placed.width,
+          height: placed.height,
+          size,
+          align,
+          lineGap: element.lineGap,
+          gap: element.gap,
+        });
+        continue;
+      }
+      if (id === "shipTo" || id === "fromAddress") {
+        const party = id === "shipTo" ? data.receiver : data.sender;
+        const heading = id === "fromAddress" ? "From/ Return Address" : "Ship To:";
+        drawAddressBlock(page, { regular, bold, italic, boldItalic }, element, party, placed, size, align, heading);
+        continue;
+      }
+      const text = valueFor(id, data, template);
       if (!text) continue;
-      drawMultiline(page, font, text, {
+      const drawText = text.includes("\n") ? drawMultiline : drawWrapped;
+      drawText(page, font, text, {
         x: placed.x,
         y: placed.y,
         width: placed.width,
@@ -642,27 +641,9 @@ export async function drawMerchantFields(
         lineGap: element.lineGap,
         gap: element.gap,
       });
-      continue;
+    } finally {
+      unclip(page);
     }
-    if (id === "shipTo" || id === "fromAddress") {
-      const party = id === "shipTo" ? data.receiver : data.sender;
-      const heading = id === "fromAddress" ? "From/ Return Address" : "Ship To:";
-      drawAddressBlock(page, { regular, bold, italic, boldItalic }, element, party, placed, size, align, heading);
-      continue;
-    }
-    const text = valueFor(id, data, template);
-    if (!text) continue;
-    const drawText = text.includes("\n") ? drawMultiline : drawWrapped;
-    drawText(page, font, text, {
-      x: placed.x,
-      y: placed.y,
-      width: placed.width,
-      height: placed.height,
-      size,
-      align,
-      lineGap: element.lineGap,
-      gap: element.gap,
-    });
   }
 
   const pageSize = page.getSize();
