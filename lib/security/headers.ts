@@ -59,7 +59,7 @@ export function contentSecurityPolicy() {
     "font-src 'self' data:",
     `connect-src ${connectSrc}`,
     "worker-src 'self' blob:",
-    "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://js.stripe.com https://hooks.stripe.com https://*.myshopify.com",
+    "frame-src 'self' blob: https://api.razorpay.com https://checkout.razorpay.com https://js.stripe.com https://hooks.stripe.com https://*.myshopify.com",
     "upgrade-insecure-requests",
   ].join("; ");
 }

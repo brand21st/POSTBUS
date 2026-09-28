@@ -3,7 +3,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logInfo } from "@/lib/logger";
 import { hashSecret, randomToken, safeEqual } from "@/lib/security/crypto";
-import { isPaperSizeId, agentPaperSize, printMediaForPage } from "@/modules/labels/page-presets";
+import { isPrintPaperSize, agentPaperSize, printMediaForPage } from "@/modules/labels/page-presets";
 import { mmFromPt } from "@/modules/labels/layout/units";
 import { paperSizeForLabelKind } from "@/modules/labels/print-targets";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
@@ -211,8 +211,8 @@ export async function updatePrintSettings(
     updates.selected_printer_name = patch.selectedPrinterName?.trim() || null;
   }
   if (patch.paperSize !== undefined) {
-    if (!isPaperSizeId(patch.paperSize)) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, 4x6, A5, or A4.");
+    if (!isPrintPaperSize(patch.paperSize)) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, 4x6, A5, A4, or A3.");
     }
     updates.paper_size = patch.paperSize;
   }
@@ -471,8 +471,8 @@ export async function enqueueManualPrintJob(
   const settings = await getPrintSettings(supabase, ctx.organizationId);
   const target = await printTarget(supabase, ctx.organizationId, settings.selectedPrinterName);
   const paperSize = options?.paperSize || paperSizeForLabelKind(label.kind);
-  if (paperSize && !isPaperSizeId(paperSize)) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, 4x6, A5, or A4.");
+  if (paperSize && !isPrintPaperSize(paperSize)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paper size must be A6, 4x6, A5, A4, or A3.");
   }
   const copies = options?.copies ?? settings.copies;
   const { data, error } = await supabase

@@ -6,11 +6,13 @@ import {
   authenticatePrintAgent,
   claimNextPrintJob,
   enqueueAutoPrintJob,
+  enqueueManualPrintJob,
   isPrintAgentApiPath,
   isPrintAgentOnline,
   loadPrintJobPdf,
   printStatusForJob,
   recoverStalePrintJobs,
+  updatePrintSettings,
 } from "@/modules/print/service";
 
 type Job = {
@@ -514,6 +516,125 @@ describe("print jobs", () => {
       })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(state.jobs[0].status).toBe("PRINTING");
+  });
+
+  it("claims an A3 sheet instead of remapping it to A6", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "MANUAL",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          paper_size: "A3",
+          copies: 1,
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+      agent: { printers: ["Epson TM"] },
+      labels: [
+        {
+          id: "label-1",
+          kind: "CUSTOM_SHIPPING",
+          template_snapshot: {
+            page: { widthMm: 297, heightMm: 420, widthPt: 841.89, heightPt: 1190.55 },
+          },
+        },
+      ],
+    };
+    const claimed = await claimNextPrintJob(printClient(state) as never, {
+      agentId: "agent-1",
+      organizationId: "org-1",
+    });
+    expect(claimed?.paperSize).toBe("A3");
+    expect(claimed?.orientation).toBe("portrait");
+  });
+
+  it("saves A3 station paper and queues an A3 print job", async () => {
+    let paperSize = "A6";
+    const inserted: Array<Record<string, unknown>> = [];
+    const settingsRow = () => ({
+      organization_id: "org-1",
+      selected_printer_name: "Epson TM",
+      paper_size: paperSize,
+      orientation: "portrait",
+      copies: 1,
+      auto_print_merchant: true,
+    });
+    const supabase = {
+      from(table: string) {
+        if (table === "print_settings") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: settingsRow(), error: null }),
+              }),
+            }),
+            update: (patch: { paper_size?: string }) => ({
+              eq: () => ({
+                select: () => ({
+                  single: async () => {
+                    if (patch.paper_size) paperSize = patch.paper_size;
+                    return { data: settingsRow(), error: null };
+                  },
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "labels") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({
+                    data: { id: "label-1", shipment_id: "ship-1", status: "READY", kind: "CUSTOM_SHIPPING" },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "printers") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({ data: null, error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          insert: (row: Record<string, unknown>) => ({
+            select: () => ({
+              single: async () => {
+                const saved = { ...row, id: "job-a3", created_at: new Date().toISOString() };
+                inserted.push(saved);
+                return { data: saved, error: null };
+              },
+            }),
+          }),
+        };
+      },
+    };
+    const ctx = { organizationId: "org-1", userId: "user-1", role: "OWNER" as const };
+    const settings = await updatePrintSettings(supabase as never, ctx, { paperSize: "A3" });
+    expect(settings.paperSize).toBe("A3");
+    const job = await enqueueManualPrintJob(supabase as never, ctx, "label-1", { paperSize: "A3", copies: 1 });
+    expect(job.paper_size).toBe("A3");
+    expect(inserted[0]?.paper_size).toBe("A3");
   });
 
   it("only exposes print-agent API paths", () => {

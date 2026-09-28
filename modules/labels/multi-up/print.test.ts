@@ -7,7 +7,11 @@ describe("multi-up print", () => {
       ok: true,
       paperSize: "A4",
     });
-    expect(multiUpPrintDecision({ sheetPaper: "4x6", agentPaper: "A4", connected: true }).ok).toBe(false);
+    expect(multiUpPrintDecision({ sheetPaper: "A3", agentPaper: "A3", connected: true })).toEqual({
+      ok: true,
+      paperSize: "A3",
+    });
+    expect(multiUpPrintDecision({ sheetPaper: "A5", agentPaper: "A4", connected: true }).ok).toBe(false);
     expect(multiUpPrintDecision({ sheetPaper: "A5", agentPaper: "A5", connected: false }).ok).toBe(false);
     expect(multiUpPrintDecision({ sheetPaper: "custom", agentPaper: "A4", connected: true }).ok).toBe(false);
   });

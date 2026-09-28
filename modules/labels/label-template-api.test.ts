@@ -402,6 +402,22 @@ describe("label template API", () => {
     expect((result as Response).headers.get("Content-Disposition")).toContain("inline");
   });
 
+  it("builds a valid sheet when a slot is moved", async () => {
+    const result = await call("POST", "label-template/multi-sheet", {
+      disposition: "inline",
+      items: [{ orderId: "246072", copies: 1 }],
+      sheet: {
+        paperSize: "A4",
+        placements: [{ index: 0, xPt: 36, yPt: 48, widthPt: 180, heightPt: 260 }],
+      },
+    });
+    const bytes = await pdfBytes(result);
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBe(1);
+    expect(pdf.getPage(0).getWidth()).toBeCloseTo(ptFromMm(210), 2);
+    expect(pdf.getPage(0).getHeight()).toBeCloseTo(ptFromMm(297), 2);
+  });
+
   it("prints the sheet only when the agent paper matches", async () => {
     await expect(
       call("POST", "label-template/multi-sheet", {
@@ -431,6 +447,36 @@ describe("label template API", () => {
     expect(printed.job.paperSize).toBe("A4");
     expect(printCalls.at(-1)).toEqual({ labelId: "custom-label-1", paperSize: "A4", copies: 1 });
     expect(snapshots.at(-1)).toMatchObject({ page: { paperSize: "A4", widthMm: 210, heightMm: 297 } });
+  });
+
+  it("builds an A3 sheet from the preset and rejects label sizes as sheets", async () => {
+    await expect(
+      call("POST", "label-template/multi-sheet", {
+        disposition: "inline",
+        items: [{ orderId: "246072", copies: 1 }],
+        sheet: { paperSize: "A6", widthMm: 105, heightMm: 148 },
+      })
+    ).rejects.toThrow(/A4, A3, A5/);
+
+    const result = await call("POST", "label-template/multi-sheet", {
+      disposition: "inline",
+      items: [{ orderId: "246072", copies: 1 }],
+      sheet: { paperSize: "A3", widthMm: 50, heightMm: 50, margins: { topMm: 0, rightMm: 0, bottomMm: 0, leftMm: 0 }, gaps: { horizontalMm: 0, verticalMm: 0 }, rotation: 0, scale: 1 },
+    });
+    const bytes = await pdfBytes(result);
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPage(0).getWidth()).toBeCloseTo(ptFromMm(297), 2);
+    expect(pdf.getPage(0).getHeight()).toBeCloseTo(ptFromMm(420), 2);
+
+    station = { connected: true, paperSize: "A3" };
+    const printed = (await call("POST", "label-template/multi-sheet", {
+      disposition: "print",
+      items: [{ orderId: "246072", copies: 1 }],
+      sheet: { paperSize: "A3" },
+    })) as { job: { paperSize: string } };
+    expect(printed.job.paperSize).toBe("A3");
+    expect(printCalls.at(-1)).toMatchObject({ paperSize: "A3" });
+    expect(snapshots.at(-1)).toMatchObject({ page: { paperSize: "A3", widthMm: 297, heightMm: 420 } });
   });
 });
 

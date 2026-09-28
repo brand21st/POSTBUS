@@ -20,8 +20,46 @@ export const PAGE_PRESETS: PagePreset[] = [
   { id: "A4", label: "A4 (210 × 297 mm)", widthMm: 210, heightMm: 297, widthPt: ptFromMm(210), heightPt: ptFromMm(297) },
 ];
 
+export const SHEET_SIZE_IDS = ["A4", "A3", "A5"] as const;
+
+export type SheetSizeId = (typeof SHEET_SIZE_IDS)[number];
+
+export type SheetPreset = {
+  id: SheetSizeId;
+  label: string;
+  widthMm: number;
+  heightMm: number;
+  widthPt: number;
+  heightPt: number;
+};
+
+const a4Preset = PAGE_PRESETS.find((item) => item.id === "A4");
+const a5Preset = PAGE_PRESETS.find((item) => item.id === "A5");
+if (!a4Preset || !a5Preset) throw new Error("A4 and A5 label presets are required for sheet sizes.");
+
+export const SHEET_PRESETS: SheetPreset[] = [
+  { ...a4Preset, id: "A4" },
+  { id: "A3", label: "A3 (297 × 420 mm)", widthMm: 297, heightMm: 420, widthPt: ptFromMm(297), heightPt: ptFromMm(420) },
+  { ...a5Preset, id: "A5" },
+];
+
 export function isPaperSizeId(value: string | null | undefined): value is PaperSizeId {
   return PAPER_SIZE_IDS.includes(value as PaperSizeId);
+}
+
+export function isSheetSizeId(value: string | null | undefined): value is SheetSizeId {
+  return SHEET_SIZE_IDS.includes(value as SheetSizeId);
+}
+
+/** Label sizes plus A3, which is a sheet size stored on print jobs and station settings. */
+export function isPrintPaperSize(value: string | null | undefined): value is PaperSizeId | "A3" {
+  return isPaperSizeId(value) || value === "A3";
+}
+
+export function sheetPreset(id: SheetSizeId): SheetPreset {
+  const preset = SHEET_PRESETS.find((item) => item.id === id);
+  if (!preset) throw new Error(`Unknown sheet size ${id}.`);
+  return preset;
 }
 
 export type SizeChoice = PaperSizeId | "custom";
@@ -61,7 +99,8 @@ export function officialDrawRect(
   };
 }
 
-export function agentPaperSize(id: string | null | undefined) {
+export function agentPaperSize(id: string | null | undefined): PaperSizeId | "A3" {
+  if (id === "A3") return "A3";
   const preset = pagePreset(id);
   return preset.id === "4x6" ? "4x6" : preset.id;
 }
@@ -82,6 +121,14 @@ export function printMediaForPage(page: {
     (preset) => Math.abs(preset.widthMm - heightMm) < 1 && Math.abs(preset.heightMm - widthMm) < 1
   );
   if (landscape) return { paperSize: landscape.id, orientation: "landscape" as const };
+  const sheetPortrait = SHEET_PRESETS.find(
+    (preset) => Math.abs(preset.widthMm - widthMm) < 1 && Math.abs(preset.heightMm - heightMm) < 1
+  );
+  if (sheetPortrait) return { paperSize: sheetPortrait.id, orientation: "portrait" as const };
+  const sheetLandscape = SHEET_PRESETS.find(
+    (preset) => Math.abs(preset.widthMm - heightMm) < 1 && Math.abs(preset.heightMm - widthMm) < 1
+  );
+  if (sheetLandscape) return { paperSize: sheetLandscape.id, orientation: "landscape" as const };
 
   let best = PAGE_PRESETS[0];
   let bestScore = Number.POSITIVE_INFINITY;

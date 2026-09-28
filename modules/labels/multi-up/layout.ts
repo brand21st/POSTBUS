@@ -47,6 +47,15 @@ export type MultiUpPlacement = {
   rotation: MultiUpRotation;
 };
 
+/** Manual slot box. Rotation stays on the grid placement. */
+export type MultiUpPlacementOverride = {
+  index: number;
+  xPt: number;
+  yPt: number;
+  widthPt: number;
+  heightPt: number;
+};
+
 export type MultiUpLayout = {
   ok: true;
   sheetWidthPt: number;
@@ -174,4 +183,37 @@ function chooseRotation(input: MultiUpInput, scale: number): MultiUpRotation {
   const uprightSlots = "ok" in upright ? 0 : upright.columns * upright.rows;
   const turnedSlots = "ok" in turned ? 0 : turned.columns * turned.rows;
   return turnedSlots > uprightSlots ? 90 : 0;
+}
+
+const MIN_SLOT_PT = 20;
+
+function finiteBox(override: MultiUpPlacementOverride) {
+  return [override.xPt, override.yPt, override.widthPt, override.heightPt].every((value) => Number.isFinite(value));
+}
+
+/** Replaces matching slots and keeps every box on the sheet. Ignores unknown indexes and non-positive sizes. */
+export function applyPlacementOverrides(layout: MultiUpLayout, overrides: MultiUpPlacementOverride[]): MultiUpLayout {
+  if (!overrides.length) return layout;
+  const byIndex = new Map<number, MultiUpPlacementOverride>();
+  for (const override of overrides) byIndex.set(override.index, override);
+  return {
+    ...layout,
+    placements: layout.placements.map((placement) => {
+      const override = byIndex.get(placement.index);
+      if (!override || !finiteBox(override) || !(override.widthPt > 0) || !(override.heightPt > 0)) return placement;
+      const minWidth = Math.min(MIN_SLOT_PT, layout.sheetWidthPt);
+      const minHeight = Math.min(MIN_SLOT_PT, layout.sheetHeightPt);
+      const widthPt = Math.min(layout.sheetWidthPt, Math.max(minWidth, override.widthPt));
+      const heightPt = Math.min(layout.sheetHeightPt, Math.max(minHeight, override.heightPt));
+      const maxX = Math.max(0, layout.sheetWidthPt - widthPt);
+      const maxY = Math.max(0, layout.sheetHeightPt - heightPt);
+      return {
+        ...placement,
+        xPt: Math.min(maxX, Math.max(0, override.xPt)),
+        yPt: Math.min(maxY, Math.max(0, override.yPt)),
+        widthPt,
+        heightPt,
+      };
+    }),
+  };
 }

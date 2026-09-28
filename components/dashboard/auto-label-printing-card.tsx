@@ -130,6 +130,7 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
                 <SelectItem value="4x6">4 × 6 in</SelectItem>
                 <SelectItem value="A5">A5</SelectItem>
                 <SelectItem value="A4">A4</SelectItem>
+                <SelectItem value="A3">A3</SelectItem>
               </SelectContent>
             </Select>
           </div>

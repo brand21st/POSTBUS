@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ptFromMm } from "@/modules/labels/layout/units";
-import { calculateMultiUpLayout, type MultiUpInput, type MultiUpLayout, type MultiUpPlacement } from "@/modules/labels/multi-up/layout";
+import { calculateMultiUpLayout, applyPlacementOverrides, type MultiUpInput, type MultiUpLayout, type MultiUpPlacement } from "@/modules/labels/multi-up/layout";
+import { parseMultiUpRequest } from "@/modules/labels/multi-up/request";
 
 const zeroMargins = { topMm: 0, rightMm: 0, bottomMm: 0, leftMm: 0 };
 const zeroGaps = { horizontalMm: 0, verticalMm: 0 };
@@ -149,5 +150,53 @@ describe("multi-up placement", () => {
       rows: 2,
     });
     expect(result.ok).toBe(false);
+  });
+
+  it("moves a slot from a manual override and clamps it onto the sheet", () => {
+    const result = layout({ sheetWidthMm: 210, sheetHeightMm: 297, labelWidthMm: 102, labelHeightMm: 152 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const moved = applyPlacementOverrides(result, [{ index: 0, xPt: 40, yPt: 55, widthPt: 80, heightPt: 120 }]);
+    expect(moved.placements[0]).toMatchObject({ xPt: 40, yPt: 55, widthPt: 80, heightPt: 120, rotation: 0 });
+    expect(moved.placements[0]?.orderId).toBe(result.placements[0]?.orderId);
+
+    const clamped = applyPlacementOverrides(result, [{ index: 0, xPt: -30, yPt: 9000, widthPt: 9, heightPt: 5000 }]);
+    const slot = clamped.placements[0]!;
+    expect(slot.widthPt).toBe(20);
+    expect(slot.heightPt).toBe(result.sheetHeightPt);
+    expect(slot.xPt).toBe(0);
+    expect(slot.yPt).toBe(0);
+    expect(slot.xPt + slot.widthPt).toBeLessThanOrEqual(result.sheetWidthPt + 0.05);
+    expect(slot.yPt + slot.heightPt).toBeLessThanOrEqual(result.sheetHeightPt + 0.05);
+    expect(slot.rotation).toBe(result.placements[0]?.rotation);
+  });
+
+  it("ignores unknown and empty manual placements", () => {
+    const result = layout({ sheetWidthMm: 210, sheetHeightMm: 297, labelWidthMm: 102, labelHeightMm: 152, items: [{ orderId: "a", copies: 2 }] });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const next = applyPlacementOverrides(result, [
+      { index: 9, xPt: 1, yPt: 1, widthPt: 30, heightPt: 30 },
+      { index: 1, xPt: 4, yPt: 6, widthPt: 0, heightPt: 10 },
+    ]);
+    expect(next.placements).toEqual(result.placements);
+  });
+});
+
+describe("multi-up request placements", () => {
+  it("keeps only finite positive slot boxes", () => {
+    const parsed = parseMultiUpRequest({
+      items: [{ orderId: "2144", copies: 1 }],
+      sheet: {
+        paperSize: "A4",
+        placements: [
+          { index: 0, xPt: 12, yPt: 18, widthPt: 40, heightPt: 60 },
+          { index: -1, xPt: 1, yPt: 1, widthPt: 10, heightPt: 10 },
+          { index: 1, xPt: 1, yPt: 1, widthPt: 0, heightPt: 10 },
+          { nope: true },
+        ],
+      },
+    });
+    expect(parsed.sheet.placements).toEqual([{ index: 0, xPt: 12, yPt: 18, widthPt: 40, heightPt: 60 }]);
   });
 });

@@ -1,14 +1,14 @@
-import type { PaperSizeId } from "@/modules/labels/page-presets";
+import type { SheetSizeId } from "@/modules/labels/page-presets";
 
 export function multiUpPrintDecision(input: {
-  sheetPaper: PaperSizeId | "custom";
+  sheetPaper: SheetSizeId | "custom";
   agentPaper: string | null | undefined;
   connected: boolean;
-}): { ok: true; paperSize: PaperSizeId } | { ok: false; message: string } {
+}): { ok: true; paperSize: SheetSizeId } | { ok: false; message: string } {
   if (input.sheetPaper === "custom") {
     return {
       ok: false,
-      message: "Custom sheets can be previewed and downloaded. Printing needs A6, 4×6, A5, or A4.",
+      message: "Custom sheets can be previewed and downloaded. Printing needs A4, A3, or A5.",
     };
   }
   if (!input.connected) {
