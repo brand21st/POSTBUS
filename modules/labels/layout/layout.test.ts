@@ -133,9 +133,13 @@ describe("layoutLabel", () => {
     const block = layoutLabel(template, data, { barcode: { width: 400, height: 120 } }).blocks.find(
       (item) => item.id === "indiaPostBarcode"
     );
-    expect(block?.barSlot?.height).toBeCloseTo(height * 0.7 - 2, 5);
-    expect(block?.image?.width).toBeLessThanOrEqual((block?.barSlot?.width ?? 0) + 0.05);
-    expect(block?.lines[0]?.text).toContain("CL556974029IN");
+    expect(block?.image?.width).toBeLessThanOrEqual((block?.width ?? 0) + 0.05);
+    const imageBottom = (block?.image?.y ?? 0) + (block?.image?.height ?? 0);
+    const line = block?.lines[0];
+    expect(line?.text).toContain("CL556974029IN");
+    expect((line?.baseline ?? 0) - (line?.fontSize ?? 0) * 0.718).toBeGreaterThanOrEqual(imageBottom - 0.05);
+    const center = (block?.x ?? 0) + (block?.width ?? 0) / 2;
+    expect(Math.abs((line?.x ?? 0) + (line?.width ?? 0) / 2 - center)).toBeLessThanOrEqual(0.05);
   });
 
   it("shares product column geometry and warns without moving overlaps", () => {

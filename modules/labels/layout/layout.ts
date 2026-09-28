@@ -163,34 +163,40 @@ function barcodeBlock(
   const showText = element.showArticleText !== false;
   const placed = stored;
   const inner = insetBox(placed, gap);
+  const captionGap = 2;
   const captionHeight = showText ? fontSize + 4 : 0;
-  const barSlotHeight = Math.max(0, showText ? inner.height * 0.7 - 2 : inner.height);
-  const align = element.align ?? "center";
+  const reserved = showText ? captionHeight + captionGap : 0;
+  const barAreaHeight = Math.max(0, inner.height - reserved);
   const fitted = assets?.barcode
     ? fitContain(
-        { x: 0, y: 0, width: inner.width, height: barSlotHeight },
+        { x: 0, y: 0, width: inner.width, height: barAreaHeight },
         assets.barcode,
-        { x: align === "left" ? "left" : align === "right" ? "right" : "center", y: "center" },
+        { x: "center", y: "top" },
         true
       )
-    : { x: 0, y: 0, width: inner.width, height: barSlotHeight };
-  const groupHeight = fitted.height + captionHeight;
+    : { x: 0, y: 0, width: inner.width, height: barAreaHeight };
+  const groupHeight = fitted.height + reserved;
   const groupTop = inner.y + Math.max(0, (inner.height - groupHeight) / 2);
   const image = {
     x: inner.x + fitted.x,
-    y: groupTop + fitted.y,
+    y: groupTop,
     width: fitted.width,
     height: fitted.height,
   };
-  const barSlot = { x: inner.x, y: groupTop, width: inner.width, height: barSlotHeight };
-  const captionBox = { x: inner.x, y: groupTop + fitted.height, width: inner.width, height: captionHeight };
+  const barSlot = { x: image.x, y: image.y, width: image.width, height: image.height };
+  const captionBox = {
+    x: inner.x,
+    y: image.y + image.height + (showText ? captionGap : 0),
+    width: inner.width,
+    height: captionHeight,
+  };
   const lines = showText
     ? placeLines({
         lines: wrapText(article, captionBox.width, (value) =>
           measureHelvetica(value, fontSize, element.fontWeight === "bold" ? "bold" : "normal")
         ).map((line) => [{ text: line, bold: element.fontWeight === "bold", italic: false }]),
         box: captionBox,
-        align,
+        align: "center",
         fontSize,
         extra: 0,
         clip: placed,
