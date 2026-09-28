@@ -85,14 +85,20 @@ export default function IndiaPostPage() {
   if (config && !hydrated) {
     setHydrated(true);
     const legacyContract = String(config.contractId ?? config.contract_id ?? "");
+    const knownService = new Set<string>(INDIA_POST_SERVICES.map((service) => service.code));
     const contracts: ContractRow[] = config.contracts?.length
-      ? config.contracts.map((contract) => ({
-          serviceCode: contract.serviceCode,
-          contractId: contract.contractId,
-        }))
+      ? config.contracts
+          .filter((contract) => knownService.has(contract.serviceCode))
+          .map((contract) => ({
+            serviceCode: contract.serviceCode,
+            contractId: contract.contractId,
+          }))
       : legacyContract
         ? [{ serviceCode: DEFAULT_INDIA_POST_SERVICE, contractId: legacyContract }]
         : [];
+
+    const savedDefault = config.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
+    const savedRange = config.barcodeRange?.serviceCode ?? ANY_SERVICE;
 
     setForm((current) => ({
       ...current,
@@ -102,8 +108,9 @@ export default function IndiaPostPage() {
         config.pickupDropoffOfficeId ?? config.pickup_dropoff_office_id ?? ""
       ),
       contracts,
-      defaultServiceCode: config.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE,
-      rangeServiceCode: config.barcodeRange?.serviceCode ?? ANY_SERVICE,
+      defaultServiceCode: knownService.has(savedDefault) ? savedDefault : DEFAULT_INDIA_POST_SERVICE,
+      rangeServiceCode:
+        savedRange === ANY_SERVICE || knownService.has(savedRange) ? savedRange : ANY_SERVICE,
       prefix: String(config.barcodeRange?.prefix ?? ""),
       suffix: String(config.barcodeRange?.suffix ?? "IN"),
       startNumber: config.barcodeRange?.startNumber != null ? String(config.barcodeRange.startNumber) : "",
@@ -111,7 +118,11 @@ export default function IndiaPostPage() {
     }));
   }
 
-  const filledContracts = form.contracts.filter((contract) => contract.contractId.trim());
+  const filledContracts = form.contracts.filter(
+    (contract) =>
+      contract.contractId.trim() &&
+      INDIA_POST_SERVICES.some((service) => service.code === contract.serviceCode)
+  );
 
   const save = useMutation({
     mutationFn: () => {

@@ -664,7 +664,7 @@ export function indiaPostLabelTemplate(): LabelTemplate {
   show("indiaPostBarcode", { align: "center", fontSize: 14, fontWeight: "bold", showArticleText: true });
   show("customerId", { fontWeight: "bold", fontSize: 11 });
   show("articleType", { fontWeight: "bold", fontSize: 11, align: "left" });
-  show("orderIdDate");
+  show("orderIdDate", { autoHeight: false });
   show("parcelSize");
   show("codAmount", { align: "right", fontWeight: "bold", autoHeight: true });
   show("prepaid", { align: "right", fontWeight: "bold" });

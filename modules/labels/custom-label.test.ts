@@ -6,7 +6,7 @@ import { orderNumberCandidates, previewFromPacking } from "@/modules/labels/cust
 import { articleIdFromShipment, indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
 import { SAMPLE_FROM_PARTS, SAMPLE_SHIP_PARTS, addressContentHeight, addressLineTexts, addressPartsFromParty, composeAddressLines, defaultAddressLayout, wrapAddressRuns } from "@/modules/labels/address-layout";
 import { SAMPLE_PACKING_DATA, loadLogoBytes } from "@/modules/labels/packing-data";
-import { articleContractLine, amountInIndianRupees, blockPreviewLines, bookedBlockText, createCustomTextElement, CUSTOM_LABEL_BLOCKS, customerIdLine, LABEL_GENERATED_FROM, nextCustomTextId, parcelSizeLines, productTable, productTableHeight, wrapProductCell, serviceContractLine, type CustomLabelPreview } from "@/modules/labels/custom-blocks";
+import { articleContractLine, amountInIndianRupees, blockPreviewLines, bookedBlockText, createCustomTextElement, CUSTOM_LABEL_BLOCKS, customerIdLine, LABEL_GENERATED_FROM, nextCustomTextId, orderIdDateLines, parcelSizeLines, productTable, productTableHeight, wrapProductCell, serviceContractLine, type CustomLabelPreview } from "@/modules/labels/custom-blocks";
 import { indiaPostVolumetricWeightGrams } from "@/modules/india-post/endpoints";
 import { customBlockVisibility, renderMerchantLabelPdf } from "@/modules/labels/packing-pdf";
 import { printMediaForPage, sizeChoiceForPage } from "@/modules/labels/page-presets";
@@ -286,6 +286,26 @@ describe("india post barcode block", () => {
     });
     expect(legacy.page.paperSize).toBe("A4");
     expect(parseLabelTemplate(indiaPost).page.paperSize).toBe("A6");
+  });
+
+  it("prints Order ID in the Properties millimetre box", async () => {
+    const template = indiaPostLabelTemplate();
+    const order = template.elements.orderIdDate;
+    const box = elementBoxMm(order, template.page.heightPt);
+    expect(box.xMm).toBeCloseTo(1.6, 1);
+    expect(box.yMm).toBeCloseTo(31.1, 1);
+    expect(box.widthMm).toBeCloseTo(25.3, 1);
+    expect(box.heightMm).toBeCloseTo(4.2, 1);
+    expect(order.align).toBe("left");
+    expect(order.fontSize).toBe(10);
+    expect(order.fontWeight).toBe("normal");
+    expect(order.lineGap).toBe(2);
+    expect(order.gap).toBe(0);
+    expect(orderIdDateLines("12345", "2 October 2018")).toEqual(["Order ID: 12345", "Date: 2 October 2018"]);
+    const pdf = await pdfContents(await renderMerchantLabelPdf(template, SAMPLE_PACKING_DATA));
+    expect(pdf).toContain("Order ID: 12345");
+    expect(pdf).toMatch(/\/Helvetica-\d+ 10 Tf/);
+    expect(pdf).toContain(`${order.x} ${order.y} ${order.width} ${order.height} re`);
   });
 
   it("shows product name, quantity, weight, and price in columns", async () => {

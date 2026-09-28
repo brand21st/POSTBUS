@@ -34,6 +34,16 @@ describe("resolveOrderBookingService", () => {
       })
     ).toBe("BUSINESS_PARCEL");
   });
+
+  it("ignores Speed Post document and falls back to Speed Post parcel", () => {
+    expect(
+      resolveOrderBookingService({
+        orderService: "SP_INLAND_DOC",
+        workspaceOverride: "SP_INLAND_DOC",
+        defaultService: "SP_INLAND_DOC",
+      })
+    ).toBe("SP_INLAND_PARCEL");
+  });
 });
 
 describe("shipmentServiceLocked", () => {

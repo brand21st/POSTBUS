@@ -442,6 +442,15 @@ export function codBlockHeight(
   return gap * 2 + Math.max(1, lines.length) * lineHeight + lineHeight;
 }
 
+export function orderIdDateLines(orderNumber?: string | null, orderDate?: string | null) {
+  const order = String(orderNumber ?? "").trim();
+  const date = String(orderDate ?? "").trim();
+  return [
+    order ? `Order ID: ${order}` : "",
+    date ? `Date: ${date}` : "",
+  ].filter(Boolean);
+}
+
 export function bookedBlockText(
   id: string,
   preview: CustomLabelPreview,
@@ -452,11 +461,7 @@ export function bookedBlockText(
   if (id === "articleType") return articleContractLine(preview.articleType, preview.contractId);
   if (id === "serviceContractId") return serviceContractLine(preview.contractId);
   if (id === "indiaPostBarcode") return preview.articleId.trim() || "India Post tracking number not available";
-  if (id === "orderIdDate") {
-    const order = preview.orderNumber ? `Order ID: ${preview.orderNumber}` : "";
-    const date = preview.orderDate ? `Date: ${preview.orderDate}` : "";
-    return [order, date].filter(Boolean).join(", ");
-  }
+  if (id === "orderIdDate") return orderIdDateLines(preview.orderNumber, preview.orderDate).join("\n");
   if (id === "parcelSize") return parcelSizeLines(preview, true).join("\n");
   if (id === "codAmount") return codAmountLines(preview.codAmount).join("\n");
   if (id === "prepaid") return "PRE PAID";
@@ -492,7 +497,7 @@ export function blockPreviewLines(
     if (id === "customerId") return ["Customer ID"];
     if (id === "articleType") return ["Speed Post parcel"];
     if (id === "serviceContractId") return ["Contract ID"];
-    if (id === "orderIdDate") return ["Order ID, Date"];
+    if (id === "orderIdDate") return ["Order ID", "Date"];
     if (id === "parcelSize") return parcelSizeLines(PARCEL_SIZE_SAMPLE);
     if (id === "codAmount") return codAmountLines(2597);
     if (id === "prepaid") return ["PRE PAID"];

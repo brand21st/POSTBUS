@@ -11,7 +11,7 @@ import {
   type PDFPage,
 } from "pdf-lib";
 import { addressPartsFromParty, composeAddressLines, helveticaTextWidth, mmToPt, wrapAddressRuns, type AddressLayout } from "@/modules/labels/address-layout";
-import { articleContractLine, codAmountLines, customTextIds, customerIdLine, isCodPayment, isCustomTextId, LABEL_GENERATED_FROM, LABEL_GENERATED_FROM_SIZE, parcelSizeLines, productColumnWidths, productTable, wrapProductCell, serviceContractLine } from "@/modules/labels/custom-blocks";
+import { articleContractLine, codAmountLines, customTextIds, customerIdLine, isCodPayment, isCustomTextId, LABEL_GENERATED_FROM, LABEL_GENERATED_FROM_SIZE, orderIdDateLines, parcelSizeLines, productColumnWidths, productTable, wrapProductCell, serviceContractLine } from "@/modules/labels/custom-blocks";
 import { indiaPostBarcodePng } from "@/modules/labels/india-post-barcode-image";
 import { pagePreset } from "@/modules/labels/page-presets";
 import {
@@ -147,8 +147,8 @@ function drawWrapped(
     if (opts.align === "center") x = box.x + (box.width - width) / 2;
     if (opts.align === "right") x = box.x + box.width - width;
     const y = box.y + box.height - opts.size - index * lineHeight;
-    if (y + opts.size * 0.2 < box.y) return;
-    page.drawText(line, { x: Math.max(0, x), y: Math.max(box.y, y), size: opts.size, font, color: rgb(0.07, 0.09, 0.15) });
+    if (index > 0 && y + opts.size * 0.2 < box.y) return;
+    page.drawText(line, { x: Math.max(0, x), y: Math.max(box.y, Math.min(y, box.y + box.height - opts.size)), size: opts.size, font, color: rgb(0.07, 0.09, 0.15) });
   });
 }
 
@@ -291,11 +291,8 @@ function valueFor(id: string, data: PackingLabelData, template: LabelTemplate) {
       return articleContractLine(data.articleType, data.contractId);
     case "serviceContractId":
       return serviceContractLine(data.contractId);
-    case "orderIdDate": {
-      const order = data.orderNumber ? `Order ID: ${data.orderNumber}` : "";
-      const date = data.orderDate ? `Date: ${data.orderDate}` : "";
-      return [order, date].filter(Boolean).join(", ");
-    }
+    case "orderIdDate":
+      return orderIdDateLines(data.orderNumber, data.orderDate).join("\n");
     case "parcelSize":
       return parcelSizeLines(data, true).join("\n");
     case "prepaid":
@@ -346,8 +343,8 @@ function drawMultiline(
     if (opts.align === "center") x = box.x + (box.width - width) / 2;
     if (opts.align === "right") x = box.x + box.width - width;
     const y = box.y + box.height - opts.size - index * lineHeight;
-    if (y + opts.size * 0.2 < box.y) return;
-    page.drawText(line, { x: Math.max(0, x), y: Math.max(box.y, y), size: opts.size, font, color: rgb(0.07, 0.09, 0.15) });
+    if (index > 0 && y + opts.size * 0.2 < box.y) return;
+    page.drawText(line, { x: Math.max(0, x), y: Math.max(box.y, Math.min(y, box.y + box.height - opts.size)), size: opts.size, font, color: rgb(0.07, 0.09, 0.15) });
   });
 }
 

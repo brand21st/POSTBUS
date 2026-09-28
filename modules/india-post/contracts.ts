@@ -42,7 +42,10 @@ export function selectableIndiaPostServices(config?: {
 } | null): SelectableIndiaPostService[] {
   const defaultCode = config?.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
   const contracts = (config?.contracts ?? []).filter(
-    (contract) => Boolean(contract.contractId?.trim()) && contract.isActive !== false
+    (contract) =>
+      KNOWN_CODES.has(contract.serviceCode) &&
+      Boolean(contract.contractId?.trim()) &&
+      contract.isActive !== false
   );
   if (contracts.length) {
     return contracts.map((contract) => ({
@@ -163,5 +166,6 @@ export async function resolveDefaultServiceCode(
     .eq("is_active", true)
     .eq("is_default", true)
     .maybeSingle();
-  return (data?.service_code as string | undefined) ?? DEFAULT_INDIA_POST_SERVICE;
+  const code = (data?.service_code as string | undefined) ?? DEFAULT_INDIA_POST_SERVICE;
+  return KNOWN_CODES.has(code) ? code : DEFAULT_INDIA_POST_SERVICE;
 }

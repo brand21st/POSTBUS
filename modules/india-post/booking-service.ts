@@ -1,4 +1,4 @@
-import { DEFAULT_INDIA_POST_SERVICE, INDIA_POST_SERVICES } from "@/types/domain";
+import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 
 export const PARCEL_SERVICE_CODES = ["SP_INLAND_PARCEL", "BUSINESS_PARCEL"] as const;
 export type ParcelServiceCode = (typeof PARCEL_SERVICE_CODES)[number];
@@ -20,8 +20,8 @@ export function resolveOrderBookingService(input: {
   if (pinned) return pinned;
   const override = parcelServiceCode(input.workspaceOverride);
   if (override) return override;
-  const fallback = (input.defaultService ?? "").trim();
-  if (INDIA_POST_SERVICES.some((service) => service.code === fallback)) return fallback;
+  const fallback = parcelServiceCode(input.defaultService);
+  if (fallback) return fallback;
   return DEFAULT_INDIA_POST_SERVICE;
 }
 

@@ -21,7 +21,7 @@ describe("selectableIndiaPostServices", () => {
             isActive: true,
             label: "Speed Post parcel",
           },
-          { serviceCode: "SP_INLAND_DOC", contractId: "", isActive: true },
+          { serviceCode: "SP_INLAND_DOC", contractId: "999", isActive: true },
         ],
       })
     ).toEqual([
@@ -32,11 +32,7 @@ describe("selectableIndiaPostServices", () => {
 
   it("falls back to known India Post services when no contract is saved", () => {
     const options = selectableIndiaPostServices({ contracts: [], defaultServiceCode: "SP_INLAND_PARCEL" });
-    expect(options.map((item) => item.code)).toEqual([
-      "SP_INLAND_PARCEL",
-      "SP_INLAND_DOC",
-      "BUSINESS_PARCEL",
-    ]);
+    expect(options.map((item) => item.code)).toEqual(["SP_INLAND_PARCEL", "BUSINESS_PARCEL"]);
     expect(options.find((item) => item.isDefault)?.code).toBe("SP_INLAND_PARCEL");
   });
 });
