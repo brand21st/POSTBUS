@@ -17,6 +17,7 @@ import {
   nextShopifyStageTags,
   shopifyOrderNumber,
   shopifyLineItemTitle,
+  shopifyLineItemWeightGrams,
   shopifyStageFromJobProgress,
   shopifyRemoteSignalsProcessing,
   shouldNotifyWatiForShopifyProcessing,
@@ -48,6 +49,7 @@ function query(data: unknown) {
   self.insert = () => self;
   self.update = () => self;
   self.upsert = () => self;
+  self.delete = () => self;
   self.maybeSingle = async () => payload;
   self.single = async () => payload;
   self.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
@@ -132,6 +134,20 @@ describe("shopify order mapping", () => {
       "Cotton Shirt — Black / M"
     );
     expect(shopifyLineItemTitle({ title: "Mug" })).toBe("Mug");
+  });
+
+  it("converts Shopify product weight into per-unit grams", () => {
+    expect(shopifyLineItemWeightGrams({ grams: 200 })).toBe(200);
+    expect(shopifyLineItemWeightGrams({ weight: { value: 0.5, unit: "KILOGRAMS" } })).toBe(500);
+    expect(shopifyLineItemWeightGrams({ weight: 250, weight_unit: "g" })).toBe(250);
+    expect(shopifyLineItemWeightGrams({ weight: 1, weight_unit: "lb" })).toBe(454);
+    expect(shopifyLineItemWeightGrams({ weight: 1, weight_unit: "oz" })).toBe(28);
+    expect(shopifyLineItemWeightGrams({ grams: 0.5 })).toBe(500);
+    expect(shopifyLineItemWeightGrams({ grams: 0 })).toBeNull();
+    expect(shopifyLineItemWeightGrams({})).toBeNull();
+    expect(
+      shopifyLineItemWeightGrams({ grams: 0, variant: { weight: 0.25, weight_unit: "kg" } })
+    ).toBe(250);
   });
 
   it("normalizes Indian phone and pincode values", () => {
@@ -297,5 +313,121 @@ describe("shopify automation flags", () => {
       ["ord-1"],
       { enqueueBooking: false }
     );
+  });
+});
+
+function trackedOrderClient(options: {
+  existingOrderId?: string | null;
+  orderStatus?: string;
+  shipments?: Array<{ status: string }>;
+  inserts: Array<{ table: string; payload: unknown }>;
+  deletes: string[];
+}) {
+  return {
+    from: vi.fn((table: string) => {
+      let data: unknown = {};
+      if (table === "external_order_references") {
+        data = options.existingOrderId ? { order_id: options.existingOrderId } : null;
+      } else if (table === "orders") {
+        data = { id: options.existingOrderId ?? "ord-1", status: options.orderStatus ?? "READY" };
+      } else if (table === "customers") data = { id: "cust-1" };
+      else if (table === "addresses") data = { id: "addr-1" };
+      else if (table === "shipments") data = options.shipments ?? [];
+      const payload = { data, error: null };
+      const self: Record<string, unknown> = {};
+      self.select = () => self;
+      self.eq = () => self;
+      self.insert = (row: unknown) => {
+        options.inserts.push({ table, payload: row });
+        return self;
+      };
+      self.update = () => self;
+      self.upsert = () => self;
+      self.delete = () => {
+        options.deletes.push(table);
+        return self;
+      };
+      self.maybeSingle = async () => payload;
+      self.single = async () => payload;
+      self.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+        Promise.resolve(payload).then(resolve, reject);
+      return self;
+    }),
+  };
+}
+
+describe("shopify line item weight persistence", () => {
+  it("stores converted grams when a Shopify order is imported", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const supabase = trackedOrderClient({ inserts, deletes: [] });
+    const result = await upsertShopifyOrder(supabase as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        line_items: [{ title: "Kurta", quantity: 2, price: "499", grams: 0.5 }],
+      },
+    });
+    expect(result.imported).toBe(true);
+    const items = inserts.find((row) => row.table === "order_line_items");
+    expect(items?.payload).toEqual([
+      expect.objectContaining({ title: "Kurta", quantity: 2, weight_grams: 500 }),
+    ]);
+  });
+
+  it("refreshes line-item weight when an open Shopify order is updated", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const deletes: string[] = [];
+    const supabase = trackedOrderClient({
+      existingOrderId: "ord-1",
+      orderStatus: "READY",
+      inserts,
+      deletes,
+    });
+    const result = await upsertShopifyOrder(supabase as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        line_items: [{ title: "Kurta", quantity: 1, price: "499", weight: { value: 0.5, unit: "KILOGRAMS" } }],
+      },
+    });
+    expect(result.updated).toBe(true);
+    expect(deletes).toContain("order_line_items");
+    const items = inserts.find((row) => row.table === "order_line_items");
+    expect(items?.payload).toEqual([expect.objectContaining({ weight_grams: 500 })]);
+  });
+
+  it("leaves line items alone once a shipment is queued or the order is booked", async () => {
+    const queued = { inserts: [] as Array<{ table: string; payload: unknown }>, deletes: [] as string[] };
+    await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        shipments: [{ status: "QUEUED" }],
+        ...queued,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: remoteOrder,
+      }
+    );
+    expect(queued.deletes).not.toContain("order_line_items");
+
+    const booked = { inserts: [] as Array<{ table: string; payload: unknown }>, deletes: [] as string[] };
+    await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "BOOKED",
+        ...booked,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: remoteOrder,
+      }
+    );
+    expect(booked.deletes).not.toContain("order_line_items");
   });
 });

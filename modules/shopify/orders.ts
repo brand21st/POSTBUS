@@ -88,15 +88,30 @@ export type ShopifyRemoteOrder = {
   payment_gateway_names?: string[] | null;
   gateway?: string | null;
   tags?: string | string[] | null;
-  line_items?: Array<{
-    title?: string;
-    name?: string | null;
-    variant_title?: string | null;
-    sku?: string | null;
-    quantity?: number;
-    price?: string | number;
-    grams?: number;
-  }>;
+  line_items?: ShopifyRemoteLineItem[];
+};
+
+export type ShopifyWeightValue =
+  | number
+  | string
+  | { value?: number | string | null; unit?: string | null }
+  | null;
+
+export type ShopifyRemoteLineItem = {
+  title?: string;
+  name?: string | null;
+  variant_title?: string | null;
+  sku?: string | null;
+  quantity?: number;
+  price?: string | number;
+  grams?: number | string | null;
+  weight?: ShopifyWeightValue;
+  weight_unit?: string | null;
+  variant?: {
+    grams?: number | string | null;
+    weight?: ShopifyWeightValue;
+    weight_unit?: string | null;
+  } | null;
 };
 
 export type ShopifySyncResult = {
@@ -297,6 +312,133 @@ export function shopifyLineItemTitle(item: {
     return `${title} — ${variant}`;
   }
   return title || "Item";
+}
+
+const SHOPIFY_GRAMS_PER_UNIT: Record<string, number> = {
+  g: 1,
+  gram: 1,
+  grams: 1,
+  kg: 1000,
+  kilogram: 1000,
+  kilograms: 1000,
+  oz: 28.3495,
+  ounce: 28.3495,
+  ounces: 28.3495,
+  lb: 453.592,
+  lbs: 453.592,
+  pound: 453.592,
+  pounds: 453.592,
+};
+
+const SHOPIFY_WEIGHT_LOCKED_ORDER = new Set(["BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CANCELLED"]);
+const SHOPIFY_WEIGHT_LOCKED_SHIPMENT = new Set([
+  "VALIDATING",
+  "QUEUED",
+  "BOOKING",
+  "BOOKED",
+  "LABEL_PENDING",
+  "LABEL_READY",
+  "MANIFEST_PENDING",
+  "MANIFEST_READY",
+  "IN_TRANSIT",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+  "NDR",
+]);
+
+function shopifyNumeric(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const amount = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+function shopifyWeightPair(weight: ShopifyWeightValue | undefined, unit?: string | null) {
+  if (weight && typeof weight === "object") {
+    const value = shopifyNumeric(weight.value);
+    if (value == null) return null;
+    return { value, unit: weight.unit ?? unit ?? null };
+  }
+  const value = shopifyNumeric(weight);
+  if (value == null) return null;
+  return { value, unit: unit ?? null };
+}
+
+export function shopifyWeightToGrams(value: number, unit?: string | null) {
+  const factor = SHOPIFY_GRAMS_PER_UNIT[String(unit || "").trim().toLowerCase()];
+  if (!factor || !Number.isFinite(value) || value <= 0) return null;
+  const grams = Math.round(value * factor);
+  return grams > 0 ? grams : null;
+}
+
+/** Per-unit grams. Shopify product weight is not multiplied by quantity. */
+export function shopifyLineItemWeightGrams(item: ShopifyRemoteLineItem) {
+  const grams = shopifyNumeric(item.grams);
+  if (grams != null && grams >= 1) return Math.round(grams);
+
+  const variantGrams = shopifyNumeric(item.variant?.grams);
+  if (variantGrams != null && variantGrams >= 1) return Math.round(variantGrams);
+
+  const pairs = [
+    shopifyWeightPair(item.weight, item.weight_unit),
+    shopifyWeightPair(item.variant?.weight, item.variant?.weight_unit ?? item.weight_unit),
+  ];
+  for (const pair of pairs) {
+    if (!pair || pair.value <= 0 || !pair.unit) continue;
+    const converted = shopifyWeightToGrams(pair.value, pair.unit);
+    if (converted) return converted;
+  }
+
+  if (grams != null && grams > 0 && grams < 1) return Math.round(grams * 1000);
+  return null;
+}
+
+function shopifyLineItemRows(organizationId: string, orderId: string, lineItems: ShopifyRemoteLineItem[]) {
+  return lineItems.map((item) => ({
+    organization_id: organizationId,
+    order_id: orderId,
+    title: shopifyLineItemTitle(item),
+    sku: item.sku ? String(item.sku) : null,
+    quantity: Number(item.quantity ?? 1),
+    unit_price: Number(item.price ?? 0),
+    weight_grams: shopifyLineItemWeightGrams(item),
+  }));
+}
+
+async function refreshShopifyLineItems(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    orderStatus?: string | null;
+    lineItems: ShopifyRemoteLineItem[];
+  }
+) {
+  if (!input.lineItems.length) return;
+  if (SHOPIFY_WEIGHT_LOCKED_ORDER.has((input.orderStatus ?? "").toUpperCase())) return;
+
+  const { data: shipments, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("status")
+    .eq("organization_id", input.organizationId)
+    .eq("order_id", input.orderId);
+  if (shipmentError) return;
+  const shipmentRows = Array.isArray(shipments) ? shipments : [];
+  const locked = shipmentRows.some((row) =>
+    SHOPIFY_WEIGHT_LOCKED_SHIPMENT.has(String((row as { status?: string }).status ?? "").toUpperCase())
+  );
+  if (locked) return;
+
+  const { error: deleteError } = await supabase
+    .from("order_line_items")
+    .delete()
+    .eq("organization_id", input.organizationId)
+    .eq("order_id", input.orderId);
+  if (deleteError) throw new Error(deleteError.message);
+
+  const { error: itemsError } = await supabase
+    .from("order_line_items")
+    .insert(shopifyLineItemRows(input.organizationId, input.orderId, input.lineItems));
+  if (itemsError) throw new Error(itemsError.message);
 }
 
 export function shopifyPhone(value?: string | null) {
@@ -1069,9 +1211,16 @@ export async function upsertShopifyOrder(
     fulfillment_status: fulfillmentStatus,
     status: orderStatus,
   };
+  const lineItems = (input.remote.line_items ?? []).filter((item) => Number(item.quantity ?? 0) > 0);
 
   if (existing?.order_id) {
     await supabase.from("orders").update(totals).eq("id", existing.order_id);
+    await refreshShopifyLineItems(supabase, {
+      organizationId: input.organizationId,
+      orderId: existing.order_id as string,
+      orderStatus: existingOrder?.status,
+      lineItems,
+    });
     if (shopifyRemoteSignalsProcessing(input.remote)) {
       await notifyShopifyProcessingWati(supabase, input.organizationId, existing.order_id as string);
     }
@@ -1101,7 +1250,6 @@ export async function upsertShopifyOrder(
   const billingId = input.remote.billing_address
     ? await insertAddress(supabase, input.organizationId, customer.id, input.remote.billing_address)
     : shippingId;
-  const lineItems = (input.remote.line_items ?? []).filter((item) => Number(item.quantity ?? 0) > 0);
   const fallbackTotal = lineItems.reduce(
     (sum, item) => sum + Number(item.price ?? 0) * Number(item.quantity ?? 1),
     0
@@ -1131,7 +1279,7 @@ export async function upsertShopifyOrder(
       .eq("organization_id", input.organizationId)
       .eq("order_number", shopifyOrderNumber(input.remote, sourceId))
       .maybeSingle();
-    if (byNumber?.id) {
+      if (byNumber?.id) {
       await supabase.from("orders").update(totals).eq("id", byNumber.id);
       await supabase.from("external_order_references").upsert(
         {
@@ -1143,6 +1291,17 @@ export async function upsertShopifyOrder(
         },
         { onConflict: "organization_id,source,source_order_id" }
       );
+      const { data: duplicateOrder } = await supabase
+        .from("orders")
+        .select("status")
+        .eq("id", byNumber.id)
+        .maybeSingle();
+      await refreshShopifyLineItems(supabase, {
+        organizationId: input.organizationId,
+        orderId: byNumber.id as string,
+        orderStatus: duplicateOrder?.status,
+        lineItems,
+      });
       return { imported: false, updated: true, skipped: false, orderId: byNumber.id as string };
     }
   }
@@ -1152,17 +1311,9 @@ export async function upsertShopifyOrder(
   }
 
   if (lineItems.length) {
-    const { error: itemsError } = await supabase.from("order_line_items").insert(
-      lineItems.map((item) => ({
-        organization_id: input.organizationId,
-        order_id: order.id,
-        title: shopifyLineItemTitle(item),
-        sku: item.sku ? String(item.sku) : null,
-        quantity: Number(item.quantity ?? 1),
-        unit_price: Number(item.price ?? 0),
-        weight_grams: Number(item.grams ?? 0) || null,
-      }))
-    );
+    const { error: itemsError } = await supabase
+      .from("order_line_items")
+      .insert(shopifyLineItemRows(input.organizationId, order.id, lineItems));
     if (itemsError) throw new Error(itemsError.message);
   }
 

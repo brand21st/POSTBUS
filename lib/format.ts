@@ -16,6 +16,12 @@ export function formatPaise(paise: number | string | null | undefined, currency 
   return formatCurrency(amount / 100, currency);
 }
 
+export function formatWeightGrams(value: number | string | null | undefined) {
+  const grams = typeof value === "string" ? Number(value) : value;
+  if (grams === null || grams === undefined || !Number.isFinite(grams) || grams <= 0) return "—";
+  return `${Math.round(grams)} g`;
+}
+
 export function formatNumber(value: number | string | null | undefined) {
   const amount = typeof value === "string" ? Number(value) : value;
   if (amount === null || amount === undefined || Number.isNaN(amount)) return "—";

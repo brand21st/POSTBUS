@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { addressLine, customerName, lineItems, orderNumber } from "@/lib/dashboard/records";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, formatWeightGrams } from "@/lib/format";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { api } from "@/lib/hooks/use-api";
@@ -82,6 +82,12 @@ export default function OrderDetailPage() {
   const record = order.data;
   const items = lineItems(record);
   const related = shipments.data?.items ?? [];
+  const itemsWeight = items.reduce((sum, item) => {
+    const grams = Number(item.weightGrams ?? item.weight_grams);
+    const quantity = Number(item.quantity) || 0;
+    if (!Number.isFinite(grams) || grams <= 0 || quantity <= 0) return sum;
+    return sum + grams * quantity;
+  }, 0);
 
   return (
     <div className="space-y-6">
@@ -160,6 +166,7 @@ export default function OrderDetailPage() {
                     <th className="pb-3">Item</th>
                     <th className="pb-3">SKU</th>
                     <th className="pb-3">Qty</th>
+                    <th className="pb-3">Weight</th>
                     <th className="pb-3">Price</th>
                   </tr>
                 </thead>
@@ -169,6 +176,7 @@ export default function OrderDetailPage() {
                       <td className="py-3 font-medium">{item.title}</td>
                       <td className="py-3 text-muted">{item.sku || "—"}</td>
                       <td className="py-3">{item.quantity}</td>
+                      <td className="py-3">{formatWeightGrams(item.weightGrams ?? item.weight_grams)}</td>
                       <td className="py-3">
                         {formatCurrency(item.unitPrice ?? item.unit_price, record.currency)}
                       </td>
@@ -176,6 +184,9 @@ export default function OrderDetailPage() {
                   ))}
                 </tbody>
               </table>
+              {itemsWeight > 0 ? (
+                <p className="mt-3 text-sm text-muted">Items weight: {formatWeightGrams(itemsWeight)}</p>
+              ) : null}
             </div>
           )}
         </CardContent>
