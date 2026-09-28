@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Download, FileText, Printer, QrCode, Settings2, Tag } from "lucide-react";
+import { Check, ChevronDown, Download, FileText, LayoutGrid, Printer, QrCode, Settings2, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -23,6 +23,7 @@ import { openLabelPdf } from "@/lib/labels/preview";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
+import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import { shipmentPrintJobs, shipmentPrintLabel, type ShipmentPrintTarget } from "@/modules/labels/print-targets";
 import { NOTIFICATIONS_QUERY_KEY } from "@/lib/hooks/use-notifications";
 import { LABELS_READY_NOTIFICATION, LABELS_READY_TITLE } from "@/lib/notifications/labels-ready";
@@ -369,6 +370,14 @@ export default function LabelsPage() {
                 Shipping templates
               </Button>
             </Link>
+            {multiUpPrintEnabled() && canPacking ? (
+              <Link href="/dashboard/labels/multi-print">
+                <Button type="button" variant="secondary">
+                  <LayoutGrid className="size-4" />
+                  Multi print
+                </Button>
+              </Link>
+            ) : null}
             <Link href="/dashboard/labels/customize">
               <Button type="button" variant="secondary">
                 <Settings2 className="size-4" />

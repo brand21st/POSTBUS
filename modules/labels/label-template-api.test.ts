@@ -1,4 +1,6 @@
+import { PDFDocument } from "pdf-lib";
 import { NextRequest } from "next/server";
+import { ptFromMm } from "@/modules/labels/layout/units";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/lib/api/context";
 import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
@@ -8,7 +10,8 @@ import { createCustomTextElement } from "@/modules/labels/custom-blocks";
 const encoded: string[] = [];
 const persisted: Array<{ kind: string; shipmentId: string }> = [];
 const snapshots: unknown[] = [];
-const printCalls: Array<{ labelId: string; paperSize?: string }> = [];
+const printCalls: Array<{ labelId: string; paperSize?: string; copies?: number }> = [];
+let station: { connected: boolean; paperSize: string } = { connected: false, paperSize: "A4" };
 const labelOps: Array<{ op: string; table: string }> = [];
 
 vi.mock("@/modules/labels/india-post-barcode-image", async (importOriginal) => {
@@ -35,11 +38,15 @@ vi.mock("@/modules/labels/load", () => ({
 }));
 
 vi.mock("@/modules/print/service", () => ({
-  enqueueManualPrintJob: vi.fn(async (_supabase: unknown, _ctx: unknown, labelId: string, opts?: { paperSize?: string }) => {
-    printCalls.push({ labelId, paperSize: opts?.paperSize });
+  enqueueManualPrintJob: vi.fn(async (_supabase: unknown, _ctx: unknown, labelId: string, opts?: { paperSize?: string; copies?: number }) => {
+    printCalls.push({
+      labelId,
+      paperSize: opts?.paperSize,
+      ...(opts?.copies != null ? { copies: opts.copies } : {}),
+    });
     return { id: "job-1", status: "PENDING", source: "MANUAL" };
   }),
-  getPrintStation: vi.fn(async () => ({ connected: false })),
+  getPrintStation: vi.fn(async () => station),
   updatePrintSettings: vi.fn(async () => null),
 }));
 
@@ -144,6 +151,7 @@ beforeEach(() => {
   printCalls.length = 0;
   labelOps.length = 0;
   labels = null;
+  station = { connected: false, paperSize: "A4" };
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
   template = indiaPostLabelTemplate();
   shipment = {
@@ -375,8 +383,54 @@ describe("label template API", () => {
     };
     expect(printed.labelId).toBe("official-1");
     expect(printed.job.paperSize).toBe("A6");
-    expect(printCalls.at(-1)).toEqual({ labelId: "official-1", paperSize: "A6" });
+    expect(printCalls.at(-1)).toMatchObject({ labelId: "official-1", paperSize: "A6" });
     expect(persisted).toEqual([]);
+  });
+
+  it("builds one A4 sheet from the stored label and ignores client page sizes", async () => {
+    const result = await call("POST", "label-template/multi-sheet", {
+      disposition: "inline",
+      template: { page: { paperSize: "A4", widthPt: 10, heightPt: 10, widthMm: 10, heightMm: 10 } },
+      items: [{ orderId: "246072", copies: 2 }],
+      sheet: { paperSize: "A4", widthMm: 50, heightMm: 50, margins: { topMm: 0, rightMm: 0, bottomMm: 0, leftMm: 0 }, gaps: { horizontalMm: 0, verticalMm: 0 }, rotation: 0, scale: 1 },
+    });
+    const bytes = await pdfBytes(result);
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBe(1);
+    expect(pdf.getPage(0).getWidth()).toBeCloseTo(ptFromMm(210), 2);
+    expect(pdf.getPage(0).getHeight()).toBeCloseTo(ptFromMm(297), 2);
+    expect((result as Response).headers.get("Content-Disposition")).toContain("inline");
+  });
+
+  it("prints the sheet only when the agent paper matches", async () => {
+    await expect(
+      call("POST", "label-template/multi-sheet", {
+        disposition: "print",
+        items: [{ orderId: "246072", copies: 1 }],
+        sheet: { paperSize: "A4" },
+      })
+    ).rejects.toThrow(/Printer unavailable/);
+    expect(printCalls).toEqual([]);
+
+    station = { connected: true, paperSize: "4x6" };
+    await expect(
+      call("POST", "label-template/multi-sheet", {
+        disposition: "print",
+        items: [{ orderId: "246072", copies: 1 }],
+        sheet: { paperSize: "A4" },
+      })
+    ).rejects.toThrow(/4x6/);
+    expect(printCalls).toEqual([]);
+
+    station = { connected: true, paperSize: "A4" };
+    const printed = (await call("POST", "label-template/multi-sheet", {
+      disposition: "print",
+      items: [{ orderId: "246072", copies: 1 }],
+      sheet: { paperSize: "A4" },
+    })) as { job: { paperSize: string } };
+    expect(printed.job.paperSize).toBe("A4");
+    expect(printCalls.at(-1)).toEqual({ labelId: "custom-label-1", paperSize: "A4", copies: 1 });
+    expect(snapshots.at(-1)).toMatchObject({ page: { paperSize: "A4", widthMm: 210, heightMm: 297 } });
   });
 });
 

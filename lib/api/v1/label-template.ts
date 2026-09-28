@@ -20,6 +20,7 @@ import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
 import { parseLabelTemplate } from "@/modules/labels/template-schema";
 import { getLabelTemplate, saveLabelTemplate } from "@/modules/labels/template-service";
 import { organizationLogoUrl } from "@/modules/organizations/branding";
+import { printMultiUpSheet, renderMultiUpSheet } from "@/modules/labels/multi-up/render";
 import { enqueueManualPrintJob, getPrintStation, updatePrintSettings } from "@/modules/print/service";
 
 export async function handleLabelTemplateRoutes(
@@ -99,6 +100,21 @@ export async function handleLabelTemplateRoutes(
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `${disposition}; filename="${filename}"`,
+      },
+    });
+  }
+
+  if (key === "POST label-template/multi-sheet") {
+    const body = await request.json().catch(() => ({}));
+    const disposition = body && typeof body === "object" ? (body as { disposition?: string }).disposition : "inline";
+    if (disposition === "print") return printMultiUpSheet(supabase, ctx, body);
+    const rendered = await renderMultiUpSheet(supabase, ctx.organizationId, body);
+    const filename = "shipping-labels.pdf";
+    const download = disposition === "attachment" ? "attachment" : "inline";
+    return new NextResponse(new Uint8Array(rendered.pdf), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `${download}; filename="${filename}"`,
       },
     });
   }

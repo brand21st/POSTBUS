@@ -108,6 +108,9 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "label-template/custom-print", ["label-template", "custom-print"])).toBe(
       "labels.write"
     );
+    expect(permissionForTenantRoute("POST", "label-template/multi-sheet", ["label-template", "multi-sheet"])).toBe(
+      "labels.read"
+    );
     expect(permissionForTenantRoute("GET", "label-template/custom-data", ["label-template", "custom-data"])).toBe(
       "labels.read"
     );

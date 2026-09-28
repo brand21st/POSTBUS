@@ -35,6 +35,7 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForPath("/dashboard/tracking")).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForPath("/dashboard/labels/customize")).toBe(FEATURE.packing);
     expect(lockedFeatureForPath("/dashboard/labels/templates")).toBe(FEATURE.packing);
+    expect(lockedFeatureForPath("/dashboard/labels/multi-print")).toBe(FEATURE.packing);
     expect(lockedFeatureForPath("/dashboard/orders")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/integrations")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/automation")).toBeNull();
