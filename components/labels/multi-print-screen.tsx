@@ -14,7 +14,7 @@ import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import { calculateMultiUpLayout, type MultiUpRotation } from "@/modules/labels/multi-up/layout";
 import { PAGE_PRESETS, isPaperSizeId, type PaperSizeId } from "@/modules/labels/page-presets";
 import type { LabelTemplate, NamedLabelTemplate } from "@/modules/labels/template-schema";
-import type { OrderRecord, Paginated } from "@/types/api";
+import type { LabelRecord, Paginated } from "@/types/api";
 
 type TemplateResponse = { template: LabelTemplate };
 type SheetChoice = PaperSizeId | "custom";
@@ -25,6 +25,15 @@ const emptyMargins = { topMm: 5, rightMm: 5, bottomMm: 5, leftMm: 5 };
 function listedTemplates(template: LabelTemplate): NamedLabelTemplate[] {
   if (template.library?.length) return template.library;
   return [{ id: "active", name: "Current template", isDefault: true, page: template.page, elements: template.elements }];
+}
+
+function generatedOrderNumber(row: LabelRecord) {
+  const barcodeState = String(row.barcodeStatus ?? row.barcode_status ?? "").toUpperCase();
+  const packingState = String(row.packingStatus ?? row.packing_status ?? "").toUpperCase();
+  const status = String(row.status ?? "").toUpperCase();
+  const generated = barcodeState === "READY" || packingState === "READY" || status === "READY";
+  if (!generated) return "";
+  return (row.orderNumber || row.order_number || "").trim();
 }
 
 function pageMm(page: LabelTemplate["page"]) {
@@ -53,9 +62,9 @@ export function MultiPrintScreen() {
     queryKey: ["label-template"],
     queryFn: () => api<TemplateResponse>("/api/v1/label-template"),
   });
-  const orders = useQuery({
-    queryKey: ["orders", "multi-print"],
-    queryFn: () => api<Paginated<OrderRecord>>("/api/v1/orders?page=1&pageSize=8"),
+  const labels = useQuery({
+    queryKey: ["labels", "multi-print"],
+    queryFn: () => api<Paginated<LabelRecord>>("/api/v1/labels?page=1&pageSize=24"),
   });
   const station = usePrintStation();
   const library = useMemo(
@@ -200,7 +209,11 @@ export function MultiPrintScreen() {
     );
   }
 
-  const recent = asPaginated<OrderRecord>(orders.data, ["orders", "items"]).items;
+  const labeledOrders = [
+    ...new Set(
+      asPaginated<LabelRecord>(labels.data, ["labels", "items"]).items.map(generatedOrderNumber).filter(Boolean)
+    ),
+  ];
 
   return (
     <div className="space-y-6">
@@ -303,16 +316,13 @@ export function MultiPrintScreen() {
               Add
             </Button>
           </div>
-          {recent.length ? (
+          {labeledOrders.length ? (
             <div className="flex flex-wrap gap-2">
-              {recent.map((order) => {
-                const number = order.orderNumber || order.order_number || order.id;
-                return (
-                  <Button key={order.id} type="button" variant="ghost" size="sm" onClick={() => addItem(number, 1)}>
-                    {number}
-                  </Button>
-                );
-              })}
+              {labeledOrders.map((number) => (
+                <Button key={number} type="button" variant="ghost" size="sm" onClick={() => addItem(number, 1)}>
+                  {number}
+                </Button>
+              ))}
             </div>
           ) : null}
           <ul className="space-y-1 text-sm">
