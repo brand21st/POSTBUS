@@ -47,10 +47,12 @@ describe("4×6 multi-print presets", () => {
     expect(a4Four).toMatchObject({
       columns: 2,
       rows: 2,
-      name: "A4 · 4 Labels",
-      labelWidthMm: pagePreset("A6").widthMm,
-      labelHeightMm: pagePreset("A6").heightMm,
+      name: "A4 · 4 Labels (2×2)",
+      labelWidthMm: LABEL_4X6.widthMm,
+      labelHeightMm: LABEL_4X6.heightMm,
     });
+    expect(a4Four?.scale).toBeLessThan(1);
+    expect(a4Four?.scale).toBeGreaterThan(0.9);
 
     const a3 = generate4x6Presets(sheetPreset("A3").widthMm, sheetPreset("A3").heightMm, "A3");
     expect(a3.map((item) => item.quantity)).toEqual([1, 2, 4]);
@@ -66,6 +68,32 @@ describe("4×6 multi-print presets", () => {
     expect(generate4x6Presets(fourBySix.widthMm, fourBySix.heightMm, "4x6").map((item) => item.quantity)).toEqual([1]);
   });
 
+  it("fits four 4×6 templates on A4 by uniform scale, without stretching", () => {
+    const a4 = sheetPreset("A4");
+    const preset = generate4x6Presets(a4.widthMm, a4.heightMm, "A4").find((item) => item.quantity === 4);
+    expect(preset).toBeTruthy();
+    const result = calculateMultiUpLayout({
+      sheetWidthMm: a4.widthMm,
+      sheetHeightMm: a4.heightMm,
+      labelWidthMm: LABEL_4X6.widthMm,
+      labelHeightMm: LABEL_4X6.heightMm,
+      margins: preset!.margins,
+      gaps: preset!.gaps,
+      rotation: 0,
+      scale: preset!.scale,
+      columns: 2,
+      rows: 2,
+      items: [{ orderId: "a", copies: 4 }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.placements).toHaveLength(4);
+    const slot = result.placements[0]!;
+    expect(slot.widthPt / slot.heightPt).toBeCloseTo(LABEL_4X6.widthMm / LABEL_4X6.heightMm, 5);
+    expect(slot.widthPt).toBeLessThan(ptFromMm(LABEL_4X6.widthMm));
+    assertInside(result, LABEL_4X6.widthMm * preset!.scale, LABEL_4X6.heightMm * preset!.scale);
+  });
+
   it("covers every multi-print paper option from the shared registry", () => {
     for (const paper of MULTI_PRINT_PAPERS) {
       const presets = generate4x6Presets(paper.widthMm, paper.heightMm, paper.id);
@@ -78,7 +106,7 @@ describe("4×6 multi-print presets", () => {
           margins: preset.margins,
           gaps: preset.gaps,
           rotation: 0,
-          scale: 1,
+          scale: preset.scale,
           columns: preset.columns,
           rows: preset.rows,
           items: [{ orderId: "a", copies: preset.quantity }],
@@ -87,7 +115,7 @@ describe("4×6 multi-print presets", () => {
         if (!result.ok) return;
         expect(result.rotation).toBe(0);
         expect(result.perSheet).toBe(preset.quantity);
-        assertInside(result, preset.labelWidthMm, preset.labelHeightMm);
+        assertInside(result, preset.labelWidthMm * preset.scale, preset.labelHeightMm * preset.scale);
         for (let index = 0; index < result.placements.length; index += 1) {
           for (let other = index + 1; other < result.placements.length; other += 1) {
             expect(overlaps(result.placements[index]!, result.placements[other]!)).toBe(false);

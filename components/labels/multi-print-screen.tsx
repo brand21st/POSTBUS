@@ -150,6 +150,16 @@ function presetCaption(preset: FourBySixPreset | null, fallback: string) {
   return preset.name.includes(" × 4×6") ? `${preset.name} Labels` : preset.name;
 }
 
+function presetChoiceCopy(item: FourBySixPreset) {
+  if (item.id === "A4-4-labels") {
+    return { title: "4 labels", hint: "A4 2×2 · auto-fit 4×6" };
+  }
+  if (item.scale === 1 && item.labelWidthMm === LABEL_4X6.widthMm) {
+    return { title: `${item.quantity} label${item.quantity === 1 ? "" : "s"}`, hint: "4×6 · full size" };
+  }
+  return { title: `${item.quantity} label${item.quantity === 1 ? "" : "s"}`, hint: `${item.columns}×${item.rows}` };
+}
+
 function pageMm(page: LabelTemplate["page"]) {
   return {
     widthMm: page.widthMm ?? (page.widthPt * 25.4) / 72,
@@ -341,7 +351,7 @@ export function MultiPrintScreen() {
       margins: activeMargins,
       gaps: { horizontalMm: Number(activeGapX) || 0, verticalMm: Number(activeGapY) || 0 },
       rotation: presetOn ? 0 : rotation,
-      scale: presetOn ? 1 : Number(scale) || 1,
+      scale: presetOn && chosenFourBySix ? chosenFourBySix.scale : Number(scale) || 1,
       columns: presetOn && chosenFourBySix ? chosenFourBySix.columns : columns.trim() ? Number(columns) : null,
       rows: presetOn && chosenFourBySix ? chosenFourBySix.rows : rows.trim() ? Number(rows) : null,
       items,
@@ -1182,21 +1192,40 @@ export function MultiPrintScreen() {
                   <div className="space-y-1.5">
                     <p className="text-xs font-medium text-muted">Available presets</p>
                     {fourBySixPresets.length ? (
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="Label quantity preset">
                         {fourBySixPresets.map((item) => {
-                          const selectedPreset = presetOn && chosenFourBySix?.quantity === item.quantity;
+                          const selectedPreset = presetOn && chosenFourBySix?.id === item.id;
+                          const copy = presetChoiceCopy(item);
                           return (
-                            <Button
+                            <button
                               key={item.id}
                               type="button"
-                              className="justify-start"
-                              variant={selectedPreset ? "primary" : "secondary"}
-                              aria-pressed={selectedPreset}
+                              role="radio"
+                              aria-checked={selectedPreset}
+                              className={cn(
+                                "flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition-all duration-200",
+                                selectedPreset
+                                  ? "border-brand bg-brand text-white shadow-sm"
+                                  : "border-border bg-card text-foreground hover:border-zinc-300 hover:bg-white dark:hover:border-zinc-700"
+                              )}
                               onClick={() => applyFourBySixPreset(item.quantity)}
                             >
-                              {item.id === "A4-4-labels" ? "4 Labels (A4 2×2)" : `${item.quantity} Labels`}
-                              {selectedPreset ? <CheckCircle2 className="ml-auto" /> : null}
-                            </Button>
+                              <span
+                                className={cn(
+                                  "flex size-8 shrink-0 items-center justify-center rounded-lg text-sm font-bold tabular-nums",
+                                  selectedPreset ? "bg-white/20" : "bg-surface-soft text-ink"
+                                )}
+                              >
+                                {item.quantity}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-sm font-semibold leading-5">{copy.title}</span>
+                                <span className={cn("block truncate text-[11px] leading-4", selectedPreset ? "text-white/80" : "text-muted")}>
+                                  {copy.hint}
+                                </span>
+                              </span>
+                              {selectedPreset ? <CheckCircle2 className="size-4 shrink-0" /> : null}
+                            </button>
                           );
                         })}
                       </div>
