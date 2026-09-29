@@ -31,6 +31,11 @@ describe("nextGroupFromList", () => {
     expect(nextGroupFromList(chips, "A", ["A"])).toEqual([]);
   });
 
+  it("fills a group of two when the sheet quantity is two", () => {
+    expect(nextGroupFromList(chips, "A", [], 2)).toEqual(["A", "B"]);
+    expect(nextGroupFromList(chips, "C", ["A", "B"], 2)).toEqual(["C", "D"]);
+  });
+
   it("fills a short group at the end of the list", () => {
     expect(nextGroupFromList(["A", "B", "C"], "A", [])).toEqual(["A", "B", "C"]);
     expect(nextGroupFromList(chips, "H", [])).toEqual(["H"]);

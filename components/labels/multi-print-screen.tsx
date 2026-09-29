@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { SmartGuideOverlay } from "@/components/labels/smart-guide-overlay";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,15 +63,31 @@ import {
   type MultiUpPlacementOverride,
   type MultiUpRotation,
 } from "@/modules/labels/multi-up/layout";
-import { A4_FOUR_UP, a4FourUpSpacing } from "@/modules/labels/multi-up/presets";
-import { SHEET_PRESETS, isSheetSizeId, type SheetSizeId } from "@/modules/labels/page-presets";
+import { LABEL_4X6, generate4x6Presets, type FourBySixPreset } from "@/modules/labels/multi-up/presets";
+import {
+  applySmartSnap,
+  emptySnapLocks,
+  groupBounds,
+  overlayForBox,
+  shiftBox,
+  snapThresholdPt,
+  type SmartOverlay,
+  type SnapLocks,
+} from "@/modules/labels/multi-up/smart-guides";
+import {
+  MULTI_PRINT_PAPERS,
+  isMultiPrintPaperId,
+  multiPrintPaper,
+  multiPrintPaperName,
+  type MultiPrintPaperId,
+} from "@/modules/labels/page-presets";
 import type { LabelTemplate, NamedLabelTemplate } from "@/modules/labels/template-schema";
 import type { LabelRecord, Paginated } from "@/types/api";
 
 type TemplateResponse = { template: LabelTemplate };
-type SheetChoice = SheetSizeId | "custom";
+type SheetChoice = MultiPrintPaperId | "custom";
 type CopyRow = { orderId: string; copies: number };
-type LayoutMode = "a4-4" | "manual";
+type LayoutMode = "preset" | "manual";
 type WorkflowStep = "labels" | "layout" | "review";
 
 const emptyMargins = { topMm: 0, rightMm: 0, bottomMm: 0, leftMm: 0 };
@@ -128,6 +145,11 @@ function generatedOrderNumber(row: LabelRecord) {
   return (row.orderNumber || row.order_number || "").trim();
 }
 
+function presetCaption(preset: FourBySixPreset | null, fallback: string) {
+  if (!preset) return fallback;
+  return preset.name.includes(" × 4×6") ? `${preset.name} Labels` : preset.name;
+}
+
 function pageMm(page: LabelTemplate["page"]) {
   return {
     widthMm: page.widthMm ?? (page.widthPt * 25.4) / 72,
@@ -169,8 +191,9 @@ export function MultiPrintScreen() {
     [templates.data]
   );
   const [templateId, setTemplateId] = useState("");
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("a4-4");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("preset");
   const [paper, setPaper] = useState<SheetChoice>("A4");
+  const [presetQuantity, setPresetQuantity] = useState(2);
   const [customWidth, setCustomWidth] = useState("300");
   const [customHeight, setCustomHeight] = useState("400");
   const [margins, setMargins] = useState(emptyMargins);
@@ -179,7 +202,7 @@ export function MultiPrintScreen() {
   const [rotation, setRotation] = useState<MultiUpRotation | "auto">(0);
   const [scale, setScale] = useState("1");
   const [columns, setColumns] = useState("2");
-  const [rows, setRows] = useState("2");
+  const [rows, setRows] = useState("1");
   const [draftOrder, setDraftOrder] = useState("");
   const [draftCopies, setDraftCopies] = useState("1");
   const [items, setItems] = useState<CopyRow[]>([]);
@@ -195,6 +218,7 @@ export function MultiPrintScreen() {
   const [zoom, setZoom] = useState(1);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
+  const [dragOverlay, setDragOverlay] = useState<SmartOverlay | null>(null);
   const canvasPane = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const zoomRef = useRef(1);
@@ -206,11 +230,15 @@ export function MultiPrintScreen() {
     startX: number;
     startY: number;
     origins: Array<{ index: number; box: SlotBox }>;
+    originBbox: SlotBox;
+    others: SlotBox[];
+    locked: SnapLocks;
   } | null>(null);
   const marquee = useRef<{ x0: number; y0: number; additive: boolean } | null>(null);
   const canvasScaleRef = useRef(1);
   const overrideFrame = useRef<number | null>(null);
   const pendingOverrides = useRef<Record<number, MultiUpPlacementOverride>>({});
+  const pendingOverlay = useRef<SmartOverlay | null | undefined>(undefined);
 
   useEffect(() => {
     zoomRef.current = zoom;
@@ -274,36 +302,66 @@ export function MultiPrintScreen() {
 
   const selectedId = library.some((item) => item.id === templateId) ? templateId : (library[0]?.id ?? "");
   const selected = library.find((item) => item.id === selectedId);
-  const label = useMemo(() => (selected ? pageMm(selected.page) : null), [selected]);
+  const templateLabel = useMemo(() => (selected ? pageMm(selected.page) : null), [selected]);
   const labeledOrders = useMemo(
     () =>
       [...new Set(asPaginated<LabelRecord>(labels.data, ["labels", "items"]).items.map(generatedOrderNumber).filter(Boolean))],
     [labels.data]
   );
-  const presetSpacing = label && layoutMode === "a4-4" ? a4FourUpSpacing(label.widthMm, label.heightMm) : null;
-  const activeMargins = presetSpacing?.margins ?? margins;
-  const activeGapX = presetSpacing ? String(presetSpacing.gaps.horizontalMm) : gapX;
-  const activeGapY = presetSpacing ? String(presetSpacing.gaps.verticalMm) : gapY;
-  const preset = isSheetSizeId(paper) ? SHEET_PRESETS.find((item) => item.id === paper) : null;
-  const sheetWidthMm = preset?.widthMm ?? Number(customWidth);
-  const sheetHeightMm = preset?.heightMm ?? Number(customHeight);
+  const namedPaper = isMultiPrintPaperId(paper) ? multiPrintPaper(paper) : null;
+  const sheetWidthMm = namedPaper?.widthMm ?? Number(customWidth);
+  const sheetHeightMm = namedPaper?.heightMm ?? Number(customHeight);
+  const fourBySixPresets = useMemo(
+    () => generate4x6Presets(sheetWidthMm, sheetHeightMm, paper),
+    [paper, sheetHeightMm, sheetWidthMm]
+  );
+  const chosenFourBySix =
+    layoutMode === "preset"
+      ? (fourBySixPresets.find((item) => item.quantity === presetQuantity) ?? fourBySixPresets.at(-1) ?? null)
+      : null;
+  const presetOn = Boolean(chosenFourBySix);
+  const slotLabel = chosenFourBySix
+    ? { widthMm: chosenFourBySix.labelWidthMm, heightMm: chosenFourBySix.labelHeightMm }
+    : layoutMode === "preset"
+      ? { widthMm: LABEL_4X6.widthMm, heightMm: LABEL_4X6.heightMm }
+      : templateLabel;
+  const activeMargins = chosenFourBySix?.margins ?? margins;
+  const activeGapX = chosenFourBySix ? String(chosenFourBySix.gaps.horizontalMm) : gapX;
+  const activeGapY = chosenFourBySix ? String(chosenFourBySix.gaps.verticalMm) : gapY;
   const layout = useMemo(() => {
-    if (!label || !(sheetWidthMm > 0) || !(sheetHeightMm > 0)) return null;
-    const fourUp = layoutMode === "a4-4";
+    if (layoutMode === "preset" && !chosenFourBySix) {
+      return { ok: false as const, message: "No valid 4×6 layout for this paper size." };
+    }
+    if (!slotLabel || !(sheetWidthMm > 0) || !(sheetHeightMm > 0)) return null;
     return calculateMultiUpLayout({
-      sheetWidthMm: fourUp ? A4_FOUR_UP.sheetWidthMm : sheetWidthMm,
-      sheetHeightMm: fourUp ? A4_FOUR_UP.sheetHeightMm : sheetHeightMm,
-      labelWidthMm: label.widthMm,
-      labelHeightMm: label.heightMm,
+      sheetWidthMm,
+      sheetHeightMm,
+      labelWidthMm: slotLabel.widthMm,
+      labelHeightMm: slotLabel.heightMm,
       margins: activeMargins,
       gaps: { horizontalMm: Number(activeGapX) || 0, verticalMm: Number(activeGapY) || 0 },
-      rotation: fourUp ? A4_FOUR_UP.rotation : rotation,
-      scale: fourUp ? A4_FOUR_UP.scale : Number(scale) || 1,
-      columns: fourUp ? A4_FOUR_UP.columns : columns.trim() ? Number(columns) : null,
-      rows: fourUp ? A4_FOUR_UP.rows : rows.trim() ? Number(rows) : null,
+      rotation: presetOn ? 0 : rotation,
+      scale: presetOn ? 1 : Number(scale) || 1,
+      columns: presetOn && chosenFourBySix ? chosenFourBySix.columns : columns.trim() ? Number(columns) : null,
+      rows: presetOn && chosenFourBySix ? chosenFourBySix.rows : rows.trim() ? Number(rows) : null,
       items,
     });
-  }, [columns, activeGapX, activeGapY, label, activeMargins, layoutMode, rotation, rows, scale, sheetHeightMm, sheetWidthMm, items]);
+  }, [
+    activeGapX,
+    activeGapY,
+    activeMargins,
+    chosenFourBySix,
+    columns,
+    items,
+    presetOn,
+    rotation,
+    rows,
+    scale,
+    sheetHeightMm,
+    sheetWidthMm,
+    slotLabel,
+    layoutMode,
+  ]);
 
   const gridKey = useMemo(
     () =>
@@ -313,15 +371,31 @@ export function MultiPrintScreen() {
         margins: activeMargins,
         gapX: activeGapX,
         gapY: activeGapY,
-        rotation,
-        scale,
-        columns,
-        rows,
+        rotation: presetOn ? 0 : rotation,
+        scale: presetOn && chosenFourBySix ? chosenFourBySix.scale : scale,
+        columns: presetOn && chosenFourBySix ? chosenFourBySix.columns : columns,
+        rows: presetOn && chosenFourBySix ? chosenFourBySix.rows : rows,
         items,
-        labelWidth: label?.widthMm ?? 0,
-        labelHeight: label?.heightMm ?? 0,
+        labelWidth: slotLabel?.widthMm ?? 0,
+        labelHeight: slotLabel?.heightMm ?? 0,
+        layoutMode,
       }),
-    [columns, activeGapX, activeGapY, items, label, activeMargins, rotation, rows, scale, sheetHeightMm, sheetWidthMm]
+    [
+      activeGapX,
+      activeGapY,
+      activeMargins,
+      chosenFourBySix,
+      columns,
+      items,
+      layoutMode,
+      presetOn,
+      rotation,
+      rows,
+      scale,
+      sheetHeightMm,
+      sheetWidthMm,
+      slotLabel,
+    ]
   );
   const gridKeyRef = useRef(gridKey);
   useEffect(() => {
@@ -330,6 +404,12 @@ export function MultiPrintScreen() {
     setOverrides({});
     setSelectedSlots([]);
   }, [gridKey]);
+
+  useEffect(() => {
+    if (layoutMode !== "preset" || !fourBySixPresets.length) return;
+    if (fourBySixPresets.some((item) => item.quantity === presetQuantity)) return;
+    setPresetQuantity(fourBySixPresets[fourBySixPresets.length - 1]!.quantity);
+  }, [fourBySixPresets, layoutMode, presetQuantity]);
 
   const displayLayout = useMemo(() => {
     if (!layout?.ok) return layout;
@@ -373,14 +453,17 @@ export function MultiPrintScreen() {
   const sheetOrders =
     displayLayout?.ok ? displayLayout.placements.filter((placement) => placement.page === pageIndex) : [];
   const markManual = useCallback(() => {
-    if (layoutMode === "a4-4" && label) {
-      const spacing = a4FourUpSpacing(label.widthMm, label.heightMm);
-      setMargins(spacing.margins);
-      setGapX(String(spacing.gaps.horizontalMm));
-      setGapY(String(spacing.gaps.verticalMm));
+    if (layoutMode === "preset" && chosenFourBySix) {
+      setMargins(chosenFourBySix.margins);
+      setGapX(String(chosenFourBySix.gaps.horizontalMm));
+      setGapY(String(chosenFourBySix.gaps.verticalMm));
+      setColumns(String(chosenFourBySix.columns));
+      setRows(String(chosenFourBySix.rows));
+      setRotation(0);
+      setScale(String(chosenFourBySix.scale));
     }
     setLayoutMode("manual");
-  }, [label, layoutMode]);
+  }, [chosenFourBySix, layoutMode]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -473,16 +556,18 @@ export function MultiPrintScreen() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [displayLayout, layout, manual, selectedSlots, markManual]);
 
-  function applyA4FourUpPreset() {
-    setPaper("A4");
-    setColumns(String(A4_FOUR_UP.columns));
-    setRows(String(A4_FOUR_UP.rows));
-    setRotation(A4_FOUR_UP.rotation);
-    setScale(String(A4_FOUR_UP.scale));
+  function applyFourBySixPreset(quantity: number) {
+    const next = fourBySixPresets.find((item) => item.quantity === quantity);
+    if (!next) return;
+    setPresetQuantity(next.quantity);
+    setColumns(String(next.columns));
+    setRows(String(next.rows));
+    setRotation(0);
+    setScale(String(next.scale));
     setManual(false);
     setOverrides({});
     setSelectedSlots([]);
-    setLayoutMode("a4-4");
+    setLayoutMode("preset");
   }
 
   function highlightOrder(orderId: string) {
@@ -499,7 +584,12 @@ export function MultiPrintScreen() {
       highlightOrder(orderId);
       return;
     }
-    const added = nextGroupFromList(labeledOrders, orderId, selectedIds);
+    const added = nextGroupFromList(
+      labeledOrders,
+      orderId,
+      selectedIds,
+      layout?.ok ? layout.perSheet : chosenFourBySix?.quantity ?? 4
+    );
     if (!added.length) return;
     setItems((current) => [...current, ...added.map((id) => ({ orderId: id, copies: 1 }))]);
   }
@@ -516,15 +606,17 @@ export function MultiPrintScreen() {
       templateId: selectedId || undefined,
       items,
       sheet: {
-        paperSize: layoutMode === "a4-4" ? A4_FOUR_UP.paperSize : paper,
-        widthMm: layoutMode === "a4-4" ? A4_FOUR_UP.sheetWidthMm : sheetWidthMm,
-        heightMm: layoutMode === "a4-4" ? A4_FOUR_UP.sheetHeightMm : sheetHeightMm,
+        paperSize: paper,
+        widthMm: sheetWidthMm,
+        heightMm: sheetHeightMm,
+        labelWidthMm: presetOn && chosenFourBySix ? chosenFourBySix.labelWidthMm : undefined,
+        labelHeightMm: presetOn && chosenFourBySix ? chosenFourBySix.labelHeightMm : undefined,
         margins: activeMargins,
         gaps: { horizontalMm: Number(activeGapX) || 0, verticalMm: Number(activeGapY) || 0 },
-        rotation: layoutMode === "a4-4" ? A4_FOUR_UP.rotation : rotation,
-        scale: layoutMode === "a4-4" ? A4_FOUR_UP.scale : Number(scale) || 1,
-        columns: layoutMode === "a4-4" ? A4_FOUR_UP.columns : columns.trim() ? Number(columns) : null,
-        rows: layoutMode === "a4-4" ? A4_FOUR_UP.rows : rows.trim() ? Number(rows) : null,
+        rotation: presetOn ? 0 : rotation,
+        scale: presetOn && chosenFourBySix ? chosenFourBySix.scale : Number(scale) || 1,
+        columns: presetOn && chosenFourBySix ? chosenFourBySix.columns : columns.trim() ? Number(columns) : null,
+        rows: presetOn && chosenFourBySix ? chosenFourBySix.rows : rows.trim() ? Number(rows) : null,
         placements: Object.values(overrides),
       },
     };
@@ -670,7 +762,29 @@ export function MultiPrintScreen() {
         return box ? { index: item, box } : null;
       })
       .filter((item): item is { index: number; box: SlotBox } => Boolean(item));
-    drag.current = { index, mode: "move", startX: event.clientX, startY: event.clientY, origins };
+    const selected = new Set(origins.map((item) => item.index));
+    const others =
+      displayLayout?.ok
+        ? displayLayout.placements
+            .filter((placement) => placement.page === pageIndex && !selected.has(placement.index))
+            .map((placement) => ({
+              xPt: placement.xPt,
+              yPt: placement.yPt,
+              widthPt: placement.widthPt,
+              heightPt: placement.heightPt,
+            }))
+        : [];
+    const originBbox = groupBounds(origins.map((item) => item.box)) ?? origin;
+    drag.current = {
+      index,
+      mode: "move",
+      startX: event.clientX,
+      startY: event.clientY,
+      origins,
+      originBbox,
+      others,
+      locked: emptySnapLocks(),
+    };
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
@@ -687,7 +801,16 @@ export function MultiPrintScreen() {
     const origin = slotOrigin(index);
     if (!origin) return;
     event.stopPropagation();
-    drag.current = { index, mode: "resize", startX: event.clientX, startY: event.clientY, origins: [{ index, box: origin }] };
+    drag.current = {
+      index,
+      mode: "resize",
+      startX: event.clientX,
+      startY: event.clientY,
+      origins: [{ index, box: origin }],
+      originBbox: origin,
+      others: [],
+      locked: emptySnapLocks(),
+    };
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
@@ -695,14 +818,18 @@ export function MultiPrintScreen() {
     }
   }
 
-  function queueOverridePatch(patch: Record<number, MultiUpPlacementOverride>) {
+  function queueOverridePatch(patch: Record<number, MultiUpPlacementOverride>, overlay?: SmartOverlay | null) {
     Object.assign(pendingOverrides.current, patch);
+    if (overlay !== undefined) pendingOverlay.current = overlay;
     if (overrideFrame.current != null) return;
     overrideFrame.current = requestAnimationFrame(() => {
       const pending = pendingOverrides.current;
       pendingOverrides.current = {};
+      const chrome = pendingOverlay.current;
+      pendingOverlay.current = undefined;
       overrideFrame.current = null;
       setOverrides((current) => ({ ...current, ...pending }));
+      if (chrome !== undefined) setDragOverlay(chrome);
     });
   }
 
@@ -711,7 +838,10 @@ export function MultiPrintScreen() {
     overrideFrame.current = null;
     const pending = pendingOverrides.current;
     pendingOverrides.current = {};
+    const chrome = pendingOverlay.current;
+    pendingOverlay.current = undefined;
     if (Object.keys(pending).length) setOverrides((current) => ({ ...current, ...pending }));
+    if (chrome !== undefined) setDragOverlay(chrome);
   }
 
   function onSlotPointerMove(index: number, event: React.PointerEvent<HTMLElement>) {
@@ -727,10 +857,21 @@ export function MultiPrintScreen() {
       queueOverridePatch({ [index]: { index, ...next } });
       return;
     }
+    const snapped = applySmartSnap({
+      originBbox: active.originBbox,
+      others: active.others,
+      sheetWidthPt: layout.sheetWidthPt,
+      sheetHeightPt: layout.sheetHeightPt,
+      intendedDx: dx,
+      intendedDy: dy,
+      thresholdPt: snapThresholdPt(canvasScale),
+      locked: active.locked,
+    });
+    active.locked = snapped.locked;
     const delta = clampGroupDelta(
       active.origins.map((item) => item.box),
-      dx,
-      dy,
+      snapped.dx,
+      snapped.dy,
       layout.sheetWidthPt,
       layout.sheetHeightPt
     );
@@ -744,12 +885,17 @@ export function MultiPrintScreen() {
           heightPt: origin.box.heightPt,
       };
     }
-    queueOverridePatch(patch);
+    const finalBbox = shiftBox(active.originBbox, delta.dx, delta.dy);
+    queueOverridePatch(
+      patch,
+      overlayForBox(finalBbox, active.others, layout.sheetWidthPt, layout.sheetHeightPt, snapped.overlay.guides)
+    );
   }
 
   function endDrag() {
     flushOverridePatch();
     drag.current = null;
+    setDragOverlay(null);
   }
 
   function applyAlign(align: (boxes: SlotBox[]) => SlotBox[]) {
@@ -823,7 +969,7 @@ export function MultiPrintScreen() {
         {[
           { label: "Selected", value: `${labelCount} labels`, icon: FileText },
           { label: "Sheets", value: layout?.ok ? String(pages) : "—", icon: Layers3 },
-          { label: "Layout", value: layoutMode === "a4-4" ? "A4 · 4-up" : "Manual", icon: Grid2X2 },
+          { label: "Layout", value: presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual"), icon: Grid2X2 },
           {
             label: "Printer",
             value: canPrint ? "Ready" : station.data?.connected ? "Check paper" : "Offline",
@@ -884,7 +1030,7 @@ export function MultiPrintScreen() {
                     <h2 className="text-sm font-semibold text-ink">1. Choose labels</h2>
                     <Badge variant="brand">{labelCount} selected</Badge>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-muted">Only orders with a generated label appear here. Labels are placed four per A4 sheet in this order.</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">Only orders with a generated label appear here. Selecting a chip fills one sheet using the current 4×6 quantity.</p>
                 </div>
 
                 <div className="flex gap-2">
@@ -977,11 +1123,13 @@ export function MultiPrintScreen() {
                 <div>
                   <div className="flex items-center justify-between gap-2">
                     <h2 className="text-sm font-semibold text-ink">2. Arrange sheet</h2>
-                    <Badge variant={layoutMode === "a4-4" ? "brand" : "outline"}>
-                      {layoutMode === "a4-4" ? "A4 · 4 labels" : "Manual"}
+                    <Badge variant={presetOn ? "brand" : "outline"}>
+                      {presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual")}
                     </Badge>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-muted">Use the recommended layout or fine-tune it. The label design itself is never changed.</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    Paper size is independent of the 4×6 label ({Math.round(LABEL_4X6.widthMm)} × {Math.round(LABEL_4X6.heightMm)} mm). The A4 2×2 preset scales that template uniformly to fit; other presets stay at 100%.
+                  </p>
                 </div>
 
                 <label className="block space-y-1.5 text-xs font-medium text-muted">
@@ -995,33 +1143,68 @@ export function MultiPrintScreen() {
                   </select>
                 </label>
 
-                <Button type="button" className="w-full justify-start" variant={layoutMode === "a4-4" ? "primary" : "secondary"} onClick={applyA4FourUpPreset}>
-                  <Grid2X2 />
-                  A4 — 4 Labels
-                  {layoutMode === "a4-4" ? <CheckCircle2 className="ml-auto" /> : null}
-                </Button>
-
-                <label className="block space-y-1.5 text-xs font-medium text-muted">
-                  Paper
-                  <select
-                    className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm text-foreground"
-                    value={paper}
-                    onChange={(event) => {
-                      markManual();
-                      setPaper(event.target.value as SheetChoice);
-                    }}
-                  >
-                    {SHEET_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-                    <option value="custom">Custom size</option>
-                  </select>
-                </label>
-
-                {paper === "custom" ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="space-y-1 text-xs text-muted">Width (mm)<Input value={customWidth} onChange={(event) => { markManual(); setCustomWidth(event.target.value); }} /></label>
-                    <label className="space-y-1 text-xs text-muted">Height (mm)<Input value={customHeight} onChange={(event) => { markManual(); setCustomHeight(event.target.value); }} /></label>
+                <div className="space-y-3 rounded-xl border border-border bg-surface-soft p-3">
+                  <div>
+                    <p className="text-sm font-semibold text-ink">4×6 Multi-Print</p>
+                    <p className="mt-0.5 text-xs leading-5 text-muted">
+                      Choose paper, then a quantity that physically fits. Positions initialize once; you can still move and align labels after that.
+                    </p>
                   </div>
-                ) : null}
+                  <label className="block space-y-1.5 text-xs font-medium text-muted">
+                    Paper
+                    <select
+                      className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm text-foreground"
+                      value={paper}
+                      onChange={(event) => {
+                        const next = event.target.value as SheetChoice;
+                        setPaper(next);
+                        if (layoutMode === "preset") {
+                          setOverrides({});
+                          setSelectedSlots([]);
+                          setLayoutMode("preset");
+                        }
+                      }}
+                    >
+                      {MULTI_PRINT_PAPERS.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                      <option value="custom">Custom size</option>
+                    </select>
+                  </label>
+                  {paper === "custom" ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="space-y-1 text-xs text-muted">Width (mm)<Input value={customWidth} onChange={(event) => setCustomWidth(event.target.value)} /></label>
+                      <label className="space-y-1 text-xs text-muted">Height (mm)<Input value={customHeight} onChange={(event) => setCustomHeight(event.target.value)} /></label>
+                    </div>
+                  ) : null}
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted">Available presets</p>
+                    {fourBySixPresets.length ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        {fourBySixPresets.map((item) => {
+                          const selectedPreset = presetOn && chosenFourBySix?.quantity === item.quantity;
+                          return (
+                            <Button
+                              key={item.id}
+                              type="button"
+                              className="justify-start"
+                              variant={selectedPreset ? "primary" : "secondary"}
+                              aria-pressed={selectedPreset}
+                              onClick={() => applyFourBySixPreset(item.quantity)}
+                            >
+                              {item.id === "A4-4-labels" ? "4 Labels (A4 2×2)" : `${item.quantity} Labels`}
+                              {selectedPreset ? <CheckCircle2 className="ml-auto" /> : null}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted">No valid 4×6 layout for this paper size.</p>
+                    )}
+                  </div>
+                </div>
 
                 <details className="group rounded-xl border border-border bg-card">
                   <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-3 text-sm font-medium">
@@ -1074,7 +1257,8 @@ export function MultiPrintScreen() {
                 <div className="rounded-xl border border-border bg-surface-soft p-3">
                   <div className="flex items-center justify-between text-sm"><span className="text-muted">Labels</span><strong>{labelCount}</strong></div>
                   <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Sheets</span><strong>{layout?.ok ? pages : "—"}</strong></div>
-                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Paper</span><strong>{paper}</strong></div>
+                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Paper</span><strong>{multiPrintPaperName(paper)}</strong></div>
+                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Layout</span><strong>{presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual")}</strong></div>
                 </div>
 
                 {layout?.ok ? (
@@ -1265,6 +1449,7 @@ export function MultiPrintScreen() {
                       }}
                     />
                   ) : null}
+                  {dragOverlay ? <SmartGuideOverlay overlay={dragOverlay} scale={canvasScale} /> : null}
                   {displayLayout.placements
                     .filter((placement) => placement.page === pageIndex)
                     .map((placement) => {

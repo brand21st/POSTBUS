@@ -449,14 +449,23 @@ describe("label template API", () => {
     expect(snapshots.at(-1)).toMatchObject({ page: { paperSize: "A4", widthMm: 210, heightMm: 297 } });
   });
 
-  it("builds an A3 sheet from the preset and rejects label sizes as sheets", async () => {
+  it("builds an A3 sheet from the preset and accepts A6 as a named sheet", async () => {
+    const a6 = await call("POST", "label-template/multi-sheet", {
+      disposition: "inline",
+      items: [{ orderId: "246072", copies: 1 }],
+      sheet: { paperSize: "A6", widthMm: 10, heightMm: 10 },
+    });
+    const a6Pdf = await PDFDocument.load(await pdfBytes(a6));
+    expect(a6Pdf.getPage(0).getWidth()).toBeCloseTo(ptFromMm(105), 2);
+    expect(a6Pdf.getPage(0).getHeight()).toBeCloseTo(ptFromMm(148), 2);
+
     await expect(
       call("POST", "label-template/multi-sheet", {
         disposition: "inline",
         items: [{ orderId: "246072", copies: 1 }],
-        sheet: { paperSize: "A6", widthMm: 105, heightMm: 148 },
+        sheet: { paperSize: "Letter" },
       })
-    ).rejects.toThrow(/A4, A3, A5/);
+    ).rejects.toThrow(/supported paper size/);
 
     const result = await call("POST", "label-template/multi-sheet", {
       disposition: "inline",

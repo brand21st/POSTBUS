@@ -1,14 +1,14 @@
-import type { SheetSizeId } from "@/modules/labels/page-presets";
+import { isMultiPrintPaperId, type MultiPrintPaperId } from "@/modules/labels/page-presets";
 
 export function multiUpPrintDecision(input: {
-  sheetPaper: SheetSizeId | "custom";
+  sheetPaper: MultiPrintPaperId | "custom";
   agentPaper: string | null | undefined;
   connected: boolean;
-}): { ok: true; paperSize: SheetSizeId } | { ok: false; message: string } {
-  if (input.sheetPaper === "custom") {
+}): { ok: true; paperSize: MultiPrintPaperId } | { ok: false; message: string } {
+  if (input.sheetPaper === "custom" || !isMultiPrintPaperId(input.sheetPaper)) {
     return {
       ok: false,
-      message: "Custom sheets can be previewed and downloaded. Printing needs A4, A3, or A5.",
+      message: "Custom sheets can be previewed and downloaded. Printing needs a named paper size that matches the printer.",
     };
   }
   if (!input.connected) {

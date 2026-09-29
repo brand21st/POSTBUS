@@ -7,7 +7,11 @@ import type {
   MultiUpPlacementOverride,
   MultiUpRotation,
 } from "@/modules/labels/multi-up/layout";
-import { isSheetSizeId, sheetPreset, type SheetSizeId } from "@/modules/labels/page-presets";
+import {
+  isMultiPrintPaperId,
+  multiPrintPaper,
+  type MultiPrintPaperId,
+} from "@/modules/labels/page-presets";
 import type { LabelTemplate } from "@/modules/labels/template-schema";
 
 const MAX_LABELS = 100;
@@ -19,9 +23,11 @@ export type MultiUpSheetRequest = {
   disposition: MultiUpDisposition;
   items: MultiUpCopy[];
   sheet: {
-    paperSize: SheetSizeId | "custom";
+    paperSize: MultiPrintPaperId | "custom";
     widthMm: number;
     heightMm: number;
+    labelWidthMm: number | null;
+    labelHeightMm: number | null;
     margins: MultiUpMargins;
     gaps: MultiUpGaps;
     rotation: MultiUpRotation | "auto";
@@ -67,6 +73,12 @@ function optionalCount(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function optionalPositive(value: unknown) {
+  if (value == null || value === "") return null;
+  const parsed = numberValue(value, Number.NaN);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function placements(value: unknown): MultiUpPlacementOverride[] {
   if (!Array.isArray(value)) return [];
   const boxes: MultiUpPlacementOverride[] = [];
@@ -97,11 +109,11 @@ export function parseMultiUpRequest(body: unknown): MultiUpSheetRequest {
   const source = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
   const sheet = source.sheet && typeof source.sheet === "object" ? (source.sheet as Record<string, unknown>) : {};
   const paper = String(sheet.paperSize ?? "");
-  if (paper !== "custom" && !isSheetSizeId(paper)) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Sheet size must be A4, A3, A5, or custom.");
+  if (paper !== "custom" && !isMultiPrintPaperId(paper)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Sheet size must be a supported paper size or custom.");
   }
-  const paperSize: SheetSizeId | "custom" = paper === "custom" ? "custom" : paper;
-  const preset = paperSize === "custom" ? null : sheetPreset(paperSize);
+  const paperSize: MultiPrintPaperId | "custom" = paper === "custom" ? "custom" : paper;
+  const preset = paperSize === "custom" ? null : multiPrintPaper(paperSize);
   const items = Array.isArray(source.items) ? source.items : [];
   const copies = items
     .map((item) => {
@@ -117,6 +129,8 @@ export function parseMultiUpRequest(body: unknown): MultiUpSheetRequest {
   if (total > MAX_LABELS) throw new AppError(ERROR_CODES.VALIDATION_ERROR, `A sheet run can include up to ${MAX_LABELS} labels.`);
   const disposition = source.disposition === "attachment" || source.disposition === "print" ? source.disposition : "inline";
   const scale = numberValue(sheet.scale, 1);
+  const labelWidthMm = optionalPositive(sheet.labelWidthMm);
+  const labelHeightMm = optionalPositive(sheet.labelHeightMm);
   return {
     templateId: source.templateId ? String(source.templateId) : null,
     disposition,
@@ -125,6 +139,8 @@ export function parseMultiUpRequest(body: unknown): MultiUpSheetRequest {
       paperSize,
       widthMm: preset ? preset.widthMm : numberValue(sheet.widthMm, 0),
       heightMm: preset ? preset.heightMm : numberValue(sheet.heightMm, 0),
+      labelWidthMm: labelWidthMm && labelHeightMm ? labelWidthMm : null,
+      labelHeightMm: labelWidthMm && labelHeightMm ? labelHeightMm : null,
       margins: margins(sheet.margins),
       gaps: gaps(sheet.gaps),
       rotation: rotation(sheet.rotation),

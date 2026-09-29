@@ -56,6 +56,56 @@ export function isPrintPaperSize(value: string | null | undefined): value is Pap
   return isPaperSizeId(value) || value === "A3";
 }
 
+export type MultiPrintPaperId = PaperSizeId | "A3";
+
+export type MultiPrintPaperOption = {
+  id: MultiPrintPaperId;
+  label: string;
+  widthMm: number;
+  heightMm: number;
+  widthPt: number;
+  heightPt: number;
+};
+
+/** Named Multi-Print sheets: sheet presets first, then unique label paper sizes. */
+export const MULTI_PRINT_PAPERS: MultiPrintPaperOption[] = (() => {
+  const seen = new Set<string>();
+  const papers: MultiPrintPaperOption[] = [];
+  for (const item of [...SHEET_PRESETS, ...PAGE_PRESETS]) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    papers.push({
+      id: item.id as MultiPrintPaperId,
+      label: item.label,
+      widthMm: item.widthMm,
+      heightMm: item.heightMm,
+      widthPt: item.widthPt,
+      heightPt: item.heightPt,
+    });
+  }
+  return papers;
+})();
+
+export function isMultiPrintPaperId(value: string | null | undefined): value is MultiPrintPaperId {
+  return MULTI_PRINT_PAPERS.some((item) => item.id === value);
+}
+
+export function multiPrintPaper(id: MultiPrintPaperId): MultiPrintPaperOption {
+  const preset = MULTI_PRINT_PAPERS.find((item) => item.id === id);
+  if (!preset) throw new Error(`Unknown multi-print paper ${id}.`);
+  return preset;
+}
+
+export function multiPrintPaperOptions() {
+  return MULTI_PRINT_PAPERS;
+}
+
+export function multiPrintPaperName(id: MultiPrintPaperId | "custom") {
+  if (id === "custom") return "Custom";
+  if (id === "4x6") return "4×6";
+  return id;
+}
+
 export function sheetPreset(id: SheetSizeId): SheetPreset {
   const preset = SHEET_PRESETS.find((item) => item.id === id);
   if (!preset) throw new Error(`Unknown sheet size ${id}.`);

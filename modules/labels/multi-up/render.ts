@@ -28,12 +28,14 @@ export async function renderMultiUpSheet(
   const request = parseMultiUpRequest(body);
   const stored = await getLabelTemplate(supabase, organizationId);
   const template = selectLabelTemplate(stored, request.templateId);
-  const label = labelSizeMm(template.page);
+  const templateSize = labelSizeMm(template.page);
+  const labelWidthMm = request.sheet.labelWidthMm ?? templateSize.widthMm;
+  const labelHeightMm = request.sheet.labelHeightMm ?? templateSize.heightMm;
   const calculated = calculateMultiUpLayout({
     sheetWidthMm: request.sheet.widthMm,
     sheetHeightMm: request.sheet.heightMm,
-    labelWidthMm: label.widthMm,
-    labelHeightMm: label.heightMm,
+    labelWidthMm,
+    labelHeightMm,
     margins: request.sheet.margins,
     gaps: request.sheet.gaps,
     rotation: request.sheet.rotation,
