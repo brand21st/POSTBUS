@@ -25,6 +25,7 @@ import {
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SmartGuideOverlay } from "@/components/labels/smart-guide-overlay";
+import { usePdfFirstPageUrl } from "@/components/labels/pdf-raster-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1564,7 +1565,7 @@ export function MultiPrintScreen() {
               </button>
               {showPdfPreview ? (
                 <div className="border-t border-border bg-surface-soft p-3">
-                  <iframe title="Sheet PDF preview" src={previewUrl} className="h-[620px] w-full rounded-xl border border-border bg-white" />
+                  <iframe title="Sheet PDF preview" src={previewUrl} className="h-[620px] w-full rounded-xl border border-border bg-white [color-scheme:light]" />
                 </div>
               ) : null}
             </div>
@@ -1591,7 +1592,7 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
   rotation: 0 | 90;
 }) {
   const label = useQuery({
-    queryKey: ["multi-print-label", templateId, orderId],
+    queryKey: ["multi-print-label-raster", templateId, orderId],
     queryFn: async () => {
       const response = await fetch("/api/v1/label-template/custom-preview", {
         method: "POST",
@@ -1606,47 +1607,35 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
         const payload = (await response.json().catch(() => ({}))) as { message?: string };
         throw new Error(payload.message || "Could not load the label.");
       }
-      return response.blob();
+      return response.arrayBuffer();
     },
   });
-  const pdfUrl = useMemo(() => (label.data ? URL.createObjectURL(label.data) : null), [label.data]);
+  const { url, error } = usePdfFirstPageUrl(label.data);
 
-  useEffect(() => {
-    return () => {
-      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
-    };
-  }, [pdfUrl]);
-
-  if (!pdfUrl) {
+  if (!url) {
     return (
-      <span className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 text-center text-[11px] text-zinc-500">
-        {label.isError ? label.error.message : ""}
+      <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white px-2 text-center text-[11px] text-zinc-500">
+        {label.isError ? label.error.message : error ?? ""}
       </span>
     );
   }
 
-  const frame = `${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`;
   if (rotation === 90) {
     return (
-      <iframe
-        title={orderId}
-        src={frame}
-        className="pointer-events-none absolute left-1/2 top-1/2 max-w-none border-0 bg-white"
+      <img
+        alt=""
+        src={url}
+        className="pointer-events-none absolute left-1/2 top-1/2 max-w-none bg-white object-contain"
         style={{
           width: "100cqh",
           height: "100cqw",
-          transform: "translate(-50%, -50%) rotate(-90deg) scale(1.06)",
+          transform: "translate(-50%, -50%) rotate(-90deg)",
         }}
       />
     );
   }
 
   return (
-    <iframe
-      title={orderId}
-      src={frame}
-      className="pointer-events-none absolute inset-0 h-full w-full border-0 bg-white"
-      style={{ transform: "scale(1.06)", transformOrigin: "center" }}
-    />
+    <img alt="" src={url} className="pointer-events-none absolute inset-0 h-full w-full bg-white object-contain" />
   );
 });

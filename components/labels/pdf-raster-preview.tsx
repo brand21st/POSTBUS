@@ -14,6 +14,10 @@ export function usePdfFirstPageUrl(bytes: ArrayBuffer | Uint8Array | undefined) 
   useEffect(() => {
     if (!bytes) {
       setError(null);
+      setUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
       return;
     }
     let cancelled = false;
@@ -29,6 +33,8 @@ export function usePdfFirstPageUrl(bytes: ArrayBuffer | Uint8Array | undefined) 
       if (!context) throw new Error("Could not draw the label.");
       canvas.width = viewport.width;
       canvas.height = viewport.height;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvas, canvasContext: context, viewport }).promise;
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
       if (!blob) throw new Error("Could not draw the label.");
@@ -75,6 +81,8 @@ export function PdfRasterPreview({ bytes, title }: PdfRasterPreviewProps) {
         if (!context) throw new Error("Could not draw the label.");
         canvas.width = viewport.width;
         canvas.height = viewport.height;
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
         await page.render({ canvas, canvasContext: context, viewport }).promise;
         const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
         if (!blob) continue;
