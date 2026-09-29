@@ -8,6 +8,7 @@ import {
   Gauge,
   Landmark,
   Timer,
+  Clapperboard,
   ScrollText,
   Settings,
   type LucideIcon,
@@ -29,6 +30,7 @@ export const adminNav: AdminNavItem[] = [
   { label: "Usage", href: "/admin/usage", icon: Gauge },
   { label: "Razorpay", href: "/admin/razorpay", icon: Landmark },
   { label: "Trial Settings", href: "/admin/trial", icon: Timer },
+  { label: "Tutorials", href: "/admin/tutorials", icon: Clapperboard },
   { label: "Audit Logs", href: "/admin/audit", icon: ScrollText },
   { label: "System Settings", href: "/admin/settings", icon: Settings },
 ];

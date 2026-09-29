@@ -7,7 +7,7 @@ import { Logo } from "@/components/layout/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { helpNav, isNavItemActive, sidebarNav } from "@/lib/dashboard/nav";
+import { helpNav, isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { lockedFeatureForPath } from "@/modules/billing/entitlements";
@@ -84,6 +84,21 @@ export function Sidebar({
 
       <div className="mt-auto space-y-3 px-3 pb-4">
         <Separator />
+        <Link
+          href={tutorialsNav.href}
+          prefetch={false}
+          onClick={onNavigate}
+          className={cn(
+            "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
+            collapsed && "justify-center px-0",
+            isNavItemActive(tutorialsNav.href, pathname)
+              ? "bg-rose-100 text-brand-dark"
+              : "text-muted hover:bg-surface-soft hover:text-foreground"
+          )}
+        >
+          <tutorialsNav.icon className="size-4 shrink-0" />
+          <span className={cn(collapsed && "sr-only")}>{tutorialsNav.label}</span>
+        </Link>
         <Link
           href={helpNav.href}
           prefetch={false}

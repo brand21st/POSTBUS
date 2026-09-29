@@ -108,6 +108,10 @@ export function permissionForTenantRoute(
 
   if (path === "search") return "orders.read";
 
+  if (root === "tutorials") {
+    return method === "GET" ? undefined : "org.manage";
+  }
+
   return undefined;
 }
 

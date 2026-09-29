@@ -15,6 +15,7 @@ import {
   testRazorpaySettings,
 } from "@/modules/razorpay/admin-settings";
 import { getRazorpayConfig, publicRazorpayStatus } from "@/modules/razorpay/config";
+import { handleAdminTutorials } from "@/lib/api/admin/tutorials";
 
 const planSchema = z.object({
   slug: z.string().min(2).optional(),
@@ -93,6 +94,9 @@ export async function handleAdminRoutes(
   if (slugs[0] === "subscriptions") return handleSubscriptions(supabase, request);
   if (slugs[0] === "payments") return handlePayments(supabase, request);
   if (slugs[0] === "plans") return handlePlans(request, supabase, ctx, slugs, method);
+  if (slugs[0] === "tutorials" || slugs[0] === "tutorial-categories") {
+    return handleAdminTutorials(request, supabase, ctx, slugs, method);
+  }
   if (slugs[0] === "audit-logs") {
     const { data } = await supabase
       .from("billing_audit_logs")

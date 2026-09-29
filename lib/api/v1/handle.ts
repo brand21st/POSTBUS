@@ -9,6 +9,7 @@ import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
 import { handlePrintAgentRoutes, handlePrintStationRoutes, isPrintAgentApiPath } from "@/lib/api/v1/print";
 import { handleSessionRoutes } from "@/lib/api/v1/session";
 import { handleBillingRoutes } from "@/lib/api/v1/billing";
+import { handleMerchantTutorials } from "@/lib/api/v1/tutorials";
 import { handleWorkspaceRoutes } from "@/lib/api/v1/workspace";
 import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { rateLimit } from "@/lib/security/rate-limit";
@@ -62,6 +63,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
     (await handleInvoiceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleCommerceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleIntegrationRoutes(request, supabase, ctx, key)) ??
+    (await handleMerchantTutorials(request, supabase, slugs, method)) ??
     (() => {
       throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
     })()

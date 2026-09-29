@@ -858,6 +858,65 @@ export type PublicTrackingEvent = {
   occurredAt?: string | null;
 };
 
+export type TutorialStatus = "draft" | "published";
+
+export type TutorialCategorySummary = {
+  id: string;
+  name: string;
+  slug: string;
+  isActive?: boolean;
+};
+
+export type TutorialPublic = {
+  id: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  youtubeUrl: string;
+  thumbnailUrl: string;
+  embedUrl: string;
+  sortOrder: number;
+  createdAt: string;
+  category: TutorialCategorySummary | null;
+};
+
+export type TutorialCategoryPublic = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+export type AdminTutorial = {
+  id: string;
+  categoryId: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  youtubeUrl: string;
+  thumbnailUrl: string;
+  embedUrl: string;
+  status: TutorialStatus;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  category: TutorialCategorySummary | null;
+};
+
+export type AdminTutorialCategory = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  tutorialCount?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type PublicTrackResult = {
   found: boolean;
   liveTracking: "ok" | "unavailable" | "not_connected";

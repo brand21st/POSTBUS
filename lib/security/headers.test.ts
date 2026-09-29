@@ -9,6 +9,8 @@ describe("security headers", () => {
   it("sets clickjacking and XSS controls Lighthouse looks for", () => {
     const csp = contentSecurityPolicy();
     expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("https://www.youtube.com");
+    expect(csp).toContain("https://www.youtube-nocookie.com");
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("upgrade-insecure-requests");
 

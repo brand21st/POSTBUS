@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import {
   LayoutDashboard,
   BarChart3,
@@ -13,13 +14,13 @@ import {
   CreditCard,
   Settings,
   LifeBuoy,
-  type LucideIcon,
 } from "lucide-react";
+import { YoutubeIcon } from "@/components/icons/youtube-icon";
 
 export type NavItem = {
   label: string;
   href: string;
-  icon: LucideIcon;
+  icon: ComponentType<{ className?: string }>;
   tour?: string;
 };
 
@@ -39,6 +40,12 @@ export const sidebarNav: NavItem[] = [
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
+export const tutorialsNav: NavItem = {
+  label: "YouTube Tutorials",
+  href: "/dashboard/tutorials",
+  icon: YoutubeIcon,
+};
+
 export const helpNav: NavItem = {
   label: "Help",
   href: "/contact",
@@ -57,6 +64,10 @@ export function breadcrumbs(pathname: string) {
     href += `/${segment}`;
     if (segment === "dashboard") {
       crumbs.push({ label: "Dashboard", href: "/dashboard" });
+      continue;
+    }
+    if (segment === "tutorials") {
+      crumbs.push({ label: "YouTube Tutorials", href });
       continue;
     }
     crumbs.push({

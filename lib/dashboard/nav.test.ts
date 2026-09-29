@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNavItemActive, sidebarNav } from "@/lib/dashboard/nav";
+import { isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
 
 describe("NDR & RTO navigation", () => {
   it("adds the item with the existing sidebar shape", () => {
@@ -15,5 +15,14 @@ describe("NDR & RTO navigation", () => {
     expect(isNavItemActive("/dashboard", "/dashboard/ndr-rto")).toBe(false);
     expect(isNavItemActive("/dashboard/ndr-rto", "/dashboard/ndr-rto")).toBe(true);
     expect(isNavItemActive("/dashboard/shipments", "/dashboard/ndr-rto")).toBe(false);
+  });
+});
+
+describe("YouTube Tutorials navigation", () => {
+  it("adds a help-cluster item pointing at the merchant tutorials page", () => {
+    expect(tutorialsNav.label).toBe("YouTube Tutorials");
+    expect(tutorialsNav.href).toBe("/dashboard/tutorials");
+    expect(isNavItemActive("/dashboard/tutorials", "/dashboard/tutorials")).toBe(true);
+    expect(isNavItemActive("/dashboard/tutorials", "/dashboard/orders")).toBe(false);
   });
 });
