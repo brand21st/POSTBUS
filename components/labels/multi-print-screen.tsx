@@ -1,11 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Eye,
+  FileText,
+  Grid2X2,
+  HelpCircle,
+  Layers3,
+  Minus,
+  MousePointer2,
+  Plus,
+  Printer,
+  RotateCcw,
+  Settings2,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { asPaginated } from "@/lib/dashboard/records";
 import { ApiError, api } from "@/lib/hooks/use-api";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
@@ -40,6 +71,7 @@ type TemplateResponse = { template: LabelTemplate };
 type SheetChoice = SheetSizeId | "custom";
 type CopyRow = { orderId: string; copies: number };
 type LayoutMode = "a4-4" | "manual";
+type WorkflowStep = "labels" | "layout" | "review";
 
 const emptyMargins = { topMm: 0, rightMm: 0, bottomMm: 0, leftMm: 0 };
 const CANVAS_ZOOM_MIN = 0.25;
@@ -103,6 +135,11 @@ function pageMm(page: LabelTemplate["page"]) {
   };
 }
 
+function templateOptionLabel(item: NamedLabelTemplate) {
+  const size = pageMm(item.page);
+  return `${item.name} (${Math.round(size.widthMm)} × ${Math.round(size.heightMm)} mm)`;
+}
+
 async function postSheet(body: unknown) {
   const response = await fetch("/api/v1/label-template/multi-sheet", {
     method: "POST",
@@ -149,6 +186,8 @@ export function MultiPrintScreen() {
   const [sheetPage, setSheetPage] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<"preview" | "download" | "print" | null>(null);
+  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>("labels");
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [manual, setManual] = useState(false);
   const [overrides, setOverrides] = useState<Record<number, MultiUpPlacementOverride>>({});
   const [selectedSlots, setSelectedSlots] = useState<number[]>([]);
@@ -159,7 +198,6 @@ export function MultiPrintScreen() {
   const canvasPane = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const zoomRef = useRef(1);
-  zoomRef.current = zoom;
   const spaceHeldRef = useRef(false);
   const pan = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const drag = useRef<{
@@ -171,10 +209,17 @@ export function MultiPrintScreen() {
   } | null>(null);
   const marquee = useRef<{ x0: number; y0: number; additive: boolean } | null>(null);
   const canvasScaleRef = useRef(1);
+  const overrideFrame = useRef<number | null>(null);
+  const pendingOverrides = useRef<Record<number, MultiUpPlacementOverride>>({});
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
 
   useEffect(() => {
     return () => {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (overrideFrame.current != null) cancelAnimationFrame(overrideFrame.current);
     };
   }, [previewUrl]);
 
@@ -229,7 +274,7 @@ export function MultiPrintScreen() {
 
   const selectedId = library.some((item) => item.id === templateId) ? templateId : (library[0]?.id ?? "");
   const selected = library.find((item) => item.id === selectedId);
-  const label = selected ? pageMm(selected.page) : null;
+  const label = useMemo(() => (selected ? pageMm(selected.page) : null), [selected]);
   const labeledOrders = useMemo(
     () =>
       [...new Set(asPaginated<LabelRecord>(labels.data, ["labels", "items"]).items.map(generatedOrderNumber).filter(Boolean))],
@@ -319,12 +364,23 @@ export function MultiPrintScreen() {
   const pageIndex = Math.min(sheetPage, pages - 1);
   const fitScale = layout?.ok ? VIEW_WIDTH / layout.sheetWidthPt : 1;
   const canvasScale = fitScale * zoom;
-  canvasScaleRef.current = canvasScale;
+  useEffect(() => {
+    canvasScaleRef.current = canvasScale;
+  }, [canvasScale]);
   const agentPaper = station.data?.paperSize ?? "";
   const canPrint = paper !== "custom" && Boolean(station.data?.connected) && agentPaper === paper && Boolean(layout?.ok);
   const labelCount = items.reduce((sum, item) => sum + item.copies, 0);
   const sheetOrders =
     displayLayout?.ok ? displayLayout.placements.filter((placement) => placement.page === pageIndex) : [];
+  const markManual = useCallback(() => {
+    if (layoutMode === "a4-4" && label) {
+      const spacing = a4FourUpSpacing(label.widthMm, label.heightMm);
+      setMargins(spacing.margins);
+      setGapX(String(spacing.gaps.horizontalMm));
+      setGapY(String(spacing.gaps.verticalMm));
+    }
+    setLayoutMode("manual");
+  }, [label, layoutMode]);
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -415,17 +471,7 @@ export function MultiPrintScreen() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [displayLayout, layout, manual, selectedSlots]);
-
-  function markManual() {
-    if (layoutMode === "a4-4" && label) {
-      const spacing = a4FourUpSpacing(label.widthMm, label.heightMm);
-      setMargins(spacing.margins);
-      setGapX(String(spacing.gaps.horizontalMm));
-      setGapY(String(spacing.gaps.verticalMm));
-    }
-    setLayoutMode("manual");
-  }
+  }, [displayLayout, layout, manual, selectedSlots, markManual]);
 
   function applyA4FourUpPreset() {
     setPaper("A4");
@@ -494,6 +540,7 @@ export function MultiPrintScreen() {
         if (current) URL.revokeObjectURL(current);
         return href;
       });
+      setShowPdfPreview(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not preview the sheet.");
     } finally {
@@ -648,6 +695,25 @@ export function MultiPrintScreen() {
     }
   }
 
+  function queueOverridePatch(patch: Record<number, MultiUpPlacementOverride>) {
+    Object.assign(pendingOverrides.current, patch);
+    if (overrideFrame.current != null) return;
+    overrideFrame.current = requestAnimationFrame(() => {
+      const pending = pendingOverrides.current;
+      pendingOverrides.current = {};
+      overrideFrame.current = null;
+      setOverrides((current) => ({ ...current, ...pending }));
+    });
+  }
+
+  function flushOverridePatch() {
+    if (overrideFrame.current != null) cancelAnimationFrame(overrideFrame.current);
+    overrideFrame.current = null;
+    const pending = pendingOverrides.current;
+    pendingOverrides.current = {};
+    if (Object.keys(pending).length) setOverrides((current) => ({ ...current, ...pending }));
+  }
+
   function onSlotPointerMove(index: number, event: React.PointerEvent<HTMLElement>) {
     if (pan.current || spaceHeldRef.current) return;
     const active = drag.current;
@@ -658,7 +724,7 @@ export function MultiPrintScreen() {
       const origin = active.origins[0]?.box;
       if (!origin) return;
       const next = aspectResize(origin, dx, dy, layout.sheetWidthPt, layout.sheetHeightPt);
-      setOverrides((current) => ({ ...current, [index]: { index, ...next } }));
+      queueOverridePatch({ [index]: { index, ...next } });
       return;
     }
     const delta = clampGroupDelta(
@@ -668,22 +734,21 @@ export function MultiPrintScreen() {
       layout.sheetWidthPt,
       layout.sheetHeightPt
     );
-    setOverrides((current) => {
-      const next = { ...current };
-      for (const origin of active.origins) {
-        next[origin.index] = {
+    const patch: Record<number, MultiUpPlacementOverride> = {};
+    for (const origin of active.origins) {
+      patch[origin.index] = {
           index: origin.index,
           xPt: origin.box.xPt + delta.dx,
           yPt: origin.box.yPt + delta.dy,
           widthPt: origin.box.widthPt,
           heightPt: origin.box.heightPt,
-        };
-      }
-      return next;
-    });
+      };
+    }
+    queueOverridePatch(patch);
   }
 
   function endDrag() {
+    flushOverridePatch();
     drag.current = null;
   }
 
@@ -719,209 +784,389 @@ export function MultiPrintScreen() {
     markManual();
   }
 
+  const printerMessage =
+    paper === "custom"
+      ? "Custom sheets can be previewed and downloaded."
+      : !station.data?.connected
+        ? "Connect a printer to print."
+        : agentPaper !== paper
+          ? `Printer paper must match ${paper}.`
+          : "Printer ready.";
+  const selectedOrderIds = new Set(items.map((item) => item.orderId));
+
+  const outputActions = (
+    <>
+      <Button type="button" variant="secondary" onClick={preview} disabled={Boolean(busy) || !items.length || layout?.ok === false}>
+        <Eye />
+        {busy === "preview" ? "Building…" : "Preview PDF"}
+      </Button>
+      <Button type="button" variant="secondary" onClick={download} disabled={Boolean(busy) || !items.length || layout?.ok === false}>
+        <Download />
+        Download PDF
+      </Button>
+      <Button type="button" onClick={print} disabled={Boolean(busy) || !canPrint}>
+        <Printer />
+        {busy === "print" ? "Sending…" : "Print"}
+      </Button>
+    </>
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 pb-20 sm:pb-0">
       <PageHeader
-        title="Multi print"
-        description="Place finished shipping labels on one sheet. The label itself is not rearranged."
+        title="Multi print labels"
+        description="Choose generated labels, arrange them on a sheet, then preview or print one PDF."
+        actions={<div className="hidden items-center gap-2 lg:flex">{outputActions}</div>}
       />
-      <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <div className="space-y-4">
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted">Template</span>
-            <select
-              className="h-11 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm"
-              value={selectedId}
-              onChange={(event) => setTemplateId(event.target.value)}
-            >
-              {library.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="text-sm text-muted">{layoutMode === "a4-4" ? `Preset: ${A4_FOUR_UP.name}` : "Custom / Manual"}</p>
-          <Button type="button" variant={layoutMode === "a4-4" ? "primary" : "secondary"} onClick={applyA4FourUpPreset}>
-            {A4_FOUR_UP.name}
-          </Button>
-          <p className="text-sm">
-            Selected: {labelCount} {labelCount === 1 ? "label" : "labels"}
-            {layout?.ok ? ` · Sheets: ${pages}` : ""}
-          </p>
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted">Sheet</span>
-            <select
-              className="h-11 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm"
-              value={paper}
-              onChange={(event) => {
-                markManual();
-                setPaper(event.target.value as SheetChoice);
-              }}
-            >
-              {SHEET_PRESETS.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-              <option value="custom">Custom</option>
-            </select>
-          </label>
-          {paper === "custom" ? (
-            <div className="grid grid-cols-2 gap-2">
-              <Input value={customWidth} onChange={(event) => { markManual(); setCustomWidth(event.target.value); }} aria-label="Sheet width mm" />
-              <Input value={customHeight} onChange={(event) => { markManual(); setCustomHeight(event.target.value); }} aria-label="Sheet height mm" />
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-live="polite">
+        {[
+          { label: "Selected", value: `${labelCount} labels`, icon: FileText },
+          { label: "Sheets", value: layout?.ok ? String(pages) : "—", icon: Layers3 },
+          { label: "Layout", value: layoutMode === "a4-4" ? "A4 · 4-up" : "Manual", icon: Grid2X2 },
+          {
+            label: "Printer",
+            value: canPrint ? "Ready" : station.data?.connected ? "Check paper" : "Offline",
+            icon: Printer,
+          },
+        ].map(({ label: statLabel, value, icon: Icon }) => (
+          <div key={statLabel} className="flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 shadow-sm">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-surface-soft text-muted">
+              <Icon className="size-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-muted">{statLabel}</span>
+              <span className="block truncate text-sm font-semibold text-ink">{value}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid items-start gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
+        <Card className="xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-hidden">
+          <CardHeader className="border-b border-border p-4">
+            <CardTitle>Prepare your sheets</CardTitle>
+            <CardDescription>Three quick steps. Your choices stay in place while you move between them.</CardDescription>
+            <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border border-border bg-surface-soft p-1" role="tablist" aria-label="Multi print workflow">
+              {([
+                ["labels", "1", "Labels"],
+                ["layout", "2", "Arrange"],
+                ["review", "3", "Review"],
+              ] as const).map(([step, number, labelText]) => {
+                const complete = step === "labels" ? labelCount > 0 : step === "layout" ? Boolean(layout?.ok && labelCount) : Boolean(previewUrl);
+                return (
+                  <button
+                    key={step}
+                    type="button"
+                    role="tab"
+                    aria-selected={workflowStep === step}
+                    onClick={() => setWorkflowStep(step)}
+                    className={cn(
+                      "flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition-all duration-200",
+                      workflowStep === step ? "bg-card text-ink shadow-sm" : "text-muted hover:text-foreground"
+                    )}
+                  >
+                    <span className={cn("flex size-5 items-center justify-center rounded-full text-[10px]", complete ? "bg-emerald-100 text-emerald-700" : "bg-zinc-200 text-zinc-600")}>
+                      {complete ? <CheckCircle2 className="size-3.5" /> : number}
+                    </span>
+                    <span className="truncate">{labelText}</span>
+                  </button>
+                );
+              })}
             </div>
-          ) : null}
-          <div className="grid grid-cols-4 gap-2">
-            {(["topMm", "rightMm", "bottomMm", "leftMm"] as const).map((key) => (
-              <label key={key} className="space-y-1 text-xs text-muted">
-                {key.replace("Mm", "")}
-                <Input
-                  value={String(activeMargins[key])}
-                  onChange={(event) => {
-                    markManual();
-                    setMargins((current) => ({ ...current, [key]: Number(event.target.value) || 0 }));
-                  }}
-                  aria-label={`${key} margin`}
-                />
-              </label>
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <label className="space-y-1 text-xs text-muted">
-              Horizontal gap
-              <Input value={activeGapX} onChange={(event) => { markManual(); setGapX(event.target.value); }} aria-label="Horizontal gap mm" />
-            </label>
-            <label className="space-y-1 text-xs text-muted">
-              Vertical gap
-              <Input value={activeGapY} onChange={(event) => { markManual(); setGapY(event.target.value); }} aria-label="Vertical gap mm" />
-            </label>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <label className="space-y-1 text-xs text-muted">
-              Rotation
-              <select
-                className="h-11 w-full rounded-[var(--radius-input)] border border-border bg-card px-2 text-sm"
-                value={String(rotation)}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  markManual();
-                  setRotation(value === "0" ? 0 : value === "90" ? 90 : "auto");
-                }}
-              >
-                <option value="auto">Auto</option>
-                <option value="0">0°</option>
-                <option value="90">90°</option>
-              </select>
-            </label>
-            <label className="space-y-1 text-xs text-muted">
-              Scale
-              <Input value={scale} onChange={(event) => { markManual(); setScale(event.target.value); }} aria-label="Scale" />
-            </label>
-            <label className="space-y-1 text-xs text-muted">
-              Columns
-              <Input value={columns} onChange={(event) => { markManual(); setColumns(event.target.value); }} placeholder="Auto" aria-label="Columns" />
-            </label>
-          </div>
-          <label className="block space-y-1 text-xs text-muted">
-            Rows
-            <Input value={rows} onChange={(event) => { markManual(); setRows(event.target.value); }} placeholder="Auto" aria-label="Rows" />
-          </label>
-          <div className="flex gap-2">
-            <Input value={draftOrder} onChange={(event) => setDraftOrder(event.target.value)} placeholder="Order ID" aria-label="Order ID" />
-            <Input className="w-20" value={draftCopies} onChange={(event) => setDraftCopies(event.target.value)} aria-label="Copies" />
-            <Button type="button" variant="secondary" onClick={() => addItem(draftOrder)}>
-              Add
-            </Button>
-          </div>
-          {labeledOrders.length ? (
-            <div className="flex flex-wrap gap-2">
-              {labeledOrders.map((number) => (
-                <Button key={number} type="button" variant="ghost" size="sm" onClick={() => onChipClick(number)}>
-                  {number}
-                </Button>
-              ))}
-            </div>
-          ) : null}
-          <ul className="space-y-1 text-sm">
-            {items.map((item, index) => (
-              <li key={`${item.orderId}-${index}`} className="flex items-center justify-between gap-2">
-                <span>
-                  {item.orderId} × {item.copies}
-                </span>
-                <button type="button" className="text-xs text-muted" onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-          {layout?.ok
-            ? sheetGroups(
-                layout.placements.map((placement) => placement.orderId),
-                layout.perSheet
-              ).map((group, sheetIndex) => (
-                <div key={`sheet-group-${sheetIndex}`} className="space-y-1">
-                  <p className="text-sm font-medium">
-                    Sheet {sheetIndex + 1} · {group.length} {group.length === 1 ? "label" : "labels"}
-                  </p>
-                  <ol className="grid grid-cols-2 gap-1 text-sm">
-                    {group.map((orderId, slot) => (
-                      <li key={`${sheetIndex}-${slot}-${orderId}`}>
-                        <button
-                          type="button"
-                          className="text-left text-muted hover:text-foreground"
-                          onClick={() => {
-                            setSheetPage(sheetIndex);
-                            highlightOrder(orderId);
-                          }}
-                        >
-                          {slot + 1}. {orderId}
-                        </button>
-                      </li>
-                    ))}
-                  </ol>
+          </CardHeader>
+
+          <CardContent className="max-h-[calc(100vh-13rem)] space-y-4 overflow-y-auto p-4">
+            {workflowStep === "labels" ? (
+              <>
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-semibold text-ink">1. Choose labels</h2>
+                    <Badge variant="brand">{labelCount} selected</Badge>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted">Only orders with a generated label appear here. Labels are placed four per A4 sheet in this order.</p>
                 </div>
-              ))
-            : null}
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={preview} disabled={Boolean(busy) || !items.length || layout?.ok === false}>
-              {busy === "preview" ? "Building…" : "Preview PDF"}
-            </Button>
-            <Button type="button" variant="secondary" onClick={download} disabled={Boolean(busy) || !items.length || layout?.ok === false}>
-              Download
-            </Button>
-            <Button type="button" variant="secondary" onClick={print} disabled={Boolean(busy) || !canPrint}>
-              Print
-            </Button>
-          </div>
-          <p className="text-xs text-muted">
-            {paper === "custom"
-              ? "Custom sheets can be previewed and downloaded."
-              : station.data?.connected
-                ? `Printer paper is ${agentPaper || "unset"}.`
-                : "Printer unavailable. Download the sheet PDF instead."}
-          </p>
-        </div>
-        <div className="space-y-4">
-          {layout && !layout.ok ? <p className="text-sm text-red-700">{layout.message}</p> : null}
-          {displayLayout?.ok ? (
-            <div>
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Button type="button" size="sm" variant="secondary" disabled={pageIndex <= 0} onClick={() => setSheetPage((page) => page - 1)}>
-                  Previous
-                </Button>
-                <span className="text-sm">
-                  Sheet {pageIndex + 1} of {pages}
-                </span>
-                <Button type="button" size="sm" variant="secondary" disabled={pageIndex >= pages - 1} onClick={() => setSheetPage((page) => page + 1)}>
-                  Next
-                </Button>
-                {Array.from({ length: pages }, (_, index) => (
-                  <Button key={index} type="button" size="sm" variant={pageIndex === index ? "primary" : "secondary"} onClick={() => setSheetPage(index)}>
-                    Sheet {index + 1}
+
+                <div className="flex gap-2">
+                  <Input value={draftOrder} onChange={(event) => setDraftOrder(event.target.value)} placeholder="Enter Order ID" aria-label="Order ID" />
+                  <Input className="w-16" value={draftCopies} onChange={(event) => setDraftCopies(event.target.value)} aria-label="Copies" title="Copies" />
+                  <Button type="button" size="icon" variant="secondary" onClick={() => addItem(draftOrder)} aria-label="Add order" title="Add order">
+                    <Plus />
                   </Button>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted">Generated labels</p>
+                  {labels.isLoading ? (
+                    <div className="flex flex-wrap gap-2">
+                      {Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="h-8 w-16 rounded-full" />)}
+                    </div>
+                  ) : labeledOrders.length ? (
+                    <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+                      {labeledOrders.map((number) => {
+                        const active = selectedOrderIds.has(number);
+                        return (
+                          <button
+                            key={number}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => onChipClick(number)}
+                            className={cn(
+                              "rounded-full border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
+                              active
+                                ? "border-brand/30 bg-rose-50 text-brand-dark shadow-sm"
+                                : "border-border bg-card text-foreground hover:border-zinc-300 hover:bg-surface-soft"
+                            )}
+                          >
+                            {number}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border bg-surface-soft p-4 text-center">
+                      <FileText className="mx-auto size-5 text-muted" />
+                      <p className="mt-2 text-sm font-medium">No generated labels yet</p>
+                      <p className="mt-1 text-xs text-muted">Generate a shipping label, then return here.</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-muted">Print order</p>
+                    {items.length ? (
+                      <button type="button" className="text-xs font-medium text-brand hover:underline" onClick={() => setItems([])}>
+                        Clear all
+                      </button>
+                    ) : null}
+                  </div>
+                  {items.length ? (
+                    <ul className="space-y-1.5">
+                      {items.map((item, index) => (
+                        <li key={`${item.orderId}-${index}`} className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
+                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-surface-soft text-[11px] font-semibold text-muted">{index + 1}</span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.orderId}</span>
+                          <span className="text-xs text-muted">×{item.copies}</span>
+                          <button
+                            type="button"
+                            className="rounded-md p-1 text-muted transition-colors hover:bg-red-50 hover:text-red-700"
+                            onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                            aria-label={`Remove ${item.orderId}`}
+                            title="Remove"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="rounded-xl bg-surface-soft px-3 py-3 text-xs text-muted">Select an Order ID above to start your first sheet.</p>
+                  )}
+                </div>
+
+                <Button type="button" className="w-full" disabled={!items.length} onClick={() => setWorkflowStep("layout")}>
+                  Arrange sheets
+                  <ChevronRight />
+                </Button>
+              </>
+            ) : null}
+
+            {workflowStep === "layout" ? (
+              <>
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-sm font-semibold text-ink">2. Arrange sheet</h2>
+                    <Badge variant={layoutMode === "a4-4" ? "brand" : "outline"}>
+                      {layoutMode === "a4-4" ? "A4 · 4 labels" : "Manual"}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted">Use the recommended layout or fine-tune it. The label design itself is never changed.</p>
+                </div>
+
+                <label className="block space-y-1.5 text-xs font-medium text-muted">
+                  Label template
+                  <select className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm text-foreground" value={selectedId} onChange={(event) => setTemplateId(event.target.value)}>
+                    {library.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {templateOptionLabel(item)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <Button type="button" className="w-full justify-start" variant={layoutMode === "a4-4" ? "primary" : "secondary"} onClick={applyA4FourUpPreset}>
+                  <Grid2X2 />
+                  A4 — 4 Labels
+                  {layoutMode === "a4-4" ? <CheckCircle2 className="ml-auto" /> : null}
+                </Button>
+
+                <label className="block space-y-1.5 text-xs font-medium text-muted">
+                  Paper
+                  <select
+                    className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm text-foreground"
+                    value={paper}
+                    onChange={(event) => {
+                      markManual();
+                      setPaper(event.target.value as SheetChoice);
+                    }}
+                  >
+                    {SHEET_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    <option value="custom">Custom size</option>
+                  </select>
+                </label>
+
+                {paper === "custom" ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1 text-xs text-muted">Width (mm)<Input value={customWidth} onChange={(event) => { markManual(); setCustomWidth(event.target.value); }} /></label>
+                    <label className="space-y-1 text-xs text-muted">Height (mm)<Input value={customHeight} onChange={(event) => { markManual(); setCustomHeight(event.target.value); }} /></label>
+                  </div>
+                ) : null}
+
+                <details className="group rounded-xl border border-border bg-card">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-3 text-sm font-medium">
+                    <SlidersHorizontal className="size-4 text-muted" />
+                    Advanced layout
+                    <ChevronDown className="ml-auto size-4 text-muted transition-transform duration-200 group-open:rotate-180" />
+                  </summary>
+                  <div className="space-y-3 border-t border-border p-3">
+                    <p className="text-xs text-muted">Change margins, gaps, rotation, label size, rows, or columns.</p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {(["topMm", "rightMm", "bottomMm", "leftMm"] as const).map((key) => (
+                        <label key={key} className="space-y-1 text-[11px] capitalize text-muted">
+                          {key.replace("Mm", "")} (mm)
+                          <Input value={String(activeMargins[key])} onChange={(event) => { markManual(); setMargins((current) => ({ ...current, [key]: Number(event.target.value) || 0 })); }} />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="space-y-1 text-[11px] text-muted">Horizontal gap (mm)<Input value={activeGapX} onChange={(event) => { markManual(); setGapX(event.target.value); }} /></label>
+                      <label className="space-y-1 text-[11px] text-muted">Vertical gap (mm)<Input value={activeGapY} onChange={(event) => { markManual(); setGapY(event.target.value); }} /></label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="space-y-1 text-[11px] text-muted">
+                        Rotation
+                        <select className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-2 text-sm" value={String(rotation)} onChange={(event) => { markManual(); setRotation(event.target.value === "0" ? 0 : event.target.value === "90" ? 90 : "auto"); }}>
+                          <option value="auto">Auto</option><option value="0">0°</option><option value="90">90°</option>
+                        </select>
+                      </label>
+                      <label className="space-y-1 text-[11px] text-muted">Label size (100% = 1)<Input value={scale} onChange={(event) => { markManual(); setScale(event.target.value); }} /></label>
+                      <label className="space-y-1 text-[11px] text-muted">Columns<Input value={columns} onChange={(event) => { markManual(); setColumns(event.target.value); }} placeholder="Auto" /></label>
+                      <label className="space-y-1 text-[11px] text-muted">Rows<Input value={rows} onChange={(event) => { markManual(); setRows(event.target.value); }} placeholder="Auto" /></label>
+                    </div>
+                  </div>
+                </details>
+
+                <div className="flex gap-2">
+                  <Button type="button" variant="secondary" className="flex-1" onClick={() => setWorkflowStep("labels")}><ChevronLeft />Labels</Button>
+                  <Button type="button" className="flex-1" disabled={!layout?.ok || !items.length} onClick={() => setWorkflowStep("review")}>Review<ChevronRight /></Button>
+                </div>
+              </>
+            ) : null}
+
+            {workflowStep === "review" ? (
+              <>
+                <div>
+                  <h2 className="text-sm font-semibold text-ink">3. Review & print</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted">Confirm each sheet, preview the final PDF, then download or print it.</p>
+                </div>
+
+                <div className="rounded-xl border border-border bg-surface-soft p-3">
+                  <div className="flex items-center justify-between text-sm"><span className="text-muted">Labels</span><strong>{labelCount}</strong></div>
+                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Sheets</span><strong>{layout?.ok ? pages : "—"}</strong></div>
+                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Paper</span><strong>{paper}</strong></div>
+                </div>
+
+                {layout?.ok ? (
+                  <div className="space-y-2">
+                    {sheetGroups(layout.placements.map((placement) => placement.orderId), layout.perSheet).map((group, sheetIndex) => (
+                      <button
+                        key={`sheet-group-${sheetIndex}`}
+                        type="button"
+                        onClick={() => setSheetPage(sheetIndex)}
+                        className={cn(
+                          "w-full rounded-xl border p-3 text-left transition-all duration-200",
+                          pageIndex === sheetIndex ? "border-brand/30 bg-rose-50 shadow-sm" : "border-border bg-card hover:bg-surface-soft"
+                        )}
+                      >
+                        <span className="flex items-center justify-between text-sm font-semibold">
+                          Sheet {sheetIndex + 1}
+                          <span className="text-xs font-normal text-muted">{group.length} labels</span>
+                        </span>
+                        <span className="mt-1 block truncate text-xs text-muted">{group.join(", ")}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className={cn("rounded-xl border px-3 py-3 text-sm", canPrint ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-border bg-surface-soft text-muted")}>
+                  <span className="flex items-center gap-2 font-medium">
+                    <span className={cn("size-2 rounded-full", canPrint ? "animate-pulse-soft bg-emerald-500" : "bg-zinc-400")} />
+                    {printerMessage}
+                  </span>
+                </div>
+
+                <div className="grid gap-2">{outputActions}</div>
+                <Button type="button" variant="ghost" className="w-full" onClick={() => setWorkflowStep("layout")}><ChevronLeft />Back to arrangement</Button>
+              </>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="min-w-0 overflow-hidden">
+          <CardHeader className="border-b border-border p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle>Sheet preview</CardTitle>
+                <CardDescription>What you see here is the geometry used for preview, download, and print.</CardDescription>
+              </div>
+              <div className="flex items-center gap-1.5" role="group" aria-label="Sheet navigation">
+                <Button type="button" size="icon" variant="secondary" disabled={pageIndex <= 0} onClick={() => setSheetPage((page) => page - 1)} aria-label="Previous sheet" title="Previous sheet"><ChevronLeft /></Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" size="sm" variant="secondary">Sheet {pageIndex + 1} of {pages}<ChevronDown /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>Go to sheet</DropdownMenuLabel>
+                    {Array.from({ length: pages }, (_, index) => (
+                      <DropdownMenuItem key={index} onClick={() => setSheetPage(index)}>
+                        Sheet {index + 1}{index === pageIndex ? <CheckCircle2 className="ml-auto text-brand" /> : null}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button type="button" size="icon" variant="secondary" disabled={pageIndex >= pages - 1} onClick={() => setSheetPage((page) => page + 1)} aria-label="Next sheet" title="Next sheet"><ChevronRight /></Button>
+              </div>
+            </div>
+            {sheetOrders.length ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {sheetOrders.map((placement, slot) => (
+                  <button
+                    key={placement.index}
+                    type="button"
+                    className={cn(
+                      "rounded-full border px-2 py-1 text-[11px] font-medium transition-colors",
+                      selectedSlots.includes(placement.index) ? "border-brand/30 bg-rose-50 text-brand-dark" : "border-border bg-card text-muted hover:text-foreground"
+                    )}
+                    onClick={() => setSelectedSlots([placement.index])}
+                  >
+                    {slot + 1}. {placement.orderId}
+                  </button>
                 ))}
+              </div>
+            ) : null}
+          </CardHeader>
+
+          {items.length && layout && !layout.ok ? (
+            <div className="m-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert" aria-live="polite">
+              <strong>This layout does not fit.</strong>
+              <p className="mt-1">{layout.message} Open Advanced layout to reduce label size or choose a larger sheet.</p>
+            </div>
+          ) : null}
+
+          {displayLayout?.ok ? (
+            <>
+              <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface-soft px-3 py-2">
                 <Button
                   type="button"
                   size="sm"
@@ -933,184 +1178,196 @@ export function MultiPrintScreen() {
                       return !current;
                     });
                   }}
+                  title="Select and move labels"
                 >
-                  Select
+                  <MousePointer2 />Select & move
                 </Button>
-                <Button type="button" size="sm" variant="secondary" disabled={!Object.keys(overrides).length} onClick={() => setOverrides({})}>
-                  Reset to grid
-                </Button>
+                <Button type="button" size="icon" variant="secondary" disabled={!Object.keys(overrides).length} onClick={() => setOverrides({})} aria-label="Reset arrangement" title="Reset arrangement"><RotateCcw /></Button>
+
                 {selectedSlots.length >= 2 ? (
-                  <>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => applyAlign(alignLeft)}>
-                      Align left
-                    </Button>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => applyAlign(alignCenterX)}>
-                      Align center
-                    </Button>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => applyAlign(alignRight)}>
-                      Align right
-                    </Button>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => applyAlign(alignTop)}>
-                      Align top
-                    </Button>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => applyAlign(alignMiddleY)}>
-                      Align middle
-                    </Button>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => applyAlign(alignBottom)}>
-                      Align bottom
-                    </Button>
-                  </>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" size="sm" variant="secondary"><Settings2 />Align<ChevronDown /></Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                      <DropdownMenuLabel>Horizontal</DropdownMenuLabel>
+                      <DropdownMenuItem onClick={() => applyAlign(alignLeft)}>Align left</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => applyAlign(alignCenterX)}>Align center</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => applyAlign(alignRight)}>Align right</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>Vertical</DropdownMenuLabel>
+                      <DropdownMenuItem onClick={() => applyAlign(alignTop)}>Align top</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => applyAlign(alignMiddleY)}>Align middle</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => applyAlign(alignBottom)}>Align bottom</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 ) : null}
+
+                <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+                <Button type="button" size="icon" variant="secondary" disabled={zoom <= CANVAS_ZOOM_MIN} onClick={() => setZoom((value) => clampCanvasZoom(value / 1.15))} aria-label="Zoom out" title="Zoom out"><Minus /></Button>
+                <span className="min-w-12 text-center text-xs font-medium tabular-nums">{Math.round(zoom * 100)}%</span>
+                <Button type="button" size="icon" variant="secondary" disabled={zoom >= CANVAS_ZOOM_MAX} onClick={() => setZoom((value) => clampCanvasZoom(value * 1.15))} aria-label="Zoom in" title="Zoom in"><Plus /></Button>
+                <Button type="button" size="sm" variant="secondary" onClick={() => setZoom(1)} title="Fit sheet"><Grid2X2 />Fit sheet</Button>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" size="icon" variant="ghost" className="ml-auto" aria-label="Canvas shortcuts" title="Shortcuts"><HelpCircle /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>Canvas shortcuts</DropdownMenuLabel>
+                    <DropdownMenuItem disabled>Shift-click · Select multiple</DropdownMenuItem>
+                    <DropdownMenuItem disabled>Drag empty space · Box select</DropdownMenuItem>
+                    <DropdownMenuItem disabled>Arrow keys · Move 1 mm</DropdownMenuItem>
+                    <DropdownMenuItem disabled>Shift + arrows · Move 5 mm</DropdownMenuItem>
+                    <DropdownMenuItem disabled>Space + drag · Pan canvas</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
-              {sheetOrders.length ? (
-                <ol className="mb-3 grid grid-cols-2 gap-1 text-sm">
-                  {sheetOrders.map((placement, slot) => (
-                    <li key={placement.index}>
-                      <button
-                        type="button"
-                        className={cn("text-left", selectedSlots.includes(placement.index) && "font-medium text-brand")}
-                        onClick={() => setSelectedSlots([placement.index])}
-                      >
-                        {slot + 1}. {placement.orderId}
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-              <div className="overflow-hidden rounded-2xl border border-border bg-surface-soft">
-                <div className="flex flex-wrap items-center justify-center gap-2 border-b border-border bg-card px-3 py-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    aria-label="Zoom out"
-                    disabled={zoom <= CANVAS_ZOOM_MIN}
-                    onClick={() => setZoom((value) => clampCanvasZoom(value / 1.15))}
-                  >
-                    −
-                  </Button>
-                  <span className="min-w-14 text-center text-sm tabular-nums">{Math.round(zoom * 100)}%</span>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    aria-label="Zoom in"
-                    disabled={zoom >= CANVAS_ZOOM_MAX}
-                    onClick={() => setZoom((value) => clampCanvasZoom(value * 1.15))}
-                  >
-                    +
-                  </Button>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => setZoom(1)}>
-                    Fit
-                  </Button>
-                  <span className="text-xs text-muted">Select · Shift-click · Drag empty to marquee · Arrows to nudge</span>
-                </div>
+
+              <div
+                ref={canvasPane}
+                data-label-canvas
+                tabIndex={manual ? 0 : undefined}
+                className={cn(
+                  "max-h-[calc(100vh-17rem)] min-h-[520px] overflow-auto bg-zinc-100/70 p-5 outline-none dark:bg-zinc-950/50",
+                  (spaceHeld || panning) && "select-none",
+                  spaceHeld && !panning && "cursor-grab",
+                  panning && "cursor-grabbing"
+                )}
+                onPointerDown={(event) => {
+                  if (spaceHeldRef.current || event.button === 1) startPan(event);
+                }}
+                onAuxClick={(event) => event.preventDefault()}
+              >
                 <div
-                  ref={canvasPane}
-                  data-label-canvas
-                  tabIndex={manual ? 0 : undefined}
-                  className={cn(
-                    "max-h-[720px] overflow-auto p-4 outline-none",
-                    (spaceHeld || panning) && "select-none",
-                    spaceHeld && !panning && "cursor-grab",
-                    panning && "cursor-grabbing"
-                  )}
-                  onPointerDown={(event) => {
-                    if (spaceHeldRef.current || event.button === 1) startPan(event);
-                  }}
-                  onAuxClick={(event) => event.preventDefault()}
+                  ref={sheetRef}
+                  className="relative mx-auto border border-zinc-300 bg-white shadow-[0_18px_55px_rgb(9_9_11/0.16)] transition-shadow duration-200"
+                  style={{ width: displayLayout.sheetWidthPt * canvasScale, height: displayLayout.sheetHeightPt * canvasScale }}
+                  onPointerDown={onCanvasPointerDown}
                 >
                   <div
-                    ref={sheetRef}
-                    className="relative mx-auto border border-zinc-900 bg-white"
-                    style={{ width: displayLayout.sheetWidthPt * canvasScale, height: displayLayout.sheetHeightPt * canvasScale }}
-                    onPointerDown={onCanvasPointerDown}
-                  >
+                    className="pointer-events-none absolute border border-dashed border-sky-400/70"
+                    style={{
+                      left: ptFromMm(activeMargins.leftMm) * canvasScale,
+                      top: ptFromMm(activeMargins.topMm) * canvasScale,
+                      right: ptFromMm(activeMargins.rightMm) * canvasScale,
+                      bottom: ptFromMm(activeMargins.bottomMm) * canvasScale,
+                    }}
+                  />
+                  {marqueeBox ? (
                     <div
-                      className="pointer-events-none absolute border border-dashed border-sky-500"
+                      className="pointer-events-none absolute border border-dashed border-brand bg-brand/10"
                       style={{
-                        left: ptFromMm(activeMargins.leftMm) * canvasScale,
-                        top: ptFromMm(activeMargins.topMm) * canvasScale,
-                        right: ptFromMm(activeMargins.rightMm) * canvasScale,
-                        bottom: ptFromMm(activeMargins.bottomMm) * canvasScale,
+                        left: marqueeBox.xPt * canvasScale,
+                        top: marqueeBox.yPt * canvasScale,
+                        width: marqueeBox.widthPt * canvasScale,
+                        height: marqueeBox.heightPt * canvasScale,
                       }}
                     />
-                    {marqueeBox ? (
-                      <div
-                        className="pointer-events-none absolute border border-dashed border-brand bg-brand/10"
-                        style={{
-                          left: marqueeBox.xPt * canvasScale,
-                          top: marqueeBox.yPt * canvasScale,
-                          width: marqueeBox.widthPt * canvasScale,
-                          height: marqueeBox.heightPt * canvasScale,
-                        }}
-                      />
-                    ) : null}
-                    {displayLayout.placements
-                      .filter((placement) => placement.page === pageIndex)
-                      .map((placement) => {
-                        const selected = selectedSlots.includes(placement.index);
-                        return (
-                          <div
-                            key={placement.index}
-                            role={manual ? "button" : undefined}
-                            tabIndex={manual ? 0 : undefined}
-                            aria-label={manual ? `Label ${placement.orderId}` : undefined}
-                            className={cn(
-                              "absolute overflow-hidden border-2 border-zinc-300 bg-white",
-                              manual && (spaceHeld || panning ? "cursor-grab" : "cursor-grab active:cursor-grabbing"),
-                              !manual && "pointer-events-none"
-                            )}
-                            style={{
-                              left: placement.xPt * canvasScale,
-                              top: placement.yPt * canvasScale,
-                              width: placement.widthPt * canvasScale,
-                              height: placement.heightPt * canvasScale,
-                              containerType: "size",
-                              outline: selected ? "2px solid var(--brand)" : undefined,
-                              outlineOffset: 1,
-                              touchAction: manual ? "none" : undefined,
-                            }}
-                            onPointerDown={manual ? (event) => onSlotPointerDown(placement.index, event) : undefined}
-                            onPointerMove={manual ? (event) => onSlotPointerMove(placement.index, event) : undefined}
-                            onPointerUp={manual ? endDrag : undefined}
-                          >
-                            <SheetSlotLabel
-                              orderId={placement.orderId}
-                              templateId={selectedId}
-                              rotation={placement.rotation}
+                  ) : null}
+                  {displayLayout.placements
+                    .filter((placement) => placement.page === pageIndex)
+                    .map((placement) => {
+                      const selected = selectedSlots.includes(placement.index);
+                      return (
+                        <div
+                          key={placement.index}
+                          role={manual ? "button" : undefined}
+                          tabIndex={manual ? 0 : undefined}
+                          aria-label={manual ? `Label ${placement.orderId}` : undefined}
+                          className={cn(
+                            "absolute overflow-hidden border-2 border-zinc-300 bg-white transition-[outline,box-shadow] duration-150",
+                            selected && "shadow-[0_0_0_3px_rgb(225_29_72/0.14)]",
+                            manual && (spaceHeld || panning ? "cursor-grab" : "cursor-grab active:cursor-grabbing"),
+                            !manual && "pointer-events-none"
+                          )}
+                          style={{
+                            left: placement.xPt * canvasScale,
+                            top: placement.yPt * canvasScale,
+                            width: placement.widthPt * canvasScale,
+                            height: placement.heightPt * canvasScale,
+                            containerType: "size",
+                            outline: selected ? "2px solid var(--brand)" : undefined,
+                            outlineOffset: 1,
+                            touchAction: manual ? "none" : undefined,
+                          }}
+                          onPointerDown={manual ? (event) => onSlotPointerDown(placement.index, event) : undefined}
+                          onPointerMove={manual ? (event) => onSlotPointerMove(placement.index, event) : undefined}
+                          onPointerUp={manual ? endDrag : undefined}
+                        >
+                          <SheetSlotLabel orderId={placement.orderId} templateId={selectedId} rotation={placement.rotation} />
+                          {selected ? (
+                            <span className="pointer-events-none absolute left-1 top-1 z-10 rounded-md bg-brand px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm">
+                              {placement.orderId}
+                            </span>
+                          ) : null}
+                          {selected && manual && selectedSlots.length === 1 ? (
+                            <button
+                              type="button"
+                              aria-label="Resize label"
+                              className="absolute bottom-0 right-0 z-10 size-3 cursor-se-resize bg-brand"
+                              onPointerDown={(event) => onResizeStart(placement.index, event)}
+                              onPointerMove={(event) => onSlotPointerMove(placement.index, event)}
+                              onPointerUp={endDrag}
                             />
-                            {selected && manual && selectedSlots.length === 1 ? (
-                              <button
-                                type="button"
-                                aria-label="Resize label"
-                                className="absolute bottom-0 right-0 z-10 size-3 cursor-se-resize bg-brand"
-                                onPointerDown={(event) => onResizeStart(placement.index, event)}
-                                onPointerMove={(event) => onSlotPointerMove(placement.index, event)}
-                                onPointerUp={endDrag}
-                              />
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                  </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                 </div>
               </div>
-              <p className="mt-2 text-xs text-muted">
-                {displayLayout.columns} × {displayLayout.rows}
-                {displayLayout.rotation ? `, rotated ${displayLayout.rotation}°` : ""}
-                {manual ? " · Select labels, marquee, drag, align, or use arrow keys." : ""}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-4 py-2.5 text-xs text-muted">
+                <span>{displayLayout.columns} × {displayLayout.rows}{displayLayout.rotation ? ` · Rotated ${displayLayout.rotation}°` : ""}</span>
+                <span aria-live="polite">{selectedSlots.length ? `${selectedSlots.length} selected` : manual ? "Click or drag to select labels" : "Turn on Select & move to edit"}</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex min-h-[520px] flex-col items-center justify-center p-8 text-center">
+              <Grid2X2 className="size-8 text-muted" />
+              <p className="mt-3 text-sm font-semibold">
+                {items.length ? "Adjust the layout to fit these labels" : "Choose labels to build your sheet"}
+              </p>
+              <p className="mt-1 max-w-sm text-xs text-muted">
+                {items.length
+                  ? "Open Arrange and Advanced layout, then reduce label size or choose a larger sheet."
+                  : "Start in step 1. Your A4 preview will appear here automatically."}
               </p>
             </div>
+          )}
+
+          {previewUrl ? (
+            <div className="border-t border-border">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-surface-soft"
+                onClick={() => setShowPdfPreview((current) => !current)}
+                aria-expanded={showPdfPreview}
+              >
+                <Eye className="size-4 text-muted" />
+                Final PDF preview
+                <ChevronDown className={cn("ml-auto size-4 text-muted transition-transform duration-200", showPdfPreview && "rotate-180")} />
+              </button>
+              {showPdfPreview ? (
+                <div className="border-t border-border bg-surface-soft p-3">
+                  <iframe title="Sheet PDF preview" src={previewUrl} className="h-[620px] w-full rounded-xl border border-border bg-white" />
+                </div>
+              ) : null}
+            </div>
           ) : null}
-          {previewUrl ? <iframe title="Sheet PDF preview" src={previewUrl} className="h-[720px] w-full border border-border bg-white" /> : null}
-        </div>
+        </Card>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-2 border-t border-border bg-card/95 p-3 shadow-[0_-8px_30px_rgb(9_9_11/0.08)] backdrop-blur sm:hidden">
+        <Button type="button" size="sm" variant="secondary" className="flex-1" onClick={preview} disabled={Boolean(busy) || !items.length || layout?.ok === false}><Eye />Preview</Button>
+        <Button type="button" size="sm" variant="secondary" className="flex-1" onClick={download} disabled={Boolean(busy) || !items.length || layout?.ok === false}><Download />Download</Button>
+        <Button type="button" size="sm" className="flex-1" onClick={print} disabled={Boolean(busy) || !canPrint}><Printer />Print</Button>
       </div>
     </div>
   );
 }
 
-function SheetSlotLabel({
+const SheetSlotLabel = memo(function SheetSlotLabel({
   orderId,
   templateId,
   rotation,
@@ -1138,15 +1395,13 @@ function SheetSlotLabel({
       return response.blob();
     },
   });
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const pdfUrl = useMemo(() => (label.data ? URL.createObjectURL(label.data) : null), [label.data]);
 
   useEffect(() => {
-    const blob = label.data;
-    if (!blob) return;
-    const objectUrl = URL.createObjectURL(blob);
-    setPdfUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [label.data]);
+    return () => {
+      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    };
+  }, [pdfUrl]);
 
   if (!pdfUrl) {
     return (
@@ -1180,4 +1435,4 @@ function SheetSlotLabel({
       style={{ transform: "scale(1.06)", transformOrigin: "center" }}
     />
   );
-}
+});
