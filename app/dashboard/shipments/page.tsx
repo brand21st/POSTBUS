@@ -18,6 +18,7 @@ import {
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
+import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { INDIA_POST_SERVICES, indiaPostServiceLabel, SHIPMENT_STATUSES } from "@/types/domain";
 import type { Paginated, ShipmentRecord } from "@/types/api";
 
@@ -49,6 +50,10 @@ export default function ShipmentsPage() {
           serviceCode: service === "all" ? undefined : service,
         })}`
       ),
+    refetchInterval: (current) => {
+      const rows = asPaginated<ShipmentRecord>(current.state.data, ["shipments", "items"]).items;
+      return rows.some((row) => isIndiaPostBookingInFlight(row.status)) ? 3_000 : false;
+    },
   });
 
   const list = asPaginated<ShipmentRecord>(query.data, ["shipments", "items"]);

@@ -40,9 +40,9 @@ export const createOrderSchema = z.object({
   shipment: z
     .object({
       weightGrams: z.coerce.number().int().min(1).optional(),
-      lengthCm: z.coerce.number().min(0).optional(),
-      widthCm: z.coerce.number().min(0).optional(),
-      heightCm: z.coerce.number().min(0).optional(),
+      lengthCm: z.coerce.number().min(0).max(150).optional(),
+      widthCm: z.coerce.number().min(0).max(150).optional(),
+      heightCm: z.coerce.number().min(0).max(150).optional(),
       serviceCode: z.string().optional(),
     })
     .optional(),

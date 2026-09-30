@@ -21,6 +21,7 @@ import { formatCurrency, formatDate, formatWeightGrams } from "@/lib/format";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { api } from "@/lib/hooks/use-api";
+import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
 import type { LineItem, OrderRecord, ShipmentRecord } from "@/types/api";
@@ -42,6 +43,10 @@ export default function OrderDetailPage() {
     queryFn: () => api<OrderRecord>(`/api/v1/orders/${params.id}`),
     enabled: Boolean(params.id),
     staleTime: 30_000,
+    refetchInterval: (current) => {
+      const status = String(current.state.data?.status ?? "").toUpperCase();
+      return status === "PROCESSING" ? 3_000 : false;
+    },
   });
 
   const shipments = useQuery({
@@ -50,6 +55,10 @@ export default function OrderDetailPage() {
       api<{ items?: ShipmentRecord[] }>(`/api/v1/shipments?orderId=${params.id}`),
     enabled: Boolean(params.id),
     staleTime: 30_000,
+    refetchInterval: (current) => {
+      const rows = current.state.data?.items ?? [];
+      return rows.some((row) => isIndiaPostBookingInFlight(row.status)) ? 3_000 : false;
+    },
   });
 
   const ship = useMutation({

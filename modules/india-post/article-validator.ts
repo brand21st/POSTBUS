@@ -2,6 +2,13 @@ import { isValidIndiaPostS10 } from "@/modules/india-post/barcode";
 import { indiaPostBookingArticleType, indiaPostMobile, indiaPostShapeOfArticle } from "@/modules/india-post/endpoints";
 import type { BookingErrorCategory } from "@/modules/india-post/article-fields";
 import type { DraftArticle, ValidationIssue, ValidatedArticle } from "@/modules/india-post/article-types";
+import {
+  INDIA_POST_ADDRESS_COMBINED_MAX,
+  INDIA_POST_ADDRESS_LINE_MAX,
+  INDIA_POST_BULK_REFERENCE_MAX,
+  INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G,
+  indiaPostRequiresOtp,
+} from "@/modules/india-post/spec";
 import { INDIA_POST_WEIGHT_MAX_G, INDIA_POST_WEIGHT_MIN_G, toIndiaPostPhysicalWeightGrams } from "@/modules/india-post/weight";
 
 const PIN = /^\d{6}$/;
@@ -25,19 +32,21 @@ function parsplLimits(): Limits {
   return { weightMax: 5_000, length: [14, 150], width: [9, 150], height: [1, 150] };
 }
 
-export function indiaPostDimensionLimits(serviceCode: string): Limits {
+export function indiaPostDimensionLimits(serviceCode: string, weightGrams = 0): Limits {
   const type = indiaPostBookingArticleType(serviceCode);
   if (type === "24_SPP_PARSPL") return parsplLimits();
   if (type === "24_SPEEDPOST_DOC" || type === "48_SPEEDPOST_DOC") return docLimits();
-  if (type === "BP" || serviceCode === "SP_INLAND_PARCEL") return parcelLimits();
+  if (type === "BP") return parcelLimits();
+  if (type === "SP" && weightGrams > 0 && weightGrams < INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G) return docLimits();
   if (serviceCode === "SP_INLAND_DOC") return docLimits();
   return parcelLimits();
 }
 
 export function isParcelArticle(serviceCode: string, weightGrams: number) {
   const type = indiaPostBookingArticleType(serviceCode);
-  if (type === "BP" || type === "24_SPP_PARSPL" || serviceCode === "SP_INLAND_PARCEL") return true;
-  if (weightGrams >= 500 && type === "SP") return true;
+  if (type === "BP" || type === "24_SPP_PARSPL") return true;
+  if (type === "24_SPEEDPOST_DOC" || type === "48_SPEEDPOST_DOC") return false;
+  if (type === "SP") return weightGrams >= INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G;
   return false;
 }
 
@@ -77,8 +86,8 @@ function checkText(
     if (required) issues.push(issue(draft, field, text, `${field} is required.`, category));
     return;
   }
-  if (text.length < 3 || text.length > 80) {
-    issues.push(issue(draft, field, text, `${field} must be between 3 and 80 characters.`, category));
+  if (text.length < 3 || text.length > INDIA_POST_ADDRESS_LINE_MAX) {
+    issues.push(issue(draft, field, text, `${field} must be between 3 and ${INDIA_POST_ADDRESS_LINE_MAX} characters.`, category));
   }
 }
 
@@ -178,7 +187,7 @@ export function validateIndiaPostArticle(draft: DraftArticle): ValidationIssue[]
   }
 
   const parcel = isParcelArticle(draft.serviceCode, weight ?? 0);
-  const limits = indiaPostDimensionLimits(draft.serviceCode);
+  const limits = indiaPostDimensionLimits(draft.serviceCode, weight ?? 0);
   const length = Number(draft.lengthCm) || 0;
   const width = Number(draft.widthCm) || 0;
   const height = Number(draft.heightCm) || 0;
@@ -300,6 +309,56 @@ export function validateIndiaPostArticle(draft: DraftArticle): ValidationIssue[]
   }
   if (draft.instructionRts && !["RTS", "RTA"].includes(draft.instructionRts)) {
     issues.push(issue(draft, "instruction_rts", draft.instructionRts, "Instruction RTS must be RTS or RTA.", ip));
+  }
+
+  const bulkReference = (draft.bulkReference || "").trim();
+  if (bulkReference.length > INDIA_POST_BULK_REFERENCE_MAX) {
+    issues.push(
+      issue(
+        draft,
+        "bulk_reference",
+        bulkReference,
+        `Bulk reference must be at most ${INDIA_POST_BULK_REFERENCE_MAX} characters.`,
+        mapping
+      )
+    );
+  }
+
+  if (indiaPostRequiresOtp(draft.serviceCode)) {
+    if (draft.otp === false) {
+      issues.push(issue(draft, "otp", "FALSE", "OTP must be TRUE for 24_SPP_PARSPL bookings.", ip));
+    }
+  } else if (draft.otp) {
+    issues.push(issue(draft, "otp", "TRUE", "OTP is only allowed for 24_SPP_PARSPL bookings.", ip));
+  }
+
+  const senderCombined = [draft.sender.line1, draft.sender.line2, draft.sender.line3]
+    .map((value) => trimText(value))
+    .join("").length;
+  if (senderCombined > INDIA_POST_ADDRESS_COMBINED_MAX) {
+    issues.push(
+      issue(
+        draft,
+        "sender_add_line_1",
+        senderCombined,
+        `Sender address lines combined must not exceed ${INDIA_POST_ADDRESS_COMBINED_MAX} characters.`,
+        config
+      )
+    );
+  }
+  const receiverCombined = [draft.receiver.line1, draft.receiver.line2, draft.receiver.line3]
+    .map((value) => trimText(value))
+    .join("").length;
+  if (receiverCombined > INDIA_POST_ADDRESS_COMBINED_MAX) {
+    issues.push(
+      issue(
+        draft,
+        "receiver_add_line_1",
+        receiverCombined,
+        `Receiver address lines combined must not exceed ${INDIA_POST_ADDRESS_COMBINED_MAX} characters.`,
+        shopify
+      )
+    );
   }
 
   return issues;

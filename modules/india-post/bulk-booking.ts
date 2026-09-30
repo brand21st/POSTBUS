@@ -19,6 +19,7 @@ import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/order
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import { indiaPostRequiresOtp } from "@/modules/india-post/spec";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 
 export type BulkBookingRow = {
@@ -462,12 +463,23 @@ export async function validateExcelBuffer(
         };
       })(),
     });
-    if (article.otp && !["0", "FALSE", "false", ""].includes(article.otp)) {
+    if (indiaPostRequiresOtp(serviceCode)) {
+      if (article.otp && ["0", "FALSE", "false", ""].includes(article.otp)) {
+        issues.push({
+          orderNumber: serial,
+          field: "otp",
+          value: article.otp,
+          error: "OTP must be TRUE for 24_SPP_PARSPL bookings.",
+          status: "Failed",
+          category: "INDIA_POST_VALIDATION",
+        });
+      }
+    } else if (article.otp && !["0", "FALSE", "false", ""].includes(article.otp)) {
       issues.push({
         orderNumber: serial,
         field: "otp",
         value: article.otp,
-        error: "OTP based delivery is not used. Leave OTP FALSE.",
+        error: "OTP based delivery is only used for 24_SPP_PARSPL.",
         status: "Failed",
         category: "MAPPING",
       });

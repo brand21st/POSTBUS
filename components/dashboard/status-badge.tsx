@@ -20,6 +20,7 @@ const SUCCESS = new Set([
 const WARNING = new Set([
   "BOOKING",
   "BOOKED",
+  "LABEL_PENDING",
   "QUEUED",
   "INCOMPLETE",
   "IN_TRANSIT",
@@ -102,7 +103,13 @@ export function StatusBadge({ value }: { value?: string | null }) {
           : undefined
       }
     >
-      {key === "WAITING" ? "Waiting to print" : key === "PRINTED" ? "Printed" : titleCase(value)}
+      {key === "WAITING"
+        ? "Waiting to print"
+        : key === "PRINTED"
+          ? "Printed"
+          : key === "LABEL_PENDING"
+            ? "Generating label"
+            : titleCase(value)}
     </Badge>
   );
 }

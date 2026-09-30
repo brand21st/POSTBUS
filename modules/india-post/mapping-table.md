@@ -1,8 +1,8 @@
 # India Post booking field mapping
 
-Source of truth: India Post External Integrations Approach Document. Field names are CEPT `process-articles` names.
+Source of truth: India Post External Integrations Approach Document (updated 30.07.2026). Field names are CEPT process-articles names.
 
-Do not invent, rename, or silently default values. OTP is always `FALSE`.
+Do not invent, rename, or silently default values. OTP is TRUE only for 24_SPP_PARSPL.
 
 | India Post Field | Postbus Source | Transformation | Required | Validation |
 |------------------|----------------|----------------|----------|------------|
@@ -24,7 +24,8 @@ Do not invent, rename, or silently default values. OTP is always `FALSE`.
 | sender_name | Store Configuration | Organization / pickup identity; never Shopify customer | mandatory | 3–80 characters |
 | sender_company | Store Configuration | Organization name | mandatory | 3–80 characters |
 | sender_add_line_1 | Store Configuration | Organization or pickup line1, trimmed | mandatory | 3–80 characters |
-| sender_add_line_2 | Store Configuration | Organization or pickup line2 if length ≥ 3 | optional | 3–80 characters when present |
+| sender_add_line_2 | Store Configuration | Organization or pickup line2 if length ≥ 3 | optional | 3–80 characters when present; combined address lines ≤ 240 |
+| sender_add_line_3 | Store Configuration | Empty unless a third sender line is stored | optional | 3–80 characters when present; combined address lines ≤ 240 |
 | sender_city | Store Configuration | Organization or pickup city | mandatory | 3–80 characters |
 | sender_state | Store Configuration | Organization or pickup state | optional | 3–80 characters when present |
 | sender_pincode | Store Configuration | Origin office / pickup pincode | mandatory | Exactly 6 digits |
@@ -35,7 +36,8 @@ Do not invent, rename, or silently default values. OTP is always `FALSE`.
 | receiver_name | Shopify Order | Shipping address name, trimmed; Excel RECEIVER NAME | mandatory | 3–80 characters |
 | receiver_company | Shopify Order | Shipping company if present; otherwise receiver_name (CEPT requires 3–80) | mandatory | 3–80 characters |
 | receiver_add_line_1 | Shopify Order | Shipping line1, trimmed | mandatory | 3–80 characters |
-| receiver_add_line_2 | Shopify Order | Shipping line2 if length ≥ 3 | optional | 3–80 characters when present |
+| receiver_add_line_2 | Shopify Order | Shipping line2 if length ≥ 3 | optional | 3–80 characters when present; combined address lines ≤ 240 |
+| receiver_add_line_3 | Shopify Order | Shipping line3 if length ≥ 3 | optional | 3–80 characters when present; combined address lines ≤ 240 |
 | receiver_city | Shopify Order | Shipping city, trimmed | mandatory | 3–80 characters |
 | receiver_state | Shopify Order | Shipping state, trimmed | optional | 3–80 characters when present |
 | receiver_pincode | Shopify Order | Shipping pincode, trimmed; no pad/truncate at booking | mandatory | Exactly 6 digits |
@@ -56,8 +58,8 @@ Do not invent, rename, or silently default values. OTP is always `FALSE`.
 | value_of_insurance | Optional | Declared value only when insurance_type is DOP | optional | Numeric(10,2) |
 | ack | Optional | TRUE/FALSE from Excel ACK; otherwise FALSE | optional | TRUE or FALSE |
 | reg | Optional | TRUE/FALSE from Excel REGISTRATION; otherwise FALSE | optional | TRUE or FALSE |
-| otp | Optional | Always FALSE — OTP is not used | optional | TRUE or FALSE; Postbus sends FALSE |
-| bulk_reference | System Generated | Excel BULK REFERENCE or Postbus batch id, max 24 | optional | Max 24 characters |
+| otp | Optional | TRUE only for 24_SPP_PARSPL (mandatory in 30.07.2026 spec); otherwise FALSE | optional | TRUE or FALSE |
+| bulk_reference | System Generated | Excel BULK REFERENCE or Postbus batch id, max 50 | optional | Max 50 characters |
 | pickup_address_id | Optional | Empty unless CEPT pickup address id is stored | optional | Number 8 when present |
 | pickup_addressee_name | Shipping Configuration | Pickup location contact when pickup_address_flag is TRUE | conditional_pickup | 3–80 characters when pickup |
 | pickup_company_name | Shipping Configuration | Pickup/org name when pickup | conditional_pickup | 3–80 characters when pickup |

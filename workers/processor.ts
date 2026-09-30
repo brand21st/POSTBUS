@@ -19,6 +19,8 @@ import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
+import { findReadyIndiaPostLabel } from "@/modules/labels/ready";
+import { runPool } from "@/lib/async/pool";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { JobPayload } from "@/lib/queue/queues";
 import type { AutomationSettings } from "@/types/api";
@@ -109,7 +111,12 @@ export async function processJob(queue: string, payload: JobPayload) {
       })
       .eq("id", jobId);
 
-    if (queue !== "invoice-generation" && payload.entityType === "shipment" && payload.entityId) {
+    if (
+      queue !== "invoice-generation" &&
+      queue !== "label-generation" &&
+      payload.entityType === "shipment" &&
+      payload.entityId
+    ) {
       await supabase
         .from("shipments")
         .update({
@@ -165,25 +172,16 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   const { consumeQuota } = await import("@/modules/billing/usage");
   const { enqueueWatiNotify } = await import("@/modules/wati/send");
 
-  for (const shipmentId of outcome.bookedIds) {
-    const { data: shipment } = await supabase
+  if (outcome.bookedIds.length) {
+    await supabase
       .from("shipments")
-      .select("id, order_id")
-      .eq("id", shipmentId)
-      .maybeSingle();
-    if (!shipment) continue;
-    if (shipment.order_id) {
-      try {
-        const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
-        await insertOrderStageNotification(supabase, {
-          organizationId: payload.organizationId,
-          orderId: shipment.order_id,
-          event: "booked",
-        });
-      } catch {
-        // In-app alerts are optional; booking should still succeed.
-      }
-    }
+      .update({ status: "LABEL_PENDING" })
+      .eq("organization_id", payload.organizationId)
+      .in("id", outcome.bookedIds)
+      .eq("status", "BOOKED");
+  }
+
+  for (const shipmentId of outcome.bookedIds) {
     try {
       await consumeQuota(supabase, payload.organizationId);
     } catch (error) {
@@ -197,6 +195,27 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         metric: "shipments",
         quantity: 1,
       });
+    }
+  }
+
+  await runPool(outcome.bookedIds, 4, async (shipmentId) => {
+    const { data: shipment } = await supabase
+      .from("shipments")
+      .select("id, order_id")
+      .eq("id", shipmentId)
+      .maybeSingle();
+    if (!shipment) return;
+    if (shipment.order_id) {
+      try {
+        const { insertOrderStageNotification } = await import("@/lib/notifications/order-stage");
+        await insertOrderStageNotification(supabase, {
+          organizationId: payload.organizationId,
+          orderId: shipment.order_id,
+          event: "booked",
+        });
+      } catch {
+        // In-app alerts are optional; booking should still succeed.
+      }
     }
     await createBackgroundJob(supabase, {
       organizationId: payload.organizationId,
@@ -238,7 +257,7 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       shipmentId: shipment.id,
       orderId: shipment.order_id,
     });
-  }
+  });
 }
 
 async function loadAutomation(
@@ -264,6 +283,21 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
   if (!payload.entityId) {
     throw Object.assign(new Error("Shipment is missing."), { code: "VALIDATION_ERROR" });
   }
+  const existing = await findReadyIndiaPostLabel(supabase, payload.organizationId, payload.entityId);
+  if (existing) {
+    await supabase.from("shipments").update({ status: "LABEL_READY" }).eq("id", payload.entityId);
+    try {
+      await persistPackingSlip(supabase, payload.organizationId, payload.entityId);
+    } catch (error) {
+      logError("PACKING_LABEL_FAILED", {
+        organizationId: payload.organizationId,
+        shipmentId: payload.entityId,
+        message: error instanceof Error ? error.message : "unknown",
+      });
+    }
+    return;
+  }
+
   const officialPdf = await fetchOfficialIndiaPostLabelPdf(supabase, payload.organizationId, payload.entityId);
   const official = await persistLabelPdf(supabase, {
     organizationId: payload.organizationId,
@@ -274,7 +308,7 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
   await supabase.from("shipments").update({ status: "LABEL_READY" }).eq("id", officialPdf.shipmentId);
 
   try {
-    await persistPackingSlip(supabase, payload.organizationId, officialPdf.shipmentId, { replace: true });
+    await persistPackingSlip(supabase, payload.organizationId, officialPdf.shipmentId);
   } catch (error) {
     logError("PACKING_LABEL_FAILED", {
       organizationId: payload.organizationId,
@@ -330,7 +364,7 @@ async function generateManifest(supabase: ReturnType<typeof createAdminClient>, 
     .not("barcode", "is", null)
     .not("booked_at", "is", null)
     .gte("booked_at", dayStart)
-    .in("status", ["BOOKED", "LABEL_READY", "MANIFEST_PENDING", "MANIFEST_READY"])
+    .in("status", ["BOOKED", "LABEL_PENDING", "LABEL_READY", "MANIFEST_PENDING", "MANIFEST_READY"])
     .order("booked_at", { ascending: true });
 
   if (!shipments?.length) {

@@ -44,6 +44,33 @@ describe("IndiaPostProvider.searchPostOffices", () => {
     expect(offices[0]?.office_name).toBe("Kolenchery SO");
   });
 
+  it("accepts a raw office array from pincode-search", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => [
+          {
+            office_id: "21360043",
+            office_name: "Mysuru H.O",
+            delivery_office_flag: true,
+            office_type_code: "HPO",
+          },
+        ],
+      }))
+    );
+
+    const provider = new IndiaPostProvider({
+      environment: "UAT",
+      status: "CONNECTED",
+      encrypted_access_token: encryptSecret("test-token"),
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+
+    const offices = await provider.searchPostOffices("570001");
+    expect(offices[0]?.office_id).toBe("21360043");
+  });
+
   it("returns an empty list for invalid pincode without calling CEPT", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

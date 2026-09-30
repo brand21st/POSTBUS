@@ -74,14 +74,15 @@ describe("production login and booking URLs", () => {
 });
 
 describe("article type and shape", () => {
-  it("sends SP and BP as documented for booking", () => {
+  it("sends SP and BP as documented for booking and labels", () => {
     expect(indiaPostBookingArticleType("SP_INLAND_PARCEL")).toBe("SP");
     expect(indiaPostBookingArticleType("SP_INLAND_DOC")).toBe("SP");
     expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BP");
   });
 
-  it("uses DOC for light Speed Post and NROL for parcels", () => {
+  it("uses DOC for Speed Post under 500 g and NROL at or above 500 g", () => {
     expect(indiaPostShapeOfArticle("SP_INLAND_DOC", 250)).toBe("DOC");
+    expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 400)).toBe("DOC");
     expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 1500)).toBe("NROL");
     expect(indiaPostShapeOfArticle("BUSINESS_PARCEL", 550)).toBe("NROL");
   });
@@ -222,5 +223,33 @@ describe("indiaPostBookingArticle", () => {
     expect(article.article_type).toBe("BP");
     expect(article.sender_city).not.toBe("NA");
     expect(article.pickup_dropoff_office_id).toBe(22660454);
+  });
+
+  it("sets OTP TRUE for 24_SPP_PARSPL", () => {
+    const article = indiaPostBookingArticle({
+      customerId: "3000064781",
+      contractId: "41918281",
+      barcode: "ET214330016IN",
+      officeId: "22660454",
+      originPin: "682311",
+      serviceCode: "24_SPP_PARSPL",
+      weightGrams: 1000,
+      lengthCm: 20,
+      widthCm: 15,
+      heightCm: 10,
+      senderName: "kerlaz",
+      senderLine1: "Registered pickup",
+      senderCity: "Ernakulam",
+      senderState: "Kerala",
+      senderMobile: "9876543210",
+      receiverName: "Vishnu Priya",
+      receiverLine1: "Sulakkarai",
+      receiverCity: "Kurakkundu",
+      receiverState: "Tamil Nadu",
+      receiverPin: "626003",
+      receiverMobile: "9944388249",
+    });
+    expect(article.otp).toBe("TRUE");
+    expect(article.article_type).toBe("24_SPP_PARSPL");
   });
 });

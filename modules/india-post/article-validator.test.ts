@@ -75,6 +75,20 @@ describe("India Post article validation", () => {
     expect(issues.some((issue) => issue.field === "physical_weight")).toBe(true);
   });
 
+  it("applies document dimension limits to Speed Post under 500 g", () => {
+    const issues = validateIndiaPostArticle(
+      baseDraft({ serviceCode: "SP_INLAND_PARCEL", weightGrams: 250, lengthCm: 20, widthCm: 15, heightCm: 10, strictDimensions: true })
+    );
+    expect(issues.some((issue) => issue.field === "height")).toBe(true);
+  });
+
+  it("allows a 50-character bulk_reference", () => {
+    const ref = "B".repeat(50);
+    expect(validateIndiaPostArticle(baseDraft({ bulkReference: ref }))).toEqual([]);
+    const issues = validateIndiaPostArticle(baseDraft({ bulkReference: `${ref}X` }));
+    expect(issues.some((issue) => issue.field === "bulk_reference")).toBe(true);
+  });
+
   it("does not enable insurance by default", () => {
     const payload = indiaPostBookingArticle({
       customerId: "1788590988",
@@ -102,6 +116,8 @@ describe("India Post article validation", () => {
     expect(payload.otp).toBe("FALSE");
     expect(payload.insurance_type).toBe("");
     expect(payload.codr_cod).toBe("");
+    expect(payload.sender_add_line_3).toBe("");
+    expect(payload.receiver_add_line_3).toBe("");
     expect(assertPayloadCoversDocumentedFields(payload)).toEqual([]);
     expect(Object.keys(payload).sort()).toEqual([...CEPT_BOOKING_FIELD_NAMES].sort());
   });
@@ -122,10 +138,10 @@ describe("India Post booking response split", () => {
 });
 
 describe("booking batch transport", () => {
-  it("uses JSON under 1000 articles and file above that", () => {
+  it("uses JSON below 1000 articles and file at 1000+", () => {
     expect(indiaPostBookingTransport(1)).toBe("json");
-    expect(indiaPostBookingTransport(1000)).toBe("json");
-    expect(indiaPostBookingTransport(1001)).toBe("file");
+    expect(indiaPostBookingTransport(999)).toBe("json");
+    expect(indiaPostBookingTransport(1000)).toBe("file");
     expect(chunkIds(["a", "b", "c", "d"], 2)).toEqual([["a", "b"], ["c", "d"]]);
   });
 

@@ -1,4 +1,5 @@
 import { indiaPostBookingArticleType, indiaPostMobile, indiaPostShapeOfArticle } from "@/modules/india-post/endpoints";
+import { INDIA_POST_BULK_REFERENCE_MAX, indiaPostRequiresOtp } from "@/modules/india-post/spec";
 import type { DraftArticle, DraftParty } from "@/modules/india-post/article-types";
 import { toIndiaPostPhysicalWeightGrams } from "@/modules/india-post/weight";
 
@@ -11,6 +12,7 @@ function party(input: {
   company?: string | null;
   line1?: string | null;
   line2?: string | null;
+  line3?: string | null;
   city?: string | null;
   state?: string | null;
   pincode?: string | null;
@@ -24,6 +26,7 @@ function party(input: {
     company,
     line1: text(input.line1),
     line2: text(input.line2) || undefined,
+    line3: text(input.line3) || undefined,
     city: text(input.city),
     state: text(input.state) || undefined,
     pincode: text(input.pincode),
@@ -172,6 +175,7 @@ export function mapExcelRowToArticle(input: {
       company: row.sender_company,
       line1: row.sender_add_line_1,
       line2: row.sender_add_line_2,
+      line3: row.sender_add_line_3,
       city: row.sender_city,
       state: row.sender_state,
       pincode: row.sender_pincode,
@@ -183,6 +187,7 @@ export function mapExcelRowToArticle(input: {
       company: row.receiver_company,
       line1: row.receiver_add_line_1,
       line2: row.receiver_add_line_2,
+      line3: row.receiver_add_line_3,
       city: row.receiver_city,
       state: row.receiver_state,
       pincode: row.receiver_pincode,
@@ -201,7 +206,8 @@ export function mapExcelRowToArticle(input: {
     reg: flag(row.reg),
     prepaymentCode: row.prepayment_code.trim().toUpperCase(),
     prepaymentValue: Number(row.value_of_prepayment) || 0,
-    bulkReference: row.bulk_reference.trim().slice(0, 24),
+    otp: indiaPostRequiresOtp(input.serviceCode) ? true : flag(row.otp) ? true : false,
+    bulkReference: row.bulk_reference.trim().slice(0, INDIA_POST_BULK_REFERENCE_MAX),
     strictWeight: true,
     strictDimensions: true,
   };

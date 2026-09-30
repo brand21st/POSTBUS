@@ -5,6 +5,7 @@ import {
   indiaPostRequiredText,
   indiaPostShapeOfArticle,
 } from "@/modules/india-post/endpoints";
+import { INDIA_POST_ADDRESS_LINE_MAX, INDIA_POST_BULK_REFERENCE_MAX, indiaPostRequiresOtp } from "@/modules/india-post/spec";
 
 function empty(value?: string | number | null) {
   if (value == null) return "";
@@ -23,7 +24,7 @@ function flag(value?: boolean | string | null, fallback = "FALSE") {
 function optionalText(value?: string | null) {
   const text = (value ?? "").trim();
   if (text.length < 3) return "";
-  return text.slice(0, 80);
+  return text.slice(0, INDIA_POST_ADDRESS_LINE_MAX);
 }
 
 /** Serializes a validated article into the documented CEPT process-articles object. */
@@ -46,22 +47,24 @@ export function serializeIndiaPostBookingArticle(article: ValidatedArticle) {
     delivery_instruction: article.deliveryInstruction || "",
     delivery_slot: article.deliverySlot || "",
     instruction_rts: article.instructionRts || "",
-    sender_name: article.sender.name.slice(0, 80),
-    sender_company: article.sender.company.slice(0, 80),
-    sender_add_line_1: article.sender.line1.slice(0, 80),
+    sender_name: article.sender.name.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
+    sender_company: article.sender.company.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
+    sender_add_line_1: article.sender.line1.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     sender_add_line_2: optionalText(article.sender.line2),
-    sender_city: article.sender.city.slice(0, 80),
+    sender_add_line_3: optionalText(article.sender.line3),
+    sender_city: article.sender.city.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     sender_state: optionalText(article.sender.state),
     sender_pincode: article.sender.pincode,
     sender_emailid: optionalText(article.sender.email),
     sender_alt_contact: article.sender.altContact || "",
     sender_kyc: article.sender.kyc || "",
     sender_tax_reference: article.sender.taxReference || "",
-    receiver_name: article.receiver.name.slice(0, 80),
-    receiver_company: article.receiver.company.slice(0, 80),
-    receiver_add_line_1: article.receiver.line1.slice(0, 80),
+    receiver_name: article.receiver.name.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
+    receiver_company: article.receiver.company.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
+    receiver_add_line_1: article.receiver.line1.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     receiver_add_line_2: optionalText(article.receiver.line2),
-    receiver_city: article.receiver.city.slice(0, 80),
+    receiver_add_line_3: optionalText(article.receiver.line3),
+    receiver_city: article.receiver.city.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     receiver_state: optionalText(article.receiver.state),
     receiver_pincode: article.receiver.pincode,
     receiver_emailid: optionalText(article.receiver.email),
@@ -81,8 +84,8 @@ export function serializeIndiaPostBookingArticle(article: ValidatedArticle) {
     value_of_insurance: article.insuranceType === "DOP" ? Number(article.insuranceValue) || 0 : 0,
     ack: flag(article.ack, "FALSE"),
     reg: flag(article.reg, "FALSE"),
-    otp: "FALSE",
-    bulk_reference: (article.bulkReference || "").slice(0, 24),
+    otp: indiaPostRequiresOtp(article.serviceCode) ? "TRUE" : "FALSE",
+    bulk_reference: (article.bulkReference || "").slice(0, INDIA_POST_BULK_REFERENCE_MAX),
     pickup_address_id: pickup ? empty(article.pickup?.addressId) : "",
     pickup_addressee_name: pickup ? article.pickup?.addresseeName ?? "" : "",
     pickup_company_name: pickup ? article.pickup?.companyName ?? "" : "",

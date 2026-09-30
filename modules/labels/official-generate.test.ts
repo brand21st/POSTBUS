@@ -8,7 +8,7 @@ describe("official India Post label generation", () => {
     const source = readFileSync(path.join(process.cwd(), "workers/processor.ts"), "utf8");
     const fetchSource = readFileSync(path.join(process.cwd(), "modules/labels/official-fetch.ts"), "utf8");
     expect(source).not.toContain("stampOrgLogoOnLabel");
-    expect(source).toContain("kind: \"INDIA_POST\"");
+    expect(source).toContain("findReadyIndiaPostLabel");
     expect(source).not.toContain("overlayMerchantOnOfficialPdf");
     expect(source).not.toContain("persistMerchantPackingLabel");
     expect(fetchSource).not.toContain("overlayIndiaPostPartyBox");

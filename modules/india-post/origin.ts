@@ -20,6 +20,21 @@ type OfficeLookup = {
   searchPostOffices: (pincode: string) => Promise<IndiaPostOffice[]>;
 };
 
+export function cachedOfficeLookup(provider: OfficeLookup): OfficeLookup {
+  const cache = new Map<string, Promise<IndiaPostOffice[]>>();
+  return {
+    searchPostOffices(pincode: string) {
+      const pin = pincode.replace(/\D/g, "").slice(0, 6);
+      const key = pin || pincode;
+      const existing = cache.get(key);
+      if (existing) return existing;
+      const pending = provider.searchPostOffices(pincode);
+      cache.set(key, pending);
+      return pending;
+    },
+  };
+}
+
 export async function resolveIndiaPostOrigin(
   provider: OfficeLookup,
   connection: { pickup_dropoff_office_id?: string | null },

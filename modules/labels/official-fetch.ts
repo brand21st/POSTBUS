@@ -1,10 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { persistIndiaPostTokens } from "@/modules/india-post/session";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import {
   indiaPostDomesticLabelPayload,
   indiaPostMobile,
 } from "@/modules/india-post/endpoints";
-import { resolveIndiaPostOrigin } from "@/modules/india-post/origin";
+import { cachedOfficeLookup, resolveIndiaPostOrigin } from "@/modules/india-post/origin";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 
@@ -73,8 +74,12 @@ export async function fetchOfficialIndiaPostLabelPdf(
 
   const sender = organizationLabelSender(org, pickup, shop?.shop_name);
   const provider = indiaPostFromRow(connection);
+  const session = await provider.ensureSession();
+  if (!session.reused && session.tokens) {
+    await persistIndiaPostTokens(supabase, connection, session.tokens);
+  }
   const origin = await resolveIndiaPostOrigin(
-    provider,
+    cachedOfficeLookup(provider),
     connection,
     {
       ...pickup,

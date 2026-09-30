@@ -18,6 +18,8 @@ export async function fetchLabelPdfBlob(labelId: string) {
 }
 
 export async function openLabelPdf(labelId: string) {
-  await fetchLabelPdfBlob(labelId);
-  window.open(`/api/v1/labels/${labelId}/download?raw=1`, "_blank", "noopener,noreferrer");
+  const blob = await fetchLabelPdfBlob(labelId);
+  const href = URL.createObjectURL(blob);
+  window.open(href, "_blank", "noopener,noreferrer");
+  window.setTimeout(() => URL.revokeObjectURL(href), 60_000);
 }

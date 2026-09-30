@@ -65,9 +65,9 @@ const schema = z.object({
   shipment: z
     .object({
       weightGrams: z.coerce.number().int().min(1).optional(),
-      lengthCm: z.coerce.number().min(0).optional(),
-      widthCm: z.coerce.number().min(0).optional(),
-      heightCm: z.coerce.number().min(0).optional(),
+      lengthCm: z.coerce.number().min(0).max(150).optional(),
+      widthCm: z.coerce.number().min(0).max(150).optional(),
+      heightCm: z.coerce.number().min(0).max(150).optional(),
       serviceCode: z.string().optional(),
     })
     .optional(),
@@ -359,13 +359,13 @@ export default function NewOrderPage() {
                 <Input className="h-9" type="number" min={1} {...form.register("shipment.weightGrams")} />
               </Field>
               <Field label="Length (cm)">
-                <Input className="h-9" type="number" min={0} step="0.1" {...form.register("shipment.lengthCm")} />
+                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.lengthCm")} />
               </Field>
               <Field label="Width (cm)">
-                <Input className="h-9" type="number" min={0} step="0.1" {...form.register("shipment.widthCm")} />
+                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.widthCm")} />
               </Field>
               <Field label="Height (cm)">
-                <Input className="h-9" type="number" min={0} step="0.1" {...form.register("shipment.heightCm")} />
+                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.heightCm")} />
               </Field>
               <Field
                 label="Service"

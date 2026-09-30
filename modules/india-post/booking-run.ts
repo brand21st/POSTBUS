@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { encryptSecret } from "@/lib/security/crypto";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import { assertValidatedArticle } from "@/modules/india-post/article-validator";
@@ -7,36 +6,14 @@ import { indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
 import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
 import { splitIndiaPostBookingResult } from "@/modules/india-post/booking-apply";
 import { indiaPostMobile } from "@/modules/india-post/endpoints";
-import { resolveIndiaPostOrigin } from "@/modules/india-post/origin";
+import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import { cachedOfficeLookup, resolveIndiaPostOrigin } from "@/modules/india-post/origin";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
+import { persistIndiaPostTokens } from "@/modules/india-post/session";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 
 type Admin = SupabaseClient;
-
-async function persistTokens(
-  supabase: Admin,
-  connection: { id: string },
-  tokens: {
-    access_token: string;
-    refresh_token?: string;
-    id_token?: string;
-    expires_in: number;
-    refresh_expires_in: number;
-  }
-) {
-  await supabase
-    .from("india_post_connections")
-    .update({
-      encrypted_access_token: encryptSecret(tokens.access_token),
-      encrypted_refresh_token: tokens.refresh_token ? encryptSecret(tokens.refresh_token) : null,
-      encrypted_id_token: tokens.id_token ? encryptSecret(tokens.id_token) : null,
-      expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-      refresh_expires_at: new Date(Date.now() + tokens.refresh_expires_in * 1000).toISOString(),
-      last_refreshed_at: new Date().toISOString(),
-    })
-    .eq("id", connection.id);
-}
 
 export async function markShipmentBookingFailed(
   supabase: Admin,
@@ -75,8 +52,8 @@ export async function runIndiaPostBooking(
     throw Object.assign(new Error("Shipment not found."), { code: "VALIDATION_ERROR" });
   }
 
-  const alreadyBooked = shipments.filter((row) => row.status === "BOOKED" && row.barcode);
-  const pending = shipments.filter((row) => row.status !== "BOOKED");
+  const alreadyBooked = shipments.filter((row) => isIndiaPostAcceptedStatus(row.status) && row.barcode);
+  const pending = shipments.filter((row) => !isIndiaPostAcceptedStatus(row.status));
   if (!pending.length) return { booked: alreadyBooked.length, failed: 0, bookedIds: [], failedIds: [] };
 
   const { data: pickup } = await supabase
@@ -98,10 +75,20 @@ export async function runIndiaPostBooking(
     .maybeSingle();
   const senderIdentity = organizationLabelSender(org, pickup, shop?.shop_name);
 
+  const { data: contracts } = await supabase
+    .from("india_post_contracts")
+    .select("service_code, contract_id")
+    .eq("organization_id", input.organizationId)
+    .eq("is_active", true);
+  const contractByService = new Map(
+    (contracts ?? []).map((row) => [String(row.service_code), String(row.contract_id)])
+  );
+
   const provider = indiaPostFromRow(connection);
+  const offices = cachedOfficeLookup(provider);
   const session = await provider.ensureSession();
   if (!session.reused && session.tokens) {
-    await persistTokens(supabase, connection, session.tokens);
+    await persistIndiaPostTokens(supabase, connection, session.tokens);
   }
 
   const prepared: Array<{
@@ -112,14 +99,7 @@ export async function runIndiaPostBooking(
 
   for (const shipment of pending) {
     const serviceCode = (shipment.service_code as string) || DEFAULT_INDIA_POST_SERVICE;
-    const { data: contract } = await supabase
-      .from("india_post_contracts")
-      .select("contract_id")
-      .eq("organization_id", input.organizationId)
-      .eq("service_code", serviceCode)
-      .eq("is_active", true)
-      .maybeSingle();
-    const contractId = (contract?.contract_id as string | undefined) || connection.contract_id;
+    const contractId = contractByService.get(serviceCode) || connection.contract_id;
     if (!contractId) {
       const message = `No India Post contract is set for ${serviceCode}. Add it on the India Post integration page.`;
       await markShipmentBookingFailed(supabase, shipment.id, message, "INVALID_CONTRACT");
@@ -149,7 +129,7 @@ export async function runIndiaPostBooking(
     } | null;
     const destPincode = address?.pincode ?? "";
     const origin = await resolveIndiaPostOrigin(
-      provider,
+      offices,
       connection,
       {
         ...pickup,
@@ -220,35 +200,38 @@ export async function runIndiaPostBooking(
   const bookedIds: string[] = [];
   const failedIds: string[] = [];
 
-  for (const item of prepared) {
-    const key = item.barcode.toUpperCase();
-    const ok = split.valid.get(key);
-    if (ok) {
-      bookedIds.push(item.shipment.id);
-      await supabase
-        .from("shipments")
-        .update({
-          status: "BOOKED",
-          tracking_number: ok.articleId,
-          barcode: ok.articleId,
-          tariff_amount: ok.tariff ?? null,
-          provider_ref: split.batchId,
-          correlation_id: split.correlationId,
-          booked_at: new Date().toISOString(),
-          last_error: null,
-          last_error_code: null,
-        })
-        .eq("id", item.shipment.id);
-      await supabase.from("orders").update({ status: "BOOKED" }).eq("id", item.shipment.order_id);
-    } else {
+  const bookedAt = new Date().toISOString();
+  await Promise.all(
+    prepared.map(async (item) => {
+      const key = item.barcode.toUpperCase();
+      const ok = split.valid.get(key);
+      if (ok) {
+        bookedIds.push(item.shipment.id);
+        await supabase
+          .from("shipments")
+          .update({
+            status: "BOOKED",
+            tracking_number: ok.articleId,
+            barcode: ok.articleId,
+            tariff_amount: ok.tariff ?? null,
+            provider_ref: split.batchId,
+            correlation_id: split.correlationId,
+            booked_at: bookedAt,
+            last_error: null,
+            last_error_code: null,
+          })
+          .eq("id", item.shipment.id);
+        await supabase.from("orders").update({ status: "BOOKED" }).eq("id", item.shipment.order_id);
+        return;
+      }
       failedIds.push(item.shipment.id);
       const message = split.failed.get(key) || "Booking rejected.";
       await markShipmentBookingFailed(supabase, item.shipment.id, message, "INDIA_POST_VALIDATION");
       if (prepared.length === 1) {
         throw Object.assign(new Error(message), { code: "VALIDATION_ERROR" });
       }
-    }
-  }
+    })
+  );
 
   return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result };
 }

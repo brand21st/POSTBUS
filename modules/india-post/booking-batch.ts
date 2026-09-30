@@ -1,9 +1,10 @@
 import { env } from "@/lib/env";
+import { INDIA_POST_FILE_BOOKING_MAX, INDIA_POST_JSON_BOOKING_MAX } from "@/modules/india-post/spec";
 
 export function indiaPostBookingBatchSize() {
   const raw = Number(env.indiaPostBookingBatchSize);
   if (!Number.isFinite(raw)) return 1;
-  return Math.min(5000, Math.max(1, Math.floor(raw)));
+  return Math.min(INDIA_POST_FILE_BOOKING_MAX, Math.max(1, Math.floor(raw)));
 }
 
 export function indiaPostBookingConcurrency() {
@@ -22,6 +23,6 @@ export function chunkIds<T>(items: T[], size: number) {
 }
 
 export function indiaPostBookingTransport(articleCount: number): "json" | "file" {
-  if (articleCount > 1000) return "file";
+  if (articleCount > INDIA_POST_JSON_BOOKING_MAX) return "file";
   return "json";
 }

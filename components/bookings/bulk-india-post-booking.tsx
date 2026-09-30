@@ -100,7 +100,18 @@ export function BulkIndiaPostBooking({
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const shown = result ?? summary.data;
+  const live = summary.data;
+  const shown = result
+    ? {
+        ...result,
+        queued: live?.queued ?? result.queued,
+        processing: live?.processing ?? result.processing,
+        booked: live?.booked ?? result.booked,
+        failed: live?.failed ?? result.failed,
+        labelsGenerated: live?.labelsGenerated ?? result.labelsGenerated,
+        manifestEligible: live?.manifestEligible ?? result.manifestEligible,
+      }
+    : live;
   const issues = shown?.issues ?? [];
 
   return (

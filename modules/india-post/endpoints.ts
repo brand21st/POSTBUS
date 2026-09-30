@@ -1,4 +1,5 @@
 import { indiaPostBaseUrl } from "@/lib/env";
+import { INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G } from "@/modules/india-post/spec";
 import type { ProviderEnvironment } from "@/types/domain";
 
 /**
@@ -43,6 +44,13 @@ export function indiaPostBookingFileUrl(environment: ProviderEnvironment, custom
   return `${apiRoot(environment)}/process-articles-file/${encodeURIComponent(customerId)}`;
 }
 
+/**
+ * CEPT process-articles `article_type` and label `service_type`.
+ * 30.07.2026 sample payload + validation errors accept SP / BP for Speed Post
+ * and Business Parcel. Product codes SP_INLAND_DOC / SP_INLAND_PARCEL are used
+ * in tariff tables and tracking responses — see REQUIRES VERIFICATION in the
+ * July 30 migration report.
+ */
 export function indiaPostBookingArticleType(serviceCode: string) {
   const code = serviceCode.trim().toUpperCase();
   if (code === "BP" || code === "BUSINESS_PARCEL") return "BP";
@@ -52,10 +60,8 @@ export function indiaPostBookingArticleType(serviceCode: string) {
 
 export function indiaPostShapeOfArticle(serviceCode: string, weightGrams: number) {
   const bookingType = indiaPostBookingArticleType(serviceCode);
-  if (bookingType === "BP" || bookingType === "24_SPP_PARSPL" || serviceCode === "SP_INLAND_PARCEL") {
-    return "NROL";
-  }
-  if (weightGrams >= 500 && bookingType === "SP") return "NROL";
+  if (bookingType === "BP" || bookingType === "24_SPP_PARSPL") return "NROL";
+  if (bookingType === "SP" && weightGrams >= INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G) return "NROL";
   return "DOC";
 }
 
@@ -124,6 +130,14 @@ export function indiaPostLabelPartyLines(input: {
 export function indiaPostFindOffice(offices: IndiaPostOffice[], officeId?: string | null) {
   if (!officeId) return null;
   return offices.find((office) => String(office.office_id) === String(officeId)) ?? null;
+}
+
+export function indiaPostOfficesFromPincodeResponse(json: unknown) {
+  if (Array.isArray(json)) return json;
+  if (json && typeof json === "object" && Array.isArray((json as { data?: unknown }).data)) {
+    return (json as { data: unknown[] }).data;
+  }
+  return [];
 }
 
 export function indiaPostPickDeliveryOffice(offices: IndiaPostOffice[]) {

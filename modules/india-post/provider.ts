@@ -1,6 +1,9 @@
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { decryptSecret } from "@/lib/security/crypto";
-import { indiaPostBookingFileUrl, indiaPostBookingUrl, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
+import { indiaPostBookingFileUrl, indiaPostBookingUrl, indiaPostOfficesFromPincodeResponse, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
+import { INDIA_POST_TIMEOUT_MS, indiaPostTimeoutSignal } from "@/modules/india-post/http";
+import { chunkIds } from "@/modules/india-post/booking-batch";
+import { INDIA_POST_TRACKING_BULK_LIMIT } from "@/modules/india-post/spec";
 import type { ProviderEnvironment } from "@/types/domain";
 
 export type ShippingProvider = {
@@ -63,6 +66,7 @@ export class IndiaPostProvider implements ShippingProvider {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.login),
     });
     const json = await response.json().catch(() => ({}));
     if (!response.ok || !json?.success) {
@@ -103,7 +107,7 @@ export class IndiaPostProvider implements ShippingProvider {
     const token = await this.token();
     const response = await fetch(
       `${this.sessionUrl("/pincode-search")}?pincode=${pincode}&office-type=post`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` }, signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search) }
     );
     if (!response.ok) {
       const error = new Error("Pincode validation failed.");
@@ -122,6 +126,7 @@ export class IndiaPostProvider implements ShippingProvider {
     });
     const response = await fetch(`${this.sessionUrl("/speed-post/tariffs")}?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search),
     });
     if (!response.ok) {
       const error = new Error("Tariff lookup failed.");
@@ -168,6 +173,7 @@ export class IndiaPostProvider implements ShippingProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ articles: input.articles }),
+      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
     });
     const json = await response.json().catch(() => ({}));
     if (!response.ok || json.success === false) {
@@ -194,6 +200,7 @@ export class IndiaPostProvider implements ShippingProvider {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body,
+      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
     });
     const json = await response.json().catch(() => ({}));
     if (!response.ok || json.success === false) {
@@ -212,10 +219,10 @@ export class IndiaPostProvider implements ShippingProvider {
     const token = await this.token();
     const response = await fetch(
       `${this.sessionUrl("/pincode-search")}?pincode=${pin}&office-type=post`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}` }, signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search) }
     );
     const json = await response.json().catch(() => ({}));
-    return Array.isArray(json?.data) ? json.data : [];
+    return indiaPostOfficesFromPincodeResponse(json);
   }
 
   async generateLabel(input: Record<string, unknown>) {
@@ -232,6 +239,7 @@ export class IndiaPostProvider implements ShippingProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(articles),
+      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.label),
     });
     const buffer = await response.arrayBuffer();
     const bytes = new Uint8Array(buffer);
@@ -263,21 +271,29 @@ export class IndiaPostProvider implements ShippingProvider {
   }
 
   async trackShipment(barcodes: string[]) {
+    const unique = [...new Set(barcodes.map((code) => String(code ?? "").trim()).filter(Boolean))];
     const token = await this.token();
-    const response = await fetch(this.sessionUrl("/tracking/bulk"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ bulk: barcodes.slice(0, 500) }),
-    });
-    if (!response.ok) {
-      const error = new Error("Tracking lookup failed.");
-      (error as { status?: number }).status = response.status;
-      throw error;
+    const data: unknown[] = [];
+    let lastJson: { success?: boolean; message?: string; data?: unknown[] } = { data: [] };
+    for (const bulk of chunkIds(unique, INDIA_POST_TRACKING_BULK_LIMIT)) {
+      const response = await fetch(this.sessionUrl("/tracking/bulk"), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ bulk }),
+        signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.track),
+      });
+      if (!response.ok) {
+        const error = new Error("Tracking lookup failed.");
+        (error as { status?: number }).status = response.status;
+        throw error;
+      }
+      lastJson = (await response.json()) as { success?: boolean; message?: string; data?: unknown[] };
+      if (Array.isArray(lastJson.data)) data.push(...lastJson.data);
     }
-    return response.json();
+    return { ...lastJson, data };
   }
 
   async cancelShipment() {

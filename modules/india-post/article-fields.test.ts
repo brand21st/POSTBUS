@@ -43,8 +43,9 @@ describe("CEPT booking field registry", () => {
     }
   });
 
-  it("does not leave otp as a live workflow", () => {
+  it("sets OTP TRUE only for 24_SPP_PARSPL", () => {
     const otp = CEPT_BOOKING_FIELDS.find((field) => field.name === "otp");
-    expect(otp?.transformation).toMatch(/Always FALSE/i);
+    expect(otp?.transformation).toMatch(/24_SPP_PARSPL/);
+    expect(otp?.transformation).not.toMatch(/Always FALSE/i);
   });
 });
