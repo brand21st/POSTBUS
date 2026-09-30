@@ -15,7 +15,7 @@ type OrderListQuery = z.infer<typeof orderListQuery>;
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
 const ORDER_LIST_SELECT =
-  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, customers(name), order_line_items(id, title, quantity), shipments(id, status, created_at)";
+  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, customers(name, phone), order_line_items(id, title, quantity, image_url), shipments(id, status, created_at)";
 
 function wantsOrderCounts(query: OrderListQuery) {
   const value = (query.includeCounts ?? "").toLowerCase();
@@ -401,7 +401,11 @@ function mapOrder(row: Record<string, unknown>) {
       ? { name: customer.name, phone: customer.phone, email: customer.email }
       : null,
     customerName: customer?.name ?? null,
-    lineItems: items,
+    lineItems: items.map((item) => ({
+      ...item,
+      imageUrl: (item.imageUrl ?? item.image_url) as string | null,
+      image_url: (item.image_url ?? item.imageUrl) as string | null,
+    })),
     items: items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
     shipment: preferredShipment(shipments),
     invoice: invoices[0]

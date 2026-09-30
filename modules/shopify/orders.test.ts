@@ -18,6 +18,10 @@ import {
   shopifyOrderNumber,
   shopifyLineItemTitle,
   shopifyLineItemWeightGrams,
+  shopifyLineItemImageUrl,
+  shopifyImageLookupKey,
+  shopifyCatalogImageForLineItem,
+  indexShopifyProductsForLineItemImages,
   shopifyStageFromJobProgress,
   shopifyRemoteSignalsProcessing,
   shouldNotifyWatiForShopifyProcessing,
@@ -323,6 +327,7 @@ function trackedOrderClient(options: {
   lineItems?: unknown;
   inserts: Array<{ table: string; payload: unknown }>;
   deletes: string[];
+  updates?: Array<{ table: string; payload: unknown }>;
 }) {
   return {
     from: vi.fn((table: string) => {
@@ -343,7 +348,10 @@ function trackedOrderClient(options: {
         options.inserts.push({ table, payload: row });
         return self;
       };
-      self.update = () => self;
+      self.update = (row: unknown) => {
+        options.updates?.push({ table, payload: row });
+        return self;
+      };
       self.upsert = () => self;
       self.delete = () => {
         options.deletes.push(table);
@@ -357,6 +365,130 @@ function trackedOrderClient(options: {
     }),
   };
 }
+
+describe("shopify line item images", () => {
+  it("normalizes titles so catalog matching ignores colon spacing", () => {
+    expect(shopifyImageLookupKey("RADHA ORANGE : SEMI BANARASI SAREE")).toBe(
+      shopifyImageLookupKey("RADHA ORANGE:SEMI BANARASI SAREE")
+    );
+  });
+
+  it("reads the image URL from the Shopify line item payload", () => {
+    expect(
+      shopifyLineItemImageUrl({
+        title: "Saree",
+        image: { src: "https://cdn.shopify.com/s/files/saree.jpg" },
+      })
+    ).toBe("https://cdn.shopify.com/s/files/saree.jpg");
+  });
+
+  it("falls back to the variant product image", () => {
+    expect(
+      shopifyLineItemImageUrl(
+        { title: "Saree", variant_id: 22 },
+        {
+          image: { src: "https://cdn.shopify.com/featured.jpg" },
+          images: [{ id: 9, src: "https://cdn.shopify.com/variant.jpg" }],
+          variants: [{ id: 22, image_id: 9 }],
+        }
+      )
+    ).toBe("https://cdn.shopify.com/variant.jpg");
+  });
+
+  it("stores the image URL when a Shopify order is imported", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const supabase = trackedOrderClient({ inserts, deletes: [] });
+    await upsertShopifyOrder(supabase as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        line_items: [
+          {
+            title: "Kurta",
+            quantity: 1,
+            price: "499",
+            grams: 200,
+            image: { src: "https://cdn.shopify.com/kurta.jpg" },
+          },
+        ],
+      },
+    });
+    const items = inserts.find((row) => row.table === "order_line_items");
+    expect(items?.payload).toEqual([
+      expect.objectContaining({ image_url: "https://cdn.shopify.com/kurta.jpg" }),
+    ]);
+  });
+
+  it("matches catalog images by SKU and product title", () => {
+    const catalog = indexShopifyProductsForLineItemImages([
+      {
+        title: "Kurta",
+        image: { src: "https://cdn.shopify.com/kurta.jpg" },
+        variants: [{ sku: "K-1", title: "Default Title" }],
+      },
+      {
+        title: "Saree",
+        images: [
+          { id: 1, src: "https://cdn.shopify.com/saree.jpg" },
+          { id: 2, src: "https://cdn.shopify.com/saree-red.jpg" },
+        ],
+        variants: [{ sku: "S-RED", title: "Red", image_id: 2 }],
+      },
+    ]);
+    expect(shopifyCatalogImageForLineItem("Kurta", "K-1", catalog)).toBe("https://cdn.shopify.com/kurta.jpg");
+    expect(shopifyCatalogImageForLineItem("Kurta", null, catalog)).toBe("https://cdn.shopify.com/kurta.jpg");
+    expect(shopifyCatalogImageForLineItem("Saree - Red", null, catalog)).toBe(
+      "https://cdn.shopify.com/saree-red.jpg"
+    );
+    expect(
+      shopifyCatalogImageForLineItem("RADHA ORANGE:SEMI BANARASI SAREE", null, {
+        ...indexShopifyProductsForLineItemImages([
+          {
+            title: "RADHA ORANGE : SEMI BANARASI SAREE",
+            image: { src: "https://cdn.shopify.com/radha.jpg" },
+          },
+        ]),
+      })
+    ).toBe("https://cdn.shopify.com/radha.jpg");
+  });
+
+  it("fills a missing image on a booked order without rewriting line items", async () => {
+    const updates: Array<{ table: string; payload: unknown }> = [];
+    const deletes: string[] = [];
+    await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "BOOKED",
+        lineItems: [{ id: "li-1", title: "Kurta", sku: null, image_url: null }],
+        inserts: [],
+        deletes,
+        updates,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: {
+          ...remoteOrder,
+          line_items: [
+            {
+              title: "Kurta",
+              quantity: 1,
+              price: "499",
+              image: { src: "https://cdn.shopify.com/kurta.jpg" },
+            },
+          ],
+        },
+      }
+    );
+    expect(deletes).not.toContain("order_line_items");
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        { table: "order_line_items", payload: { image_url: "https://cdn.shopify.com/kurta.jpg" } },
+      ])
+    );
+  });
+});
 
 describe("shopify line item weight persistence", () => {
   it("stores converted grams when a Shopify order is imported", async () => {

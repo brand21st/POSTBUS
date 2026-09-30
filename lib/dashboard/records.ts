@@ -66,6 +66,10 @@ export function customerName(order: {
   return pickString(order.customerName, order.customer?.name, "—") || "—";
 }
 
+export function customerPhone(order: { customer?: CustomerSummary | null }) {
+  return pickString(order.customer?.phone) || "";
+}
+
 export function addressLine(address?: AddressSummary | null) {
   if (!address) return "—";
   return (
@@ -88,6 +92,18 @@ const BLOCKED_FULFILL_STATUSES = new Set(["BOOKED", "SHIPPED", "IN_TRANSIT", "DE
 
 export function lineItems(order: { lineItems?: LineItem[]; line_items?: LineItem[] }) {
   return order.lineItems ?? order.line_items ?? [];
+}
+
+export function lineItemImageUrl(item: LineItem) {
+  return pickString(item.imageUrl, item.image_url);
+}
+
+export function firstLineItemImage(order: { lineItems?: LineItem[]; line_items?: LineItem[] }) {
+  for (const item of lineItems(order)) {
+    const url = lineItemImageUrl(item);
+    if (url) return url;
+  }
+  return "";
 }
 
 export function itemCount(order: {

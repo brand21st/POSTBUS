@@ -43,9 +43,13 @@ function Counts({ result }: { result: BulkBookingResult | undefined }) {
 export function BulkIndiaPostBooking({
   selectedIds,
   onQueued,
+  size = "sm",
+  iconOnly = false,
 }: {
   selectedIds: string[];
   onQueued?: () => void;
+  size?: "default" | "sm" | "xs" | "icon-xs";
+  iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<BulkBookingResult | null>(null);
@@ -104,7 +108,10 @@ export function BulkIndiaPostBooking({
       <Button
         type="button"
         variant="secondary"
+        size={iconOnly ? "icon-xs" : size}
         disabled={selectedIds.length === 0}
+        title="Bulk book"
+        aria-label="Bulk book"
         onClick={() => {
           setOpen(true);
           setResult(null);
@@ -112,7 +119,7 @@ export function BulkIndiaPostBooking({
         }}
       >
         <Truck className="size-4" />
-        Bulk book
+        {iconOnly ? null : "Bulk book"}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">

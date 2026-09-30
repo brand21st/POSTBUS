@@ -164,6 +164,8 @@ export type LineItem = {
   weightGrams?: number | null;
   weight_grams?: number | null;
   weight_edited?: boolean | null;
+  imageUrl?: string | null;
+  image_url?: string | null;
 };
 
 export type OrderRecord = {

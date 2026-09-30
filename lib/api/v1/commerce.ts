@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
@@ -23,6 +23,23 @@ import {
   validateExcelBuffer,
   validateOrdersForBooking,
 } from "@/modules/india-post/bulk-booking";
+import { logError } from "@/lib/logger";
+import { backfillMissingShopifyLineItemImages } from "@/modules/shopify/orders";
+
+function fillShopifyLineItemImages(supabase: SupabaseClient, organizationId: string) {
+  const run = () =>
+    backfillMissingShopifyLineItemImages(supabase, organizationId).catch((error) => {
+      logError("shopify.line-item-images.backfill", {
+        organizationId,
+        message: error instanceof Error ? error.message : "unknown",
+      });
+    });
+  try {
+    after(run);
+  } catch {
+    void run();
+  }
+}
 
 function dateRange(request: NextRequest) {
   const from = request.nextUrl.searchParams.get("from") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -54,6 +71,7 @@ export async function handleCommerceRoutes(
 
   if (key === "GET orders") {
     const parsed = orderListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
+    fillShopifyLineItemImages(supabase, ctx.organizationId);
     return listOrders(supabase, ctx, parsed);
   }
 
@@ -79,6 +97,7 @@ export async function handleCommerceRoutes(
   }
 
   if (method === "GET" && slugs[0] === "orders" && slugs[1]) {
+    fillShopifyLineItemImages(supabase, ctx.organizationId);
     return getOrder(supabase, ctx, slugs[1]);
   }
 

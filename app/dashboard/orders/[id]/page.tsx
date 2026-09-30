@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Truck } from "lucide-react";
+import { ArrowLeft, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { addressLine, customerName, lineItems, orderNumber } from "@/lib/dashboard/records";
+import { addressLine, customerName, lineItemImageUrl, lineItems, orderNumber } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate, formatWeightGrams } from "@/lib/format";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
@@ -40,6 +41,7 @@ export default function OrderDetailPage() {
     queryKey: ["order", params.id],
     queryFn: () => api<OrderRecord>(`/api/v1/orders/${params.id}`),
     enabled: Boolean(params.id),
+    staleTime: 30_000,
   });
 
   const shipments = useQuery({
@@ -47,6 +49,7 @@ export default function OrderDetailPage() {
     queryFn: () =>
       api<{ items?: ShipmentRecord[] }>(`/api/v1/shipments?orderId=${params.id}`),
     enabled: Boolean(params.id),
+    staleTime: 30_000,
   });
 
   const ship = useMutation({
@@ -67,20 +70,23 @@ export default function OrderDetailPage() {
   useEffect(() => {
     const record = order.data;
     if (!record) return;
-    const next: Record<string, string> = {};
-    const modes: Record<string, "auto" | "manual"> = {};
-    lineItems(record).forEach((item, index) => {
-      const key = item.id ?? String(index);
-      const grams = Number(item.weightGrams ?? item.weight_grams);
-      next[key] = Number.isFinite(grams) && grams > 0 ? String(Math.round(grams)) : "";
-      modes[key] = item.weight_edited ? "manual" : "auto";
-    });
-    setDraftWeights(next);
-    setItemModes(modes);
-    const savedMode = record.parcelWeightMode ?? record.parcel_weight_mode;
-    setWeightMode(savedMode === "manual" ? "manual" : "auto");
-    const box = Number(record.parcelWeightGrams ?? record.parcel_weight_grams);
-    setManualBox(Number.isFinite(box) && box > 0 ? String(Math.round(box)) : "");
+    const timer = window.setTimeout(() => {
+      const next: Record<string, string> = {};
+      const modes: Record<string, "auto" | "manual"> = {};
+      lineItems(record).forEach((item, index) => {
+        const key = item.id ?? String(index);
+        const grams = Number(item.weightGrams ?? item.weight_grams);
+        next[key] = Number.isFinite(grams) && grams > 0 ? String(Math.round(grams)) : "";
+        modes[key] = item.weight_edited ? "manual" : "auto";
+      });
+      setDraftWeights(next);
+      setItemModes(modes);
+      const savedMode = record.parcelWeightMode ?? record.parcel_weight_mode;
+      setWeightMode(savedMode === "manual" ? "manual" : "auto");
+      const box = Number(record.parcelWeightGrams ?? record.parcel_weight_grams);
+      setManualBox(Number.isFinite(box) && box > 0 ? String(Math.round(box)) : "");
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [order.data]);
 
   const saveWeights = useMutation({
@@ -104,8 +110,16 @@ export default function OrderDetailPage() {
   if (order.isLoading) {
     return (
       <div className="space-y-4">
-        <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-48 w-full" />
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-9 w-48" />
+          <Skeleton className="h-8 w-28" />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-3">
+          <Skeleton className="h-40" />
+          <Skeleton className="h-40" />
+          <Skeleton className="h-40" />
+        </div>
+        <Skeleton className="h-56 w-full" />
       </div>
     );
   }
@@ -118,7 +132,7 @@ export default function OrderDetailPage() {
         description={order.error instanceof Error ? order.error.message : "This order is unavailable."}
         action={
           <Link href="/dashboard/orders">
-            <Button variant="secondary">Back to orders</Button>
+            <Button variant="secondary" size="sm">Back to orders</Button>
           </Link>
         }
       />
@@ -142,24 +156,36 @@ export default function OrderDetailPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title={orderNumber(record)}
-        description={`Created ${formatDate(record.createdAt ?? record.created_at, true)}`}
-        actions={
-          <Button type="button" onClick={() => ship.mutate()} disabled={ship.isPending}>
-            <Truck className="size-4" />
-            Ship order
-          </Button>
-        }
-      />
+    <div className="space-y-4">
+      <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 bg-background/90 px-1 py-2 backdrop-blur-sm">
+        <PageHeader
+          className="min-w-0 flex-1"
+          title={orderNumber(record)}
+          description={`Created ${formatDate(record.createdAt ?? record.created_at, true)}`}
+          icon={
+            <Link
+              href="/dashboard/orders"
+              className="flex size-9 items-center justify-center rounded-xl border border-border bg-card text-muted transition-colors hover:bg-surface-soft hover:text-ink"
+              aria-label="Back to orders"
+            >
+              <ArrowLeft className="size-4" />
+            </Link>
+          }
+          actions={
+            <Button type="button" size="sm" onClick={() => ship.mutate()} disabled={ship.isPending}>
+              <Truck className="size-4" />
+              Ship order
+            </Button>
+          }
+        />
+      </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-3 lg:grid-cols-3">
         <Card>
-          <CardHeader>
+          <CardHeader className="p-4">
             <CardTitle>Status</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm">
+          <CardContent className="space-y-2 p-4 pt-0 text-sm">
             <Row label="Order" value={<StatusBadge value={record.status} />} />
             <Row label="Payment" value={<StatusBadge value={record.paymentStatus ?? record.payment_status} />} />
             <Row
@@ -183,10 +209,10 @@ export default function OrderDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="p-4">
             <CardTitle>Customer</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
+          <CardContent className="space-y-1.5 p-4 pt-0 text-sm">
             <p className="font-medium text-ink">{customerName(record)}</p>
             <p className="text-muted">{record.customer?.phone ?? "—"}</p>
             <p className="text-muted">{record.customer?.email ?? "—"}</p>
@@ -194,41 +220,96 @@ export default function OrderDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="p-4">
             <CardTitle>Shipping address</CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-muted">
+          <CardContent className="p-4 pt-0 text-sm text-muted">
             {addressLine(record.shippingAddress)}
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="p-4">
           <CardTitle>Line items</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 pt-0">
           {items.length === 0 ? (
             <p className="text-sm text-muted">No line items on this order.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div>
+              <div className="space-y-3 md:hidden">
+                {items.map((item, index) => (
+                  <div key={item.id ?? index} className="rounded-xl border border-border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <LineItemThumb title={item.title} imageUrl={lineItemImageUrl(item)} />
+                        <p className="font-medium">{item.title}</p>
+                      </div>
+                      <p className="text-sm tabular-nums">{formatCurrency(item.unitPrice ?? item.unit_price, record.currency)}</p>
+                    </div>
+                    <p className="text-xs text-muted">Qty {item.quantity} · {item.sku || "No SKU"}</p>
+                    <div className="mt-2 space-y-2">
+                      <ServiceToggle
+                        label={`Item weight mode for ${item.title}`}
+                        value={itemModes[item.id ?? String(index)] ?? "auto"}
+                        disabled={weightsLocked}
+                        options={[
+                          { value: "auto", label: "Auto", title: "Use the product weight" },
+                          { value: "manual", label: "Manual", title: "Type this product weight" },
+                        ]}
+                        onChange={(value) => {
+                          const key = item.id ?? String(index);
+                          const next = value === "manual" ? "manual" : "auto";
+                          setItemModes((current) => ({ ...current, [key]: next }));
+                        }}
+                      />
+                      {(itemModes[item.id ?? String(index)] ?? "auto") === "manual" ? (
+                        <Input
+                          type="number"
+                          min={0}
+                          step={1}
+                          aria-label={`Item weight for ${item.title}`}
+                          disabled={weightsLocked}
+                          className="h-8 w-24"
+                          value={draftWeights[item.id ?? String(index)] ?? ""}
+                          onChange={(event) => {
+                            const key = item.id ?? String(index);
+                            setDraftWeights((current) => ({ ...current, [key]: event.target.value }));
+                          }}
+                        />
+                      ) : (
+                        <p className="text-sm text-ink">
+                          {draftItemGrams(item, index) > 0 ? formatWeightGrams(draftItemGrams(item, index)) : "—"}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-wide text-muted">
-                    <th className="pb-3">Item</th>
-                    <th className="pb-3">SKU</th>
-                    <th className="pb-3">Qty</th>
-                    <th className="pb-3">Item weight (g)</th>
-                    <th className="pb-3">Price</th>
+                    <th className="pb-2">Item</th>
+                    <th className="pb-2">SKU</th>
+                    <th className="pb-2">Qty</th>
+                    <th className="pb-2">Item weight (g)</th>
+                    <th className="pb-2">Price</th>
                   </tr>
                 </thead>
                 <tbody>
                   {items.map((item, index) => (
                     <tr key={item.id ?? index} className="border-t border-border">
-                      <td className="py-3 font-medium">{item.title}</td>
-                      <td className="py-3 text-muted">{item.sku || "—"}</td>
-                      <td className="py-3">{item.quantity}</td>
-                      <td className="py-3">
+                      <td className="py-2 font-medium">
+                        <div className="flex items-center gap-2">
+                          <LineItemThumb title={item.title} imageUrl={lineItemImageUrl(item)} className="size-10" />
+                          <span>{item.title}</span>
+                        </div>
+                      </td>
+                      <td className="py-2 text-muted">{item.sku || "—"}</td>
+                      <td className="py-2">{item.quantity}</td>
+                      <td className="py-2">
                         <div className="flex flex-col items-start gap-2">
                           <ServiceToggle
                             label={`Item weight mode for ${item.title}`}
@@ -251,7 +332,7 @@ export default function OrderDetailPage() {
                               step={1}
                               aria-label={`Item weight for ${item.title}`}
                               disabled={weightsLocked}
-                              className="h-9 w-24"
+                              className="h-8 w-24"
                               value={draftWeights[item.id ?? String(index)] ?? ""}
                               onChange={(event) => {
                                 const key = item.id ?? String(index);
@@ -265,14 +346,15 @@ export default function OrderDetailPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-3">
+                      <td className="py-2">
                         {formatCurrency(item.unitPrice ?? item.unit_price, record.currency)}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <div className="mt-4 flex flex-wrap items-end justify-between gap-4 border-t border-border pt-4">
+              </div>
+              <div className="mt-3 flex flex-wrap items-end justify-between gap-4 border-t border-border pt-3">
                 <div className="space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted">Box weight</p>
                   <ServiceToggle
@@ -310,6 +392,7 @@ export default function OrderDetailPage() {
                 <Button
                   type="button"
                   variant="secondary"
+                  size="sm"
                   disabled={weightsLocked || saveWeights.isPending || items.some((item) => !item.id)}
                   onClick={() => {
                     if (weightMode === "manual" && !(Number(manualBox) >= 1)) {
@@ -345,10 +428,10 @@ export default function OrderDetailPage() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="p-4">
           <CardTitle>Invoice</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 p-4 pt-0">
           {record.invoice ? <StatusBadge value={record.invoice.status} /> : null}
           <PlanLock locked={invoicesLocked} feature={FEATURE.invoices} compact>
             <InvoiceActions
@@ -366,10 +449,10 @@ export default function OrderDetailPage() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="p-4">
           <CardTitle>Shipments</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-2 p-4 pt-0">
           {related.length === 0 ? (
             <p className="text-sm text-muted">No shipments have been created for this order.</p>
           ) : (
@@ -377,7 +460,7 @@ export default function OrderDetailPage() {
               <Link
                 key={shipment.id}
                 href={`/dashboard/shipments/${shipment.id}`}
-                className="flex items-center justify-between rounded-xl border border-border px-4 py-3 hover:bg-surface-soft"
+                className="flex items-center justify-between rounded-xl border border-border px-3 py-2.5 transition-colors duration-150 hover:bg-surface-soft"
               >
                 <span className="font-medium">
                   {shipment.trackingNumber ?? shipment.tracking_number ?? shipment.barcode ?? shipment.id}

@@ -11,6 +11,7 @@ import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
 import { customerTrackingLink } from "@/modules/tracking-pages/host";
 import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { logError } from "@/lib/logger";
+import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { settleOrderPayment } from "@/modules/orders/payment";
 import { fetchWithShopifyTimeout, shopifyHttpError } from "@/modules/shopify/http";
 import type { FulfillmentStatus, PaymentStatus } from "@/types/domain";
@@ -108,12 +109,105 @@ export type ShopifyRemoteLineItem = {
   grams?: number | string | null;
   weight?: ShopifyWeightValue;
   weight_unit?: string | null;
+  product_id?: number | string | null;
+  variant_id?: number | string | null;
+  image?: { src?: string | null; url?: string | null } | string | null;
   variant?: {
     grams?: number | string | null;
     weight?: ShopifyWeightValue;
     weight_unit?: string | null;
+    image?: { src?: string | null; url?: string | null } | null;
   } | null;
 };
+
+type ShopifyProductImage = { id?: number | string; src?: string | null };
+type ShopifyProduct = {
+  id?: number | string;
+  title?: string | null;
+  image?: { src?: string | null } | null;
+  images?: ShopifyProductImage[];
+  variants?: Array<{
+    id?: number | string;
+    sku?: string | null;
+    title?: string | null;
+    image_id?: number | string | null;
+  }>;
+};
+
+export type ShopifyProductImageCatalog = {
+  bySku: Map<string, string>;
+  byTitle: Map<string, string>;
+};
+
+const shopifyImageBackfillInFlight = new Set<string>();
+
+export function shopifyLineItemImageUrl(
+  item: ShopifyRemoteLineItem,
+  product?: ShopifyProduct | null
+) {
+  if (typeof item.image === "string" && item.image.trim()) return item.image.trim();
+  const nested = item.image && typeof item.image === "object" ? item.image.src || item.image.url : null;
+  if (nested?.trim()) return nested.trim();
+  const variantImage = item.variant?.image?.src || item.variant?.image?.url;
+  if (variantImage?.trim()) return variantImage.trim();
+  if (!product) return null;
+  const variant = product.variants?.find((row) => String(row.id) === String(item.variant_id ?? ""));
+  if (variant?.image_id != null) {
+    const match = product.images?.find((image) => String(image.id) === String(variant.image_id));
+    if (match?.src?.trim()) return match.src.trim();
+  }
+  return product.image?.src?.trim() || product.images?.[0]?.src?.trim() || null;
+}
+
+export function shopifyImageLookupKey(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s*:\s*/g, ":")
+    .replace(/\s+/g, " ");
+}
+
+export function indexShopifyProductsForLineItemImages(products: ShopifyProduct[]): ShopifyProductImageCatalog {
+  const bySku = new Map<string, string>();
+  const byTitle = new Map<string, string>();
+  const remember = (map: Map<string, string>, key: string | null | undefined, src: string) => {
+    const normalized = shopifyImageLookupKey(key);
+    if (!normalized || map.has(normalized)) return;
+    map.set(normalized, src);
+  };
+  for (const product of products) {
+    const featured = product.image?.src?.trim() || product.images?.[0]?.src?.trim() || "";
+    if (featured) remember(byTitle, product.title, featured);
+    for (const variant of product.variants ?? []) {
+      let src = featured;
+      if (variant.image_id != null) {
+        const match = product.images?.find((image) => String(image.id) === String(variant.image_id));
+        if (match?.src?.trim()) src = match.src.trim();
+      }
+      if (!src) continue;
+      remember(bySku, variant.sku, src);
+      const variantTitle = String(variant.title ?? "").trim();
+      const combined =
+        variantTitle && variantTitle.toLowerCase() !== "default title" && product.title
+          ? `${product.title} - ${variantTitle}`
+          : product.title || variantTitle;
+      remember(byTitle, combined, src);
+    }
+  }
+  return { bySku, byTitle };
+}
+
+export function shopifyCatalogImageForLineItem(
+  title: string | null | undefined,
+  sku: string | null | undefined,
+  catalog: ShopifyProductImageCatalog
+) {
+  const skuKey = shopifyImageLookupKey(sku);
+  if (skuKey && catalog.bySku.has(skuKey)) return catalog.bySku.get(skuKey) ?? null;
+  const titleKey = shopifyImageLookupKey(title);
+  if (titleKey && catalog.byTitle.has(titleKey)) return catalog.byTitle.get(titleKey) ?? null;
+  return null;
+}
 
 export type ShopifySyncResult = {
   imported: number;
@@ -404,6 +498,7 @@ function shopifyLineItemRows(organizationId: string, orderId: string, lineItems:
     unit_price: Number(item.price ?? 0),
     weight_grams: shopifyLineItemWeightGrams(item),
     weight_edited: false,
+    image_url: shopifyLineItemImageUrl(item),
   }));
 }
 
@@ -432,6 +527,45 @@ export function preserveEditedShopifyLineWeights<T extends { title: string; sku:
   });
 }
 
+async function applyShopifyLineItemImages(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    lineItems: ShopifyRemoteLineItem[];
+  }
+) {
+  const { data: existingItems, error } = await supabase
+    .from("order_line_items")
+    .select("id, title, sku, image_url")
+    .eq("organization_id", input.organizationId)
+    .eq("order_id", input.orderId);
+  if (error || !Array.isArray(existingItems) || !existingItems.length) return;
+
+  const byKey = new Map<string, string>();
+  for (const item of input.lineItems) {
+    const src = shopifyLineItemImageUrl(item);
+    if (!src) continue;
+    byKey.set(shopifyWeightKey(shopifyLineItemTitle(item), item.sku ? String(item.sku) : null), src);
+  }
+
+  for (const row of existingItems as Array<{
+    id: string;
+    title?: string | null;
+    sku?: string | null;
+    image_url?: string | null;
+  }>) {
+    if (String(row.image_url ?? "").trim()) continue;
+    const src = byKey.get(shopifyWeightKey(row.title, row.sku));
+    if (!src) continue;
+    await supabase
+      .from("order_line_items")
+      .update({ image_url: src })
+      .eq("id", row.id)
+      .eq("organization_id", input.organizationId);
+  }
+}
+
 async function refreshShopifyLineItems(
   supabase: SupabaseClient,
   input: {
@@ -442,19 +576,24 @@ async function refreshShopifyLineItems(
   }
 ) {
   if (!input.lineItems.length) return;
-  if (SHOPIFY_WEIGHT_LOCKED_ORDER.has((input.orderStatus ?? "").toUpperCase())) return;
-
-  const { data: shipments, error: shipmentError } = await supabase
-    .from("shipments")
-    .select("status")
-    .eq("organization_id", input.organizationId)
-    .eq("order_id", input.orderId);
-  if (shipmentError) return;
-  const shipmentRows = Array.isArray(shipments) ? shipments : [];
-  const locked = shipmentRows.some((row) =>
-    SHOPIFY_WEIGHT_LOCKED_SHIPMENT.has(String((row as { status?: string }).status ?? "").toUpperCase())
-  );
-  if (locked) return;
+  const orderLocked = SHOPIFY_WEIGHT_LOCKED_ORDER.has((input.orderStatus ?? "").toUpperCase());
+  let shipmentLocked = false;
+  if (!orderLocked) {
+    const { data: shipments, error: shipmentError } = await supabase
+      .from("shipments")
+      .select("status")
+      .eq("organization_id", input.organizationId)
+      .eq("order_id", input.orderId);
+    if (shipmentError) return;
+    const shipmentRows = Array.isArray(shipments) ? shipments : [];
+    shipmentLocked = shipmentRows.some((row) =>
+      SHOPIFY_WEIGHT_LOCKED_SHIPMENT.has(String((row as { status?: string }).status ?? "").toUpperCase())
+    );
+  }
+  if (orderLocked || shipmentLocked) {
+    await applyShopifyLineItemImages(supabase, input);
+    return;
+  }
 
   const { data: existingItems, error: itemsReadError } = await supabase
     .from("order_line_items")
@@ -1507,9 +1646,163 @@ export async function fetchUnfulfilledShopifyOrders(shop: string, token: string,
   }
   const json = (await response.json()) as { orders?: ShopifyRemoteOrder[] };
   return {
-    orders: json.orders ?? [],
+    orders: await withShopifyProductImages(shop, token, json.orders ?? []),
     nextPage: nextPageInfo(response.headers.get("link")),
   };
+}
+
+async function withShopifyProductImages(shop: string, token: string, orders: ShopifyRemoteOrder[]) {
+  const missingIds = new Set<string>();
+  for (const order of orders) {
+    for (const item of order.line_items ?? []) {
+      if (shopifyLineItemImageUrl(item) || item.product_id == null) continue;
+      missingIds.add(String(item.product_id));
+    }
+  }
+  if (missingIds.size === 0) return orders;
+
+  const products = new Map<string, ShopifyProduct>();
+  const ids = [...missingIds];
+  for (let index = 0; index < ids.length; index += 50) {
+    const chunk = ids.slice(index, index + 50);
+    const path = `/products.json?ids=${encodeURIComponent(chunk.join(","))}&fields=id,image,images,variants`;
+    try {
+      const response = await shopifyRequest(shop, token, path);
+      if (!response.ok) continue;
+      const json = (await response.json()) as { products?: ShopifyProduct[] };
+      for (const product of json.products ?? []) {
+        if (product.id != null) products.set(String(product.id), product);
+      }
+    } catch {
+      // Keep the order import even if product images cannot be loaded.
+    }
+  }
+
+  return orders.map((order) => ({
+    ...order,
+    line_items: (order.line_items ?? []).map((item) => {
+      if (shopifyLineItemImageUrl(item)) return item;
+      const product = item.product_id != null ? products.get(String(item.product_id)) : undefined;
+      const src = shopifyLineItemImageUrl(item, product);
+      return src ? { ...item, image: { src } } : item;
+    }),
+  }));
+}
+
+async function fetchShopifyProductImageCatalog(shop: string, token: string, maxPages = 20) {
+  const products: ShopifyProduct[] = [];
+  let pageInfo: string | null = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const url = new URL(`https://${normalizeShopDomain(shop)}/admin/api/${SHOPIFY_API_VERSION}/products.json`);
+    url.searchParams.set("limit", "250");
+    url.searchParams.set("fields", "id,title,image,images,variants");
+    if (pageInfo) {
+      url.searchParams.set("page_info", pageInfo);
+    } else {
+      url.searchParams.set("status", "active,draft,archived");
+    }
+    try {
+      let response = await shopifyRequest(shop, token, url.toString());
+      if (!response.ok && !pageInfo) {
+        const fallback = new URL(`https://${normalizeShopDomain(shop)}/admin/api/${SHOPIFY_API_VERSION}/products.json`);
+        fallback.searchParams.set("limit", "250");
+        fallback.searchParams.set("fields", "id,title,image,images,variants");
+        response = await shopifyRequest(shop, token, fallback.toString());
+      }
+      if (!response.ok) break;
+      const json = (await response.json()) as { products?: ShopifyProduct[] };
+      products.push(...(json.products ?? []));
+      pageInfo = nextPageInfo(response.headers.get("link"));
+      if (!pageInfo) break;
+    } catch {
+      break;
+    }
+  }
+  return indexShopifyProductsForLineItemImages(products);
+}
+
+export async function backfillMissingShopifyLineItemImages(
+  supabase: SupabaseClient,
+  organizationId: string,
+  options?: { maxRounds?: number }
+) {
+  if (shopifyImageBackfillInFlight.has(organizationId)) return { updated: 0 };
+  shopifyImageBackfillInFlight.add(organizationId);
+  try {
+    const db = hasAdminClient() ? createAdminClient() : supabase;
+    const connection = await loadShopifyConnection(db, organizationId);
+    if (!connection?.shop_domain) return { updated: 0 };
+    const token = await resolveShopifyAdminToken(connection);
+    if (!token) {
+      logError("shopify.line-item-images.no-token", {
+        organizationId,
+        hasAccessToken: Boolean(connection.encrypted_access_token),
+      });
+      return { updated: 0 };
+    }
+
+    const catalog = await fetchShopifyProductImageCatalog(connection.shop_domain, token);
+    if (catalog.byTitle.size === 0 && catalog.bySku.size === 0) {
+      logError("shopify.line-item-images.catalog-empty", { organizationId });
+      return { updated: 0 };
+    }
+
+    const maxRounds = Math.max(1, options?.maxRounds ?? 1);
+    let updated = 0;
+    for (let round = 0; round < maxRounds; round += 1) {
+      const missingJoin = await db
+        .from("order_line_items")
+        .select("id, title, sku, order_id, orders!inner(source)")
+        .eq("organization_id", organizationId)
+        .eq("orders.source", "SHOPIFY")
+        .is("image_url", null)
+        .order("created_at", { ascending: false })
+        .limit(500);
+      const missing = missingJoin.error
+        ? await db
+            .from("order_line_items")
+            .select("id, title, sku, order_id")
+            .eq("organization_id", organizationId)
+            .is("image_url", null)
+            .order("created_at", { ascending: false })
+            .limit(500)
+        : missingJoin;
+      if (missing.error) {
+        logError("shopify.line-item-images.backfill", {
+          organizationId,
+          message: missing.error.message,
+        });
+        break;
+      }
+      const rows = Array.isArray(missing.data) ? missing.data : [];
+      if (!rows.length) break;
+
+      const patches = rows
+        .map((row) => {
+          const src = shopifyCatalogImageForLineItem(row.title, row.sku, catalog);
+          return src ? { id: row.id as string, src } : null;
+        })
+        .filter((row): row is { id: string; src: string } => Boolean(row));
+      if (!patches.length) break;
+
+      for (let index = 0; index < patches.length; index += 25) {
+        const chunk = patches.slice(index, index + 25);
+        const results = await Promise.all(
+          chunk.map((row) =>
+            db
+              .from("order_line_items")
+              .update({ image_url: row.src })
+              .eq("id", row.id)
+              .eq("organization_id", organizationId)
+          )
+        );
+        updated += results.filter((result) => !result.error).length;
+      }
+    }
+    return { updated };
+  } finally {
+    shopifyImageBackfillInFlight.delete(organizationId);
+  }
 }
 
 export async function syncUnfulfilledShopifyOrders(
@@ -1585,6 +1878,14 @@ export async function syncUnfulfilledShopifyOrders(
       .from("shopify_connections")
       .update({ last_sync_at: new Date().toISOString(), last_error: null })
       .eq("id", connection.id);
+  }
+  try {
+    await backfillMissingShopifyLineItemImages(supabase, input.organizationId, { maxRounds: 8 });
+  } catch (error) {
+    logError("shopify.line-item-images.backfill", {
+      organizationId: input.organizationId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
   }
   return result;
 }

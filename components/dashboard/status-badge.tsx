@@ -55,22 +55,22 @@ const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY"]);
 export function orderStatusRowClass(status?: string | null) {
   switch ((status ?? "").toUpperCase()) {
     case "IMPORTED":
-      return "bg-sky-50 hover:bg-sky-100/80";
+      return "bg-sky-50/40 hover:bg-sky-50";
     case "READY":
-      return "bg-emerald-50 hover:bg-emerald-100/80";
+      return "bg-emerald-50/40 hover:bg-emerald-50";
     case "PROCESSING":
-      return "bg-orange-50 hover:bg-orange-100/80";
+      return "bg-orange-50/50 hover:bg-orange-50";
     case "BOOKED":
-      return "bg-amber-100 hover:bg-amber-200/70";
+      return "bg-amber-50 hover:bg-amber-100/70";
     case "SHIPPED":
     case "IN_TRANSIT":
-      return "bg-indigo-50 hover:bg-indigo-100/80";
+      return "bg-indigo-50/40 hover:bg-indigo-50";
     case "DELIVERED":
-      return "bg-zinc-200 text-zinc-700 hover:bg-zinc-300/80";
+      return "bg-zinc-50 text-zinc-700 hover:bg-zinc-100";
     case "FAILED":
-      return "bg-red-50 hover:bg-red-100/80";
+      return "bg-red-50/50 hover:bg-red-50";
     case "CANCELLED":
-      return "bg-zinc-100 hover:bg-zinc-200/70";
+      return "bg-zinc-50 hover:bg-zinc-100";
     default:
       return undefined;
   }
