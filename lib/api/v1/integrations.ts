@@ -10,7 +10,7 @@ import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
 import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
 import { parcelServiceCode, resolveOrderBookingService } from "@/modules/india-post/booking-service";
-import { listContracts, saveContracts } from "@/modules/india-post/contracts";
+import { listContracts, saveContracts, saveParcelContract } from "@/modules/india-post/contracts";
 import { syncOpenShipmentsService, workspaceBookingChoice } from "@/modules/shipments/service";
 import { DEFAULT_INDIA_POST_SERVICE, DEFAULT_PROVIDER_ENVIRONMENT } from "@/types/domain";
 import {
@@ -51,6 +51,7 @@ async function applyWorkspaceBookingToOpenShipments(supabase: SupabaseClient, or
   const serviceCode = resolveOrderBookingService({
     workspaceOverride: choice.workspaceOverride,
     defaultService: choice.defaultService,
+    allowedServices: choice.allowedServices,
   });
   const { data: openShipments, error: openError } = await supabase
     .from("shipments")
@@ -532,6 +533,37 @@ export async function handleIntegrationRoutes(
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
     await applyWorkspaceBookingToOpenShipments(supabase, ctx.organizationId);
     return { defaultServiceCode: serviceCode, bookingServiceOverride: null };
+  }
+
+  if (key === "PATCH integrations/india-post/contracts") {
+    const body = await request.json().catch(() => ({}));
+    const serviceCode = parcelServiceCode(String(body.serviceCode ?? body.service ?? ""));
+    if (!serviceCode) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        "Choose Speed Post parcel or Business Parcel."
+      );
+    }
+    const { data: existing, error: existingError } = await supabase
+      .from("india_post_connections")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (existingError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingError.message);
+    if (!existing) {
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        "Save your India Post customer ID and password first."
+      );
+    }
+    const contractId = String(body.contractId ?? body.contract_id ?? "").replace(/\D/g, "");
+    const contracts = await saveParcelContract(supabase, ctx.organizationId, serviceCode, contractId);
+    await applyWorkspaceBookingToOpenShipments(supabase, ctx.organizationId);
+    return {
+      contracts,
+      defaultServiceCode:
+        contracts.find((contract) => contract.isDefault)?.serviceCode ?? DEFAULT_INDIA_POST_SERVICE,
+    };
   }
 
   if (key === "PATCH integrations/india-post/office") {

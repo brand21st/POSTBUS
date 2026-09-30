@@ -77,13 +77,10 @@ import {
   resolveOrderBookingService,
   shipmentServiceLocked,
 } from "@/modules/india-post/booking-service";
+import { parcelServiceToggleOptions, savedParcelContracts } from "@/modules/india-post/contracts";
+import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { BulkOrderStatusResult, DashboardKpis, IndiaPostConfig, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
-
-const PARCEL_OPTIONS = [
-  { value: "SP_INLAND_PARCEL", label: "SP", title: "Speed Post parcel" },
-  { value: "BUSINESS_PARCEL", label: "BP", title: "Business Parcel" },
-];
 
 const COLUMN_STORAGE = "postbus.orders.columns";
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
@@ -231,6 +228,10 @@ export default function OrdersPage() {
         yesterdayTo: yesterdayRange.to.toISOString(),
       })}`),
     placeholderData: keepPreviousData,
+    refetchInterval: (current) => {
+      const rows = asPaginated<OrderRecord>(current.state.data, ["orders", "items"]).items;
+      return rows.some((row) => isIndiaPostBookingInFlight(row.shipment?.status)) ? 3_000 : false;
+    },
   });
 
   const list = asPaginated<OrderRecord>(query.data, ["orders", "items"]);
@@ -367,10 +368,12 @@ export default function OrdersPage() {
   }
 
   function rowServiceToggle(row: OrderRecord) {
+    const allowedServices = savedParcelContracts(indiaPost.data).map((contract) => contract.serviceCode);
     const effective = resolveOrderBookingService({
       orderService: row.indiaPostService ?? row.india_post_service,
       workspaceOverride: indiaPost.data?.bookingServiceOverride,
       defaultService: indiaPost.data?.defaultServiceCode,
+      allowedServices,
     });
     const locked = shipmentServiceLocked(row.shipment?.status);
     const pending = setService.isPending && setService.variables?.orderId === row.id;
@@ -378,7 +381,7 @@ export default function OrdersPage() {
       <ServiceToggle
         label={`India Post service for ${orderNumber(row)}`}
         value={parcelServiceCode(effective) ?? ""}
-        options={PARCEL_OPTIONS}
+        options={parcelServiceToggleOptions(indiaPost.data)}
         disabled={locked || pending}
         onChange={(service) => {
           if (service !== (row.indiaPostService ?? row.india_post_service)) {

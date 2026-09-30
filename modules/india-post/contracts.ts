@@ -30,7 +30,7 @@ export type SelectableIndiaPostService = {
   isDefault: boolean;
 };
 
-export function selectableIndiaPostServices(config?: {
+type IndiaPostServiceConfig = {
   contracts?: Array<{
     serviceCode: string;
     contractId?: string | null;
@@ -39,14 +39,36 @@ export function selectableIndiaPostServices(config?: {
     label?: string | null;
   }>;
   defaultServiceCode?: string | null;
-} | null): SelectableIndiaPostService[] {
-  const defaultCode = config?.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
-  const contracts = (config?.contracts ?? []).filter(
+} | null;
+
+export function savedParcelContracts(config?: IndiaPostServiceConfig) {
+  return (config?.contracts ?? []).filter(
     (contract) =>
       KNOWN_CODES.has(contract.serviceCode) &&
       Boolean(contract.contractId?.trim()) &&
       contract.isActive !== false
   );
+}
+
+export function hideWorkspaceBookingToggle(config?: IndiaPostServiceConfig) {
+  return savedParcelContracts(config).length === 1;
+}
+
+export function parcelServiceToggleOptions(config?: IndiaPostServiceConfig) {
+  const short: Record<string, { label: string; title: string }> = {
+    SP_INLAND_PARCEL: { label: "SP", title: "Speed Post parcel" },
+    BUSINESS_PARCEL: { label: "BP", title: "Business Parcel" },
+  };
+  return selectableIndiaPostServices(config).map((service) => ({
+    value: service.code,
+    label: short[service.code]?.label ?? service.label,
+    title: short[service.code]?.title ?? service.label,
+  }));
+}
+
+export function selectableIndiaPostServices(config?: IndiaPostServiceConfig): SelectableIndiaPostService[] {
+  const defaultCode = config?.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
+  const contracts = savedParcelContracts(config);
   if (contracts.length) {
     return contracts.map((contract) => ({
       code: contract.serviceCode,
@@ -114,6 +136,79 @@ export function validateContracts(contracts: ContractInput[]) {
   if (defaults.length > 1) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Only one service can be the default.");
   }
+}
+
+export async function saveParcelContract(
+  supabase: SupabaseClient,
+  organizationId: string,
+  serviceCode: string,
+  contractId: string
+) {
+  const code = serviceCode.trim();
+  if (!KNOWN_CODES.has(code)) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `${code} is not a service India Post accepts as article_type.`
+    );
+  }
+  const id = contractId.replace(/\D/g, "");
+  if (!id) {
+    const { data: existing, error: existingError } = await supabase
+      .from("india_post_contracts")
+      .select("service_code, is_default")
+      .eq("organization_id", organizationId)
+      .eq("service_code", code)
+      .maybeSingle();
+    if (existingError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingError.message);
+
+    const { error: deleteError } = await supabase
+      .from("india_post_contracts")
+      .delete()
+      .eq("organization_id", organizationId)
+      .eq("service_code", code);
+    if (deleteError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, deleteError.message);
+
+    if (existing?.is_default) {
+      const remaining = await listContracts(supabase, organizationId);
+      const nextDefault =
+        remaining.find((contract) => contract.serviceCode === DEFAULT_INDIA_POST_SERVICE) ?? remaining[0];
+      if (nextDefault) {
+        const { error: defaultError } = await supabase
+          .from("india_post_contracts")
+          .update({ is_default: true })
+          .eq("organization_id", organizationId)
+          .eq("service_code", nextDefault.serviceCode);
+        if (defaultError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, defaultError.message);
+      }
+    }
+    return listContracts(supabase, organizationId);
+  }
+
+  if (!/^\d{4,20}$/.test(id)) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `Contract ID for ${labelFor(code)} must be the numeric ID from the India Post portal.`
+    );
+  }
+
+  const existing = await listContracts(supabase, organizationId);
+  const current = existing.find((contract) => contract.serviceCode === code);
+  const hasDefault = existing.some((contract) => contract.isDefault);
+  const isDefault = Boolean(current?.isDefault) || !hasDefault;
+
+  const { error } = await supabase.from("india_post_contracts").upsert(
+    {
+      organization_id: organizationId,
+      service_code: code,
+      contract_id: id,
+      label: labelFor(code),
+      is_default: isDefault,
+      is_active: true,
+    },
+    { onConflict: "organization_id,service_code" }
+  );
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return listContracts(supabase, organizationId);
 }
 
 export async function saveContracts(

@@ -11,27 +11,15 @@ import { indiaPostMobile } from "@/modules/india-post/endpoints";
 import { resolveIndiaPostOrigin } from "@/modules/india-post/origin";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { resolveOrderBookingService } from "@/modules/india-post/booking-service";
-import { resolveDefaultServiceCode } from "@/modules/india-post/contracts";
+import { resolveDefaultServiceCode, savedParcelContracts } from "@/modules/india-post/contracts";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { createManualOrder } from "@/modules/orders/service";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
+import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
-
-const BOOKED_STATUSES = new Set([
-  "BOOKED",
-  "LABEL_PENDING",
-  "LABEL_READY",
-  "MANIFEST_PENDING",
-  "MANIFEST_READY",
-  "IN_TRANSIT",
-  "OUT_FOR_DELIVERY",
-  "DELIVERED",
-  "NDR",
-  "RTO",
-]);
 
 export type BulkBookingRow = {
   orderId?: string;
@@ -58,20 +46,32 @@ export type BulkBookingResult = {
 };
 
 async function loadStoreContext(supabase: SupabaseClient, organizationId: string) {
-  const [{ data: connection }, { data: pickup }, { data: org }, { data: shop }, defaultService] = await Promise.all([
-    supabase.from("india_post_connections").select("*").eq("organization_id", organizationId).maybeSingle(),
-    supabase
-      .from("pickup_locations")
-      .select("*")
-      .eq("organization_id", organizationId)
-      .order("is_default", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase.from("organizations").select("name, phone, line1, line2, city, state, pincode").eq("id", organizationId).maybeSingle(),
-    supabase.from("shopify_stores").select("shop_name").eq("organization_id", organizationId).maybeSingle(),
-    resolveDefaultServiceCode(supabase, organizationId),
-  ]);
-  return { connection, pickup, org, shop, defaultService };
+  const [{ data: connection }, { data: pickup }, { data: org }, { data: shop }, defaultService, { data: contracts }] =
+    await Promise.all([
+      supabase.from("india_post_connections").select("*").eq("organization_id", organizationId).maybeSingle(),
+      supabase
+        .from("pickup_locations")
+        .select("*")
+        .eq("organization_id", organizationId)
+        .order("is_default", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase.from("organizations").select("name, phone, line1, line2, city, state, pincode").eq("id", organizationId).maybeSingle(),
+      supabase.from("shopify_stores").select("shop_name").eq("organization_id", organizationId).maybeSingle(),
+      resolveDefaultServiceCode(supabase, organizationId),
+      supabase
+        .from("india_post_contracts")
+        .select("service_code, contract_id, is_active")
+        .eq("organization_id", organizationId),
+    ]);
+  const allowedServices = savedParcelContracts({
+    contracts: (contracts ?? []).map((row) => ({
+      serviceCode: String(row.service_code ?? ""),
+      contractId: String(row.contract_id ?? ""),
+      isActive: row.is_active !== false,
+    })),
+  }).map((contract) => contract.serviceCode);
+  return { connection, pickup, org, shop, defaultService, allowedServices };
 }
 
 function countsFromShipments(shipments: Array<{ status?: string | null }>) {
@@ -79,7 +79,7 @@ function countsFromShipments(shipments: Array<{ status?: string | null }>) {
   return {
     queued: shipments.filter((row) => statusOf(row.status) === "QUEUED").length,
     processing: shipments.filter((row) => ["BOOKING", "VALIDATING"].includes(statusOf(row.status))).length,
-    booked: shipments.filter((row) => BOOKED_STATUSES.has(statusOf(row.status))).length,
+    booked: shipments.filter((row) => isIndiaPostAcceptedStatus(row.status)).length,
     failed: shipments.filter((row) => statusOf(row.status) === "FAILED").length,
     labelsGenerated: shipments.filter((row) =>
       ["LABEL_READY", "MANIFEST_PENDING", "MANIFEST_READY"].includes(statusOf(row.status))
@@ -192,7 +192,7 @@ export async function validateOrdersForBooking(
     } | null;
     const existing = ((order.shipments as Array<Record<string, unknown>>) ?? [])[0];
     const existingStatus = String(existing?.status ?? "");
-    if (existing && BOOKED_STATUSES.has(existingStatus)) {
+    if (existing && isIndiaPostAcceptedStatus(existingStatus)) {
       const issue: ValidationIssue = {
         orderId: order.id,
         orderNumber: order.order_number,
@@ -220,6 +220,7 @@ export async function validateOrdersForBooking(
       orderService: order.india_post_service,
       workspaceOverride: store.connection.booking_service_override,
       defaultService: store.defaultService,
+      allowedServices: store.allowedServices,
     });
     const contractId = contractByService.get(serviceCode) || store.connection.contract_id;
     const lineItems = (order.order_line_items as Array<{ quantity?: number; weight_grams?: number }>) ?? [];
@@ -387,6 +388,7 @@ export async function validateExcelBuffer(
     orderService: null,
     workspaceOverride: store.connection.booking_service_override,
     defaultService: store.defaultService || DEFAULT_INDIA_POST_SERVICE,
+    allowedServices: store.allowedServices,
   });
   const { data: contract } = await supabase
     .from("india_post_contracts")
@@ -533,6 +535,7 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
     orderService: null,
     workspaceOverride: store.connection?.booking_service_override,
     defaultService: store.defaultService || DEFAULT_INDIA_POST_SERVICE,
+    allowedServices: store.allowedServices,
   });
 
   for (const article of parsed.articles) {

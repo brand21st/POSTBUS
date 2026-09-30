@@ -15,13 +15,23 @@ export function resolveOrderBookingService(input: {
   orderService?: string | null;
   workspaceOverride?: string | null;
   defaultService?: string | null;
+  allowedServices?: Array<string | null | undefined> | null;
 }) {
+  const allowed = [
+    ...new Set((input.allowedServices ?? []).map((code) => parcelServiceCode(code)).filter(Boolean)),
+  ] as ParcelServiceCode[];
+  const only = allowed.length === 1 ? allowed[0] : null;
+  const inAllowed = (code: ParcelServiceCode | null) =>
+    Boolean(code && (allowed.length === 0 || allowed.includes(code)));
+
   const pinned = parcelServiceCode(input.orderService);
-  if (pinned) return pinned;
+  if (pinned && inAllowed(pinned)) return pinned;
+  if (only) return only;
+
   const override = parcelServiceCode(input.workspaceOverride);
-  if (override) return override;
+  if (override && inAllowed(override)) return override;
   const fallback = parcelServiceCode(input.defaultService);
-  if (fallback) return fallback;
+  if (fallback && inAllowed(fallback)) return fallback;
   return DEFAULT_INDIA_POST_SERVICE;
 }
 

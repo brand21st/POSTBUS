@@ -30,6 +30,7 @@ import {
   DEFAULT_PROVIDER_ENVIRONMENT,
   INDIA_POST_SERVICES,
   PROVIDER_ENVIRONMENTS,
+  indiaPostServiceLabel,
 } from "@/types/domain";
 import type { IndiaPostConfig } from "@/types/api";
 
@@ -246,9 +247,41 @@ export default function IndiaPostPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const verify = useMutation({
-    mutationFn: () => api("/api/v1/integrations/india-post/verify", { method: "POST" }),
-    onSuccess: () => toast.success("Connection verified against India Post."),
+  const login = useMutation({
+    mutationFn: (snapshot: FormState) => {
+      const customerId = snapshot.customerId.trim();
+      const needsCredentials = replaceSecrets || !hasSecrets;
+      if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
+        throw new Error("Live booking is not ready yet. Keep Test selected.");
+      }
+      if (!customerId) {
+        throw new Error("Enter your India Post customer ID.");
+      }
+      if (needsCredentials && !snapshot.password.trim()) {
+        throw new Error("Enter your India Post password.");
+      }
+      if (!needsCredentials) {
+        return api("/api/v1/integrations/india-post/verify", { method: "POST" });
+      }
+      return api("/api/v1/integrations/india-post", {
+        method: "POST",
+        body: JSON.stringify({
+          environment: snapshot.environment,
+          username: customerId,
+          password: snapshot.password,
+          bulkCustomerId: customerId,
+          pickupDropoffOfficeId: snapshot.pickupDropoffOfficeId.trim() || undefined,
+          pickupDropoffOfficeName: snapshot.pickupDropoffOfficeName.trim() || undefined,
+        }),
+      });
+    },
+    onSuccess: () => {
+      toast.success("Logged in to India Post.");
+      setForm((current) => ({ ...current, password: "" }));
+      setReplaceSecrets(false);
+      queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["integrations"] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -279,6 +312,73 @@ export default function IndiaPostPage() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+
+  const saveContract = useMutation({
+    mutationFn: ({ serviceCode, contractId }: { serviceCode: string; contractId: string }) =>
+      api<{
+        contracts: IndiaPostConfig["contracts"];
+        defaultServiceCode: string;
+      }>("/api/v1/integrations/india-post/contracts", {
+        method: "PATCH",
+        body: JSON.stringify({ serviceCode, contractId }),
+      }),
+    onSuccess: (data, variables) => {
+      setForm((current) => ({
+        ...current,
+        contracts: (data.contracts ?? []).map((contract) => ({
+          serviceCode: contract.serviceCode,
+          contractId: contract.contractId,
+        })),
+        defaultServiceCode: data.defaultServiceCode,
+      }));
+      queryClient.setQueryData<IndiaPostConfig>(INDIA_POST_QUERY_KEY, (current) =>
+        current
+          ? {
+              ...current,
+              contracts: data.contracts,
+              defaultServiceCode: data.defaultServiceCode,
+            }
+          : current
+      );
+      queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
+      toast.success(
+        variables.contractId
+          ? `${indiaPostServiceLabel(variables.serviceCode)} contract saved.`
+          : `${indiaPostServiceLabel(variables.serviceCode)} contract cleared.`
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const contractSaveFlight = useRef<string | null>(null);
+
+  function savedContractId(serviceCode: string) {
+    return (
+      config?.contracts?.find((contract) => contract.serviceCode === serviceCode)?.contractId ?? ""
+    );
+  }
+
+  function persistContract(serviceCode: string, contractId: string, options?: { force?: boolean }) {
+    const next = contractId.replace(/\D/g, "").slice(0, 20);
+    const saved = savedContractId(serviceCode);
+    if (next && !/^\d{4,20}$/.test(next)) {
+      setContract(serviceCode, saved);
+      toast.error("Contract ID must be the numeric ID from the India Post portal.");
+      return;
+    }
+    if (!options?.force && next === saved) return;
+    const flight = `${serviceCode}:${next}`;
+    if (contractSaveFlight.current === flight && !options?.force) return;
+    contractSaveFlight.current = flight;
+    saveContract.mutate(
+      { serviceCode, contractId: next },
+      {
+        onSettled: () => {
+          if (contractSaveFlight.current === flight) contractSaveFlight.current = null;
+        },
+      }
+    );
+  }
 
   const setDefault = useMutation({
     mutationFn: (serviceCode: string) =>
@@ -406,15 +506,23 @@ export default function IndiaPostPage() {
           <Button type="button" onClick={() => save.mutate(form)} disabled={save.isPending}>
             {save.isPending ? "Saving…" : "Save & connect"}
           </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => login.mutate(form)}
+            disabled={
+              login.isPending ||
+              productionBlocked ||
+              !form.customerId.trim() ||
+              !(hasSecrets || form.password.trim())
+            }
+          >
+            {login.isPending ? "Logging in…" : "Login"}
+          </Button>
           {form.environment === "UAT" ? (
-            <>
-              <Button type="button" variant="secondary" onClick={() => verify.mutate()} disabled={verify.isPending}>
-                {verify.isPending ? "Verifying…" : "Verify login"}
-              </Button>
-              <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
-                {test.isPending ? "Checking…" : "Test connection"}
-              </Button>
-            </>
+            <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
+              {test.isPending ? "Checking…" : "Test connection"}
+            </Button>
           ) : null}
           <Button
             type="button"
@@ -557,7 +665,7 @@ export default function IndiaPostPage() {
               return (
                 <div
                   key={service.code}
-                  className="grid gap-3 px-6 py-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] md:items-center"
+                  className="grid gap-3 px-6 py-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] md:items-center"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">{service.label}</p>
@@ -572,8 +680,23 @@ export default function IndiaPostPage() {
                   <Input
                     value={value}
                     placeholder="Contract ID"
-                    onChange={(event) => setContract(service.code, event.target.value)}
+                    inputMode="numeric"
+                    onChange={(event) => setContract(service.code, event.target.value.replace(/\D/g, "").slice(0, 20))}
+                    onBlur={(event) => persistContract(service.code, event.target.value)}
                   />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-11"
+                    disabled={!value.trim() || saveContract.isPending}
+                    onClick={() => {
+                      setContract(service.code, "");
+                      persistContract(service.code, "", { force: true });
+                    }}
+                  >
+                    Clear
+                  </Button>
                   <button
                     type="button"
                     title={

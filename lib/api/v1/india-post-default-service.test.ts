@@ -53,6 +53,9 @@ function defaultServiceDb(initial: { contracts: ContractRow[]; override: string 
                 order() {
                   return thenable({ data: contracts, error: null });
                 },
+                then(resolve: (value: { data: ContractRow[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) {
+                  return Promise.resolve({ data: contracts, error: null }).then(resolve, reject);
+                },
                 maybeSingle() {
                   const def = contracts.find((row) => row.is_default && row.is_active);
                   return Promise.resolve({

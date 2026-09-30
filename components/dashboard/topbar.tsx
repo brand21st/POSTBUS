@@ -24,6 +24,7 @@ import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { useNotifications } from "@/lib/hooks/use-notifications";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
+import { hideWorkspaceBookingToggle } from "@/modules/india-post/contracts";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { indiaPostServiceLabel } from "@/types/domain";
@@ -132,6 +133,7 @@ export function Topbar({
       </nav>
 
       <div className="ml-auto flex items-center gap-1.5">
+        {hideWorkspaceBookingToggle(indiaPost.data) ? null : (
         <ServiceToggle
           label="India Post booking service"
           value={bookingValue}
@@ -141,6 +143,7 @@ export function Topbar({
             if (service !== bookingValue) bookingService.mutate(service);
           }}
         />
+        )}
         <div className="flex items-center" data-tour="search">
           <Button
             type="button"

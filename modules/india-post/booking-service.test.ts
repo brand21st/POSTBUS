@@ -47,6 +47,17 @@ describe("resolveOrderBookingService", () => {
     ).toBe("SP_INLAND_PARCEL");
   });
 
+  it("uses the only saved contract when the top-bar override has no ID", () => {
+    expect(
+      resolveOrderBookingService({
+        orderService: "SP_INLAND_PARCEL",
+        workspaceOverride: "SP_INLAND_PARCEL",
+        defaultService: "SP_INLAND_PARCEL",
+        allowedServices: ["BUSINESS_PARCEL"],
+      })
+    ).toBe("BUSINESS_PARCEL");
+  });
+
   it("ignores Speed Post document and falls back to Speed Post parcel", () => {
     expect(
       resolveOrderBookingService({

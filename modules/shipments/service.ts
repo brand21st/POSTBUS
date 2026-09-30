@@ -4,7 +4,8 @@ import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { resolveOrderBookingService, shipmentServiceLocked } from "@/modules/india-post/booking-service";
-import { resolveDefaultServiceCode } from "@/modules/india-post/contracts";
+import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import { resolveDefaultServiceCode, savedParcelContracts } from "@/modules/india-post/contracts";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { INDIA_POST_SERVICES } from "@/types/domain";
@@ -21,17 +22,29 @@ function assertIndiaPostService(serviceCode: string) {
 }
 
 export async function workspaceBookingChoice(supabase: SupabaseClient, organizationId: string) {
-  const [{ data }, defaultService] = await Promise.all([
+  const [{ data }, defaultService, contracts] = await Promise.all([
     supabase
       .from("india_post_connections")
       .select("booking_service_override")
       .eq("organization_id", organizationId)
       .maybeSingle(),
     resolveDefaultServiceCode(supabase, organizationId),
+    supabase
+      .from("india_post_contracts")
+      .select("service_code, contract_id, is_active")
+      .eq("organization_id", organizationId),
   ]);
+  const allowedServices = savedParcelContracts({
+    contracts: (contracts.data ?? []).map((row) => ({
+      serviceCode: String(row.service_code ?? ""),
+      contractId: String(row.contract_id ?? ""),
+      isActive: row.is_active !== false,
+    })),
+  }).map((contract) => contract.serviceCode);
   return {
     workspaceOverride: (data?.booking_service_override as string | null) ?? null,
     defaultService,
+    allowedServices,
   };
 }
 
@@ -116,6 +129,7 @@ export async function createShipmentsForOrders(
       orderService: order.india_post_service,
       workspaceOverride: bookingChoice?.workspaceOverride,
       defaultService: bookingChoice?.defaultService,
+      allowedServices: bookingChoice?.allowedServices,
     });
     assertIndiaPostService(resolved);
     return resolved;
@@ -126,18 +140,7 @@ export async function createShipmentsForOrders(
   for (const order of orders) {
     const current = existingByOrder.get(order.id);
     const currentStatus = (current?.status ?? "").toUpperCase();
-    const alreadyBooked = [
-      "BOOKED",
-      "LABEL_PENDING",
-      "LABEL_READY",
-      "MANIFEST_PENDING",
-      "MANIFEST_READY",
-      "IN_TRANSIT",
-      "OUT_FOR_DELIVERY",
-      "DELIVERED",
-      "NDR",
-      "RTO",
-    ].includes(currentStatus);
+    const alreadyBooked = isIndiaPostAcceptedStatus(currentStatus);
     const items = (order.order_line_items as Array<{ quantity: number; weight_grams?: number }>) ?? [];
     const weight = bookingBoxWeightGrams({
       parcelWeightMode: order.parcel_weight_mode as string | null,
@@ -365,6 +368,7 @@ export async function retryShipment(supabase: SupabaseClient, ctx: TenantContext
       orderService: order?.india_post_service,
       workspaceOverride: choice.workspaceOverride,
       defaultService: choice.defaultService,
+      allowedServices: choice.allowedServices,
     });
     assertIndiaPostService(serviceCode);
   }
