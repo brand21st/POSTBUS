@@ -116,6 +116,7 @@ export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number];
 
 export const PROVIDER_ENVIRONMENTS = ["UAT", "PRODUCTION"] as const;
 export type ProviderEnvironment = (typeof PROVIDER_ENVIRONMENTS)[number];
+export const DEFAULT_PROVIDER_ENVIRONMENT: ProviderEnvironment = "PRODUCTION";
 
 // India Post issues one contract, and usually one barcode series, per product.
 // `code` is the CEPT `article_type`; only bookable parcel codes are listed.

@@ -12,7 +12,7 @@ import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/bar
 import { parcelServiceCode, resolveOrderBookingService } from "@/modules/india-post/booking-service";
 import { listContracts, saveContracts } from "@/modules/india-post/contracts";
 import { syncOpenShipmentsService, workspaceBookingChoice } from "@/modules/shipments/service";
-import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
+import { DEFAULT_INDIA_POST_SERVICE, DEFAULT_PROVIDER_ENVIRONMENT } from "@/types/domain";
 import {
   createShopifyOAuthState,
   exchangeShopifyToken,
@@ -434,7 +434,7 @@ export async function handleIntegrationRoutes(
     const contracts = await listContracts(supabase, ctx.organizationId);
     const range = ranges?.[0] ?? null;
     return {
-      environment: data?.environment ?? "UAT",
+      environment: data?.environment ?? DEFAULT_PROVIDER_ENVIRONMENT,
       status: data?.status ?? "NOT_CONNECTED",
       bulkCustomerId: data?.bulk_customer_id,
       contractId: data?.contract_id,
@@ -555,9 +555,13 @@ export async function handleIntegrationRoutes(
 
   if (key === "PUT integrations/india-post" || key === "POST integrations/india-post" || key === "PATCH integrations/india-post") {
     const body = await request.json();
+    const environment =
+      body.environment === "UAT" || body.environment === "PRODUCTION"
+        ? body.environment
+        : DEFAULT_PROVIDER_ENVIRONMENT;
     const payload: Record<string, unknown> = {
       organization_id: ctx.organizationId,
-      environment: body.environment ?? "UAT",
+      environment,
       bulk_customer_id: body.bulkCustomerId ?? body.bulk_customer_id,
       contract_id: body.contractId ?? body.contract_id,
       pickup_dropoff_office_id: body.pickupDropoffOfficeId ?? body.pickup_dropoff_office_id,
@@ -712,6 +716,49 @@ export async function handleIntegrationRoutes(
       })
       .eq("organization_id", ctx.organizationId);
     return { verified: true };
+  }
+
+  if (key === "DELETE integrations/india-post") {
+    const { data: existing, error: existingError } = await supabase
+      .from("india_post_connections")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (existingError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingError.message);
+    if (!existing) {
+      return { loggedOut: true, status: "NOT_CONNECTED" };
+    }
+    const logoutPatch = {
+      encrypted_username: null,
+      encrypted_password: null,
+      encrypted_access_token: null,
+      encrypted_refresh_token: null,
+      encrypted_id_token: null,
+      expires_at: null,
+      refresh_expires_at: null,
+      last_refreshed_at: null,
+      last_verified_at: null,
+      bulk_customer_id: null,
+      last_error: null,
+      status: "NOT_CONNECTED",
+      environment: DEFAULT_PROVIDER_ENVIRONMENT,
+    };
+    const { data, error } = await supabase
+      .from("india_post_connections")
+      .update(logoutPatch)
+      .eq("id", existing.id)
+      .eq("organization_id", ctx.organizationId)
+      .select("status")
+      .single();
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "india_post.logged_out",
+      entity_type: "india_post_connection",
+      entity_id: existing.id,
+    });
+    return { loggedOut: true, status: data?.status ?? "NOT_CONNECTED" };
   }
 
   if (key === "GET integrations/wati") {

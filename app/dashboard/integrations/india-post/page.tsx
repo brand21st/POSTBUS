@@ -27,6 +27,7 @@ import { Copy } from "lucide-react";
 import { IndiaPostOfficeFinder } from "@/components/integrations/india-post-office-finder";
 import {
   DEFAULT_INDIA_POST_SERVICE,
+  DEFAULT_PROVIDER_ENVIRONMENT,
   INDIA_POST_SERVICES,
   PROVIDER_ENVIRONMENTS,
 } from "@/types/domain";
@@ -51,7 +52,7 @@ type FormState = {
 const ANY_SERVICE = "ANY";
 
 const EMPTY: FormState = {
-  environment: "UAT",
+  environment: DEFAULT_PROVIDER_ENVIRONMENT,
   customerId: "",
   password: "",
   pickupDropoffOfficeId: "",
@@ -100,7 +101,7 @@ export default function IndiaPostPage() {
 
     setForm((current) => ({
       ...current,
-      environment: config.environment ?? "UAT",
+      environment: config.environment ?? DEFAULT_PROVIDER_ENVIRONMENT,
       customerId: String(config.bulkCustomerId ?? config.bulk_customer_id ?? ""),
       pickupDropoffOfficeId: String(
         config.pickupDropoffOfficeId ?? config.pickup_dropoff_office_id ?? ""
@@ -220,6 +221,28 @@ export default function IndiaPostPage() {
   const test = useMutation({
     mutationFn: () => api("/api/v1/integrations/india-post/test", { method: "POST" }),
     onSuccess: () => toast.success("India Post confirmed the connection."),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const loggedIn =
+    hasSecrets || config?.status === "CONNECTED" || config?.status === "PENDING";
+
+  const logout = useMutation({
+    mutationFn: () =>
+      api<{ loggedOut: boolean; status: string }>("/api/v1/integrations/india-post", {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      toast.success("Logged out of India Post. Saved login was cleared.");
+      setReplaceSecrets(false);
+      setForm((current) => ({
+        ...current,
+        customerId: "",
+        password: "",
+      }));
+      queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["integrations"] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -349,11 +372,32 @@ export default function IndiaPostPage() {
           <Button type="button" onClick={() => save.mutate(form)} disabled={save.isPending}>
             {save.isPending ? "Saving…" : "Save & connect"}
           </Button>
-          <Button type="button" variant="secondary" onClick={() => verify.mutate()} disabled={verify.isPending}>
-            {verify.isPending ? "Verifying…" : "Verify login"}
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
-            {test.isPending ? "Checking…" : "Test connection"}
+          {form.environment === "UAT" ? (
+            <>
+              <Button type="button" variant="secondary" onClick={() => verify.mutate()} disabled={verify.isPending}>
+                {verify.isPending ? "Verifying…" : "Verify login"}
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
+                {test.isPending ? "Checking…" : "Test connection"}
+              </Button>
+            </>
+          ) : null}
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!loggedIn || logout.isPending}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  "Log out of India Post for this workspace? This clears the saved customer ID, password, and session tokens. Office ID, barcodes, and contracts stay."
+                )
+              ) {
+                return;
+              }
+              logout.mutate();
+            }}
+          >
+            {logout.isPending ? "Logging out…" : "Logout"}
           </Button>
         </CardFooter>
       </Card>
