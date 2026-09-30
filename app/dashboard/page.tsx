@@ -124,7 +124,8 @@ export default function DashboardPage() {
   const syncShopify = useMutation({
     mutationFn: () => api("/api/v1/integrations/shopify/sync", { method: "POST" }),
     onSuccess: () => {
-      toast.success("Shopify unfulfilled orders were imported.");
+      toast.success("Shopify sync queued.");
+      queryClient.invalidateQueries({ queryKey: ["integrations"] });
       queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
     onError: (error: Error) => toast.error(error.message),

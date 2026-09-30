@@ -167,6 +167,13 @@ export function normalizeIndiaPostArticleId(value?: unknown) {
   return S10_ARTICLE.test(article) ? article : "";
 }
 
+export function isValidIndiaPostS10(value?: unknown) {
+  const article = normalizeIndiaPostArticleId(value);
+  if (!article) return false;
+  const serial = article.slice(2, 10);
+  return indiaPostS10CheckDigit(serial) === Number(article[10]);
+}
+
 /** Prefer the article India Post accepted on booking; otherwise the S10 we submitted. */
 export function indiaPostAcceptedArticleId(
   valid?: {

@@ -12,11 +12,17 @@ import { bulkOrderStatusSchema, createOrderSchema, orderListQuery, updateOrderWe
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
-import { filterGroupedLabels, groupLabelsByShipment, paginateGroupedLabels } from "@/modules/labels/group";
-import { mapLabelRow } from "@/modules/labels/map";
+import { listGroupedLabels } from "@/modules/labels/list";
 import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
 import { ndrListQuery } from "@/modules/ndr-rto/schema";
 import { getNdrSummary, listNdrShipments, syncNdrShipment } from "@/modules/ndr-rto/service";
+import {
+  queueExcelBuffer,
+  queueValidatedOrders,
+  summarizeBulkBookings,
+  validateExcelBuffer,
+  validateOrdersForBooking,
+} from "@/modules/india-post/bulk-booking";
 
 function dateRange(request: NextRequest) {
   const from = request.nextUrl.searchParams.get("from") || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -90,6 +96,37 @@ export async function handleCommerceRoutes(
     return bulkUpdateOrderStatus(supabase, ctx, body);
   }
 
+  if (key === "POST bookings/validate") {
+    const body = await request.json();
+    const orderIds: string[] = body.orderIds ?? [];
+    return validateOrdersForBooking(supabase, ctx, orderIds);
+  }
+
+  if (key === "POST bookings/queue") {
+    const body = await request.json();
+    const orderIds: string[] = body.orderIds ?? [];
+    return queueValidatedOrders(supabase, ctx, orderIds);
+  }
+
+  if (key === "GET bookings/summary") {
+    const orderIds = (request.nextUrl.searchParams.get("orderIds") ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    return summarizeBulkBookings(supabase, ctx, orderIds);
+  }
+
+  if (key === "POST bookings/excel") {
+    const form = await request.formData();
+    const file = form.get("file");
+    if (!(file instanceof File)) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Upload an India Post Excel workbook.");
+    }
+    const bytes = await file.arrayBuffer();
+    const queue = String(form.get("queue") ?? "") === "true";
+    return queue ? queueExcelBuffer(supabase, ctx, bytes) : validateExcelBuffer(supabase, ctx, bytes);
+  }
+
   if (key === "GET ndr-rto/summary") {
     return getNdrSummary(supabase, ctx);
   }
@@ -132,15 +169,7 @@ export async function handleCommerceRoutes(
     const page = Number(request.nextUrl.searchParams.get("page") || 1);
     const pageSize = Number(request.nextUrl.searchParams.get("pageSize") || 20);
     const kind = request.nextUrl.searchParams.get("kind");
-    const { data, error } = await supabase
-      .from("labels")
-      .select("*, shipments(barcode, tracking_number, orders(order_number)), print_jobs!print_jobs_label_id_fkey(*)")
-      .eq("organization_id", ctx.organizationId)
-      .order("created_at", { ascending: false })
-      .limit(2000);
-    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-    const grouped = groupLabelsByShipment((data ?? []).map((row) => mapLabelRow(row as Record<string, unknown>)));
-    return paginateGroupedLabels(filterGroupedLabels(grouped, kind), page, pageSize);
+    return listGroupedLabels(supabase, ctx, { page, pageSize, kind });
   }
 
   if (method === "GET" && slugs[0] === "labels" && slugs[2] === "download") {

@@ -1,8 +1,9 @@
+import { cache } from "react";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { env } from "@/lib/env";
 
-export async function createServerSupabase() {
+async function createServerSupabaseUncached() {
   if (!env.supabaseUrl || !env.supabaseAnonKey) {
     throw new Error("Supabase public credentials are not configured.");
   }
@@ -26,3 +27,6 @@ export async function createServerSupabase() {
     },
   });
 }
+
+// One SSR client per incoming request. Do not reuse across users or requests.
+export const createServerSupabase = cache(createServerSupabaseUncached);

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, ChevronRight, Menu, Search } from "lucide-react";
 import { toast } from "sonner";
 import { CommandSearch } from "@/components/dashboard/command-search";
@@ -21,17 +21,13 @@ import {
 import { breadcrumbs } from "@/lib/dashboard/nav";
 import { formatRelative, initials } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
+import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { useNotifications } from "@/lib/hooks/use-notifications";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { indiaPostServiceLabel } from "@/types/domain";
 import type { IndiaPostConfig, MeResponse } from "@/types/api";
-
-const BOOKING_OPTIONS = [
-  { value: "DEFAULT", label: "Default", title: "Use the India Post default service" },
-  { value: "SP_INLAND_PARCEL", label: "SP", title: "Speed Post parcel" },
-  { value: "BUSINESS_PARCEL", label: "BP", title: "Business Parcel" },
-];
 
 export function Topbar({
   me,
@@ -44,18 +40,33 @@ export function Topbar({
   const router = useRouter();
   const queryClient = useQueryClient();
   const crumbs = useMemo(() => breadcrumbs(pathname), [pathname]);
-  const indiaPost = useQuery({
-    queryKey: ["india-post"],
-    queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
-  });
+  const indiaPost = useIndiaPost();
+  const defaultServiceLabel = indiaPostServiceLabel(
+    indiaPost.data?.defaultServiceCode ?? "SP_INLAND_PARCEL"
+  );
+  const bookingOptions = [
+    {
+      value: "DEFAULT",
+      label: "Default",
+      title: `Use the India Post default service (${defaultServiceLabel})`,
+    },
+    { value: "SP_INLAND_PARCEL", label: "SP", title: "Speed Post parcel" },
+    { value: "BUSINESS_PARCEL", label: "BP", title: "Business Parcel" },
+  ];
   const bookingService = useMutation({
     mutationFn: (service: string) =>
-      api("/api/v1/integrations/india-post/booking-service", {
-        method: "PATCH",
-        body: JSON.stringify({ service }),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["india-post"] });
+      api<{ bookingServiceOverride: string | null; serviceCode: string }>(
+        "/api/v1/integrations/india-post/booking-service",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ service }),
+        }
+      ),
+    onSuccess: (data) => {
+      queryClient.setQueryData<IndiaPostConfig>(INDIA_POST_QUERY_KEY, (current) =>
+        current ? { ...current, bookingServiceOverride: data.bookingServiceOverride } : current
+      );
+      queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -124,7 +135,7 @@ export function Topbar({
         <ServiceToggle
           label="India Post booking service"
           value={bookingValue}
-          options={BOOKING_OPTIONS}
+          options={bookingOptions}
           disabled={!canChangeBooking || bookingService.isPending}
           onChange={(service) => {
             if (service !== bookingValue) bookingService.mutate(service);

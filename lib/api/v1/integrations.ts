@@ -31,7 +31,8 @@ import {
   SHOPIFY_CREDENTIAL_DISCONNECT_PATCH,
   verifyShopifyHmac,
 } from "@/modules/shopify/oauth";
-import { shopifyReadyToSync, syncUnfulfilledShopifyOrders } from "@/modules/shopify/orders";
+import { shopifyReadyToSync } from "@/modules/shopify/orders";
+import { enqueueShopifyOrderSync, latestShopifySyncJob } from "@/modules/shopify/sync-job";
 import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { watiClientFromRow } from "@/modules/wati/client";
 import { watiBroadcastName, watiNotifyRecipient } from "@/modules/wati/notify";
@@ -44,6 +45,28 @@ import {
   registerWatiWebhook,
   saveWatiConnection,
 } from "@/modules/wati/service";
+
+async function applyWorkspaceBookingToOpenShipments(supabase: SupabaseClient, organizationId: string) {
+  const choice = await workspaceBookingChoice(supabase, organizationId);
+  const serviceCode = resolveOrderBookingService({
+    workspaceOverride: choice.workspaceOverride,
+    defaultService: choice.defaultService,
+  });
+  const { data: openShipments, error: openError } = await supabase
+    .from("shipments")
+    .select("id, orders!inner(india_post_service)")
+    .eq("organization_id", organizationId)
+    .in("status", ["DRAFT", "QUEUED", "FAILED"])
+    .is("orders.india_post_service", null);
+  if (openError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, openError.message);
+  await syncOpenShipmentsService(
+    supabase,
+    organizationId,
+    (openShipments ?? []).map((item) => item.id as string),
+    serviceCode
+  );
+  return serviceCode;
+}
 
 function normalizePickupOfficeId(value: unknown) {
   const digits = String(value ?? "").replace(/\D/g, "").slice(0, 8);
@@ -61,10 +84,11 @@ export async function handleIntegrationRoutes(
   key: string
 ) {
   if (key === "GET integrations") {
-    const [{ data: shopify }, { data: indiaPost }, { data: wati }] = await Promise.all([
+    const [{ data: shopify }, { data: indiaPost }, { data: wati }, syncJob] = await Promise.all([
       supabase.from("shopify_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("india_post_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("wati_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
+      latestShopifySyncJob(supabase, ctx.organizationId),
     ]);
     const shopifyConfigured = shopifyAppConfiguredFor(shopify);
     const shopifySyncReady = shopifyReadyToSync(shopify);
@@ -75,6 +99,8 @@ export async function handleIntegrationRoutes(
         shopDomain: shopify?.shop_domain ?? "",
         lastSyncAt: shopify?.last_sync_at,
         lastError: shopify?.last_error,
+        syncJobStatus: (syncJob?.status as string | undefined) ?? null,
+        syncJobError: (syncJob?.last_error as string | undefined) ?? null,
         appConfigured: shopifyConfigured,
         readyToSync: shopifySyncReady,
       },
@@ -196,9 +222,10 @@ export async function handleIntegrationRoutes(
     const savedClientId = storedClientId(data);
     const hasSecret = hasStoredClientSecret(data);
     if (!disconnectStore && shopifyReadyToSync(data)) {
-      void syncUnfulfilledShopifyOrders(supabase, {
+      void enqueueShopifyOrderSync(supabase, {
         organizationId: ctx.organizationId,
         userId: ctx.userId,
+        force: true,
       }).catch((error) => {
         logError("shopify.sync_after_save_failed", {
           message: error instanceof Error ? error.message : "sync failed",
@@ -352,9 +379,10 @@ export async function handleIntegrationRoutes(
         ? await supabase.from("shopify_connections").update(record).eq("id", connection.id)
         : await supabase.from("shopify_connections").insert(record);
       if (error) return failRedirect(error.message);
-      void syncUnfulfilledShopifyOrders(supabase, {
+      void enqueueShopifyOrderSync(supabase, {
         organizationId: ctx.organizationId,
         userId: ctx.userId,
+        force: true,
       }).catch((syncError) => {
         logError("shopify.sync_after_connect_failed", {
           message: syncError instanceof Error ? syncError.message : "sync failed",
@@ -369,17 +397,10 @@ export async function handleIntegrationRoutes(
   }
 
   if (key === "POST integrations/shopify/sync") {
-    const { data: connection } = await supabase
-      .from("shopify_connections")
-      .select("*")
-      .eq("organization_id", ctx.organizationId)
-      .maybeSingle();
-    if (!shopifyReadyToSync(connection) && connection?.status !== "CONNECTED") {
-      throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Shopify is not connected.");
-    }
-    const result = await syncUnfulfilledShopifyOrders(supabase, {
+    const result = await enqueueShopifyOrderSync(supabase, {
       organizationId: ctx.organizationId,
       userId: ctx.userId,
+      force: true,
     });
     if (!result.connected) {
       throw new AppError(
@@ -387,7 +408,15 @@ export async function handleIntegrationRoutes(
         "Could not authenticate with Shopify. Check Client ID and Client secret."
       );
     }
-    return result;
+    return {
+      queued: true,
+      jobId: result.jobId,
+      duplicate: result.duplicate,
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      hasMore: false,
+    };
   }
 
   if (key === "GET integrations/india-post") {
@@ -457,25 +486,46 @@ export async function handleIntegrationRoutes(
     );
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
-    const choice = await workspaceBookingChoice(supabase, ctx.organizationId);
-    const serviceCode = resolveOrderBookingService({
-      workspaceOverride: choice.workspaceOverride,
-      defaultService: choice.defaultService,
-    });
-    const { data: openShipments, error: openError } = await supabase
-      .from("shipments")
-      .select("id, orders!inner(india_post_service)")
-      .eq("organization_id", ctx.organizationId)
-      .in("status", ["DRAFT", "QUEUED", "FAILED"])
-      .is("orders.india_post_service", null);
-    if (openError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, openError.message);
-    await syncOpenShipmentsService(
+    const serviceCode = await applyWorkspaceBookingToOpenShipments(supabase, ctx.organizationId);
+    return { bookingServiceOverride: requested, serviceCode };
+  }
+
+  if (key === "PATCH integrations/india-post/default-service") {
+    const body = await request.json().catch(() => ({}));
+    const serviceCode = parcelServiceCode(String(body.serviceCode ?? body.service ?? ""));
+    if (!serviceCode) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        "Choose Speed Post parcel or Business Parcel as the default."
+      );
+    }
+    const contracts = await listContracts(supabase, ctx.organizationId);
+    if (!contracts.some((contract) => contract.serviceCode === serviceCode)) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        "Save a contract ID for that service first."
+      );
+    }
+    await saveContracts(
       supabase,
       ctx.organizationId,
-      (openShipments ?? []).map((item) => item.id as string),
-      serviceCode
+      contracts.map((contract) => ({
+        serviceCode: contract.serviceCode,
+        contractId: contract.contractId,
+        isDefault: contract.serviceCode === serviceCode,
+        isActive: contract.isActive,
+      }))
     );
-    return { bookingServiceOverride: requested, serviceCode };
+    const { error } = await supabase.from("india_post_connections").upsert(
+      {
+        organization_id: ctx.organizationId,
+        booking_service_override: null,
+      },
+      { onConflict: "organization_id" }
+    );
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    await applyWorkspaceBookingToOpenShipments(supabase, ctx.organizationId);
+    return { defaultServiceCode: serviceCode, bookingServiceOverride: null };
   }
 
   if (key === "PATCH integrations/india-post/office") {

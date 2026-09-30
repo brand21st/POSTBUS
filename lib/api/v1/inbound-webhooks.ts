@@ -3,7 +3,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import { hashSecret } from "@/lib/security/crypto";
 import { isAutoShopifySyncEnabled } from "@/modules/automation/service";
-import { createBackgroundJob } from "@/modules/jobs/service";
+import { enqueueShopifyOrderSync } from "@/modules/shopify/sync-job";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
 import { resolveShopifyWebhookSecrets, verifyWebhookHmac, normalizeShopDomain, pickShopifyConnectionForShop } from "@/modules/shopify/oauth";
@@ -132,11 +132,9 @@ export async function handleInboundWebhook(request: NextRequest, path: string) {
         throw error;
       }
     } else if (await isAutoShopifySyncEnabled(admin, connection.organization_id)) {
-      await createBackgroundJob(admin, {
+      await enqueueShopifyOrderSync(admin, {
         organizationId: connection.organization_id,
-        jobType: "shopify-sync",
-        entityType: "shopify_connection",
-        progress: { topic },
+        force: false,
       });
     }
     return { accepted: true };

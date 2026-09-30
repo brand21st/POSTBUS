@@ -10,8 +10,17 @@ import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { syncOpenShipmentsService } from "@/modules/shipments/service";
 
 type CreateInput = z.infer<typeof createOrderSchema>;
+type OrderListQuery = z.infer<typeof orderListQuery>;
 
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
+
+const ORDER_LIST_SELECT =
+  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, customers(name), order_line_items(id, title, quantity), shipments(id, status, created_at)";
+
+function wantsOrderCounts(query: OrderListQuery) {
+  const value = (query.includeCounts ?? "").toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
 
 function orderDateBoundary(value: string, endOfDay: boolean) {
   if (value.includes("T")) return value;
@@ -26,39 +35,84 @@ async function nextOrderNumber(supabase: SupabaseClient, organizationId: string)
   return `PB-${String((count ?? 0) + 10001)}`;
 }
 
-export async function listOrders(
-  supabase: SupabaseClient,
+type OrderDateRange = "list" | "none" | { from?: string; to?: string };
+
+function applyOrderListFilters(
+  // PostgREST filter builders are not exported as a stable public type.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  builder: any,
   ctx: TenantContext,
-  query: z.infer<typeof orderListQuery>
+  query: OrderListQuery,
+  dates: OrderDateRange = "list"
 ) {
-  const from = (query.page - 1) * query.pageSize;
-  const to = from + query.pageSize - 1;
-
-  let builder = supabase
-    .from("orders")
-    .select(
-      "*, customers(id, name, phone, email), order_line_items(id, title, sku, quantity, unit_price), shipments(id, status, barcode, tracking_number, service_code, created_at)",
-      { count: "exact" }
-    )
-    .eq("organization_id", ctx.organizationId)
-    .order("created_at", { ascending: false })
-    .range(from, to);
-
+  builder = builder.eq("organization_id", ctx.organizationId);
   if (query.status) builder = builder.eq("status", query.status);
   if (query.source) builder = builder.eq("source", query.source);
   if (query.paymentStatus) builder = builder.eq("payment_status", query.paymentStatus);
-  if (query.from) builder = builder.gte("created_at", orderDateBoundary(query.from, false));
-  if (query.to) builder = builder.lte("created_at", orderDateBoundary(query.to, true));
+  const from = dates === "list" ? query.from : dates === "none" ? undefined : dates.from;
+  const to = dates === "list" ? query.to : dates === "none" ? undefined : dates.to;
+  if (from) builder = builder.gte("created_at", orderDateBoundary(from, false));
+  if (to) builder = builder.lte("created_at", orderDateBoundary(to, true));
   if (query.q) {
     const filter = orIlike(["order_number", "source_order_id"], query.q);
     if (filter) builder = builder.or(filter);
   }
+  return builder;
+}
 
-  const { data, error, count } = await builder;
+async function countOrders(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  query: OrderListQuery,
+  dates: OrderDateRange = "list"
+) {
+  const builder = applyOrderListFilters(
+    supabase.from("orders").select("id", { count: "exact", head: true }),
+    ctx,
+    query,
+    dates
+  );
+  const { count, error } = await builder;
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return count ?? 0;
+}
 
-  const items = (data ?? []).map(mapOrder);
-  return { items, page: query.page, pageSize: query.pageSize, total: count ?? 0 };
+export async function listOrders(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  query: OrderListQuery
+) {
+  const from = (query.page - 1) * query.pageSize;
+  const to = from + query.pageSize - 1;
+
+  const listBuilder = applyOrderListFilters(
+    supabase.from("orders").select(ORDER_LIST_SELECT).order("created_at", { ascending: false }).range(from, to),
+    ctx,
+    query
+  );
+
+  const includeCounts = wantsOrderCounts(query);
+  const [listed, total, all, today, yesterday] = await Promise.all([
+    listBuilder,
+    countOrders(supabase, ctx, query, "list"),
+    includeCounts ? countOrders(supabase, ctx, query, "none") : Promise.resolve(0),
+    includeCounts && query.todayFrom && query.todayTo
+      ? countOrders(supabase, ctx, query, { from: query.todayFrom, to: query.todayTo })
+      : Promise.resolve(0),
+    includeCounts && query.yesterdayFrom && query.yesterdayTo
+      ? countOrders(supabase, ctx, query, { from: query.yesterdayFrom, to: query.yesterdayTo })
+      : Promise.resolve(0),
+  ]);
+
+  if (listed.error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, listed.error.message);
+
+  return {
+    items: (listed.data ?? []).map(mapOrder),
+    page: query.page,
+    pageSize: query.pageSize,
+    total,
+    ...(includeCounts ? { counts: { all, today, yesterday } } : {}),
+  };
 }
 
 export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id: string) {

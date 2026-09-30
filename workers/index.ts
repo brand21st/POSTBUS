@@ -1,3 +1,4 @@
+import { indiaPostBookingConcurrency } from "@/modules/india-post/booking-batch";
 import { Worker } from "bullmq";
 import { getRedis } from "@/lib/queue/connection";
 import { QUEUE_NAMES } from "@/lib/queue/queues";
@@ -16,7 +17,7 @@ for (const name of names) {
     },
     {
       connection: getRedis(),
-      concurrency: name === "shipment-booking" ? 4 : 2,
+      concurrency: name === "shipment-booking" ? indiaPostBookingConcurrency() : 2,
       settings: {
         backoffStrategy: (attemptsMade: number) => delayForAttempt(attemptsMade),
       },

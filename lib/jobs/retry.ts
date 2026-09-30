@@ -54,6 +54,10 @@ export function classifyProviderError(error: unknown): ClassifiedError {
     return { retryable: false, code, message };
   }
 
+  if (anyError?.name === "AbortError" || anyError?.name === "TimeoutError" || anyError?.code === "ABORT_ERR") {
+    return { retryable: true, code: "ETIMEDOUT", message };
+  }
+
   if (typeof anyError?.status === "number") {
     if (anyError.status === 429 || anyError.status >= 500) {
       return { retryable: true, code: `HTTP_${anyError.status}`, message };

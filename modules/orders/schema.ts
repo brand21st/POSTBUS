@@ -99,6 +99,11 @@ export const orderListQuery = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   sort: z.string().optional(),
+  includeCounts: z.string().optional(),
+  todayFrom: z.string().optional(),
+  todayTo: z.string().optional(),
+  yesterdayFrom: z.string().optional(),
+  yesterdayTo: z.string().optional(),
 });
 
 export const bulkOrderStatusSchema = z.object({

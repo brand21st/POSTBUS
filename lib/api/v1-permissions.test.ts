@@ -8,6 +8,8 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "orders/bulk/status", ["orders", "bulk", "status"])).toBe(
       "shipments.write"
     );
+    expect(permissionForTenantRoute("POST", "bookings/validate", ["bookings", "validate"])).toBe("shipments.write");
+    expect(permissionForTenantRoute("GET", "bookings/summary", ["bookings", "summary"])).toBe("shipments.read");
     expect(permissionForTenantRoute("PATCH", "orders/abc/service", ["orders", "abc", "service"])).toBe(
       "orders.write"
     );
@@ -18,6 +20,13 @@ describe("permissionForTenantRoute", () => {
         "booking-service",
       ])
     ).toBe("shipments.write");
+    expect(
+      permissionForTenantRoute("PATCH", "integrations/india-post/default-service", [
+        "integrations",
+        "india-post",
+        "default-service",
+      ])
+    ).toBe("integrations.manage");
     expect(permissionForTenantRoute("POST", "shipments/abc/retry", ["shipments", "abc", "retry"])).toBe(
       "shipments.write"
     );

@@ -10,6 +10,10 @@ export function permissionForTenantRoute(
 
   if (path.startsWith("dashboard/")) return "orders.read";
 
+  if (root === "bookings") {
+    return method === "GET" ? "shipments.read" : "shipments.write";
+  }
+
   if (root === "orders") {
     if (method === "POST" && slugs[1] === "bulk" && slugs[2] === "status") return "shipments.write";
     if (method === "PATCH" && slugs[2] === "service") return "orders.write";
@@ -73,6 +77,7 @@ export function permissionForTenantRoute(
   if (key === "GET automation") return undefined;
 
   if (key === "PATCH integrations/india-post/booking-service") return "shipments.write";
+  if (key === "PATCH integrations/india-post/default-service") return "integrations.manage";
 
   if (root === "integrations") {
     const readable =

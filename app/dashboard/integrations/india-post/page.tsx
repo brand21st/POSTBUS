@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { IndiaPostLogo } from "@/components/brand/india-post-logo";
 import { IndiaPostWatchTutorialLink } from "@/components/integrations/india-post-watch-tutorial-link";
@@ -21,6 +21,8 @@ import {
 import { formatDate, formatNumber } from "@/lib/format";
 import { barcodeStockForService, barcodesLeft } from "@/modules/india-post/barcode";
 import { api } from "@/lib/hooks/use-api";
+import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
+import { cn } from "@/lib/utils";
 import { Copy } from "lucide-react";
 import { IndiaPostOfficeFinder } from "@/components/integrations/india-post-office-finder";
 import {
@@ -66,12 +68,8 @@ export default function IndiaPostPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [replaceSecrets, setReplaceSecrets] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
 
-  const query = useQuery({
-    queryKey: ["india-post"],
-    queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
-  });
+  const query = useIndiaPost();
 
   const config = query.data;
   const hasSecrets = Boolean(
@@ -82,8 +80,8 @@ export default function IndiaPostPage() {
   const lastError = config?.lastError || config?.last_error;
   const lastVerified = config?.lastVerifiedAt ?? config?.last_verified_at;
 
-  if (config && !hydrated) {
-    setHydrated(true);
+  useEffect(() => {
+    if (!config) return;
     const legacyContract = String(config.contractId ?? config.contract_id ?? "");
     const knownService = new Set<string>(INDIA_POST_SERVICES.map((service) => service.code));
     const contracts: ContractRow[] = config.contracts?.length
@@ -116,7 +114,7 @@ export default function IndiaPostPage() {
       startNumber: config.barcodeRange?.startNumber != null ? String(config.barcodeRange.startNumber) : "",
       endNumber: config.barcodeRange?.endNumber != null ? String(config.barcodeRange.endNumber) : "",
     }));
-  }
+  }, [config]);
 
   const savedOfficeId = String(
     config?.pickupDropoffOfficeId ?? config?.pickup_dropoff_office_id ?? ""
@@ -131,7 +129,7 @@ export default function IndiaPostPage() {
     onSuccess: (data) => {
       const saved = data.pickupDropoffOfficeId ?? "";
       setForm((current) => ({ ...current, pickupDropoffOfficeId: saved }));
-      queryClient.setQueryData<IndiaPostConfig>(["india-post"], (current) =>
+      queryClient.setQueryData<IndiaPostConfig>(INDIA_POST_QUERY_KEY, (current) =>
         current ? { ...current, pickupDropoffOfficeId: saved, pickup_dropoff_office_id: saved } : current
       );
       toast.success(saved ? `Office ID ${saved} saved.` : "Office ID cleared.");
@@ -207,7 +205,7 @@ export default function IndiaPostPage() {
       toast.success("India Post connected. Status is Connected.");
       setForm((current) => ({ ...current, password: "" }));
       setReplaceSecrets(false);
-      queryClient.invalidateQueries({ queryKey: ["india-post"] });
+      queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -222,6 +220,35 @@ export default function IndiaPostPage() {
   const test = useMutation({
     mutationFn: () => api("/api/v1/integrations/india-post/test", { method: "POST" }),
     onSuccess: () => toast.success("India Post confirmed the connection."),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const setDefault = useMutation({
+    mutationFn: (serviceCode: string) =>
+      api<{ defaultServiceCode: string; bookingServiceOverride: null }>(
+        "/api/v1/integrations/india-post/default-service",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ serviceCode }),
+        }
+      ),
+    onSuccess: (data) => {
+      queryClient.setQueryData<IndiaPostConfig>(INDIA_POST_QUERY_KEY, (current) =>
+        current
+          ? {
+              ...current,
+              defaultServiceCode: data.defaultServiceCode,
+              bookingServiceOverride: null,
+              contracts: current.contracts?.map((contract) => ({
+                ...contract,
+                isDefault: contract.serviceCode === data.defaultServiceCode,
+              })),
+            }
+          : current
+      );
+      queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
+      toast.success("Default service saved.");
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -456,15 +483,26 @@ export default function IndiaPostPage() {
                     placeholder="Contract ID"
                     onChange={(event) => setContract(service.code, event.target.value)}
                   />
-                  <Button
+                  <button
                     type="button"
-                    size="sm"
-                    variant={isDefault ? "primary" : "secondary"}
-                    disabled={!value.trim()}
-                    onClick={() => set("defaultServiceCode", service.code)}
+                    title={
+                      isDefault
+                        ? `Default booking service (${service.label})`
+                        : `Set ${service.label} as the India Post default`
+                    }
+                    aria-pressed={isDefault}
+                    disabled={!value.trim() || setDefault.isPending}
+                    onClick={() => {
+                      if (!isDefault) setDefault.mutate(service.code);
+                    }}
+                    className={cn(
+                      "h-7 rounded-md px-2 text-xs font-semibold transition-colors",
+                      isDefault ? "bg-brand text-white" : "text-muted hover:text-foreground",
+                      (!value.trim() || setDefault.isPending) && "cursor-not-allowed opacity-60"
+                    )}
                   >
                     {isDefault ? "Default" : "Set default"}
-                  </Button>
+                  </button>
                 </div>
               );
             })}

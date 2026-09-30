@@ -28,3 +28,25 @@ export function bookingBoxWeightGrams(input: {
   if (Number.isFinite(explicit) && explicit >= 1) return Math.round(explicit);
   return 100;
 }
+
+/** True when a merchant-declared or line-item weight exists (not the 100 g fallback). */
+export function hasDeclaredBookingWeight(input: {
+  parcelWeightMode?: string | null;
+  parcelWeightGrams?: number | null;
+  lineItems?: ParcelWeightLine[] | null;
+  explicitGrams?: number | null;
+}) {
+  if ((input.parcelWeightMode ?? "auto").toLowerCase() === "manual") {
+    const manual = Number(input.parcelWeightGrams);
+    return Number.isFinite(manual) && manual >= 1;
+  }
+  const sum = (input.lineItems ?? []).reduce((total, item) => {
+    const grams = Number(item.weightGrams ?? item.weight_grams);
+    const quantity = Number(item.quantity) || 0;
+    if (!Number.isFinite(grams) || grams <= 0 || quantity <= 0) return total;
+    return total + grams * quantity;
+  }, 0);
+  if (sum > 0) return true;
+  const explicit = Number(input.explicitGrams);
+  return Number.isFinite(explicit) && explicit >= 1;
+}

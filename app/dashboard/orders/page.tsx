@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Download, Plus, RefreshCw, Truck } from "lucide-react";
 import { toast } from "sonner";
+import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import {
   OrderDateFilter,
@@ -104,11 +105,25 @@ export default function OrdersPage() {
   const shopify = integrations.data?.shopify;
   const shopifyStatus = (shopify?.status ?? "").toUpperCase();
   const shopifyReady = shopifyStatus === "CONNECTED" || Boolean(shopify?.readyToSync);
+  const syncJobStatus = (shopify?.syncJobStatus ?? "").toUpperCase();
+  const syncInFlight = ["QUEUED", "RUNNING", "RETRYING"].includes(syncJobStatus);
   const activeFrom = dateFilter.kind === "all" ? undefined : dateFilter.from.toISOString();
   const activeTo = dateFilter.kind === "all" ? undefined : dateFilter.to.toISOString();
+  const todayRange = todayOrderRange();
+  const yesterdayRange = yesterdayOrderRange();
 
   const query = useQuery({
-    queryKey: ["orders", page, debounced, status, source, payment, activeFrom, activeTo],
+    queryKey: [
+      "orders",
+      page,
+      debounced,
+      status,
+      source,
+      payment,
+      activeFrom,
+      activeTo,
+      todayRange.from.toISOString(),
+    ],
     queryFn: () =>
       api<Paginated<OrderRecord>>(`/api/v1/orders?${toSearchParams({
         page,
@@ -119,109 +134,38 @@ export default function OrdersPage() {
         paymentStatus: payment === "all" ? undefined : payment,
         from: activeFrom,
         to: activeTo,
+        includeCounts: "1",
+        todayFrom: todayRange.from.toISOString(),
+        todayTo: todayRange.to.toISOString(),
+        yesterdayFrom: yesterdayRange.from.toISOString(),
+        yesterdayTo: yesterdayRange.to.toISOString(),
       })}`),
-    refetchInterval: shopifyReady ? 15000 : false,
   });
 
   const list = asPaginated<OrderRecord>(query.data, ["orders", "items"]);
-  const todayRange = todayOrderRange();
-  const yesterdayRange = yesterdayOrderRange();
-  const countFilters = {
-    page: 1,
-    pageSize: 1,
-    q: debounced,
-    status: status === "all" ? undefined : status,
-    source: source === "all" ? undefined : source,
-    paymentStatus: payment === "all" ? undefined : payment,
-  };
-  const allCount = useQuery({
-    queryKey: ["order-date-count", "all", debounced, status, source, payment],
-    queryFn: () =>
-      api<Paginated<OrderRecord>>(`/api/v1/orders?${toSearchParams(countFilters)}`),
-    refetchInterval: shopifyReady ? 15000 : false,
-  });
-  const todayCount = useQuery({
-    queryKey: ["order-date-count", "today", debounced, status, source, payment, todayRange.from.toISOString()],
-    queryFn: () =>
-      api<Paginated<OrderRecord>>(`/api/v1/orders?${toSearchParams({
-        ...countFilters,
-        from: todayRange.from.toISOString(),
-        to: todayRange.to.toISOString(),
-      })}`),
-    refetchInterval: shopifyReady ? 15000 : false,
-  });
-  const yesterdayCount = useQuery({
-    queryKey: [
-      "order-date-count",
-      "yesterday",
-      debounced,
-      status,
-      source,
-      payment,
-      yesterdayRange.from.toISOString(),
-    ],
-    queryFn: () =>
-      api<Paginated<OrderRecord>>(`/api/v1/orders?${toSearchParams({
-        ...countFilters,
-        from: yesterdayRange.from.toISOString(),
-        to: yesterdayRange.to.toISOString(),
-      })}`),
-    refetchInterval: shopifyReady ? 15000 : false,
-  });
+  const dateCounts = query.data?.counts ?? { all: list.total, today: undefined, yesterday: undefined };
+
+  useEffect(() => {
+    if (!syncInFlight) return;
+    const timer = window.setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: ["integrations"] });
+      void queryClient.invalidateQueries({ queryKey: ["orders"] });
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [syncInFlight, queryClient]);
 
   const syncShopify = useMutation({
     mutationFn: () =>
-      api<{ imported: number; updated: number; skipped: number; hasMore: boolean }>(
+      api<{ queued?: boolean; duplicate?: boolean; jobId?: string }>(
         "/api/v1/integrations/shopify/sync",
         { method: "POST" }
       ),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      toast.success(result.duplicate ? "Shopify sync already running." : "Shopify sync queued.");
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
-      queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      if (result.hasMore) {
-        syncShopify.mutate();
-      }
     },
     onError: (error: Error) => toast.error(error.message),
   });
-
-  const autoSyncStarted = useRef(false);
-  useEffect(() => {
-    if (!shopifyReady || autoSyncStarted.current) return;
-    autoSyncStarted.current = true;
-    syncShopify.mutate();
-  }, [shopifyReady, syncShopify]);
-
-  useEffect(() => {
-    if (!shopifyReady) return;
-    const timer = window.setInterval(() => {
-      void api<{ imported: number }>("/api/v1/integrations/shopify/sync", { method: "POST" })
-        .then((result) => {
-          queryClient.invalidateQueries({ queryKey: ["orders"] });
-          queryClient.invalidateQueries({ queryKey: ["notifications"] });
-          if (result.imported > 0) {
-            window.dispatchEvent(
-              new CustomEvent("postbus:new-shopify-orders", {
-                detail: [
-                  {
-                    id: crypto.randomUUID(),
-                    title: result.imported === 1 ? "New Shopify order" : `${result.imported} new Shopify orders`,
-                    body:
-                      result.imported === 1
-                        ? "An unfulfilled order just arrived from Shopify."
-                        : "Unfulfilled orders just arrived from the connected store.",
-                    type: "shopify.order_imported",
-                  },
-                ],
-              })
-            );
-          }
-        })
-        .catch(() => undefined);
-    }, 60_000);
-    return () => window.clearInterval(timer);
-  }, [shopifyReady, queryClient]);
 
   const ship = useMutation({
     mutationFn: ({
@@ -293,7 +237,6 @@ export default function OrdersPage() {
         });
       }
       queryClient.invalidateQueries({ queryKey: ["orders"] });
-      queryClient.invalidateQueries({ queryKey: ["order-date-count"] });
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
       setSelected([]);
       setConfirmFulfill(false);
@@ -442,7 +385,15 @@ export default function OrdersPage() {
         title="Orders"
         description={
           shopifyReady
-            ? "Unfulfilled Shopify orders import automatically. Status changes send the matching Wati template and update Shopify fulfillment."
+            ? syncInFlight
+              ? syncJobStatus === "QUEUED"
+                ? "Shopify sync is queued. Orders below are from your workspace and will refresh as imports finish."
+                : "Shopify sync is running in the background. Orders below are from your workspace."
+              : shopify?.lastSyncAt
+                ? `Unfulfilled Shopify orders import in the background. Last synced ${formatDate(shopify.lastSyncAt, true)}.`
+                : shopify?.lastError || shopify?.syncJobError
+                  ? `Shopify sync last failed: ${shopify.lastError || shopify.syncJobError}`
+                  : "Unfulfilled Shopify orders import in the background. Status changes send the matching Wati template and update Shopify fulfillment."
             : "Filter, export, and ship the canonical order list."
         }
         actions={
@@ -451,11 +402,11 @@ export default function OrdersPage() {
               <Button
                 type="button"
                 variant="secondary"
-                disabled={syncShopify.isPending}
+                disabled={syncShopify.isPending || syncInFlight}
                 onClick={() => syncShopify.mutate()}
               >
-                <RefreshCw className={`size-4 ${syncShopify.isPending ? "animate-spin" : ""}`} />
-                {syncShopify.isPending ? "Syncing Shopify…" : "Sync Shopify"}
+                <RefreshCw className={`size-4 ${syncShopify.isPending || syncInFlight ? "animate-spin" : ""}`} />
+                {syncInFlight ? (syncJobStatus === "QUEUED" ? "Sync queued" : "Syncing…") : "Sync Shopify"}
               </Button>
             ) : null}
             <Button type="button" variant="secondary" onClick={exportCsv}>
@@ -473,6 +424,10 @@ export default function OrdersPage() {
                 Ship selected
               </Button>
             ) : null}
+            <BulkIndiaPostBooking
+              selectedIds={selected}
+              onQueued={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
+            />
             <Link href="/dashboard/orders/new" className={buttonVariants()}>
               <Plus className="size-4" />
               Add order
@@ -484,9 +439,9 @@ export default function OrdersPage() {
       <OrderDateFilter
         value={dateFilter}
         counts={{
-          all: allCount.data?.total,
-          today: todayCount.data?.total,
-          yesterday: yesterdayCount.data?.total,
+          all: dateCounts.all,
+          today: dateCounts.today,
+          yesterday: dateCounts.yesterday,
         }}
         onChange={(next) => {
           setDateFilter(next);
@@ -544,6 +499,10 @@ export default function OrdersPage() {
                 <Truck className="size-4" />
                 {bulkFulfill.isPending ? "Processing…" : "Fulfill · Booked / packed"}
               </Button>
+              <BulkIndiaPostBooking
+                selectedIds={selected}
+                onQueued={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
+              />
               <Button
                 type="button"
                 variant="secondary"
@@ -560,7 +519,7 @@ export default function OrdersPage() {
       <DataTable
         columns={columns}
         data={list.items}
-        loading={query.isLoading || (shopifyReady && syncShopify.isPending && list.total === 0)}
+        loading={query.isLoading}
         error={query.error instanceof Error ? query.error : null}
         emptyTitle={shopifyReady ? "No unfulfilled Shopify orders yet" : "No orders match these filters"}
         emptyDescription={

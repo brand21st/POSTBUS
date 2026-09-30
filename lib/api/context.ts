@@ -1,6 +1,7 @@
-import { createServerSupabase } from "@/lib/supabase/server";
+import { cache } from "react";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { hasPermission, permissionsFor } from "@/lib/permissions/rbac";
+import { getRequestAuthUser } from "@/lib/supabase/request-auth";
 import type { MemberRole, Permission } from "@/types/domain";
 
 export type TenantContext = {
@@ -13,11 +14,8 @@ export type TenantContext = {
   permissions: Permission[];
 };
 
-export async function requireTenant(permission?: Permission): Promise<TenantContext> {
-  const supabase = await createServerSupabase();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+const resolveRequestTenant = cache(async (): Promise<TenantContext> => {
+  const { supabase, user } = await getRequestAuthUser();
 
   if (!user) {
     throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
@@ -56,13 +54,6 @@ export async function requireTenant(permission?: Permission): Promise<TenantCont
   }
 
   const role = membership.role as MemberRole;
-  if (permission && !hasPermission(role, permission)) {
-    throw new AppError(
-      ERROR_CODES.FORBIDDEN,
-      "You do not have permission to perform this action."
-    );
-  }
-
   const organization = Array.isArray(membership.organizations)
     ? membership.organizations[0]
     : membership.organizations;
@@ -76,4 +67,15 @@ export async function requireTenant(permission?: Permission): Promise<TenantCont
     role,
     permissions: permissionsFor(role),
   };
+});
+
+export async function requireTenant(permission?: Permission): Promise<TenantContext> {
+  const ctx = await resolveRequestTenant();
+  if (permission && !hasPermission(ctx.role, permission)) {
+    throw new AppError(
+      ERROR_CODES.FORBIDDEN,
+      "You do not have permission to perform this action."
+    );
+  }
+  return ctx;
 }

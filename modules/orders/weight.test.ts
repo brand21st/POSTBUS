@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bookingBoxWeightGrams } from "@/modules/orders/weight";
+import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
 
 describe("bookingBoxWeightGrams", () => {
   it("uses the manual box weight for India Post", () => {
@@ -28,5 +28,8 @@ describe("bookingBoxWeightGrams", () => {
     expect(bookingBoxWeightGrams({ parcelWeightMode: "auto", lineItems: [{ quantity: 1, weight_grams: null }] })).toBe(
       100
     );
+    expect(
+      hasDeclaredBookingWeight({ parcelWeightMode: "auto", lineItems: [{ quantity: 1, weight_grams: null }] })
+    ).toBe(false);
   });
 });

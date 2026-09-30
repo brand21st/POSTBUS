@@ -30,6 +30,8 @@ export const env = {
   indiaPostProdBaseUrl:
     optional(process.env.INDIA_POST_PROD_BASE_URL) ||
     "https://app.indiapost.gov.in/beextcustomer",
+  indiaPostBookingBatchSize: optional(process.env.INDIA_POST_BOOKING_BATCH_SIZE) || "1",
+  indiaPostBookingConcurrency: optional(process.env.INDIA_POST_BOOKING_CONCURRENCY) || "4",
   razorpayKeyId: optional(process.env.RAZORPAY_KEY_ID),
   razorpayKeySecret: optional(process.env.RAZORPAY_KEY_SECRET),
   razorpayWebhookSecret: optional(process.env.RAZORPAY_WEBHOOK_SECRET),

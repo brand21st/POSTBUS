@@ -1,0 +1,589 @@
+export const BOOKING_ERROR_CATEGORIES = [
+  "SHOPIFY_DATA",
+  "POSTBUS_CONFIG",
+  "MAPPING",
+  "INDIA_POST_VALIDATION",
+  "INDIA_POST_API",
+  "BOOKING",
+  "LABEL",
+  "MANIFEST",
+  "NETWORK",
+  "AUTH",
+] as const;
+
+export type BookingErrorCategory = (typeof BOOKING_ERROR_CATEGORIES)[number];
+
+export type CeptFieldRequirement = "mandatory" | "optional" | "conditional_pickup" | "conditional_alt";
+
+export type CeptFieldSource =
+  | "Store Configuration"
+  | "Shipping Configuration"
+  | "Package Configuration"
+  | "Shopify Order"
+  | "Excel Input"
+  | "System Generated"
+  | "India Post API derived"
+  | "Optional";
+
+export type CeptBookingField = {
+  name: string;
+  required: CeptFieldRequirement;
+  source: CeptFieldSource;
+  transformation: string;
+  validation: string;
+};
+
+/** Exact CEPT process-articles field names from the India Post approach document. */
+export const CEPT_BOOKING_FIELDS: CeptBookingField[] = [
+  {
+    name: "bulk_customer_id",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "india_post_connections.bulk_customer_id as 10-digit string",
+    validation: "Number, length 10",
+  },
+  {
+    name: "contract_id",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "india_post_contracts.contract_id for selected service; never from Shopify/UI",
+    validation: "Number, length 8",
+  },
+  {
+    name: "barcode_no",
+    required: "mandatory",
+    source: "System Generated",
+    transformation: "S10 from barcode_ranges, or Excel BARCODE NO after uniqueness + check-digit checks",
+    validation: "13 characters, S10",
+  },
+  {
+    name: "pickup_or_dropoff",
+    required: "mandatory",
+    source: "Shipping Configuration",
+    transformation: "DROPOFF unless pickup is explicitly enabled; Excel PICKUP ADDRESS FLAG",
+    validation: "PICKUP or DROPOFF",
+  },
+  {
+    name: "pickup_dropoff_office_id",
+    required: "mandatory",
+    source: "India Post API derived",
+    transformation: "Saved office id resolved via pincode-search; never invented",
+    validation: "8-digit number; delivery_office_flag true; office_type_code not BPO",
+  },
+  {
+    name: "article_type",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "Postbus service → CEPT article_type (SP / BP / configured NDD code)",
+    validation: "Documented product codes only",
+  },
+  {
+    name: "physical_weight",
+    required: "mandatory",
+    source: "Package Configuration",
+    transformation: "Shopify/Postbus grams rounded to a whole number; Excel PHYSICAL WEIGHT",
+    validation: "Whole number 1–35000 grams",
+  },
+  {
+    name: "shape_of_article",
+    required: "mandatory",
+    source: "Package Configuration",
+    transformation: "Excel SHAPE OF ARTICLE or derived from service/weight (DOC / NROL / ROLL)",
+    validation: "ROLL, NROL, or DOC",
+  },
+  {
+    name: "length",
+    required: "mandatory",
+    source: "Package Configuration",
+    transformation: "Shipment/Excel cm; 0 only when the article is not a parcel",
+    validation: "Numeric cm; article-type min/max from tariff tables",
+  },
+  {
+    name: "breadth_diameter",
+    required: "mandatory",
+    source: "Package Configuration",
+    transformation: "Shipment width_cm or Excel BREADTH/DIAMETER",
+    validation: "Numeric cm; article-type min/max from tariff tables",
+  },
+  {
+    name: "height",
+    required: "mandatory",
+    source: "Package Configuration",
+    transformation: "Shipment height_cm or Excel HEIGHT",
+    validation: "Numeric cm; article-type min/max from tariff tables",
+  },
+  {
+    name: "priority_flag",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel PRIORITY FLAG or empty",
+    validation: "TRUE or FALSE",
+  },
+  {
+    name: "delivery_instruction",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel DELIVERY INSTRUCTION",
+    validation: "ND, OD, or SD",
+  },
+  {
+    name: "delivery_slot",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel if present; otherwise empty",
+    validation: "9am-2pm, 2pm-5pm, or 5pm-8pm",
+  },
+  {
+    name: "instruction_rts",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel INSTRUCTION RTS",
+    validation: "RTS or RTA",
+  },
+  {
+    name: "sender_name",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "Organization / pickup identity; never Shopify customer",
+    validation: "3–80 characters",
+  },
+  {
+    name: "sender_company",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "Organization name",
+    validation: "3–80 characters",
+  },
+  {
+    name: "sender_add_line_1",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "Organization or pickup line1, trimmed",
+    validation: "3–80 characters",
+  },
+  {
+    name: "sender_add_line_2",
+    required: "optional",
+    source: "Store Configuration",
+    transformation: "Organization or pickup line2 if length ≥ 3",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "sender_city",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "Organization or pickup city",
+    validation: "3–80 characters",
+  },
+  {
+    name: "sender_state",
+    required: "optional",
+    source: "Store Configuration",
+    transformation: "Organization or pickup state",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "sender_pincode",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "Origin office / pickup pincode",
+    validation: "Exactly 6 digits",
+  },
+  {
+    name: "sender_emailid",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless configured",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "sender_alt_contact",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless configured",
+    validation: "10 digits when present",
+  },
+  {
+    name: "sender_kyc",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless configured",
+    validation: "Max 20 characters",
+  },
+  {
+    name: "sender_tax_reference",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless configured",
+    validation: "Max 20 characters",
+  },
+  {
+    name: "receiver_name",
+    required: "mandatory",
+    source: "Shopify Order",
+    transformation: "Shipping address name, trimmed; Excel RECEIVER NAME",
+    validation: "3–80 characters",
+  },
+  {
+    name: "receiver_company",
+    required: "mandatory",
+    source: "Shopify Order",
+    transformation: "Shipping company if present; otherwise receiver_name (CEPT requires 3–80)",
+    validation: "3–80 characters",
+  },
+  {
+    name: "receiver_add_line_1",
+    required: "mandatory",
+    source: "Shopify Order",
+    transformation: "Shipping line1, trimmed",
+    validation: "3–80 characters",
+  },
+  {
+    name: "receiver_add_line_2",
+    required: "optional",
+    source: "Shopify Order",
+    transformation: "Shipping line2 if length ≥ 3",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "receiver_city",
+    required: "mandatory",
+    source: "Shopify Order",
+    transformation: "Shipping city, trimmed",
+    validation: "3–80 characters",
+  },
+  {
+    name: "receiver_state",
+    required: "optional",
+    source: "Shopify Order",
+    transformation: "Shipping state, trimmed",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "receiver_pincode",
+    required: "mandatory",
+    source: "Shopify Order",
+    transformation: "Shipping pincode, trimmed; no pad/truncate at booking",
+    validation: "Exactly 6 digits",
+  },
+  {
+    name: "receiver_emailid",
+    required: "optional",
+    source: "Optional",
+    transformation: "Customer email if present",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "receiver_alt_contact",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless provided",
+    validation: "10 digits when present",
+  },
+  {
+    name: "receiver_kyc",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless provided",
+    validation: "Max 20 characters",
+  },
+  {
+    name: "receiver_tax_reference",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless provided",
+    validation: "Max 20 characters",
+  },
+  {
+    name: "alt_address_flag",
+    required: "mandatory",
+    source: "Shipping Configuration",
+    transformation: "TRUE only when alternate address is enabled and complete",
+    validation: "TRUE or FALSE",
+  },
+  {
+    name: "pickup_address_flag",
+    required: "mandatory",
+    source: "Shipping Configuration",
+    transformation: "TRUE for PICKUP, FALSE for DROPOFF",
+    validation: "TRUE or FALSE",
+  },
+  {
+    name: "drop_off_pincode",
+    required: "optional",
+    source: "India Post API derived",
+    transformation: "Origin office pincode, not destination",
+    validation: "Exactly 6 digits when DROPOFF",
+  },
+  {
+    name: "sender_mobile_no",
+    required: "mandatory",
+    source: "Store Configuration",
+    transformation: "Org/pickup Indian mobile; never receiver mobile",
+    validation: "10 digits starting 6–9",
+  },
+  {
+    name: "receiver_mobile_no",
+    required: "mandatory",
+    source: "Shopify Order",
+    transformation: "Shipping/customer phone last 10 digits",
+    validation: "10 digits starting 6–9",
+  },
+  {
+    name: "prepayment_code",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless configured QR or SQ",
+    validation: "QR or SQ",
+  },
+  {
+    name: "value_of_prepayment",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty/0 unless prepayment is configured",
+    validation: "Numeric(10,2)",
+  },
+  {
+    name: "codr_cod",
+    required: "optional",
+    source: "Shopify Order",
+    transformation: "COD when shipment payment_mode is COD; else blank (not unpaid=COD)",
+    validation: "Blank, COD, or CODR",
+  },
+  {
+    name: "value_for_codr_cod",
+    required: "optional",
+    source: "Shopify Order",
+    transformation: "Collectable amount when COD; else blank",
+    validation: "Numeric(10,2) when COD",
+  },
+  {
+    name: "insurance_type",
+    required: "optional",
+    source: "Optional",
+    transformation: "DOP only when insurance is selected; otherwise empty",
+    validation: "DOP or empty",
+  },
+  {
+    name: "value_of_insurance",
+    required: "optional",
+    source: "Optional",
+    transformation: "Declared value only when insurance_type is DOP",
+    validation: "Numeric(10,2)",
+  },
+  {
+    name: "ack",
+    required: "optional",
+    source: "Optional",
+    transformation: "TRUE/FALSE from Excel ACK; otherwise FALSE",
+    validation: "TRUE or FALSE",
+  },
+  {
+    name: "reg",
+    required: "optional",
+    source: "Optional",
+    transformation: "TRUE/FALSE from Excel REGISTRATION; otherwise FALSE",
+    validation: "TRUE or FALSE",
+  },
+  {
+    name: "otp",
+    required: "optional",
+    source: "Optional",
+    transformation: "Always FALSE — OTP is not used",
+    validation: "TRUE or FALSE; Postbus sends FALSE",
+  },
+  {
+    name: "bulk_reference",
+    required: "optional",
+    source: "System Generated",
+    transformation: "Excel BULK REFERENCE or Postbus batch id, max 24",
+    validation: "Max 24 characters",
+  },
+  {
+    name: "pickup_address_id",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless CEPT pickup address id is stored",
+    validation: "Number 8 when present",
+  },
+  {
+    name: "pickup_addressee_name",
+    required: "conditional_pickup",
+    source: "Shipping Configuration",
+    transformation: "Pickup location contact when pickup_address_flag is TRUE",
+    validation: "3–80 characters when pickup",
+  },
+  {
+    name: "pickup_company_name",
+    required: "conditional_pickup",
+    source: "Shipping Configuration",
+    transformation: "Pickup/org name when pickup",
+    validation: "3–80 characters when pickup",
+  },
+  {
+    name: "pickup_address_line1",
+    required: "conditional_pickup",
+    source: "Shipping Configuration",
+    transformation: "Pickup line1 when pickup",
+    validation: "3–80 characters when pickup",
+  },
+  {
+    name: "pickup_address_line2",
+    required: "optional",
+    source: "Shipping Configuration",
+    transformation: "Pickup line2 when length ≥ 3",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "pickup_address_line3",
+    required: "optional",
+    source: "Shipping Configuration",
+    transformation: "Empty unless provided",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "pickup_city",
+    required: "conditional_pickup",
+    source: "Shipping Configuration",
+    transformation: "Pickup city when pickup",
+    validation: "3–80 characters when pickup",
+  },
+  {
+    name: "pickup_state",
+    required: "optional",
+    source: "Shipping Configuration",
+    transformation: "Pickup state",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "pickup_pincode",
+    required: "conditional_pickup",
+    source: "Shipping Configuration",
+    transformation: "Pickup pincode when pickup",
+    validation: "Exactly 6 digits when pickup",
+  },
+  {
+    name: "pickup_email_id",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless provided",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "pickup_alt_contact_no",
+    required: "optional",
+    source: "Optional",
+    transformation: "Empty unless provided",
+    validation: "10 digits when present",
+  },
+  {
+    name: "pickup_mobile_no",
+    required: "conditional_pickup",
+    source: "Shipping Configuration",
+    transformation: "Pickup mobile when pickup",
+    validation: "10 digits when pickup",
+  },
+  {
+    name: "pickup_schedule_slot",
+    required: "conditional_pickup",
+    source: "Shipping Configuration",
+    transformation: "Excel or configured slot",
+    validation: "10:00-13:00 or 13:00-16:00 when pickup",
+  },
+  {
+    name: "pickup_schedule_date",
+    required: "conditional_pickup",
+    source: "Shipping Configuration",
+    transformation: "Excel date or configured datetime",
+    validation: "MM/DD/YYYY HH:MM:SS AM/PM when pickup",
+  },
+  {
+    name: "alt_addressee_name",
+    required: "conditional_alt",
+    source: "Optional",
+    transformation: "Excel AltAddress when alt_address_flag is TRUE",
+    validation: "3–80 characters when alt",
+  },
+  {
+    name: "alt_company_name",
+    required: "conditional_alt",
+    source: "Optional",
+    transformation: "Excel AltAddress company when alt",
+    validation: "3–80 characters when alt",
+  },
+  {
+    name: "alt_address_line1",
+    required: "conditional_alt",
+    source: "Optional",
+    transformation: "Excel AltAddress line1 when alt",
+    validation: "3–80 characters when alt",
+  },
+  {
+    name: "alt_address_line2",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel AltAddress line2",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "alt_address_line3",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel AltAddress line3",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "alt_city",
+    required: "conditional_alt",
+    source: "Optional",
+    transformation: "Excel AltAddress city when alt",
+    validation: "3–80 characters when alt",
+  },
+  {
+    name: "alt_state",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel AltAddress state",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "alt_pincode",
+    required: "conditional_alt",
+    source: "Optional",
+    transformation: "Excel AltAddress pincode when alt",
+    validation: "Exactly 6 digits when alt",
+  },
+  {
+    name: "alt_email_id",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel AltAddress email",
+    validation: "3–80 characters when present",
+  },
+  {
+    name: "alt_contact_no",
+    required: "optional",
+    source: "Optional",
+    transformation: "Excel AltAddress alt contact",
+    validation: "10 digits when present",
+  },
+  {
+    name: "alt_alternate_mobile_no",
+    required: "conditional_alt",
+    source: "Optional",
+    transformation: "Excel AltAddress mobile when alt",
+    validation: "10 digits when alt",
+  },
+];
+
+export const CEPT_BOOKING_FIELD_NAMES = CEPT_BOOKING_FIELDS.map((field) => field.name);
+
+export function mappingTableMarkdown() {
+  const header = "| India Post Field | Postbus Source | Transformation | Required | Validation |";
+  const divider = "|------------------|----------------|----------------|----------|------------|";
+  const rows = CEPT_BOOKING_FIELDS.map(
+    (field) =>
+      `| ${field.name} | ${field.source} | ${field.transformation} | ${field.required} | ${field.validation} |`
+  );
+  return [header, divider, ...rows].join("\n");
+}

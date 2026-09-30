@@ -4,6 +4,7 @@ import {
   indiaPostPincodeSearchApiUrl,
   indiaPostBookingArticle,
   indiaPostBookingArticleType,
+  indiaPostBookingFileUrl,
   indiaPostBookingUrl,
   indiaPostDomesticLabelPayload,
   indiaPostMobile,
@@ -62,6 +63,9 @@ describe("production login and booking URLs", () => {
   it("keeps UAT booking on the documented no-/v1 route", () => {
     expect(indiaPostBookingUrl("UAT", "3000064781")).toBe(
       "https://test.cept.gov.in/beextcustomer/process-articles/3000064781"
+    );
+    expect(indiaPostBookingFileUrl("UAT", "3000064781")).toBe(
+      "https://test.cept.gov.in/beextcustomer/process-articles-file/3000064781"
     );
     expect(indiaPostSessionUrl("UAT", "/access/login")).toBe(
       "https://test.cept.gov.in/beextcustomer/v1/access/login"

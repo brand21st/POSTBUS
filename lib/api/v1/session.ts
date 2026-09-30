@@ -8,6 +8,7 @@ import {
 } from "@/modules/organizations/service";
 import { getOrganizationEntitlements } from "@/modules/billing/entitlements";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getRequestAuthUser } from "@/lib/supabase/request-auth";
 
 export async function handleSessionRoutes(
   request: NextRequest,
@@ -15,9 +16,8 @@ export async function handleSessionRoutes(
   key: string
 ) {
   if (key === "GET me") {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const auth = await getRequestAuthUser();
+    const user = auth.user;
     if (!user) throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
     const { data: profile } = await supabase
       .from("profiles")
@@ -58,9 +58,7 @@ export async function handleSessionRoutes(
   }
 
   if (key === "POST organizations") {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { user } = await getRequestAuthUser();
     if (!user) throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
     const existing = await listMemberships(supabase, user.id);
     if (existing[0]) {

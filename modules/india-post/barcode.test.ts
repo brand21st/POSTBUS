@@ -7,6 +7,7 @@ import {
   indiaPostPublicTrackingUrl,
   isCeptUatTestSeries,
   parseBarcodeRange,
+  isValidIndiaPostS10,
 } from "@/modules/india-post/barcode";
 
 describe("formatBarcode", () => {
@@ -22,6 +23,8 @@ describe("formatBarcode", () => {
 
   it("matches the live Kolenchery Business Parcel article", () => {
     expect(formatBarcode("CL", 55697399, "IN")).toBe("CL556973995IN");
+    expect(isValidIndiaPostS10("CL556973995IN")).toBe(true);
+    expect(isValidIndiaPostS10("CL556973990IN")).toBe(false);
   });
 });
 

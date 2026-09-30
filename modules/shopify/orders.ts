@@ -12,6 +12,7 @@ import { customerTrackingLink } from "@/modules/tracking-pages/host";
 import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { logError } from "@/lib/logger";
 import { settleOrderPayment } from "@/modules/orders/payment";
+import { fetchWithShopifyTimeout, shopifyHttpError } from "@/modules/shopify/http";
 import type { FulfillmentStatus, PaymentStatus } from "@/types/domain";
 
 export const SHOPIFY_API_VERSION = "2025-01";
@@ -120,6 +121,7 @@ export type ShopifySyncResult = {
   skipped: number;
   hasMore: boolean;
   connected: boolean;
+  nextPageInfo?: string | null;
 };
 
 export function shopifyReadyToSync(row?: ShopifyConnectionRow | null) {
@@ -505,7 +507,7 @@ async function shopifyRequest(shop: string, token: string, path: string, init?: 
   const url = path.startsWith("http")
     ? path
     : `https://${normalizeShopDomain(shop)}/admin/api/${SHOPIFY_API_VERSION}${path}`;
-  const response = await fetch(url, {
+  return fetchWithShopifyTimeout(url, {
     ...init,
     headers: {
       "X-Shopify-Access-Token": token,
@@ -513,7 +515,6 @@ async function shopifyRequest(shop: string, token: string, path: string, init?: 
       ...(init?.headers ?? {}),
     },
   });
-  return response;
 }
 
 async function shopifyGraphql<T>(
@@ -522,7 +523,7 @@ async function shopifyGraphql<T>(
   query: string,
   variables: Record<string, unknown>
 ) {
-  const response = await fetch(
+  const response = await fetchWithShopifyTimeout(
     `https://${normalizeShopDomain(shop)}/admin/api/${SHOPIFY_GRAPHQL_API_VERSION}/graphql.json`,
     {
       method: "POST",
@@ -552,7 +553,7 @@ export async function resolveShopifyAdminToken(row?: ShopifyConnectionRow | null
   const creds = resolveShopifyAppCredentials(row);
   const shop = row?.shop_domain;
   if (!creds || !shop) return null;
-  const response = await fetch(`https://${normalizeShopDomain(shop)}/admin/oauth/access_token`, {
+  const response = await fetchWithShopifyTimeout(`https://${normalizeShopDomain(shop)}/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -1502,7 +1503,7 @@ export async function fetchUnfulfilledShopifyOrders(shop: string, token: string,
   }
   const response = await shopifyRequest(shop, token, url.toString());
   if (!response.ok) {
-    throw new Error(`Shopify orders fetch failed (${response.status}).`);
+    throw shopifyHttpError(`Shopify orders fetch failed (${response.status}).`, response.status);
   }
   const json = (await response.json()) as { orders?: ShopifyRemoteOrder[] };
   return {
@@ -1513,11 +1514,11 @@ export async function fetchUnfulfilledShopifyOrders(shop: string, token: string,
 
 export async function syncUnfulfilledShopifyOrders(
   supabase: SupabaseClient,
-  input: { organizationId: string; userId?: string; maxPages?: number }
+  input: { organizationId: string; userId?: string; maxPages?: number; pageInfo?: string | null }
 ): Promise<ShopifySyncResult> {
   const connection = await loadShopifyConnection(supabase, input.organizationId);
   if (!shopifyReadyToSync(connection)) {
-    return { imported: 0, updated: 0, skipped: 0, hasMore: false, connected: false };
+    return { imported: 0, updated: 0, skipped: 0, hasMore: false, connected: false, nextPageInfo: null };
   }
   const token = await resolveShopifyAdminToken(connection);
   if (!token || !connection?.shop_domain) {
@@ -1527,14 +1528,14 @@ export async function syncUnfulfilledShopifyOrders(
         .update({ last_error: "Could not authenticate with Shopify. Check Client ID and secret." })
         .eq("id", connection.id);
     }
-    return { imported: 0, updated: 0, skipped: 0, hasMore: false, connected: false };
+    return { imported: 0, updated: 0, skipped: 0, hasMore: false, connected: false, nextPageInfo: null };
   }
 
   await markShopifyConnected(supabase, connection);
   try {
     await registerShopifyOrderWebhooks(connection.shop_domain, token);
   } catch {
-    // Polling on /dashboard/orders still imports when webhook registration is blocked.
+    // Webhooks still import when registration is blocked; background sync covers the rest.
   }
 
   const automation = await shopifyOrderAutomation(supabase, input.organizationId);
@@ -1545,27 +1546,38 @@ export async function syncUnfulfilledShopifyOrders(
     skipped: 0,
     hasMore: false,
     connected: true,
+    nextPageInfo: null,
   };
-  let pageInfo: string | null = null;
+  let pageInfo: string | null = input.pageInfo ?? null;
   const maxPages = input.maxPages ?? 20;
   for (let page = 0; page < maxPages; page += 1) {
-    const batch = await fetchUnfulfilledShopifyOrders(connection.shop_domain, token, pageInfo);
-    for (const remote of batch.orders) {
-      const upserted = await upsertShopifyOrder(supabase, {
-        organizationId: input.organizationId,
-        userId: input.userId,
-        shopDomain: connection.shop_domain,
-        remote,
-        createShipment: automation.createShipment,
-        enqueueBooking: automation.enqueueBooking,
-      });
-      if (upserted.imported) result.imported += 1;
-      else if (upserted.updated) result.updated += 1;
-      else result.skipped += 1;
+    try {
+      const batch = await fetchUnfulfilledShopifyOrders(connection.shop_domain, token, pageInfo);
+      for (const remote of batch.orders) {
+        const upserted = await upsertShopifyOrder(supabase, {
+          organizationId: input.organizationId,
+          userId: input.userId,
+          shopDomain: connection.shop_domain,
+          remote,
+          createShipment: automation.createShipment,
+          enqueueBooking: automation.enqueueBooking,
+        });
+        if (upserted.imported) result.imported += 1;
+        else if (upserted.updated) result.updated += 1;
+        else result.skipped += 1;
+      }
+      pageInfo = batch.nextPage;
+      result.nextPageInfo = pageInfo;
+      if (!pageInfo) break;
+      if (page === maxPages - 1) result.hasMore = true;
+    } catch (error) {
+      const httpError = error as ReturnType<typeof shopifyHttpError>;
+      httpError.shopifyPageInfo = pageInfo;
+      httpError.imported = result.imported;
+      httpError.updated = result.updated;
+      httpError.skipped = result.skipped;
+      throw httpError;
     }
-    pageInfo = batch.nextPage;
-    if (!pageInfo) break;
-    if (page === maxPages - 1) result.hasMore = true;
   }
 
   if (connection.id) {

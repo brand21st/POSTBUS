@@ -12,6 +12,7 @@ type ClaimedJob = {
   entity_id: string | null;
   created_by: string | null;
   attempt_count: number;
+  progress?: { shipmentIds?: string[] } | null;
 };
 
 export type DrainResult = {
@@ -52,6 +53,7 @@ export async function drainDueJobs(limit = DEFAULT_DRAIN_LIMIT): Promise<DrainRe
         jobId: job.id,
         entityType: job.entity_type ?? undefined,
         entityId: job.entity_id ?? undefined,
+        shipmentIds: job.progress?.shipmentIds,
         userId: job.created_by ?? undefined,
       });
       result.succeeded += 1;

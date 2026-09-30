@@ -11,6 +11,7 @@ export async function createBackgroundJob(
     jobType: JobType;
     entityType?: string;
     entityId?: string;
+    shipmentIds?: string[];
     userId?: string;
     progress?: Record<string, unknown>;
   }
@@ -24,7 +25,7 @@ export async function createBackgroundJob(
       entity_id: input.entityId ?? null,
       status: "QUEUED",
       created_by: input.userId ?? null,
-      progress: input.progress ?? {},
+      progress: input.progress ?? (input.shipmentIds ? { shipmentIds: input.shipmentIds } : {}),
     })
     .select()
     .single();
@@ -45,6 +46,7 @@ export async function createBackgroundJob(
       jobId: data.id,
       entityType: input.entityType,
       entityId: input.entityId,
+      shipmentIds: input.shipmentIds,
       userId: input.userId,
     });
   } catch (queueError) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  parcelServiceCode,
   resolveOrderBookingService,
   shipmentServiceLocked,
 } from "@/modules/india-post/booking-service";
@@ -26,6 +27,7 @@ describe("resolveOrderBookingService", () => {
   });
 
   it("uses the India Post default when the top bar is Default", () => {
+    expect(parcelServiceCode(null)).toBeNull();
     expect(
       resolveOrderBookingService({
         orderService: null,
@@ -33,6 +35,16 @@ describe("resolveOrderBookingService", () => {
         defaultService: "BUSINESS_PARCEL",
       })
     ).toBe("BUSINESS_PARCEL");
+  });
+
+  it("keeps an SP/BP override even when the default contract is the other service", () => {
+    expect(
+      resolveOrderBookingService({
+        orderService: null,
+        workspaceOverride: "SP_INLAND_PARCEL",
+        defaultService: "BUSINESS_PARCEL",
+      })
+    ).toBe("SP_INLAND_PARCEL");
   });
 
   it("ignores Speed Post document and falls back to Speed Post parcel", () => {

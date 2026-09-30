@@ -49,11 +49,18 @@ export type MeResponse = {
   subscription?: MeSubscription | null;
 };
 
+export type OrderListCounts = {
+  all: number;
+  today: number;
+  yesterday: number;
+};
+
 export type Paginated<T> = {
   items: T[];
   page: number;
   pageSize: number;
   total: number;
+  counts?: OrderListCounts;
 };
 
 export type KpiMetric = {
@@ -203,6 +210,39 @@ export type BulkOrderStatusResult = {
   updated: Array<{ id: string; orderNumber: string }>;
   skipped: Array<{ id: string; orderNumber?: string; reason: string }>;
   failed: Array<{ id: string; reason: string }>;
+};
+
+export type BulkBookingIssue = {
+  orderId?: string;
+  orderNumber?: string;
+  barcode?: string;
+  field: string;
+  value: string;
+  error: string;
+  status: "Failed";
+  category: string;
+};
+
+export type BulkBookingResult = {
+  total: number;
+  valid: number;
+  invalid: number;
+  queued: number;
+  processing: number;
+  booked: number;
+  failed: number;
+  labelsGenerated: number;
+  manifestEligible: number;
+  rows: Array<{
+    orderId?: string;
+    orderNumber?: string;
+    shipmentId?: string;
+    barcode?: string;
+    valid: boolean;
+    issues: BulkBookingIssue[];
+    status: string;
+  }>;
+  issues: BulkBookingIssue[];
 };
 
 export type ShipmentRecord = {
@@ -516,6 +556,8 @@ export type IntegrationCard = {
   last_sync_at?: string | null;
   lastError?: string | null;
   last_error?: string | null;
+  syncJobStatus?: string | null;
+  syncJobError?: string | null;
   comingLater?: boolean;
   coming_later?: boolean;
   appConfigured?: boolean;

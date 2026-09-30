@@ -34,6 +34,7 @@ export type JobPayload = {
   jobId: string;
   entityType?: string;
   entityId?: string;
+  shipmentIds?: string[];
   userId?: string;
 };
 

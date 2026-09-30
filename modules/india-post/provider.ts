@@ -1,6 +1,6 @@
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { decryptSecret } from "@/lib/security/crypto";
-import { indiaPostBookingUrl, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
+import { indiaPostBookingFileUrl, indiaPostBookingUrl, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
 import type { ProviderEnvironment } from "@/types/domain";
 
 export type ShippingProvider = {
@@ -138,6 +138,22 @@ export class IndiaPostProvider implements ShippingProvider {
     );
   }
 
+  async ensureSession() {
+    if (
+      this.connection.encrypted_access_token &&
+      this.connection.expires_at &&
+      new Date(this.connection.expires_at).getTime() - Date.now() > 60_000
+    ) {
+      return {
+        reused: true as const,
+        access_token: decryptSecret(this.connection.encrypted_access_token),
+        tokens: null,
+      };
+    }
+    const tokens = await this.login();
+    return { reused: false as const, access_token: tokens.access_token, tokens };
+  }
+
   async bookShipment(input: Record<string, unknown>) {
     this.assertConnected();
     const token = await this.token();
@@ -152,6 +168,32 @@ export class IndiaPostProvider implements ShippingProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ articles: input.articles }),
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok || json.success === false) {
+      const fieldError = Array.isArray(json.errors) ? json.errors[0]?.msg : null;
+      const error = new Error(fieldError || json.message || "India Post booking failed.");
+      (error as { status?: number }).status = response.status;
+      (error as { details?: unknown }).details = json;
+      throw error;
+    }
+    return json;
+  }
+
+  async bookShipmentFile(articles: unknown[]) {
+    this.assertConnected();
+    const token = await this.token();
+    const customId = this.connection.bulk_customer_id;
+    if (!customId) {
+      throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post customer ID is missing.");
+    }
+    const file = new File([JSON.stringify({ articles })], "articles.json", { type: "application/json" });
+    const body = new FormData();
+    body.append("file", file);
+    const response = await fetch(indiaPostBookingFileUrl(this.environment(), customId), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body,
     });
     const json = await response.json().catch(() => ({}));
     if (!response.ok || json.success === false) {
