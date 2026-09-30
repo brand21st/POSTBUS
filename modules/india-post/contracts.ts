@@ -211,6 +211,35 @@ export async function saveParcelContract(
   return listContracts(supabase, organizationId);
 }
 
+export async function syncPageContracts(
+  supabase: SupabaseClient,
+  organizationId: string,
+  contracts: ContractInput[]
+) {
+  for (const service of INDIA_POST_SERVICES) {
+    const row = contracts.find((contract) => contract.serviceCode === service.code);
+    await saveParcelContract(supabase, organizationId, service.code, row?.contractId ?? "");
+  }
+  const remaining = await listContracts(supabase, organizationId);
+  const requestedDefault = contracts.find((contract) => contract.isDefault)?.serviceCode;
+  const defaultService = remaining.some((contract) => contract.serviceCode === requestedDefault)
+    ? requestedDefault
+    : remaining.find((contract) => contract.isDefault)?.serviceCode ?? remaining[0]?.serviceCode;
+  if (defaultService && remaining.length) {
+    return saveContracts(
+      supabase,
+      organizationId,
+      remaining.map((contract) => ({
+        serviceCode: contract.serviceCode,
+        contractId: contract.contractId,
+        isDefault: contract.serviceCode === defaultService,
+        isActive: contract.isActive,
+      }))
+    );
+  }
+  return remaining;
+}
+
 export async function saveContracts(
   supabase: SupabaseClient,
   organizationId: string,

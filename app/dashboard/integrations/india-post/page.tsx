@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { IndiaPostLogo } from "@/components/brand/india-post-logo";
@@ -23,8 +23,9 @@ import { barcodeStockForService, barcodesLeft } from "@/modules/india-post/barco
 import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { cn } from "@/lib/utils";
-import { Copy } from "lucide-react";
+import { Copy, Eye, EyeOff } from "lucide-react";
 import { IndiaPostOfficeFinder } from "@/components/integrations/india-post-office-finder";
+import { notifyIndiaPostSaved } from "@/components/integrations/india-post-saved-toast";
 import {
   DEFAULT_INDIA_POST_SERVICE,
   DEFAULT_PROVIDER_ENVIRONMENT,
@@ -126,6 +127,38 @@ export default function IndiaPostPage() {
   const savedOfficeId = String(
     config?.pickupDropoffOfficeId ?? config?.pickup_dropoff_office_id ?? ""
   );
+  const savedOfficeName = String(
+    config?.pickupDropoffOfficeName ?? config?.pickup_dropoff_office_name ?? ""
+  );
+
+  const dirty = useMemo(() => {
+    if (!config) return false;
+    const savedCustomer = String(config.bulkCustomerId ?? config.bulk_customer_id ?? "");
+    const savedRange = config.barcodeRange?.serviceCode ?? ANY_SERVICE;
+    const savedPrefix = String(config.barcodeRange?.prefix ?? "");
+    const savedSuffix = String(config.barcodeRange?.suffix ?? "IN");
+    const savedStart = config.barcodeRange?.startNumber != null ? String(config.barcodeRange.startNumber) : "";
+    const savedEnd = config.barcodeRange?.endNumber != null ? String(config.barcodeRange.endNumber) : "";
+    const savedDefault = config.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
+    if (form.environment !== (config.environment ?? DEFAULT_PROVIDER_ENVIRONMENT)) return true;
+    if (form.customerId !== savedCustomer) return true;
+    if (replaceSecrets || form.password.trim()) return true;
+    if (form.pickupDropoffOfficeId !== savedOfficeId) return true;
+    if (form.pickupDropoffOfficeName !== savedOfficeName) return true;
+    if (form.rangeServiceCode !== savedRange && !(savedRange === ANY_SERVICE && form.rangeServiceCode === ANY_SERVICE)) {
+      return true;
+    }
+    if (form.prefix !== savedPrefix) return true;
+    if (form.suffix !== savedSuffix) return true;
+    if (form.startNumber !== savedStart) return true;
+    if (form.endNumber !== savedEnd) return true;
+    if (form.defaultServiceCode !== savedDefault) return true;
+    return INDIA_POST_SERVICES.some((service) => {
+      const current = form.contracts.find((item) => item.serviceCode === service.code)?.contractId ?? "";
+      const saved = config.contracts?.find((item) => item.serviceCode === service.code)?.contractId ?? "";
+      return current !== saved;
+    });
+  }, [config, form, replaceSecrets, savedOfficeId, savedOfficeName]);
 
   const saveOffice = useMutation({
     mutationFn: ({ officeId, officeName }: { officeId: string; officeName?: string | null }) =>
@@ -194,36 +227,27 @@ export default function IndiaPostPage() {
   const save = useMutation({
     mutationFn: (snapshot: FormState) => {
       const customerId = snapshot.customerId.trim();
-      const snapshotContracts = snapshot.contracts.filter(
-        (contract) =>
-          contract.contractId.trim() &&
-          INDIA_POST_SERVICES.some((service) => service.code === contract.serviceCode)
-      );
       if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
         throw new Error("Live booking is not ready yet. Keep Test selected.");
       }
-      if (!customerId && !hasSecrets) {
-        throw new Error("Enter your India Post customer ID.");
-      }
-      if (!hasSecrets && !snapshot.password.trim()) {
-        throw new Error("Enter your India Post password.");
-      }
-      return api<IndiaPostConfig>("/api/v1/integrations/india-post", {
+      return api<{ saved: boolean; status: string }>("/api/v1/integrations/india-post", {
         method: "POST",
         body: JSON.stringify({
+          connect: false,
           environment: snapshot.environment,
           username: replaceSecrets || !hasSecrets ? customerId || undefined : undefined,
-          password: replaceSecrets || !hasSecrets ? snapshot.password || undefined : undefined,
+          password: replaceSecrets || (!hasSecrets && snapshot.password.trim()) ? snapshot.password || undefined : undefined,
           bulkCustomerId: customerId || undefined,
           pickupDropoffOfficeId: snapshot.pickupDropoffOfficeId.trim() || undefined,
           pickupDropoffOfficeName: snapshot.pickupDropoffOfficeName.trim() || undefined,
-          contracts: snapshotContracts.length
-            ? snapshotContracts.map((contract) => ({
-                serviceCode: contract.serviceCode,
-                contractId: contract.contractId.trim(),
-                isDefault: contract.serviceCode === snapshot.defaultServiceCode,
-              }))
-            : undefined,
+          contracts: INDIA_POST_SERVICES.map((service) => {
+            const row = snapshot.contracts.find((item) => item.serviceCode === service.code);
+            return {
+              serviceCode: service.code,
+              contractId: row?.contractId.trim() ?? "",
+              isDefault: snapshot.defaultServiceCode === service.code,
+            };
+          }),
           barcodeRange: snapshot.prefix.trim()
             ? {
                 prefix: snapshot.prefix.trim(),
@@ -238,7 +262,7 @@ export default function IndiaPostPage() {
       });
     },
     onSuccess: () => {
-      toast.success("India Post connected. Status is Connected.");
+      notifyIndiaPostSaved();
       setForm((current) => ({ ...current, password: "" }));
       setReplaceSecrets(false);
       queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
@@ -432,7 +456,19 @@ export default function IndiaPostPage() {
       <PageHeader
         title={<IndiaPostLogo className="h-12 max-w-[12rem]" />}
         description="Sign in with your India Post customer ID and password, then add your post office and barcode series."
-        actions={<StatusBadge value={config?.status ?? "NOT_CONNECTED"} />}
+        actions={
+          <div className="flex items-center gap-2">
+            <StatusBadge value={config?.status ?? "NOT_CONNECTED"} />
+            <Button
+              type="button"
+              variant={dirty ? "primary" : "secondary"}
+              disabled={!dirty || save.isPending}
+              onClick={() => save.mutate(form)}
+            >
+              {save.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        }
       />
 
       <IndiaPostWatchTutorialLink />
@@ -503,9 +539,6 @@ export default function IndiaPostPage() {
           ) : null}
         </CardContent>
         <CardFooter className="flex flex-wrap gap-2 border-t border-border pt-4">
-          <Button type="button" onClick={() => save.mutate(form)} disabled={save.isPending}>
-            {save.isPending ? "Saving…" : "Save & connect"}
-          </Button>
           <Button
             type="button"
             variant="secondary"
@@ -794,17 +827,34 @@ function Field({
   placeholder?: string;
   hint?: string;
 }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = type === "password";
+
   return (
     <div className="space-y-2">
       <Label>{label}</Label>
-      <Input
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={onBlur ? (event) => onBlur(event.target.value) : undefined}
-      />
+      <div className={isPassword ? "relative" : undefined}>
+        <Input
+          type={isPassword && showPassword ? "text" : type}
+          value={value}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          className={isPassword ? "pr-11" : undefined}
+          onChange={(event) => onChange(event.target.value)}
+          onBlur={onBlur ? (event) => onBlur(event.target.value) : undefined}
+        />
+        {isPassword ? (
+          <button
+            type="button"
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted hover:text-foreground"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            aria-pressed={showPassword}
+            onClick={() => setShowPassword((current) => !current)}
+          >
+            {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          </button>
+        ) : null}
+      </div>
       {hint ? <p className="text-sm font-medium text-foreground">{hint}</p> : null}
     </div>
   );

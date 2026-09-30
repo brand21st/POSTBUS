@@ -10,7 +10,7 @@ import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
 import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
 import { parcelServiceCode, resolveOrderBookingService } from "@/modules/india-post/booking-service";
-import { listContracts, saveContracts, saveParcelContract } from "@/modules/india-post/contracts";
+import { listContracts, saveContracts, saveParcelContract, syncPageContracts } from "@/modules/india-post/contracts";
 import { syncOpenShipmentsService, workspaceBookingChoice } from "@/modules/shipments/service";
 import { DEFAULT_INDIA_POST_SERVICE, DEFAULT_PROVIDER_ENVIRONMENT } from "@/types/domain";
 import {
@@ -608,6 +608,7 @@ export async function handleIntegrationRoutes(
 
   if (key === "PUT integrations/india-post" || key === "POST integrations/india-post" || key === "PATCH integrations/india-post") {
     const body = await request.json();
+    const connect = body.connect !== false;
     const environment =
       body.environment === "UAT" || body.environment === "PRODUCTION"
         ? body.environment
@@ -618,8 +619,8 @@ export async function handleIntegrationRoutes(
       bulk_customer_id: body.bulkCustomerId ?? body.bulk_customer_id,
       contract_id: body.contractId ?? body.contract_id,
       pickup_dropoff_office_id: body.pickupDropoffOfficeId ?? body.pickup_dropoff_office_id,
-      status: "PENDING",
     };
+    if (connect) payload.status = "PENDING";
     if (
       Object.prototype.hasOwnProperty.call(body, "pickupDropoffOfficeName") ||
       Object.prototype.hasOwnProperty.call(body, "pickup_dropoff_office_name")
@@ -638,7 +639,8 @@ export async function handleIntegrationRoutes(
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
     if (Array.isArray(body.contracts)) {
-      await saveContracts(supabase, ctx.organizationId, body.contracts);
+      if (connect) await saveContracts(supabase, ctx.organizationId, body.contracts);
+      else await syncPageContracts(supabase, ctx.organizationId, body.contracts);
     }
 
     if (body.barcodeRange) {
@@ -654,34 +656,72 @@ export async function handleIntegrationRoutes(
         );
       }
 
-      // Saving twice used to add a second active row, and the booking worker's
-      // single-row lookup then failed. Retire the current series for this service
-      // first, which is also how a used-up series gets replaced.
-      let retire = supabase
+      let currentQuery = supabase
         .from("barcode_ranges")
-        .update({ is_active: false })
+        .select("next_number, prefix, suffix, start_number, end_number, service_code")
         .eq("organization_id", ctx.organizationId)
         .eq("is_active", true);
-      retire = parsed.serviceCode
-        ? retire.eq("service_code", parsed.serviceCode)
-        : retire.is("service_code", null);
-      const { error: retireError } = await retire;
-      if (retireError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, retireError.message);
+      currentQuery = parsed.serviceCode
+        ? currentQuery.eq("service_code", parsed.serviceCode)
+        : currentQuery.is("service_code", null);
+      const { data: currentRange, error: currentRangeError } = await currentQuery.maybeSingle();
+      if (currentRangeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, currentRangeError.message);
 
-      const { error: rangeError } = await supabase.from("barcode_ranges").insert({
-        organization_id: ctx.organizationId,
-        service_code: parsed.serviceCode,
-        prefix: parsed.prefix,
-        suffix: parsed.suffix,
-        start_number: parsed.startNumber,
-        end_number: parsed.endNumber,
-        next_number: body.barcodeRange.nextNumber ?? parsed.startNumber,
-        is_active: true,
-      });
-      if (rangeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, rangeError.message);
+      const sameSeries =
+        currentRange &&
+        currentRange.prefix === parsed.prefix &&
+        currentRange.suffix === parsed.suffix &&
+        Number(currentRange.start_number) === parsed.startNumber &&
+        Number(currentRange.end_number) === parsed.endNumber &&
+        (currentRange.service_code ?? null) === parsed.serviceCode;
+
+      if (!sameSeries) {
+        let nextNumber = Number(body.barcodeRange.nextNumber ?? parsed.startNumber);
+        if (
+          currentRange &&
+          currentRange.prefix === parsed.prefix &&
+          currentRange.suffix === parsed.suffix &&
+          Number.isInteger(Number(currentRange.next_number))
+        ) {
+          nextNumber = Math.min(
+            Math.max(Number(currentRange.next_number), parsed.startNumber),
+            parsed.endNumber + 1
+          );
+        }
+
+        // Saving twice used to add a second active row, and the booking worker's
+        // single-row lookup then failed. Retire the current series for this service
+        // first, which is also how a used-up series gets replaced.
+        let retire = supabase
+          .from("barcode_ranges")
+          .update({ is_active: false })
+          .eq("organization_id", ctx.organizationId)
+          .eq("is_active", true);
+        retire = parsed.serviceCode
+          ? retire.eq("service_code", parsed.serviceCode)
+          : retire.is("service_code", null);
+        const { error: retireError } = await retire;
+        if (retireError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, retireError.message);
+
+        const { error: rangeError } = await supabase.from("barcode_ranges").insert({
+          organization_id: ctx.organizationId,
+          service_code: parsed.serviceCode,
+          prefix: parsed.prefix,
+          suffix: parsed.suffix,
+          start_number: parsed.startNumber,
+          end_number: parsed.endNumber,
+          next_number: nextNumber,
+          is_active: true,
+        });
+        if (rangeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, rangeError.message);
+      }
     }
 
-    // Save & connect: verify CEPT login immediately so the badge turns Connected (green).
+    if (!connect) {
+      return { saved: true, status: data.status ?? "NOT_CONNECTED" };
+    }
+
+    // Login with credentials: verify CEPT immediately so the badge turns Connected.
     let status = data.status ?? "PENDING";
     let lastError: string | null = null;
     try {
