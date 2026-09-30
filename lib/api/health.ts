@@ -15,8 +15,14 @@ export type SystemHealth = {
 
 async function databaseFromAuthEndpoint(): Promise<"Healthy" | "Error"> {
   try {
-    if (!env.supabaseUrl) return "Error";
-    const response = await fetch(`${env.supabaseUrl}/auth/v1/health`);
+    // GoTrue rejects this URL with 401 unless the public anon key is sent.
+    if (!env.supabaseUrl || !env.supabaseAnonKey) return "Error";
+    const response = await fetch(`${env.supabaseUrl}/auth/v1/health`, {
+      headers: {
+        apikey: env.supabaseAnonKey,
+        Authorization: `Bearer ${env.supabaseAnonKey}`,
+      },
+    });
     return response.ok ? "Healthy" : "Error";
   } catch {
     return "Error";
