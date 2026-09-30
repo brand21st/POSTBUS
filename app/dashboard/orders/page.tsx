@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,7 +18,6 @@ import {
   Truck,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ShopifyLogo } from "@/components/brand/shopify-logo";
 import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
@@ -605,7 +605,13 @@ export default function OrdersPage() {
                   disabled={syncShopify.isPending || syncInFlight}
                   onClick={() => syncShopify.mutate()}
                 >
-                  <ShopifyLogo className={`h-3.5 ${syncShopify.isPending || syncInFlight ? "animate-pulse" : ""}`} />
+                  <Image
+                    src="/images/shopify-icon.png"
+                    alt=""
+                    width={16}
+                    height={16}
+                    className={`size-4 object-contain ${syncShopify.isPending || syncInFlight ? "animate-pulse" : ""}`}
+                  />
                   Shopify Order Sync
                 </Button>
               ) : null}
