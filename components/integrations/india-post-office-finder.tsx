@@ -30,7 +30,7 @@ export function IndiaPostOfficeFinder({
   canSearch,
 }: {
   officeId: string;
-  onOfficeIdChange: (officeId: string) => void;
+  onOfficeIdChange: (officeId: string, officeName?: string) => void;
   canSearch: boolean;
 }) {
   const [pincode, setPincode] = useState("");
@@ -93,7 +93,7 @@ export function IndiaPostOfficeFinder({
                     selected && "bg-brand/5"
                   )}
                   onClick={() => {
-                    onOfficeIdChange(office.officeId);
+                    onOfficeIdChange(office.officeId, office.name);
                   }}
                 >
                   <span className="min-w-0">

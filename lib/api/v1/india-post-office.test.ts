@@ -15,8 +15,14 @@ const ctx = {
 } as TenantContext;
 
 function officeConnection(initial: string | null | "missing") {
-  const state: { id: string; pickup_dropoff_office_id: string | null } | null =
-    initial === "missing" ? null : { id: "conn-1", pickup_dropoff_office_id: initial };
+  const state: {
+    id: string;
+    pickup_dropoff_office_id: string | null;
+    pickup_dropoff_office_name: string | null;
+  } | null =
+    initial === "missing"
+      ? null
+      : { id: "conn-1", pickup_dropoff_office_id: initial, pickup_dropoff_office_name: "Kolenchery SO" };
   const updates: Record<string, unknown>[] = [];
 
   function chain(mode: "read" | "write", payload?: Record<string, unknown>) {
@@ -28,13 +34,29 @@ function officeConnection(initial: string | null | "missing") {
         return api;
       },
       async maybeSingle() {
-        return { data: state ? { id: state.id } : null, error: null };
+        return {
+          data: state
+            ? { id: state.id, pickup_dropoff_office_id: state.pickup_dropoff_office_id }
+            : null,
+          error: null,
+        };
       },
       async single() {
         if (mode === "write" && state && payload) {
           updates.push(payload);
-          state.pickup_dropoff_office_id = (payload.pickup_dropoff_office_id as string | null) ?? null;
-          return { data: { pickup_dropoff_office_id: state.pickup_dropoff_office_id }, error: null };
+          if ("pickup_dropoff_office_id" in payload) {
+            state.pickup_dropoff_office_id = (payload.pickup_dropoff_office_id as string | null) ?? null;
+          }
+          if ("pickup_dropoff_office_name" in payload) {
+            state.pickup_dropoff_office_name = (payload.pickup_dropoff_office_name as string | null) ?? null;
+          }
+          return {
+            data: {
+              pickup_dropoff_office_id: state.pickup_dropoff_office_id,
+              pickup_dropoff_office_name: state.pickup_dropoff_office_name,
+            },
+            error: null,
+          };
         }
         return { data: null, error: { message: "missing connection" } };
       },
@@ -59,11 +81,15 @@ function officeConnection(initial: string | null | "missing") {
   };
 }
 
-function patch(officeId: string) {
+function patch(officeId: string, officeName?: string) {
   return new NextRequest("http://localhost/api/v1/integrations/india-post/office", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ pickupDropoffOfficeId: officeId }),
+    body: JSON.stringify(
+      officeName === undefined
+        ? { pickupDropoffOfficeId: officeId }
+        : { pickupDropoffOfficeId: officeId, pickupDropoffOfficeName: officeName }
+    ),
   });
 }
 
@@ -76,8 +102,10 @@ describe("PATCH integrations/india-post/office", () => {
       ctx,
       "PATCH integrations/india-post/office"
     );
-    expect(result).toEqual({ pickupDropoffOfficeId: "12345678" });
-    expect(db.updates).toEqual([{ pickup_dropoff_office_id: "12345678" }]);
+    expect(result).toEqual({ pickupDropoffOfficeId: "12345678", pickupDropoffOfficeName: null });
+    expect(db.updates).toEqual([
+      { pickup_dropoff_office_id: "12345678", pickup_dropoff_office_name: null },
+    ]);
   });
 
   it("clears the office id when the field is empty", async () => {
@@ -88,8 +116,10 @@ describe("PATCH integrations/india-post/office", () => {
       ctx,
       "PATCH integrations/india-post/office"
     );
-    expect(result).toEqual({ pickupDropoffOfficeId: null });
-    expect(db.updates).toEqual([{ pickup_dropoff_office_id: null }]);
+    expect(result).toEqual({ pickupDropoffOfficeId: null, pickupDropoffOfficeName: null });
+    expect(db.updates).toEqual([
+      { pickup_dropoff_office_id: null, pickup_dropoff_office_name: null },
+    ]);
   });
 
   it("rejects a short office id and leaves the row unchanged", async () => {
@@ -108,5 +138,22 @@ describe("PATCH integrations/india-post/office", () => {
       message: "Save your India Post customer ID and password first.",
     });
     expect(db.updates).toEqual([]);
+  });
+
+  it("saves the post office name with the office id", async () => {
+    const db = officeConnection("22660454");
+    const result = await handleIntegrationRoutes(
+      patch("22660454", "Kolenchery SO"),
+      db.client as never,
+      ctx,
+      "PATCH integrations/india-post/office"
+    );
+    expect(result).toEqual({
+      pickupDropoffOfficeId: "22660454",
+      pickupDropoffOfficeName: "Kolenchery SO",
+    });
+    expect(db.updates).toEqual([
+      { pickup_dropoff_office_id: "22660454", pickup_dropoff_office_name: "Kolenchery SO" },
+    ]);
   });
 });

@@ -40,6 +40,7 @@ type FormState = {
   customerId: string;
   password: string;
   pickupDropoffOfficeId: string;
+  pickupDropoffOfficeName: string;
   contracts: ContractRow[];
   defaultServiceCode: string;
   rangeServiceCode: string;
@@ -56,6 +57,7 @@ const EMPTY: FormState = {
   customerId: "",
   password: "",
   pickupDropoffOfficeId: "",
+  pickupDropoffOfficeName: "",
   contracts: [],
   defaultServiceCode: DEFAULT_INDIA_POST_SERVICE,
   rangeServiceCode: ANY_SERVICE,
@@ -106,6 +108,9 @@ export default function IndiaPostPage() {
       pickupDropoffOfficeId: String(
         config.pickupDropoffOfficeId ?? config.pickup_dropoff_office_id ?? ""
       ),
+      pickupDropoffOfficeName: String(
+        config.pickupDropoffOfficeName ?? config.pickup_dropoff_office_name ?? ""
+      ),
       contracts,
       defaultServiceCode: knownService.has(savedDefault) ? savedDefault : DEFAULT_INDIA_POST_SERVICE,
       rangeServiceCode:
@@ -122,39 +127,67 @@ export default function IndiaPostPage() {
   );
 
   const saveOffice = useMutation({
-    mutationFn: (officeId: string) =>
-      api<{ pickupDropoffOfficeId: string | null }>("/api/v1/integrations/india-post/office", {
-        method: "PATCH",
-        body: JSON.stringify({ pickupDropoffOfficeId: officeId }),
-      }),
+    mutationFn: ({ officeId, officeName }: { officeId: string; officeName?: string | null }) =>
+      api<{ pickupDropoffOfficeId: string | null; pickupDropoffOfficeName: string | null }>(
+        "/api/v1/integrations/india-post/office",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            pickupDropoffOfficeId: officeId,
+            ...(officeName !== undefined ? { pickupDropoffOfficeName: officeName } : {}),
+          }),
+        }
+      ),
     onSuccess: (data) => {
       const saved = data.pickupDropoffOfficeId ?? "";
-      setForm((current) => ({ ...current, pickupDropoffOfficeId: saved }));
+      const savedName = data.pickupDropoffOfficeName ?? "";
+      setForm((current) => ({
+        ...current,
+        pickupDropoffOfficeId: saved,
+        pickupDropoffOfficeName: savedName,
+      }));
       queryClient.setQueryData<IndiaPostConfig>(INDIA_POST_QUERY_KEY, (current) =>
-        current ? { ...current, pickupDropoffOfficeId: saved, pickup_dropoff_office_id: saved } : current
+        current
+          ? {
+              ...current,
+              pickupDropoffOfficeId: saved,
+              pickup_dropoff_office_id: saved,
+              pickupDropoffOfficeName: savedName,
+              pickup_dropoff_office_name: savedName,
+            }
+          : current
       );
-      toast.success(saved ? `Office ID ${saved} saved.` : "Office ID cleared.");
+      toast.success(
+        saved
+          ? savedName
+            ? `${savedName} (${saved}) saved.`
+            : `Office ID ${saved} saved.`
+          : "Office ID cleared."
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
   const officeSaveFlight = useRef<string | null>(null);
 
-  function persistOfficeId(value: string, options?: { force?: boolean }) {
+  function persistOfficeId(value: string, options?: { force?: boolean; name?: string | null }) {
     const next = value.replace(/\D/g, "").slice(0, 8);
     if (next && next.length !== 8) {
       setForm((current) => ({ ...current, pickupDropoffOfficeId: savedOfficeId }));
       toast.error("Office ID is 8 digits.");
       return;
     }
-    if (!options?.force && next === savedOfficeId) return;
-    if (officeSaveFlight.current === next) return;
+    if (!options?.force && next === savedOfficeId && options?.name === undefined) return;
+    if (officeSaveFlight.current === next && options?.name === undefined) return;
     officeSaveFlight.current = next;
-    saveOffice.mutate(next, {
-      onSettled: () => {
-        if (officeSaveFlight.current === next) officeSaveFlight.current = null;
-      },
-    });
+    saveOffice.mutate(
+      { officeId: next, officeName: options?.name },
+      {
+        onSettled: () => {
+          if (officeSaveFlight.current === next) officeSaveFlight.current = null;
+        },
+      }
+    );
   }
 
   const save = useMutation({
@@ -182,6 +215,7 @@ export default function IndiaPostPage() {
           password: replaceSecrets || !hasSecrets ? snapshot.password || undefined : undefined,
           bulkCustomerId: customerId || undefined,
           pickupDropoffOfficeId: snapshot.pickupDropoffOfficeId.trim() || undefined,
+          pickupDropoffOfficeName: snapshot.pickupDropoffOfficeName.trim() || undefined,
           contracts: snapshotContracts.length
             ? snapshotContracts.map((contract) => ({
                 serviceCode: contract.serviceCode,
@@ -415,15 +449,28 @@ export default function IndiaPostPage() {
               label="Office ID"
               value={form.pickupDropoffOfficeId}
               placeholder="22660454"
-              onChange={(value) => set("pickupDropoffOfficeId", value.replace(/\D/g, "").slice(0, 8))}
+              hint={form.pickupDropoffOfficeName || undefined}
+              onChange={(value) => {
+                const next = value.replace(/\D/g, "").slice(0, 8);
+                setForm((current) => ({
+                  ...current,
+                  pickupDropoffOfficeId: next,
+                  pickupDropoffOfficeName:
+                    next === savedOfficeId ? current.pickupDropoffOfficeName : "",
+                }));
+              }}
               onBlur={(value) => persistOfficeId(value)}
             />
             <IndiaPostOfficeFinder
               officeId={form.pickupDropoffOfficeId}
-              onOfficeIdChange={(value) => {
+              onOfficeIdChange={(value, officeName) => {
                 const next = value.replace(/\D/g, "").slice(0, 8);
-                set("pickupDropoffOfficeId", next);
-                persistOfficeId(next);
+                setForm((current) => ({
+                  ...current,
+                  pickupDropoffOfficeId: next,
+                  pickupDropoffOfficeName: officeName ?? "",
+                }));
+                persistOfficeId(next, { name: officeName ?? null });
               }}
               canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
             />
@@ -613,6 +660,7 @@ function Field({
   type = "text",
   autoComplete,
   placeholder,
+  hint,
 }: {
   label: string;
   value: string;
@@ -621,6 +669,7 @@ function Field({
   type?: string;
   autoComplete?: string;
   placeholder?: string;
+  hint?: string;
 }) {
   return (
     <div className="space-y-2">
@@ -633,6 +682,7 @@ function Field({
         onChange={(event) => onChange(event.target.value)}
         onBlur={onBlur ? (event) => onBlur(event.target.value) : undefined}
       />
+      {hint ? <p className="text-sm font-medium text-foreground">{hint}</p> : null}
     </div>
   );
 }

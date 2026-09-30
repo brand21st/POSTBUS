@@ -77,6 +77,11 @@ function normalizePickupOfficeId(value: unknown) {
   return digits;
 }
 
+function normalizePickupOfficeName(value: unknown) {
+  const name = String(value ?? "").trim().slice(0, 80);
+  return name || null;
+}
+
 export async function handleIntegrationRoutes(
   request: NextRequest,
   supabase: SupabaseClient,
@@ -439,6 +444,7 @@ export async function handleIntegrationRoutes(
       bulkCustomerId: data?.bulk_customer_id,
       contractId: data?.contract_id,
       pickupDropoffOfficeId: data?.pickup_dropoff_office_id,
+      pickupDropoffOfficeName: data?.pickup_dropoff_office_name,
       usernameMasked: data?.encrypted_username ? maskSecret("user") : "",
       hasPassword: Boolean(data?.encrypted_password),
       lastVerifiedAt: data?.last_verified_at,
@@ -531,9 +537,12 @@ export async function handleIntegrationRoutes(
   if (key === "PATCH integrations/india-post/office") {
     const body = await request.json().catch(() => ({}));
     const officeId = normalizePickupOfficeId(body.pickupDropoffOfficeId ?? body.pickup_dropoff_office_id);
+    const nameProvided =
+      Object.prototype.hasOwnProperty.call(body, "pickupDropoffOfficeName") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_dropoff_office_name");
     const { data: existing, error: existingError } = await supabase
       .from("india_post_connections")
-      .select("id")
+      .select("id, pickup_dropoff_office_id")
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     if (existingError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingError.message);
@@ -543,14 +552,26 @@ export async function handleIntegrationRoutes(
         "Save your India Post customer ID and password first."
       );
     }
+    let officeName: string | null | undefined;
+    if (!officeId) officeName = null;
+    else if (nameProvided) {
+      officeName = normalizePickupOfficeName(body.pickupDropoffOfficeName ?? body.pickup_dropoff_office_name);
+    } else if (officeId !== (existing.pickup_dropoff_office_id ?? null)) {
+      officeName = null;
+    }
+    const patch: Record<string, unknown> = { pickup_dropoff_office_id: officeId };
+    if (officeName !== undefined) patch.pickup_dropoff_office_name = officeName;
     const { data, error } = await supabase
       .from("india_post_connections")
-      .update({ pickup_dropoff_office_id: officeId })
+      .update(patch)
       .eq("organization_id", ctx.organizationId)
-      .select("pickup_dropoff_office_id")
+      .select("pickup_dropoff_office_id, pickup_dropoff_office_name")
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-    return { pickupDropoffOfficeId: data?.pickup_dropoff_office_id ?? null };
+    return {
+      pickupDropoffOfficeId: data?.pickup_dropoff_office_id ?? null,
+      pickupDropoffOfficeName: data?.pickup_dropoff_office_name ?? null,
+    };
   }
 
   if (key === "PUT integrations/india-post" || key === "POST integrations/india-post" || key === "PATCH integrations/india-post") {
@@ -567,6 +588,14 @@ export async function handleIntegrationRoutes(
       pickup_dropoff_office_id: body.pickupDropoffOfficeId ?? body.pickup_dropoff_office_id,
       status: "PENDING",
     };
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupDropoffOfficeName") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_dropoff_office_name")
+    ) {
+      payload.pickup_dropoff_office_name = normalizePickupOfficeName(
+        body.pickupDropoffOfficeName ?? body.pickup_dropoff_office_name
+      );
+    }
     if (body.username) payload.encrypted_username = encryptSecret(body.username);
     if (body.password) payload.encrypted_password = encryptSecret(body.password);
     const { data, error } = await supabase

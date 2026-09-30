@@ -671,6 +671,8 @@ export type IndiaPostConfig = {
   contract_id?: string | null;
   pickupDropoffOfficeId?: string | null;
   pickup_dropoff_office_id?: string | null;
+  pickupDropoffOfficeName?: string | null;
+  pickup_dropoff_office_name?: string | null;
   usernameMasked?: string | null;
   username_masked?: string | null;
   hasPassword?: boolean;
