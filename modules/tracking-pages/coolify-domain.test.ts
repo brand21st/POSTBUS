@@ -78,6 +78,19 @@ describe("ensureCoolifyTrackingDomain", () => {
       expect(hostProvisioningFromSync(result).status).toBe("live");
     });
 
+    it("returns live when a wildcard already covers the subdomain", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => JSON.stringify({ fqdn: "https://www.postbus.in,https://*.postbus.in" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const { ensureCoolifyTrackingDomain, hostProvisioningFromSync } = await import("./coolify-domain");
+      const result = await ensureCoolifyTrackingDomain("fa");
+      expect(result).toMatchObject({ synced: true, added: false, restarted: false });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(hostProvisioningFromSync(result).status).toBe("live");
+    });
+
     it("adds a missing domain and schedules restart after the response", async () => {
       const fetchMock = vi
         .fn()

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { PublicTrackingGate } from "@/components/tracking-page/public-tracking-gate";
 import { PublicTrackingPage } from "@/components/tracking-page/public-tracking-page";
 import { marketingMetadata, noIndexMetadata } from "@/lib/seo/metadata";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -63,6 +64,13 @@ export default async function TrackPage({
     page = null;
   }
 
-  if (!page) return <PublicTrackingPage unavailable />;
+  if (!page) {
+    return (
+      <PublicTrackingGate
+        subdomain={subdomain}
+        hostname={headerStore.get("host") ?? `${subdomain}.postbus.in`}
+      />
+    );
+  }
   return <PublicTrackingPage page={page} initialQuery={initialQuery} />;
 }

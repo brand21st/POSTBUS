@@ -36,6 +36,25 @@ function parseDomains(fqdn: string | null | undefined) {
     .filter(Boolean);
 }
 
+function coversTrackingHost(domains: string[], domain: string) {
+  if (domains.includes(domain)) return true;
+  try {
+    const host = new URL(domain).hostname;
+    const labels = host.split(".");
+    if (labels.length < 3) return false;
+    const parent = labels.slice(1).join(".");
+    return domains.some((entry) => {
+      try {
+        return new URL(entry).hostname === `*.${parent}`;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
 function parseJson(text: string) {
   if (!text.trim()) return null;
   try {
@@ -140,7 +159,7 @@ export async function ensureCoolifyTrackingDomain(subdomain: string): Promise<Co
       `/applications/${config.applicationUuid}`
     );
     const domains = parseDomains(app.fqdn);
-    if (domains.includes(domain)) {
+    if (coversTrackingHost(domains, domain)) {
       return {
         synced: true,
         domain,

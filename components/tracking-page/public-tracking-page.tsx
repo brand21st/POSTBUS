@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Radio } from "lucide-react";
 import { BannerAds } from "@/components/tracking-page/banner-ads";
+import { PublicTrackingGate } from "@/components/tracking-page/public-tracking-gate";
 import { StoreLocationCard } from "@/components/tracking-page/store-location-card";
 import { TrackingTimeline } from "@/components/tracking-page/tracking-timeline";
 import { Button } from "@/components/ui/button";
@@ -79,13 +79,10 @@ export function PublicTrackingPage({
 
   if (unavailable || !page) {
     return (
-      <div className="flex min-h-[70vh] flex-col items-center justify-center px-6 text-center">
-        <Radio className="mb-4 size-8 text-muted" />
-        <h1 className="text-2xl font-semibold text-ink">This tracking page is not available</h1>
-        <p className="mt-2 max-w-md text-sm text-muted">
-          The store has not published a tracking page at this address, or the address is incorrect.
-        </p>
-      </div>
+      <PublicTrackingGate
+        subdomain={page?.subdomain ?? ""}
+        hostname={typeof window === "undefined" ? "" : window.location.host}
+      />
     );
   }
 
