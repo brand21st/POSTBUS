@@ -975,18 +975,29 @@ export type AdminTutorialCategory = {
   updatedAt: string;
 };
 
+export type PublicTrackedShipment = {
+  id: string;
+  barcode?: string | null;
+  trackingNumber?: string | null;
+  status?: string | null;
+  operationalStatus?: string | null;
+  orderNumber?: string | null;
+  serviceLabel?: string | null;
+  originCity?: string | null;
+  originState?: string | null;
+  destinationCity?: string | null;
+  destinationState?: string | null;
+  bookedAt?: string | null;
+  lastUpdatedAt?: string | null;
+  weightGrams?: number | null;
+  paymentMode?: string | null;
+  codAmount?: number | null;
+  events: PublicTrackingEvent[];
+};
+
 export type PublicTrackResult = {
   found: boolean;
   liveTracking: "ok" | "unavailable" | "not_connected";
   liveMessage?: string | null;
-  shipment?: {
-    id: string;
-    barcode?: string | null;
-    trackingNumber?: string | null;
-    status?: string | null;
-    orderNumber?: string | null;
-    destinationCity?: string | null;
-    destinationState?: string | null;
-    events: PublicTrackingEvent[];
-  } | null;
+  shipment?: PublicTrackedShipment | null;
 };

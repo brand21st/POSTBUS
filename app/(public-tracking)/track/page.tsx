@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { PostbusTrackPage } from "@/components/tracking-page/postbus-track-page";
 import { PublicTrackingGate } from "@/components/tracking-page/public-tracking-gate";
 import { PublicTrackingPage } from "@/components/tracking-page/public-tracking-page";
 import { marketingMetadata, noIndexMetadata } from "@/lib/seo/metadata";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { apexTrackingPage } from "@/modules/tracking-pages/apex";
 import { parseTrackingSubdomain } from "@/modules/tracking-pages/host";
 import { getPublishedTrackingPage } from "@/modules/tracking-pages/service";
 import type { TrackingPageRecord } from "@/types/api";
@@ -47,13 +47,7 @@ export default async function TrackPage({
   const initialQuery = query.tracking?.trim() ?? "";
 
   if (!subdomain) {
-    return (
-      <PublicTrackingPage
-        page={apexTrackingPage()}
-        global
-        initialQuery={initialQuery}
-      />
-    );
+    return <PostbusTrackPage initialQuery={initialQuery} />;
   }
 
   let page: TrackingPageRecord | null = null;
