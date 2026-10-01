@@ -9,6 +9,7 @@ import {
   MAX_BANNERS,
   MAX_UPLOAD_BYTES,
 } from "./constants";
+import { ensureCoolifyTrackingDomain } from "./coolify-domain";
 import { classifySubdomain, publicObjectUrl, subdomainCandidates, trackingPagePublicUrl } from "./host";
 import type { UpdateTrackingPageInput } from "./schema";
 import type { TrackingPageBanner, TrackingPageRecord, TrackingPageSocial } from "@/types/api";
@@ -329,8 +330,11 @@ export async function updateTrackingPage(
     entity_id: page.id,
   });
 
-  const banners = await loadBanners(supabase, page.id);
-  return mapTrackingPage(data as TrackingPageRow, banners);
+  const mapped = mapTrackingPage(data as TrackingPageRow, await loadBanners(supabase, page.id));
+  if (input.subdomain && input.subdomain !== page.subdomain && mapped.status === "PUBLISHED") {
+    await ensureCoolifyTrackingDomain(mapped.subdomain);
+  }
+  return mapped;
 }
 
 export async function setTrackingPageStatus(
@@ -360,8 +364,11 @@ export async function setTrackingPageStatus(
     entity_id: page.id,
   });
 
-  const banners = await loadBanners(supabase, page.id);
-  return mapTrackingPage(data as TrackingPageRow, banners);
+  const mapped = mapTrackingPage(data as TrackingPageRow, await loadBanners(supabase, page.id));
+  if (status === "PUBLISHED") {
+    await ensureCoolifyTrackingDomain(mapped.subdomain);
+  }
+  return mapped;
 }
 
 function assertImageFile(file: File) {

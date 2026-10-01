@@ -21,7 +21,7 @@ import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
-import { trackingHostSuffix } from "@/modules/tracking-pages/host";
+import { trackingHostSuffix, trackingPagePublicUrl } from "@/modules/tracking-pages/host";
 import { subdomainSchema, updateTrackingPageSchema } from "@/modules/tracking-pages/schema";
 import type { SubdomainAvailability, TrackingPageRecord } from "@/types/api";
 import type { MemberRole } from "@/types/domain";
@@ -602,9 +602,11 @@ function CustomerUrlCard({
   const hint = changed && settled ? availabilityLabel(availability.data?.reason) : null;
   const canSave =
     changed && settled && parsed.success && availability.data?.available === true && !save.isPending;
+  const previewUrl = parsed.success ? trackingPagePublicUrl(normalized) : page.publicUrl;
+  const activeUrl = editing && parsed.success ? previewUrl : page.publicUrl;
 
   async function copyUrl() {
-    await navigator.clipboard.writeText(page.publicUrl);
+    await navigator.clipboard.writeText(activeUrl);
     toast.success("Tracking URL copied.");
   }
 
@@ -635,10 +637,30 @@ function CustomerUrlCard({
                 <p className="text-sm text-error">{parsed.error.issues[0]?.message}</p>
               ) : null}
               {hint ? <p className={`text-sm font-medium ${hint.className}`}>{hint.text}</p> : null}
+              <p className="text-sm text-muted break-all">
+                Customer URL:{" "}
+                <a
+                  href={previewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand hover:underline"
+                >
+                  {previewUrl}
+                </a>
+              </p>
               <p className="text-sm text-muted">The previous address stops working after you save.</p>
             </div>
           ) : (
-            <CardDescription className="break-all">{page.publicUrl}</CardDescription>
+            <CardDescription className="break-all">
+              <a
+                href={page.publicUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-brand hover:underline"
+              >
+                {page.publicUrl}
+              </a>
+            </CardDescription>
           )}
         </div>
         <StatusBadge value={page.status} />
@@ -659,7 +681,7 @@ function CustomerUrlCard({
               <Copy />
               Copy URL
             </Button>
-            <a href={page.publicUrl} target="_blank" rel="noopener noreferrer">
+            <a href={activeUrl} target="_blank" rel="noopener noreferrer">
               <Button type="button" variant="secondary">
                 <ExternalLink />
                 Open

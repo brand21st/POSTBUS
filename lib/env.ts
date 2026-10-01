@@ -45,6 +45,9 @@ export const env = {
     if (!configured || configured === "/data/invoices") return "/data/labels/invoices";
     return configured;
   })(),
+  coolifyBaseUrl: optional(process.env.COOLIFY_BASE_URL),
+  coolifyApplicationUuid: optional(process.env.COOLIFY_APPLICATION_UUID),
+  coolifyApiToken: optional(process.env.COOLIFY_API_TOKEN),
 };
 
 export function usesDatabaseJobRunner() {
