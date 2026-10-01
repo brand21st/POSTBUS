@@ -390,6 +390,20 @@ export function defaultLabelTemplateId(template: LabelTemplate) {
   return template.library?.find((item) => item.isDefault)?.id ?? template.library?.[0]?.id ?? null;
 }
 
+export function defaultLabelTemplatePage(template: LabelTemplate) {
+  return selectLabelTemplate(template, defaultLabelTemplateId(template)).page;
+}
+
+/** Short size shown on the Shipping Slip button (A6, 4×6, or millimetres). */
+export function templatePageSizeLabel(page: LabelTemplate["page"]) {
+  if (page.paperSize && page.paperSize !== "custom") {
+    return page.paperSize === "4x6" ? "4×6" : page.paperSize;
+  }
+  const width = Math.round(page.widthMm ?? (page.widthPt * 25.4) / 72);
+  const height = Math.round(page.heightMm ?? (page.heightPt * 25.4) / 72);
+  return `${width}×${height}`;
+}
+
 export function selectLabelTemplate(template: LabelTemplate, templateId?: string | null): LabelTemplate {
   if (!templateId || !template.library?.length) return template;
   const found = template.library.find((item) => item.id === templateId);

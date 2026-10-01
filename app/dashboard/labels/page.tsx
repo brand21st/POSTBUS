@@ -25,6 +25,11 @@ import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
 import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import { shipmentPrintJobs, shipmentPrintLabel, type ShipmentPrintTarget } from "@/modules/labels/print-targets";
+import {
+  defaultLabelTemplatePage,
+  templatePageSizeLabel,
+  type LabelTemplate,
+} from "@/modules/labels/template-schema";
 import type { LabelRecord, Paginated } from "@/types/api";
 
 function printLabel(status?: string | null) {
@@ -130,6 +135,14 @@ export default function LabelsPage() {
     },
     refetchInterval: 5_000,
   });
+
+  const templates = useQuery({
+    queryKey: ["label-template"],
+    queryFn: () => api<{ template: LabelTemplate }>("/api/v1/label-template"),
+  });
+  const slipSize = templates.data?.template
+    ? templatePageSizeLabel(defaultLabelTemplatePage(templates.data.template))
+    : null;
 
   const list = asPaginated<LabelRecord>(query.data, ["labels", "items"]);
 
@@ -267,6 +280,11 @@ export default function LabelsPage() {
             >
               <Truck className="size-4" />
               {slipBusy ? "Generating…" : "Shipping Slip"}
+              {slipSize ? (
+                <span className="rounded bg-brand px-1 py-px text-[9px] font-bold leading-none text-white">
+                  {slipSize}
+                </span>
+              ) : null}
             </Button>
           </div>
         );

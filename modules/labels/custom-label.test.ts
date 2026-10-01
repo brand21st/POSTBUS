@@ -14,6 +14,8 @@ import {
   applyPaperSize,
   defaultLabelTemplate,
   defaultLabelTemplateId,
+  defaultLabelTemplatePage,
+  templatePageSizeLabel,
   fitAddressBox,
   growAutoHeightBox,
   elementBoxFromMm,
@@ -122,6 +124,23 @@ describe("india post barcode block", () => {
     packing.library = packing.library.map((item) => ({ ...item, isDefault: false }));
     expect(defaultLabelTemplateId(packing)).toBe("default");
     expect(defaultLabelTemplateId(indiaPostLabelTemplate())).toBeNull();
+  });
+
+  it("labels the Default template paper size for the Shipping Slip badge", () => {
+    const packing = defaultLabelTemplate("A5");
+    const india = indiaPostLabelTemplate();
+    packing.library = [
+      { id: "default", name: "Default", isDefault: true, page: packing.page, elements: packing.elements },
+      { id: "india", name: "India Post", isDefault: false, page: india.page, elements: india.elements },
+    ];
+    expect(templatePageSizeLabel(defaultLabelTemplatePage(packing))).toBe("A5");
+    packing.library[0] = { ...packing.library[0], isDefault: false };
+    packing.library[1] = { ...packing.library[1], isDefault: true };
+    expect(templatePageSizeLabel(defaultLabelTemplatePage(packing))).toBe("A6");
+    expect(templatePageSizeLabel({ ...india.page, paperSize: "4x6" })).toBe("4×6");
+    expect(templatePageSizeLabel({ widthPt: 200, heightPt: 200, paperSize: "custom", widthMm: 70, heightMm: 70 })).toBe(
+      "70×70"
+    );
   });
 
   it("renders the Default shipping slip PDF from packing data", async () => {
