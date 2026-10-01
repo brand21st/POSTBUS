@@ -77,6 +77,85 @@ function redactShipment(input: {
   };
 }
 
+type StoredShipmentMatch = {
+  organizationId: string;
+  shipment: NonNullable<PublicTrackResult["shipment"]>;
+};
+
+async function loadGlobalStoredShipment(
+  supabase: SupabaseClient,
+  query: string
+): Promise<StoredShipmentMatch | null> {
+  if (hasAdminClient()) {
+    const admin = createAdminClient();
+    const filter = orExact(["barcode", "tracking_number"], query);
+    if (!filter) return null;
+    const { data: shipments } = await admin
+      .from("shipments")
+      .select("id, organization_id, barcode, tracking_number, status, order_id, shipping_address_id")
+      .or(filter)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    const shipment = shipments?.[0];
+    if (!shipment) return null;
+
+    const [{ data: order }, { data: address }, { data: events }] = await Promise.all([
+      shipment.order_id
+        ? admin.from("orders").select("order_number").eq("id", shipment.order_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      shipment.shipping_address_id
+        ? admin.from("addresses").select("city, state").eq("id", shipment.shipping_address_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      admin
+        .from("tracking_events")
+        .select("id, event_code, event_description, office_name, occurred_at")
+        .eq("shipment_id", shipment.id)
+        .order("occurred_at", { ascending: false }),
+    ]);
+
+    return {
+      organizationId: shipment.organization_id,
+      shipment: redactShipment({
+        id: shipment.id,
+        barcode: shipment.barcode,
+        trackingNumber: shipment.tracking_number,
+        status: shipment.status,
+        orderNumber: order?.order_number ?? null,
+        destinationCity: address?.city ?? null,
+        destinationState: address?.state ?? null,
+        events: (events ?? []).map((event) => ({
+          id: event.id,
+          eventCode: event.event_code,
+          eventDescription: event.event_description,
+          officeName: event.office_name,
+          occurredAt: event.occurred_at,
+        })),
+      }),
+    };
+  }
+
+  const { data, error } = await supabase.rpc("public_find_shipment_global", {
+    p_query: query,
+  });
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!data) return null;
+  const row = data as {
+    organizationId: string;
+    id: string;
+    barcode?: string | null;
+    trackingNumber?: string | null;
+    status?: string | null;
+    orderNumber?: string | null;
+    destinationCity?: string | null;
+    destinationState?: string | null;
+    events?: PublicTrackingEvent[];
+  };
+  return {
+    organizationId: row.organizationId,
+    shipment: redactShipment(row),
+  };
+}
+
 async function loadStoredShipment(
   supabase: SupabaseClient,
   organizationId: string,
@@ -230,6 +309,48 @@ async function refreshLiveTracking(
   }
 }
 
+async function buildTrackResult(
+  supabase: SupabaseClient,
+  organizationId: string,
+  query: string,
+  stored: NonNullable<PublicTrackResult["shipment"]>
+): Promise<PublicTrackResult> {
+  const live = await refreshLiveTracking(organizationId, stored);
+  const refreshed =
+    live.liveTracking === "ok"
+      ? await loadStoredShipment(supabase, organizationId, query)
+      : stored;
+
+  return {
+    found: true,
+    liveTracking: live.liveTracking,
+    liveMessage: live.liveMessage,
+    shipment: refreshed
+      ? {
+          ...refreshed,
+          status: live.status ?? refreshed.status,
+        }
+      : stored,
+  };
+}
+
+export async function publicApexTrackLookup(
+  supabase: SupabaseClient,
+  query: string
+): Promise<PublicTrackResult> {
+  const match = await loadGlobalStoredShipment(supabase, query.trim());
+  if (!match) {
+    return {
+      found: false,
+      liveTracking: "unavailable",
+      liveMessage: null,
+      shipment: null,
+    };
+  }
+
+  return buildTrackResult(supabase, match.organizationId, query.trim(), match.shipment);
+}
+
 export async function publicTrackLookup(
   supabase: SupabaseClient,
   subdomain: string,
@@ -250,23 +371,7 @@ export async function publicTrackLookup(
     };
   }
 
-  const live = await refreshLiveTracking(page.organizationId, stored);
-  const refreshed =
-    live.liveTracking === "ok"
-      ? await loadStoredShipment(supabase, page.organizationId, query.trim())
-      : stored;
-
-  return {
-    found: true,
-    liveTracking: live.liveTracking,
-    liveMessage: live.liveMessage,
-    shipment: refreshed
-      ? {
-          ...refreshed,
-          status: live.status ?? refreshed.status,
-        }
-      : stored,
-  };
+  return buildTrackResult(supabase, page.organizationId, query.trim(), stored);
 }
 
 export function resolveRequestSubdomain(

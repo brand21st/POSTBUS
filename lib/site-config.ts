@@ -40,6 +40,7 @@ export const footerLinks = {
   product: [
     { label: "How it works", href: "/#how-it-works" },
     { label: "Features", href: "/features" },
+    { label: "Track shipment", href: "/track" },
     { label: "Pricing", href: "/pricing" },
     { label: "India Post shipping", href: "/india-post-shipping" },
     { label: "Shopify integration", href: "/shopify-india-post" },

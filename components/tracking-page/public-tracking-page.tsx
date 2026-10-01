@@ -17,6 +17,7 @@ export function PublicTrackingPage({
   preview = false,
   lookupEnabled = true,
   compact = false,
+  global = false,
   initialQuery = "",
 }: {
   page?: TrackingPageRecord | null;
@@ -24,6 +25,7 @@ export function PublicTrackingPage({
   preview?: boolean;
   lookupEnabled?: boolean;
   compact?: boolean;
+  global?: boolean;
   initialQuery?: string;
 }) {
   const [query, setQuery] = useState(initialQuery);
@@ -43,9 +45,13 @@ export function PublicTrackingPage({
     setError(null);
     setResult(null);
     try {
+      const body: { query: string; subdomain?: string } = { query: value.trim() };
+      if (!global && page?.subdomain) {
+        body.subdomain = page.subdomain;
+      }
       const data = await api<PublicTrackResult>("/api/v1/public/track", {
         method: "POST",
-        body: JSON.stringify({ query: value.trim(), subdomain: page?.subdomain }),
+        body: JSON.stringify(body),
       });
       setResult(data);
       if (!data.found) {
@@ -60,7 +66,7 @@ export function PublicTrackingPage({
 
   useEffect(() => {
     const id = initialQuery.trim();
-    if (id.length < 6 || !lookupEnabled || preview || !page?.subdomain) return;
+    if (id.length < 6 || !lookupEnabled || preview || (!global && !page?.subdomain)) return;
     void lookup(id);
     // The link from Shopify should look up once when the page opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -176,7 +182,9 @@ export function PublicTrackingPage({
           </nav>
         )}
 
-        <p className="mt-auto pt-12 text-center text-xs opacity-50">Powered by PostBus</p>
+        {!global ? (
+          <p className="mt-auto pt-12 text-center text-xs opacity-50">Powered by PostBus</p>
+        ) : null}
       </div>
     </div>
   );
