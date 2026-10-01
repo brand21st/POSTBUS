@@ -86,8 +86,9 @@ function usePublicTrackingHost(page: TrackingPageRecord | null | undefined) {
   });
 
   useEffect(() => {
-    if (!page || query.data?.status !== "live") return;
-    const key = `${page.id}:${query.data.domain}`;
+    const host = query.data;
+    if (!page || host?.status !== "live") return;
+    const key = `${page.id}:${host.domain}`;
     if (announced.current === key) return;
     announced.current = key;
     queryClient.setQueryData(["tracking-page"], (current: TrackingPageRecord | undefined) => {
@@ -96,18 +97,18 @@ function usePublicTrackingHost(page: TrackingPageRecord | null | undefined) {
         ...current,
         hostProvisioning: {
           status: "live",
-          domain: query.data.domain,
-          message: query.data.message,
+          domain: host.domain,
+          message: host.message,
         },
       };
     });
-    if (query.data.notified) {
+    if (host.notified) {
       toast.success("Your tracking page is live for customers.", {
-        description: query.data.domain,
+        description: host.domain,
         duration: 10_000,
         action: {
           label: "Open URL",
-          onClick: () => window.open(query.data.domain, "_blank", "noopener,noreferrer"),
+          onClick: () => window.open(host.domain, "_blank", "noopener,noreferrer"),
         },
       });
       void queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_QUERY_KEY });
