@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { PreviewReadyDialog } from "@/components/labels/preview-ready-dialog";
 import { SmartGuideOverlay } from "@/components/labels/smart-guide-overlay";
 import { usePdfFirstPageUrl } from "@/components/labels/pdf-raster-preview";
 import { Badge } from "@/components/ui/badge";
@@ -187,6 +188,38 @@ async function postSheet(body: unknown) {
   return payload;
 }
 
+let previewChimeCtx: AudioContext | null = null;
+
+function playPreviewChime() {
+  if (typeof window === "undefined" || document.hidden) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const AudioCtx =
+    window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) return;
+  previewChimeCtx ??= new AudioCtx();
+  const ctx = previewChimeCtx;
+  if (ctx.state === "suspended") void ctx.resume();
+  const now = ctx.currentTime;
+  const gain = ctx.createGain();
+  gain.connect(ctx.destination);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+  for (const [freq, start, length] of [
+    [784, 0, 0.18],
+    [988, 0.09, 0.2],
+    [1175, 0.18, 0.22],
+  ] as const) {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    osc.start(now + start);
+    osc.stop(now + start + length);
+  }
+  window.setTimeout(() => gain.disconnect(), 500);
+}
+
 export function MultiPrintScreen() {
   const templates = useQuery({
     queryKey: ["label-template"],
@@ -222,6 +255,7 @@ export function MultiPrintScreen() {
   const [busy, setBusy] = useState<"preview" | "download" | "print" | null>(null);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>("labels");
   const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
   const [manual, setManual] = useState(false);
   const [overrides, setOverrides] = useState<Record<number, MultiUpPlacementOverride>>({});
   const [selectedSlots, setSelectedSlots] = useState<number[]>([]);
@@ -322,6 +356,12 @@ export function MultiPrintScreen() {
   const namedPaper = isMultiPrintPaperId(paper) ? multiPrintPaper(paper) : null;
   const sheetWidthMm = namedPaper?.widthMm ?? Number(customWidth);
   const sheetHeightMm = namedPaper?.heightMm ?? Number(customHeight);
+  const sheetSizeLabel =
+    paper !== "custom" && isMultiPrintPaperId(paper)
+      ? multiPrintPaperName(paper)
+      : sheetWidthMm > 0 && sheetHeightMm > 0
+        ? `${Math.round(sheetWidthMm)}×${Math.round(sheetHeightMm)} mm`
+        : null;
   const fourBySixPresets = useMemo(
     () => generate4x6Presets(sheetWidthMm, sheetHeightMm, paper),
     [paper, sheetHeightMm, sheetWidthMm]
@@ -643,12 +683,30 @@ export function MultiPrintScreen() {
         if (current) URL.revokeObjectURL(current);
         return href;
       });
-      setShowPdfPreview(true);
+      setPreviewDialogOpen(true);
+      playPreviewChime();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not preview the sheet.");
     } finally {
       setBusy(null);
     }
+  }
+
+  function saveSheetPdf(href: string) {
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = "shipping-labels.pdf";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  function downloadPreview() {
+    if (previewUrl) {
+      saveSheetPdf(previewUrl);
+      return;
+    }
+    void download();
   }
 
   async function download() {
@@ -657,12 +715,7 @@ export function MultiPrintScreen() {
       const result = await postSheet({ ...requestBody(), disposition: "attachment" });
       if (!(result instanceof Blob)) return;
       const href = URL.createObjectURL(result);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = "shipping-labels.pdf";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      saveSheetPdf(href);
       URL.revokeObjectURL(href);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not download the sheet.");
@@ -1572,6 +1625,16 @@ export function MultiPrintScreen() {
           ) : null}
         </Card>
       </div>
+
+      <PreviewReadyDialog
+        open={previewDialogOpen}
+        onOpenChange={setPreviewDialogOpen}
+        previewUrl={previewUrl}
+        sheetSize={sheetSizeLabel}
+        onDownload={downloadPreview}
+        onPrint={() => void print()}
+        printDisabled={!canPrint}
+      />
 
       <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-2 border-t border-border bg-card/95 p-3 shadow-[0_-8px_30px_rgb(9_9_11/0.08)] backdrop-blur sm:hidden">
         <Button type="button" size="sm" variant="secondary" className="flex-1" onClick={preview} disabled={Boolean(busy) || !items.length || layout?.ok === false}><Eye />Preview</Button>
