@@ -6,8 +6,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
-import { useFieldArray, useForm } from "react-hook-form";
+import { Lock, Minus, Plus, Trash2 } from "lucide-react";
+import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -15,6 +15,8 @@ import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Combobox } from "@/components/ui/combobox";
+import { IndiaFlag } from "@/components/ui/india-flag";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -26,6 +28,8 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/lib/hooks/use-api";
 import { formatCurrency } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS } from "@/lib/indian-states";
 import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { IndiaPostConfig } from "@/types/api";
@@ -122,7 +126,7 @@ export default function NewOrderPage() {
         line1: "",
         line2: "",
         city: "",
-        state: "",
+        state: DEFAULT_INDIAN_STATE,
         pincode: "",
         country: "IN",
       },
@@ -145,6 +149,24 @@ export default function NewOrderPage() {
     (sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0),
     0
   );
+  const totalQuantity = (lineItemValues ?? []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const totalWeight = (lineItemValues ?? []).reduce(
+    (sum, item) => sum + Number(item.quantity || 0) * Number(item.weightGrams || 0),
+    0
+  );
+
+  function stepQuantity(index: number, delta: number) {
+    const current = Number(form.getValues(`lineItems.${index}.quantity`) || 0);
+    form.setValue(`lineItems.${index}.quantity`, Math.max(1, current + delta), { shouldDirty: true });
+  }
+
+  function addLineItem() {
+    items.append(
+      { title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0 },
+      { shouldFocus: true, focusName: `lineItems.${items.fields.length}.title` }
+    );
+  }
+
   const collectOnDelivery =
     paymentStatus === "COD"
       ? orderTotal
@@ -271,7 +293,7 @@ export default function NewOrderPage() {
           <CardTitle>Shipping address</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
-          <AddressFields prefix="shippingAddress" form={{ register: form.register }} />
+          <AddressFields prefix="shippingAddress" form={{ register: form.register, control: form.control }} />
           <label className="col-span-full flex items-center gap-2 text-sm">
             <Checkbox
               checked={billingSame}
@@ -288,56 +310,187 @@ export default function NewOrderPage() {
             <CardTitle>Billing address</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
-            <AddressFields prefix="billingAddress" form={{ register: form.register }} />
+            <AddressFields prefix="billingAddress" form={{ register: form.register, control: form.control }} />
           </CardContent>
         </Card>
       ) : null}
 
       <Card>
         <CardHeader className="flex-row items-center justify-between p-4">
-          <CardTitle>Line items</CardTitle>
-          <Button
-            type="button"
-            variant="secondary"
-            size="xs"
-            onClick={() => items.append({ title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0 })}
-          >
-            <Plus className="size-4" />
-            Add item
-          </Button>
+          <div>
+            <CardTitle>Line items</CardTitle>
+            <p className="mt-0.5 text-xs text-muted">
+              {items.fields.length} {items.fields.length === 1 ? "item" : "items"} · {totalQuantity} units
+            </p>
+          </div>
         </CardHeader>
-        <CardContent className="space-y-3 p-4 pt-0">
-          {items.fields.map((field, index) => (
-            <div key={field.id} className="grid gap-2 rounded-xl border border-border p-3 md:grid-cols-12">
-              <Field label="Title" className="md:col-span-4">
-                <Input className="h-9" {...form.register(`lineItems.${index}.title`)} />
-              </Field>
-              <Field label="SKU" className="md:col-span-2">
-                <Input className="h-9" {...form.register(`lineItems.${index}.sku`)} />
-              </Field>
-              <Field label="Qty" className="md:col-span-2">
-                <Input className="h-9" type="number" min={1} {...form.register(`lineItems.${index}.quantity`)} />
-              </Field>
-              <Field label="Unit price" className="md:col-span-2">
-                <Input className="h-9" type="number" min={0} step="0.01" {...form.register(`lineItems.${index}.unitPrice`)} />
-              </Field>
-              <Field label="Weight (g)" className="md:col-span-1">
-                <Input className="h-9" type="number" min={0} {...form.register(`lineItems.${index}.weightGrams`)} />
-              </Field>
-              <div className="flex items-end md:col-span-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  disabled={items.fields.length === 1}
-                  onClick={() => items.remove(index)}
-                  aria-label="Remove item"
+        <CardContent className="p-4 pt-0">
+          <div
+            aria-hidden
+            className={cn(
+              "hidden px-3 pb-2 text-[11px] font-semibold uppercase tracking-wide text-muted lg:grid lg:gap-2",
+              LINE_ITEM_GRID
+            )}
+          >
+            <span>Product</span>
+            <span>SKU</span>
+            <span className="text-center">Qty</span>
+            <span>Unit price</span>
+            <span>Weight</span>
+            <span className="text-right">Total</span>
+            <span />
+          </div>
+
+          <div className="space-y-2 lg:space-y-0 lg:divide-y lg:divide-border lg:rounded-xl lg:border lg:border-border">
+            {items.fields.map((field, index) => {
+              const titleError = form.formState.errors.lineItems?.[index]?.title?.message;
+              const row = lineItemValues?.[index];
+              const lineTotal = Number(row?.quantity || 0) * Number(row?.unitPrice || 0);
+              return (
+                <div
+                  key={field.id}
+                  className={cn(
+                    "grid grid-cols-2 gap-x-2 gap-y-3 rounded-xl border border-border p-3 sm:grid-cols-4 lg:items-start lg:gap-y-0 lg:rounded-none lg:border-0 lg:px-3 lg:py-2.5",
+                    LINE_ITEM_GRID
+                  )}
                 >
-                  <Trash2 className="size-4" />
-                </Button>
+                  <div className="col-span-2 sm:col-span-4 lg:col-span-1">
+                    <LineLabel htmlFor={`item-${field.id}-title`}>Product</LineLabel>
+                    <Input
+                      id={`item-${field.id}-title`}
+                      className="h-9"
+                      placeholder="e.g. Cotton saree"
+                      aria-invalid={Boolean(titleError)}
+                      {...form.register(`lineItems.${index}.title`)}
+                    />
+                    {titleError ? <p className="mt-1 text-xs text-error">{titleError}</p> : null}
+                  </div>
+
+                  <div>
+                    <LineLabel htmlFor={`item-${field.id}-sku`}>SKU</LineLabel>
+                    <Input
+                      id={`item-${field.id}-sku`}
+                      className="h-9"
+                      placeholder="Optional"
+                      {...form.register(`lineItems.${index}.sku`)}
+                    />
+                  </div>
+
+                  <div>
+                    <LineLabel htmlFor={`item-${field.id}-qty`}>Qty</LineLabel>
+                    <div className="flex h-9 items-stretch overflow-hidden rounded-[var(--radius-input)] border border-border bg-card shadow-sm focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/30">
+                      <button
+                        type="button"
+                        aria-label="Decrease quantity"
+                        disabled={Number(row?.quantity || 1) <= 1}
+                        onClick={() => stepQuantity(index, -1)}
+                        className="flex w-8 shrink-0 items-center justify-center text-muted transition-colors hover:bg-surface-soft hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        <Minus className="size-3.5" />
+                      </button>
+                      <input
+                        id={`item-${field.id}-qty`}
+                        type="number"
+                        inputMode="numeric"
+                        min={1}
+                        className={cn(
+                          "w-full min-w-0 bg-transparent text-center text-sm tabular-nums text-foreground outline-none",
+                          NO_SPINNER
+                        )}
+                        {...form.register(`lineItems.${index}.quantity`)}
+                      />
+                      <button
+                        type="button"
+                        aria-label="Increase quantity"
+                        onClick={() => stepQuantity(index, 1)}
+                        className="flex w-8 shrink-0 items-center justify-center text-muted transition-colors hover:bg-surface-soft hover:text-foreground"
+                      >
+                        <Plus className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <LineLabel htmlFor={`item-${field.id}-price`}>Unit price</LineLabel>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">₹</span>
+                      <Input
+                        id={`item-${field.id}-price`}
+                        className={cn("h-9 pl-7 tabular-nums", NO_SPINNER)}
+                        type="number"
+                        inputMode="decimal"
+                        min={0}
+                        step="0.01"
+                        placeholder="0.00"
+                        onFocus={(event) => event.currentTarget.select()}
+                        {...form.register(`lineItems.${index}.unitPrice`)}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <LineLabel htmlFor={`item-${field.id}-weight`}>Weight</LineLabel>
+                    <div className="relative">
+                      <Input
+                        id={`item-${field.id}-weight`}
+                        className={cn("h-9 pr-7 tabular-nums", NO_SPINNER)}
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        placeholder="0"
+                        onFocus={(event) => event.currentTarget.select()}
+                        {...form.register(`lineItems.${index}.weightGrams`)}
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted">g</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 sm:col-span-3 lg:col-span-1 lg:h-9 lg:justify-end">
+                    <span className="text-xs text-muted lg:hidden">Line total</span>
+                    <span className="text-sm font-medium tabular-nums text-ink">{formatCurrency(lineTotal)}</span>
+                  </div>
+
+                  <div className="flex justify-end lg:h-9 lg:items-center">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-muted hover:bg-error/10 hover:text-error"
+                      disabled={items.fields.length === 1}
+                      onClick={() => items.remove(index)}
+                      aria-label={`Remove item ${index + 1}`}
+                      title={items.fields.length === 1 ? "An order needs at least one item" : "Remove item"}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="justify-center border border-dashed border-border text-muted hover:border-brand hover:text-brand sm:justify-start"
+              onClick={addLineItem}
+            >
+              <Plus className="size-4" />
+              Add another item
+            </Button>
+            <dl className="flex items-center justify-end gap-5 text-sm">
+              <div className="flex items-baseline gap-1.5">
+                <dt className="text-muted">Weight</dt>
+                <dd className="tabular-nums">{formatWeight(totalWeight)}</dd>
               </div>
-            </div>
-          ))}
+              <div className="flex items-baseline gap-1.5">
+                <dt className="text-muted">Subtotal</dt>
+                <dd className="font-semibold tabular-nums text-ink">{formatCurrency(orderTotal)}</dd>
+              </div>
+            </dl>
+          </div>
         </CardContent>
       </Card>
 
@@ -448,6 +601,23 @@ export default function NewOrderPage() {
   );
 }
 
+const LINE_ITEM_GRID = "lg:grid-cols-[minmax(0,1fr)_6.5rem_7rem_7rem_5.5rem_5.5rem_2rem]";
+const NO_SPINNER =
+  "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
+
+function formatWeight(grams: number) {
+  if (!grams) return "—";
+  return grams >= 1000 ? `${(grams / 1000).toFixed(2).replace(/\.?0+$/, "")} kg` : `${grams} g`;
+}
+
+function LineLabel({ htmlFor, children }: { htmlFor: string; children: ReactNode }) {
+  return (
+    <label htmlFor={htmlFor} className="mb-1 block text-xs font-medium text-muted lg:sr-only">
+      {children}
+    </label>
+  );
+}
+
 function Field({
   label,
   hint,
@@ -476,7 +646,7 @@ function AddressFields({
   form,
 }: {
   prefix: "shippingAddress" | "billingAddress";
-  form: Pick<ReturnType<typeof useForm<FormValues>>, "register">;
+  form: Pick<ReturnType<typeof useForm<FormValues>>, "register" | "control">;
 }) {
   return (
     <>
@@ -496,13 +666,39 @@ function AddressFields({
         <Input className="h-9" {...form.register(`${prefix}.city`)} />
       </Field>
       <Field label="State">
-        <Input className="h-9" {...form.register(`${prefix}.state`)} />
+        <Controller
+          control={form.control}
+          name={`${prefix}.state`}
+          defaultValue={DEFAULT_INDIAN_STATE}
+          render={({ field, fieldState }) => (
+            <Combobox
+              ref={field.ref}
+              name={field.name}
+              value={field.value}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+              options={INDIAN_STATE_OPTIONS}
+              placeholder="Search state"
+              emptyText="No state matches your search"
+              aria-invalid={Boolean(fieldState.error)}
+            />
+          )}
+        />
       </Field>
       <Field label="Pincode">
         <Input className="h-9" {...form.register(`${prefix}.pincode`)} />
       </Field>
       <Field label="Country">
-        <Input className="h-9" {...form.register(`${prefix}.country`)} />
+        <input type="hidden" defaultValue="IN" {...form.register(`${prefix}.country`)} />
+        <div
+          aria-readonly="true"
+          title="Shipping is available within India only"
+          className="flex h-9 w-full cursor-not-allowed select-none items-center gap-2.5 rounded-[var(--radius-input)] border border-border bg-surface-soft px-3.5 text-sm text-foreground"
+        >
+          <IndiaFlag className="h-3.5 w-5 shrink-0 rounded-[2px] shadow-[0_0_0_1px_rgb(9_9_11/0.08)]" />
+          <span className="font-medium">India</span>
+          <Lock className="ml-auto size-3.5 text-muted" aria-hidden />
+        </div>
       </Field>
     </>
   );
