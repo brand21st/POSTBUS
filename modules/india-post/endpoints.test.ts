@@ -80,10 +80,13 @@ describe("article type and shape", () => {
     expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BP");
   });
 
-  it("uses DOC for Speed Post under 500 g and NROL at or above 500 g", () => {
+  it("follows the selected Speed Post product and falls back to weight for bare SP", () => {
     expect(indiaPostShapeOfArticle("SP_INLAND_DOC", 250)).toBe("DOC");
-    expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 400)).toBe("DOC");
+    expect(indiaPostShapeOfArticle("SP_INLAND_DOC", 800)).toBe("DOC");
+    expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 100)).toBe("NROL");
     expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 1500)).toBe("NROL");
+    expect(indiaPostShapeOfArticle("SP", 400)).toBe("DOC");
+    expect(indiaPostShapeOfArticle("SP", 500)).toBe("NROL");
     expect(indiaPostShapeOfArticle("BUSINESS_PARCEL", 550)).toBe("NROL");
   });
 });

@@ -58,10 +58,22 @@ export function indiaPostBookingArticleType(serviceCode: string) {
   return "SP";
 }
 
+/**
+ * CEPT books `article_type: SP` + `shape_of_article: DOC` as Speed Post Document
+ * even under a parcel contract, so an explicit parcel/doc product code must win
+ * over the weight heuristic.
+ */
+export function indiaPostSpeedPostKind(serviceCode: string, weightGrams: number): "PARCEL" | "DOC" {
+  const code = serviceCode.trim().toUpperCase();
+  if (code === "SP_INLAND_PARCEL") return "PARCEL";
+  if (code === "SP_INLAND_DOC") return "DOC";
+  return weightGrams >= INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G ? "PARCEL" : "DOC";
+}
+
 export function indiaPostShapeOfArticle(serviceCode: string, weightGrams: number) {
   const bookingType = indiaPostBookingArticleType(serviceCode);
   if (bookingType === "BP" || bookingType === "24_SPP_PARSPL") return "NROL";
-  if (bookingType === "SP" && weightGrams >= INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G) return "NROL";
+  if (bookingType === "SP" && indiaPostSpeedPostKind(serviceCode, weightGrams) === "PARCEL") return "NROL";
   return "DOC";
 }
 

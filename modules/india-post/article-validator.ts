@@ -1,12 +1,16 @@
 import { isValidIndiaPostS10 } from "@/modules/india-post/barcode";
-import { indiaPostBookingArticleType, indiaPostMobile, indiaPostShapeOfArticle } from "@/modules/india-post/endpoints";
+import {
+  indiaPostBookingArticleType,
+  indiaPostMobile,
+  indiaPostShapeOfArticle,
+  indiaPostSpeedPostKind,
+} from "@/modules/india-post/endpoints";
 import type { BookingErrorCategory } from "@/modules/india-post/article-fields";
 import type { DraftArticle, ValidationIssue, ValidatedArticle } from "@/modules/india-post/article-types";
 import {
   INDIA_POST_ADDRESS_COMBINED_MAX,
   INDIA_POST_ADDRESS_LINE_MAX,
   INDIA_POST_BULK_REFERENCE_MAX,
-  INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G,
   indiaPostRequiresOtp,
 } from "@/modules/india-post/spec";
 import { INDIA_POST_WEIGHT_MAX_G, INDIA_POST_WEIGHT_MIN_G, toIndiaPostPhysicalWeightGrams } from "@/modules/india-post/weight";
@@ -37,8 +41,10 @@ export function indiaPostDimensionLimits(serviceCode: string, weightGrams = 0): 
   if (type === "24_SPP_PARSPL") return parsplLimits();
   if (type === "24_SPEEDPOST_DOC" || type === "48_SPEEDPOST_DOC") return docLimits();
   if (type === "BP") return parcelLimits();
-  if (type === "SP" && weightGrams > 0 && weightGrams < INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G) return docLimits();
-  if (serviceCode === "SP_INLAND_DOC") return docLimits();
+  if (type === "SP") {
+    if (weightGrams <= 0 && serviceCode.trim().toUpperCase() !== "SP_INLAND_DOC") return parcelLimits();
+    return indiaPostSpeedPostKind(serviceCode, weightGrams) === "DOC" ? docLimits() : parcelLimits();
+  }
   return parcelLimits();
 }
 
@@ -46,7 +52,7 @@ export function isParcelArticle(serviceCode: string, weightGrams: number) {
   const type = indiaPostBookingArticleType(serviceCode);
   if (type === "BP" || type === "24_SPP_PARSPL") return true;
   if (type === "24_SPEEDPOST_DOC" || type === "48_SPEEDPOST_DOC") return false;
-  if (type === "SP") return weightGrams >= INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G;
+  if (type === "SP") return indiaPostSpeedPostKind(serviceCode, weightGrams) === "PARCEL";
   return false;
 }
 

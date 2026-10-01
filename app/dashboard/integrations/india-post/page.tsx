@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { IndiaPostLogo } from "@/components/brand/india-post-logo";
+import { IndiaPostGuideBanner } from "@/components/integrations/india-post-guide-banner";
 import { IndiaPostWatchTutorialLink } from "@/components/integrations/india-post-watch-tutorial-link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -472,6 +473,8 @@ export default function IndiaPostPage() {
       />
 
       <IndiaPostWatchTutorialLink />
+
+      <IndiaPostGuideBanner selectedService={form.defaultServiceCode} />
 
       <Card>
         <CardHeader className="pb-4">

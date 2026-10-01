@@ -75,11 +75,18 @@ describe("India Post article validation", () => {
     expect(issues.some((issue) => issue.field === "physical_weight")).toBe(true);
   });
 
-  it("applies document dimension limits to Speed Post under 500 g", () => {
+  it("applies document dimension limits to Speed Post documents", () => {
     const issues = validateIndiaPostArticle(
-      baseDraft({ serviceCode: "SP_INLAND_PARCEL", weightGrams: 250, lengthCm: 20, widthCm: 15, heightCm: 10, strictDimensions: true })
+      baseDraft({ serviceCode: "SP_INLAND_DOC", weightGrams: 250, lengthCm: 20, widthCm: 15, heightCm: 10, strictDimensions: true })
     );
     expect(issues.some((issue) => issue.field === "height")).toBe(true);
+  });
+
+  it("keeps parcel limits for a light Speed Post parcel", () => {
+    const issues = validateIndiaPostArticle(
+      baseDraft({ serviceCode: "SP_INLAND_PARCEL", weightGrams: 100, lengthCm: 26, widthCm: 26, heightCm: 30, strictDimensions: true })
+    );
+    expect(issues).toEqual([]);
   });
 
   it("allows a 50-character bulk_reference", () => {

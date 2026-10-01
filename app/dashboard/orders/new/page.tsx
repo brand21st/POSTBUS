@@ -11,6 +11,7 @@ import { useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -140,8 +141,7 @@ export default function NewOrderPage() {
   const paymentStatus = form.watch("paymentStatus");
   const amountPaid = Number(form.watch("amountPaid") || 0);
   const lineItemValues = form.watch("lineItems");
-  const selectedService = form.watch("shipment.serviceCode");
-  const orderTotal = (lineItemValues ?? []).reduce(
+  const selectedService = form.watch("shipment.serviceCode");  const orderTotal = (lineItemValues ?? []).reduce(
     (sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0),
     0
   );
@@ -353,6 +353,7 @@ export default function NewOrderPage() {
             />
             Create shipment after save
           </label>
+          {createShipment ? <IndiaPostBookingGuide selectedService={selectedService} /> : null}
           {createShipment ? (
             <div className="grid gap-3 md:grid-cols-5">
               <Field label="Weight (g)">
