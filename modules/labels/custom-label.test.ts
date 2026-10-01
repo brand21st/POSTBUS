@@ -13,6 +13,7 @@ import { printMediaForPage, sizeChoiceForPage } from "@/modules/labels/page-pres
 import {
   applyPaperSize,
   defaultLabelTemplate,
+  defaultLabelTemplateId,
   fitAddressBox,
   growAutoHeightBox,
   elementBoxFromMm,
@@ -105,6 +106,33 @@ describe("india post barcode block", () => {
     });
     expect(parsed.page.widthMm).toBe(105);
     expect(parsed.page.heightMm).toBe(148);
+  });
+
+  it("picks the library item marked Default", () => {
+    const packing = defaultLabelTemplate("A6");
+    const india = indiaPostLabelTemplate();
+    packing.library = [
+      { id: "default", name: "Default", isDefault: true, page: packing.page, elements: packing.elements },
+      { id: "india", name: "India Post", isDefault: false, page: india.page, elements: india.elements },
+    ];
+    expect(defaultLabelTemplateId(packing)).toBe("default");
+    packing.library[0] = { ...packing.library[0], isDefault: false };
+    packing.library[1] = { ...packing.library[1], isDefault: true };
+    expect(defaultLabelTemplateId(packing)).toBe("india");
+    packing.library = packing.library.map((item) => ({ ...item, isDefault: false }));
+    expect(defaultLabelTemplateId(packing)).toBe("default");
+    expect(defaultLabelTemplateId(indiaPostLabelTemplate())).toBeNull();
+  });
+
+  it("renders the Default shipping slip PDF from packing data", async () => {
+    const packing = defaultLabelTemplate("A6");
+    packing.library = [
+      { id: "default", name: "Default", isDefault: true, page: packing.page, elements: packing.elements },
+    ];
+    const selected = selectLabelTemplate(packing, defaultLabelTemplateId(packing));
+    const bytes = await renderMerchantLabelPdf(selected, SAMPLE_PACKING_DATA);
+    expect(Buffer.from(bytes).subarray(0, 5).toString()).toBe("%PDF-");
+    expect(bytes.byteLength).toBeGreaterThan(500);
   });
 
   it("prints the editor page when India Post is not the workspace default", async () => {

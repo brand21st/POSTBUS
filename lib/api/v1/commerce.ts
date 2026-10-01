@@ -12,9 +12,12 @@ import { bulkOrderStatusSchema, createOrderSchema, orderListQuery, updateOrderWe
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
+import { renderCustomShippingLabel } from "@/modules/labels/custom-label-service";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { fetchReceiptPdf } from "@/modules/labels/receipt";
 import { listGroupedLabels } from "@/modules/labels/list";
+import { getLabelTemplate } from "@/modules/labels/template-service";
+import { defaultLabelTemplateId } from "@/modules/labels/template-schema";
 import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
 import { ndrListQuery } from "@/modules/ndr-rto/schema";
 import { getNdrSummary, listNdrShipments, syncNdrShipment } from "@/modules/ndr-rto/service";
@@ -269,6 +272,42 @@ export async function handleCommerceRoutes(
       response.headers.set("X-Label-Source", "stored");
       return response;
     }
+  }
+
+  if (method === "GET" && slugs[0] === "labels" && slugs[1] && slugs[2] === "shipping-slip") {
+    const { data: row } = await supabase
+      .from("labels")
+      .select("id, shipment_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", slugs[1])
+      .maybeSingle();
+    if (!row?.shipment_id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label not found.");
+    const shipmentId = String(row.shipment_id);
+    const { data: shipment } = await supabase
+      .from("shipments")
+      .select("id, barcode, booked_at")
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", shipmentId)
+      .maybeSingle();
+    const { data: official } = await supabase
+      .from("labels")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("shipment_id", shipmentId)
+      .eq("kind", "INDIA_POST")
+      .eq("status", "READY")
+      .limit(1)
+      .maybeSingle();
+    if (!shipment?.barcode || !shipment.booked_at || !official?.id) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Generate the India Post label first.");
+    }
+    const stored = await getLabelTemplate(supabase, ctx.organizationId);
+    const rendered = await renderCustomShippingLabel(supabase, ctx.organizationId, {
+      shipmentId,
+      templateId: defaultLabelTemplateId(stored),
+    });
+    const articleId = rendered.data.articleId?.trim() || shipmentId;
+    return labelPdfFileResponse(rendered.pdf, `shipping-slip-${articleId}.pdf`);
   }
 
   if (method === "GET" && slugs[0] === "labels" && slugs[1] && slugs[2] === "receipt") {

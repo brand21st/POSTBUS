@@ -386,6 +386,10 @@ export function labelPageSize(page: LabelTemplate["page"]) {
   return { widthPt: page.widthPt, heightPt: page.heightPt };
 }
 
+export function defaultLabelTemplateId(template: LabelTemplate) {
+  return template.library?.find((item) => item.isDefault)?.id ?? template.library?.[0]?.id ?? null;
+}
+
 export function selectLabelTemplate(template: LabelTemplate, templateId?: string | null): LabelTemplate {
   if (!templateId || !template.library?.length) return template;
   const found = template.library.find((item) => item.id === templateId);

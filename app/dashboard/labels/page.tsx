@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Download, LayoutGrid, Printer, QrCode, ReceiptText, Settings2, Tag } from "lucide-react";
+import { Check, ChevronDown, Download, LayoutGrid, Printer, QrCode, ReceiptText, Settings2, Tag, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -84,7 +84,7 @@ async function downloadLabelsZip(ids: string[]) {
   throw new ApiError(message, response.status);
 }
 
-async function downloadLabelPdf(id: string, source: "download" | "latest" | "receipt" = "download") {
+async function downloadLabelPdf(id: string, source: "download" | "latest" | "receipt" | "shipping-slip" = "download") {
   const response = await fetch(`/api/v1/labels/${id}/${source}`, { credentials: "same-origin" });
   if (!response.ok) {
     let message = "Could not download the file.";
@@ -194,6 +194,12 @@ export default function LabelsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const downloadShippingSlip = useMutation({
+    mutationFn: (id: string) => downloadLabelPdf(id, "shipping-slip"),
+    onSuccess: () => toast.success("Shipping slip downloaded."),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const preview = useMutation({
     mutationFn: (id: string) => openLabelPdf(id),
     onError: (error: Error) => toast.error(error.message),
@@ -226,6 +232,10 @@ export default function LabelsPage() {
         const labelId = indiaId ?? packId;
         const labelBusy = downloadLatestLabel.isPending && downloadLatestLabel.variables === labelId;
         const receiptBusy = downloadReceipt.isPending && downloadReceipt.variables === labelId;
+        const slipBusy = downloadShippingSlip.isPending && downloadShippingSlip.variables === labelId;
+        const indiaReady =
+          Boolean(indiaId) &&
+          String(row.barcodeStatus ?? row.barcode_status ?? (indiaId ? row.status : "")).toUpperCase() === "READY";
         return (
           <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
             <Button
@@ -247,6 +257,16 @@ export default function LabelsPage() {
             >
               <ReceiptText className="size-4" />
               {receiptBusy ? "Generating…" : "Receipt"}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!indiaReady || slipBusy}
+              onClick={() => labelId && downloadShippingSlip.mutate(labelId)}
+            >
+              <Truck className="size-4" />
+              {slipBusy ? "Generating…" : "Shipping Slip"}
             </Button>
           </div>
         );
