@@ -20,6 +20,7 @@ import {
   shopifyLineItemWeightGrams,
   shopifyLineItemImageUrl,
   shopifyImageLookupKey,
+  applyShopifyCatalogToLineItems,
   shopifyCatalogImageForLineItem,
   indexShopifyProductsForLineItemImages,
   shopifyStageFromJobProgress,
@@ -418,6 +419,20 @@ describe("shopify line item images", () => {
     expect(items?.payload).toEqual([
       expect.objectContaining({ image_url: "https://cdn.shopify.com/kurta.jpg" }),
     ]);
+  });
+
+  it("applies catalog images onto order line items missing image_url", () => {
+    const catalog = indexShopifyProductsForLineItemImages([
+      {
+        title: "Cotton Kurta",
+        image: { src: "https://cdn.shopify.com/kurta.jpg" },
+        variants: [{ sku: "K-1", title: "Default Title" }],
+      },
+    ]);
+    const items = [{ id: "li-1", title: "Cotton Kurta", sku: "K-1", image_url: null }];
+    const patches = applyShopifyCatalogToLineItems(items, catalog);
+    expect(items[0]?.image_url).toBe("https://cdn.shopify.com/kurta.jpg");
+    expect(patches).toEqual([{ id: "li-1", src: "https://cdn.shopify.com/kurta.jpg" }]);
   });
 
   it("matches catalog images by SKU and product title", () => {

@@ -63,6 +63,7 @@ import {
   customerName,
   customerPhone,
   firstLineItemImage,
+  lineItems,
   itemCount,
   itemNamesPreview,
   itemSummary,
@@ -477,9 +478,10 @@ export default function OrdersPage() {
               if (summary === "—") return "—";
               const count = itemCount(row);
               const preview = itemNamesPreview(row);
+              const thumbTitle = lineItems(row)[0]?.title ?? preview;
               return (
                 <div className="flex max-w-[220px] items-center gap-2" title={summary}>
-                  <LineItemThumb title={preview} imageUrl={firstLineItemImage(row)} />
+                  <LineItemThumb title={thumbTitle} imageUrl={firstLineItemImage(row)} />
                   <div className="min-w-0">
                     <p className="font-medium text-ink">{count === 1 ? "1 item" : `${count} items`}</p>
                     <p className="truncate text-[11px] text-muted">{preview}</p>

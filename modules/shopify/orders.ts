@@ -209,6 +209,107 @@ export function shopifyCatalogImageForLineItem(
   return null;
 }
 
+export type OrderLineItemImageRow = {
+  id?: string;
+  title?: string | null;
+  sku?: string | null;
+  imageUrl?: string | null;
+  image_url?: string | null;
+};
+
+export type OrderWithLineItemImages = {
+  source?: string | null;
+  lineItems?: OrderLineItemImageRow[];
+};
+
+const shopifyCatalogCache = new Map<string, { catalog: ShopifyProductImageCatalog | null; at: number }>();
+const SHOPIFY_CATALOG_TTL_MS = 5 * 60 * 1000;
+const SHOPIFY_CATALOG_FAILURE_TTL_MS = 60 * 1000;
+
+export function applyShopifyCatalogToLineItems(
+  items: OrderLineItemImageRow[],
+  catalog: ShopifyProductImageCatalog
+) {
+  const patches: Array<{ id: string; src: string }> = [];
+  for (const item of items) {
+    const current = String(item.imageUrl ?? item.image_url ?? "").trim();
+    if (current) continue;
+    const src = shopifyCatalogImageForLineItem(item.title, item.sku, catalog);
+    if (!src) continue;
+    item.imageUrl = src;
+    item.image_url = src;
+    if (item.id) patches.push({ id: item.id, src });
+  }
+  return patches;
+}
+
+async function loadShopifyProductImageCatalog(
+  supabase: SupabaseClient,
+  organizationId: string
+): Promise<ShopifyProductImageCatalog | null> {
+  const cached = shopifyCatalogCache.get(organizationId);
+  if (cached) {
+    const ttl = cached.catalog ? SHOPIFY_CATALOG_TTL_MS : SHOPIFY_CATALOG_FAILURE_TTL_MS;
+    if (Date.now() - cached.at < ttl) return cached.catalog;
+  }
+
+  let catalog: ShopifyProductImageCatalog | null = null;
+  try {
+    const db = hasAdminClient() ? createAdminClient() : supabase;
+    const connection = await loadShopifyConnection(db, organizationId);
+    const token = connection?.shop_domain ? await resolveShopifyAdminToken(connection) : null;
+    if (connection?.shop_domain && token) {
+      catalog = await fetchShopifyProductImageCatalog(connection.shop_domain, token);
+    }
+  } catch (error) {
+    logError("shopify.line-item-images.catalog", {
+      organizationId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+  }
+  shopifyCatalogCache.set(organizationId, { catalog, at: Date.now() });
+  return catalog;
+}
+
+export async function enrichShopifyLineItemImagesInOrders(
+  supabase: SupabaseClient,
+  organizationId: string,
+  orders: OrderWithLineItemImages[]
+) {
+  const shopifyOrders = orders.filter((order) => String(order.source ?? "").toUpperCase() === "SHOPIFY");
+  if (!shopifyOrders.length) return;
+
+  const needsCatalog = shopifyOrders.some((order) =>
+    (order.lineItems ?? []).some((item) => !String(item.imageUrl ?? item.image_url ?? "").trim())
+  );
+  if (!needsCatalog) return;
+
+  const catalog = await loadShopifyProductImageCatalog(supabase, organizationId);
+  if (!catalog) return;
+
+  const patches: Array<{ id: string; src: string }> = [];
+  for (const order of shopifyOrders) {
+    patches.push(...applyShopifyCatalogToLineItems(order.lineItems ?? [], catalog));
+  }
+  if (!patches.length) return;
+
+  void Promise.all(
+    patches.map((patch) =>
+      supabase
+        .from("order_line_items")
+        .update({ image_url: patch.src })
+        .eq("id", patch.id)
+        .eq("organization_id", organizationId)
+        .is("image_url", null)
+    )
+  ).catch((error) => {
+    logError("shopify.line-item-images.enrich", {
+      organizationId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+  });
+}
+
 export type ShopifySyncResult = {
   imported: number;
   updated: number;

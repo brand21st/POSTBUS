@@ -8,6 +8,7 @@ import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { settleOrderPayment } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { syncOpenShipmentsService } from "@/modules/shipments/service";
+import { enrichShopifyLineItemImagesInOrders } from "@/modules/shopify/orders";
 
 type CreateInput = z.infer<typeof createOrderSchema>;
 type OrderListQuery = z.infer<typeof orderListQuery>;
@@ -106,8 +107,11 @@ export async function listOrders(
 
   if (listed.error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, listed.error.message);
 
+  const items = (listed.data ?? []).map(mapOrder);
+  await enrichShopifyLineItemImagesInOrders(supabase, ctx.organizationId, items);
+
   return {
-    items: (listed.data ?? []).map(mapOrder),
+    items,
     page: query.page,
     pageSize: query.pageSize,
     total,
@@ -126,7 +130,9 @@ export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id:
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
-  return mapOrder(data);
+  const order = mapOrder(data);
+  await enrichShopifyLineItemImagesInOrders(supabase, ctx.organizationId, [order]);
+  return order;
 }
 
 export async function createManualOrder(
