@@ -6,8 +6,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { Lock, Minus, Plus, Trash2 } from "lucide-react";
-import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { AlertCircle, Loader2, Lock, MapPin, Minus, Plus, Trash2 } from "lucide-react";
+import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -610,6 +610,81 @@ function formatWeight(grams: number) {
   return grams >= 1000 ? `${(grams / 1000).toFixed(2).replace(/\.?0+$/, "")} kg` : `${grams} g`;
 }
 
+type PincodeOffices = {
+  pincode: string;
+  offices: Array<{ officeId: string; name: string; city: string; state: string; officeTypeCode: string }>;
+};
+
+function PincodeLookup({
+  control,
+  name,
+}: {
+  control: ReturnType<typeof useForm<FormValues>>["control"];
+  name: "shippingAddress.pincode" | "billingAddress.pincode";
+}) {
+  const value = useWatch({ control, name });
+  const pincode = String(value ?? "").replace(/\D/g, "");
+  const ready = /^\d{6}$/.test(pincode);
+  const lookup = useQuery({
+    queryKey: ["india-post", "offices", pincode],
+    queryFn: () =>
+      api<PincodeOffices>(`/api/v1/integrations/india-post/offices?pincode=${pincode}`),
+    enabled: ready,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
+    retry: false,
+  });
+
+  if (!ready) return null;
+
+  if (lookup.isPending) {
+    return (
+      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted" aria-live="polite">
+        <Loader2 className="size-3.5 animate-spin" />
+        Finding post office…
+      </p>
+    );
+  }
+
+  if (lookup.isError) {
+    return (
+      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted" aria-live="polite">
+        <AlertCircle className="size-3.5 shrink-0" />
+        {lookup.error instanceof Error ? lookup.error.message : "Could not look up this pincode."}
+      </p>
+    );
+  }
+
+  const offices = lookup.data?.offices ?? [];
+  if (!offices.length) {
+    return (
+      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-warning" aria-live="polite">
+        <AlertCircle className="size-3.5 shrink-0" />
+        No post office found for this pincode.
+      </p>
+    );
+  }
+
+  const [office, ...others] = offices;
+  const location = [office.city, office.state].filter(Boolean).join(", ");
+  return (
+    <div
+      className="mt-1.5 flex items-start gap-2 rounded-lg border border-success/20 bg-success/5 px-2.5 py-1.5 text-xs"
+      aria-live="polite"
+      title={offices.map((item) => item.name).join("\n")}
+    >
+      <MapPin className="mt-0.5 size-3.5 shrink-0 text-success" />
+      <div className="min-w-0">
+        <p className="truncate font-medium text-ink">
+          {office.name}
+          {others.length ? <span className="font-normal text-muted"> +{others.length} more</span> : null}
+        </p>
+        {location ? <p className="truncate text-muted">{location}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 function LineLabel({ htmlFor, children }: { htmlFor: string; children: ReactNode }) {
   return (
     <label htmlFor={htmlFor} className="mb-1 block text-xs font-medium text-muted lg:sr-only">
@@ -686,7 +761,15 @@ function AddressFields({
         />
       </Field>
       <Field label="Pincode">
-        <Input className="h-9" {...form.register(`${prefix}.pincode`)} />
+        <Input
+          className="h-9 tabular-nums tracking-wide"
+          inputMode="numeric"
+          maxLength={6}
+          autoComplete="postal-code"
+          placeholder="6-digit pincode"
+          {...form.register(`${prefix}.pincode`)}
+        />
+        <PincodeLookup control={form.control} name={`${prefix}.pincode`} />
       </Field>
       <Field label="Country">
         <input type="hidden" defaultValue="IN" {...form.register(`${prefix}.country`)} />
