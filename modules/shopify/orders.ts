@@ -243,6 +243,68 @@ export function applyShopifyCatalogToLineItems(
   return patches;
 }
 
+function getCachedShopifyProductImageCatalog(organizationId: string): ShopifyProductImageCatalog | null {
+  const cached = shopifyCatalogCache.get(organizationId);
+  if (!cached?.catalog) return null;
+  if (Date.now() - cached.at >= SHOPIFY_CATALOG_TTL_MS) return null;
+  return cached.catalog;
+}
+
+function shopifyOrdersMissingLineItemImages(orders: OrderWithLineItemImages[]) {
+  return orders
+    .filter((order) => String(order.source ?? "").toUpperCase() === "SHOPIFY")
+    .some((order) =>
+      (order.lineItems ?? []).some((item) => !String(item.imageUrl ?? item.image_url ?? "").trim())
+    );
+}
+
+function applyShopifyCatalogToOrders(orders: OrderWithLineItemImages[], catalog: ShopifyProductImageCatalog) {
+  const patches: Array<{ id: string; src: string }> = [];
+  for (const order of orders) {
+    if (String(order.source ?? "").toUpperCase() !== "SHOPIFY") continue;
+    patches.push(...applyShopifyCatalogToLineItems(order.lineItems ?? [], catalog));
+  }
+  return patches;
+}
+
+function persistShopifyLineItemImagePatches(
+  supabase: SupabaseClient,
+  organizationId: string,
+  patches: Array<{ id: string; src: string }>
+) {
+  if (!patches.length) return;
+  void Promise.all(
+    patches.map((patch) =>
+      supabase
+        .from("order_line_items")
+        .update({ image_url: patch.src })
+        .eq("id", patch.id)
+        .eq("organization_id", organizationId)
+        .is("image_url", null)
+    )
+  ).catch((error) => {
+    logError("shopify.line-item-images.enrich", {
+      organizationId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+  });
+}
+
+export function enrichShopifyLineItemImagesFromCache(
+  supabase: SupabaseClient,
+  organizationId: string,
+  orders: OrderWithLineItemImages[]
+) {
+  if (!shopifyOrdersMissingLineItemImages(orders)) return;
+  const catalog = getCachedShopifyProductImageCatalog(organizationId);
+  if (!catalog) return;
+  persistShopifyLineItemImagePatches(
+    supabase,
+    organizationId,
+    applyShopifyCatalogToOrders(orders, catalog)
+  );
+}
+
 async function loadShopifyProductImageCatalog(
   supabase: SupabaseClient,
   organizationId: string
@@ -276,38 +338,19 @@ export async function enrichShopifyLineItemImagesInOrders(
   organizationId: string,
   orders: OrderWithLineItemImages[]
 ) {
-  const shopifyOrders = orders.filter((order) => String(order.source ?? "").toUpperCase() === "SHOPIFY");
-  if (!shopifyOrders.length) return;
+  if (!shopifyOrdersMissingLineItemImages(orders)) return;
 
-  const needsCatalog = shopifyOrders.some((order) =>
-    (order.lineItems ?? []).some((item) => !String(item.imageUrl ?? item.image_url ?? "").trim())
-  );
-  if (!needsCatalog) return;
+  enrichShopifyLineItemImagesFromCache(supabase, organizationId, orders);
+  if (!shopifyOrdersMissingLineItemImages(orders)) return;
 
   const catalog = await loadShopifyProductImageCatalog(supabase, organizationId);
   if (!catalog) return;
 
-  const patches: Array<{ id: string; src: string }> = [];
-  for (const order of shopifyOrders) {
-    patches.push(...applyShopifyCatalogToLineItems(order.lineItems ?? [], catalog));
-  }
-  if (!patches.length) return;
-
-  void Promise.all(
-    patches.map((patch) =>
-      supabase
-        .from("order_line_items")
-        .update({ image_url: patch.src })
-        .eq("id", patch.id)
-        .eq("organization_id", organizationId)
-        .is("image_url", null)
-    )
-  ).catch((error) => {
-    logError("shopify.line-item-images.enrich", {
-      organizationId,
-      message: error instanceof Error ? error.message : "unknown",
-    });
-  });
+  persistShopifyLineItemImagePatches(
+    supabase,
+    organizationId,
+    applyShopifyCatalogToOrders(orders, catalog)
+  );
 }
 
 export type ShopifySyncResult = {
