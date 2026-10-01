@@ -49,6 +49,7 @@ describe("order stage dashboard alerts", () => {
     expect(isDashboardAlertNotification("shipment.in_transit")).toBe(true);
     expect(isDashboardAlertNotification("shipment.delivered")).toBe(true);
     expect(isDashboardAlertNotification("labels.barcode_and_packing_ready")).toBe(true);
+    expect(isDashboardAlertNotification("tracking.host_live")).toBe(true);
     expect(isDashboardAlertNotification("shipment.failed")).toBe(false);
     expect(isDashboardAlertNotification("tracking.updated")).toBe(false);
   });
@@ -91,6 +92,7 @@ describe("order stage dashboard alerts", () => {
 
   it("uses the completion chime when both barcode and packing slip are ready", () => {
     expect(usesCompletionSound([LABELS_READY_NOTIFICATION])).toBe(true);
+    expect(usesCompletionSound(["tracking.host_live"])).toBe(true);
     expect(usesCompletionSound([SHOPIFY_ORDER_NOTIFICATION, LABELS_READY_NOTIFICATION])).toBe(true);
     expect(usesCompletionSound([SHOPIFY_ORDER_NOTIFICATION])).toBe(false);
   });

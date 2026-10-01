@@ -896,6 +896,13 @@ export type TrackingPageRecord = {
   };
 };
 
+export type TrackingHostStatus = {
+  status: "live" | "connecting" | "unpublished";
+  domain: string;
+  message: string;
+  notified: boolean;
+};
+
 export type SubdomainAvailability = {
   available: boolean;
   reason: "available" | "taken" | "reserved" | "invalid";

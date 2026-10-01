@@ -1,7 +1,8 @@
 import { LABELS_READY_NOTIFICATION } from "@/lib/notifications/labels-ready";
+import { TRACKING_HOST_LIVE_NOTIFICATION } from "@/lib/notifications/tracking-host";
 
 export const SHOPIFY_ORDER_NOTIFICATION = "shopify.order_imported";
-export { LABELS_READY_NOTIFICATION };
+export { LABELS_READY_NOTIFICATION, TRACKING_HOST_LIVE_NOTIFICATION };
 
 export const DASHBOARD_ALERT_TYPES = new Set([
   SHOPIFY_ORDER_NOTIFICATION,
@@ -10,6 +11,7 @@ export const DASHBOARD_ALERT_TYPES = new Set([
   "shipment.in_transit",
   "shipment.delivered",
   LABELS_READY_NOTIFICATION,
+  TRACKING_HOST_LIVE_NOTIFICATION,
 ]);
 
 export function isShopifyOrderNotification(type?: string | null) {
@@ -108,7 +110,9 @@ export async function playCompletionSound() {
 }
 
 export function usesCompletionSound(types: Array<string | null | undefined>) {
-  return types.some((type) => type === LABELS_READY_NOTIFICATION);
+  return types.some(
+    (type) => type === LABELS_READY_NOTIFICATION || type === TRACKING_HOST_LIVE_NOTIFICATION
+  );
 }
 
 export async function playDashboardAlertSound(types: Array<string | null | undefined>) {

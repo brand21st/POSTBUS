@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, ExternalLink, Globe, Pencil, Trash2 } from "lucide-react";
+import { CheckCircle2, Copy, ExternalLink, Globe, Pencil, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -17,13 +17,14 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { api } from "@/lib/hooks/use-api";
+import { NOTIFICATIONS_QUERY_KEY } from "@/lib/hooks/use-notifications";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { trackingHostSuffix, trackingPagePublicUrl } from "@/modules/tracking-pages/host";
 import { subdomainSchema, updateTrackingPageSchema } from "@/modules/tracking-pages/schema";
-import type { SubdomainAvailability, TrackingPageRecord } from "@/types/api";
+import type { SubdomainAvailability, TrackingHostStatus, TrackingPageRecord } from "@/types/api";
 import type { MemberRole } from "@/types/domain";
 
 const createSchema = z.object({
@@ -57,16 +58,63 @@ function notifyHostProvisioning(page: TrackingPageRecord, title: string) {
   }
   if (provision.status === "connecting") {
     toast.success(title, {
-      description: "Connecting the public address. Open it in about a minute.",
+      description: "We’ll notify you here when the public address is live for customers.",
       duration: 8000,
-      action: {
-        label: "Open URL",
-        onClick: () => window.open(page.publicUrl, "_blank", "noopener,noreferrer"),
-      },
     });
     return;
   }
   toast.warning("Customer URL saved.", { description: provision.message, duration: 8000 });
+}
+
+function usePublicTrackingHost(page: TrackingPageRecord | null | undefined) {
+  const queryClient = useQueryClient();
+  const connecting = page?.hostProvisioning?.status === "connecting";
+  const announced = useRef("");
+  const query = useQuery({
+    queryKey: ["tracking-host-status", page?.id, page?.subdomain, connecting],
+    enabled: Boolean(page && page.status === "PUBLISHED"),
+    queryFn: () =>
+      api<TrackingHostStatus>(
+        `/api/v1/tracking-pages/host-status${connecting ? "?announce=1" : ""}`
+      ),
+    refetchInterval: (current) => {
+      if (current.state.data?.status === "live") return false;
+      if (connecting || current.state.data?.status === "connecting") return 4000;
+      return false;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+  useEffect(() => {
+    if (!page || query.data?.status !== "live") return;
+    const key = `${page.id}:${query.data.domain}`;
+    if (announced.current === key) return;
+    announced.current = key;
+    queryClient.setQueryData(["tracking-page"], (current: TrackingPageRecord | undefined) => {
+      if (!current) return current;
+      return {
+        ...current,
+        hostProvisioning: {
+          status: "live",
+          domain: query.data.domain,
+          message: query.data.message,
+        },
+      };
+    });
+    if (query.data.notified) {
+      toast.success("Your tracking page is live for customers.", {
+        description: query.data.domain,
+        duration: 10_000,
+        action: {
+          label: "Open URL",
+          onClick: () => window.open(query.data.domain, "_blank", "noopener,noreferrer"),
+        },
+      });
+      void queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_QUERY_KEY });
+    }
+  }, [page, query.data, queryClient]);
+
+  return query;
 }
 
 export function TrackingPageEditor() {
@@ -217,6 +265,7 @@ function toFormValues(page: TrackingPageRecord): EditorValues {
 
 function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; canManage: boolean }) {
   const queryClient = useQueryClient();
+  const publicHost = usePublicTrackingHost(page);
   const form = useForm<EditorValues>({
     resolver: zodResolver(updateTrackingPageSchema) as never,
     defaultValues: toFormValues(page),
@@ -316,6 +365,7 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
     onSuccess: (next) => {
       queryClient.setQueryData(["tracking-page"], next);
       notifyHostProvisioning(next, "Tracking page published.");
+      void queryClient.invalidateQueries({ queryKey: ["tracking-host-status"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not publish."),
   });
@@ -380,6 +430,7 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
       <div className="space-y-6">
         <CustomerUrlCard
           page={page}
+          hostStatus={publicHost.data}
           canManage={canManage}
           publishing={publish.isPending}
           unpublishing={unpublish.isPending}
@@ -566,6 +617,7 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
 
 function CustomerUrlCard({
   page,
+  hostStatus,
   canManage,
   publishing,
   unpublishing,
@@ -573,6 +625,7 @@ function CustomerUrlCard({
   onUnpublish,
 }: {
   page: TrackingPageRecord;
+  hostStatus?: TrackingHostStatus;
   canManage: boolean;
   publishing: boolean;
   unpublishing: boolean;
@@ -619,6 +672,7 @@ function CustomerUrlCard({
       queryClient.setQueryData(["tracking-page"], next);
       setEditing(false);
       notifyHostProvisioning(next, "Customer URL updated.");
+      void queryClient.invalidateQueries({ queryKey: ["tracking-host-status"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not update the URL."),
   });
@@ -628,6 +682,13 @@ function CustomerUrlCard({
     changed && settled && parsed.success && availability.data?.available === true && !save.isPending;
   const previewUrl = parsed.success ? trackingPagePublicUrl(normalized) : page.publicUrl;
   const activeUrl = editing && parsed.success ? previewUrl : page.publicUrl;
+  const publicLive =
+    page.status === "PUBLISHED" &&
+    (hostStatus?.status === "live" || page.hostProvisioning?.status === "live");
+  const publicConnecting =
+    page.status === "PUBLISHED" &&
+    !publicLive &&
+    (hostStatus?.status === "connecting" || page.hostProvisioning?.status === "connecting");
 
   async function copyUrl() {
     await navigator.clipboard.writeText(activeUrl);
@@ -684,8 +745,15 @@ function CustomerUrlCard({
               >
                 {page.publicUrl}
               </a>
-              {page.hostProvisioning?.status === "connecting" ? (
-                <span className="mt-2 block text-sm text-muted">Public address is connecting…</span>
+              {publicLive ? (
+                <span className="mt-2 flex items-center gap-1.5 text-sm font-medium text-success">
+                  <CheckCircle2 className="size-4" />
+                  Live for customers
+                </span>
+              ) : publicConnecting ? (
+                <span className="mt-2 block text-sm text-muted">
+                  Connecting public address… we’ll notify you when it’s live.
+                </span>
               ) : null}
             </CardDescription>
           )}

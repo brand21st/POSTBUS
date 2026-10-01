@@ -9,11 +9,15 @@ import {
   unlockNewOrderSound,
   collectDashboardAlerts,
   LABELS_READY_NOTIFICATION,
+  TRACKING_HOST_LIVE_NOTIFICATION,
 } from "@/lib/notifications/new-order";
 import { cn } from "@/lib/utils";
 import type { NotificationRecord } from "@/types/api";
 
 function orderHref(item: NotificationRecord) {
+  if (item.type === TRACKING_HOST_LIVE_NOTIFICATION) {
+    return item.body?.startsWith("http") ? item.body : "/dashboard/tracking";
+  }
   if (item.type === LABELS_READY_NOTIFICATION) return "/dashboard/labels";
   if (item.href) return item.href;
   const orderId = item.entityId ?? item.entity_id;
@@ -21,6 +25,7 @@ function orderHref(item: NotificationRecord) {
 }
 
 function actionLabel(item: NotificationRecord) {
+  if (item.type === TRACKING_HOST_LIVE_NOTIFICATION) return "Open customer URL";
   return item.type === LABELS_READY_NOTIFICATION ? "View labels" : "View order";
 }
 
@@ -90,25 +95,38 @@ export function NewOrderAlerts() {
 
   const first = alerts[0];
   const labelsReady = first.type === LABELS_READY_NOTIFICATION;
+  const hostLive = first.type === TRACKING_HOST_LIVE_NOTIFICATION;
+  const successAlert = labelsReady || hostLive;
   const title =
     alerts.length === 1
       ? first.title || (labelsReady ? "Barcode and Packing slip Ready" : "Order update")
       : labelsReady
         ? `${alerts.length} label updates`
-        : `${alerts.length} order updates`;
+        : hostLive
+          ? `${alerts.length} tracking page updates`
+          : `${alerts.length} order updates`;
   const body =
     alerts.length === 1
       ? first.body || (labelsReady ? "Download the barcode and packing slip." : "An order just moved to the next stage.")
       : labelsReady
         ? "Barcode and packing slips are ready."
-        : "Orders just moved to the next stage.";
-  const href = alerts.length === 1 ? orderHref(first) : labelsReady ? "/dashboard/labels" : "/dashboard/orders";
+        : hostLive
+          ? "Customer tracking addresses are live."
+          : "Orders just moved to the next stage.";
+  const href =
+    alerts.length === 1
+      ? orderHref(first)
+      : labelsReady
+        ? "/dashboard/labels"
+        : hostLive
+          ? "/dashboard/tracking"
+          : "/dashboard/orders";
 
   return (
     <div
       className={cn(
         "fixed right-4 top-20 z-[80] w-[min(24rem,calc(100vw-2rem))] rounded-2xl border bg-card p-4 shadow-2xl",
-        labelsReady ? "border-emerald-200" : "border-brand/20"
+        successAlert ? "border-emerald-200" : "border-brand/20"
       )}
       role="alertdialog"
       aria-label={title}
@@ -117,10 +135,10 @@ export function NewOrderAlerts() {
         <span
           className={cn(
             "flex size-10 shrink-0 items-center justify-center rounded-2xl",
-            labelsReady ? "bg-emerald-50 text-emerald-700" : "bg-brand/10 text-brand"
+            successAlert ? "bg-emerald-50 text-emerald-700" : "bg-brand/10 text-brand"
           )}
         >
-          {labelsReady ? <CircleCheck className="size-5" /> : <BellRing className="size-5" />}
+          {successAlert ? <CircleCheck className="size-5" /> : <BellRing className="size-5" />}
         </span>
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-ink">{title}</p>
@@ -130,10 +148,20 @@ export function NewOrderAlerts() {
             className="mt-3 text-sm font-medium text-brand hover:underline"
             onClick={() => {
               setAlerts([]);
+              if (href.startsWith("http://") || href.startsWith("https://")) {
+                window.open(href, "_blank", "noopener,noreferrer");
+                return;
+              }
               router.push(href);
             }}
           >
-            {alerts.length === 1 ? actionLabel(first) : labelsReady ? "View labels" : "View order"}
+            {alerts.length === 1
+              ? actionLabel(first)
+              : labelsReady
+                ? "View labels"
+                : hostLive
+                  ? "View tracking page"
+                  : "View order"}
           </button>
         </div>
         <button
