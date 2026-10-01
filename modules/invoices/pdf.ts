@@ -80,7 +80,7 @@ function code128B(text: string) {
   return codes.map((code) => CODE128_PATTERNS[code] ?? CODE128_PATTERNS[0]).join("");
 }
 
-function drawBarcode(page: PDFPage, value: string, x: number, y: number, width: number, height: number) {
+export function drawBarcode(page: PDFPage, value: string, x: number, y: number, width: number, height: number) {
   const pattern = code128B(value);
   const moduleWidth = width / pattern.length;
   let cursor = x;

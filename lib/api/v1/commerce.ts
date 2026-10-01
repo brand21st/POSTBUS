@@ -12,6 +12,8 @@ import { bulkOrderStatusSchema, createOrderSchema, orderListQuery, updateOrderWe
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
+import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
+import { fetchReceiptPdf } from "@/modules/labels/receipt";
 import { listGroupedLabels } from "@/modules/labels/list";
 import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
 import { ndrListQuery } from "@/modules/ndr-rto/schema";
@@ -218,6 +220,74 @@ export async function handleCommerceRoutes(
       return labelPdfViewerResponse(filename);
     }
     return labelPdfFileResponse(bytes, filename);
+  }
+
+  if (method === "GET" && slugs[0] === "labels" && slugs[1] && slugs[2] === "latest") {
+    const { data: row } = await supabase
+      .from("labels")
+      .select("id, shipment_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", slugs[1])
+      .maybeSingle();
+    if (!row?.shipment_id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label not found.");
+    const shipmentId = String(row.shipment_id);
+    const filename = `india-post-label-${shipmentId}.pdf`;
+    try {
+      const official = await fetchOfficialIndiaPostLabelPdf(supabase, ctx.organizationId, shipmentId);
+      const response = labelPdfFileResponse(official.pdf, filename);
+      response.headers.set("X-Label-Source", "india-post");
+      return response;
+    } catch (error) {
+      logError("LABEL_LATEST_FETCH_FAILED", {
+        organizationId: ctx.organizationId,
+        shipmentId,
+        message: error instanceof Error ? error.message : "unknown",
+      });
+      const { data: stored } = await supabase
+        .from("labels")
+        .select("id, file_path, file_url, shipment_id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("shipment_id", shipmentId)
+        .eq("kind", "INDIA_POST")
+        .eq("status", "READY")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!stored?.file_path && !stored?.file_url) {
+        throw new AppError(
+          ERROR_CODES.PROVIDER_ERROR,
+          error instanceof Error ? error.message : "India Post label generation failed."
+        );
+      }
+      const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, {
+        id: String(stored.id),
+        file_path: stored.file_path || "",
+        file_url: stored.file_url,
+        shipment_id: stored.shipment_id,
+      });
+      const response = labelPdfFileResponse(bytes, filename);
+      response.headers.set("X-Label-Source", "stored");
+      return response;
+    }
+  }
+
+  if (method === "GET" && slugs[0] === "labels" && slugs[1] && slugs[2] === "receipt") {
+    const { data: row } = await supabase
+      .from("labels")
+      .select("id, shipment_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", slugs[1])
+      .maybeSingle();
+    if (!row?.shipment_id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label not found.");
+    try {
+      const receipt = await fetchReceiptPdf(supabase, ctx.organizationId, String(row.shipment_id));
+      return labelPdfFileResponse(receipt.pdf, `india-post-receipt-${receipt.articleId}.pdf`);
+    } catch (error) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        error instanceof Error ? error.message : "Could not create the receipt."
+      );
+    }
   }
 
   if (key === "POST labels/bulk-download") {

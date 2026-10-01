@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Download, FileText, LayoutGrid, Printer, QrCode, Settings2, Tag } from "lucide-react";
+import { Check, ChevronDown, Download, LayoutGrid, Printer, QrCode, ReceiptText, Settings2, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -25,8 +25,6 @@ import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
 import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import { shipmentPrintJobs, shipmentPrintLabel, type ShipmentPrintTarget } from "@/modules/labels/print-targets";
-import { NOTIFICATIONS_QUERY_KEY } from "@/lib/hooks/use-notifications";
-import { LABELS_READY_NOTIFICATION, LABELS_READY_TITLE } from "@/lib/notifications/labels-ready";
 import type { LabelRecord, Paginated } from "@/types/api";
 
 function printLabel(status?: string | null) {
@@ -86,8 +84,8 @@ async function downloadLabelsZip(ids: string[]) {
   throw new ApiError(message, response.status);
 }
 
-async function downloadLabelPdf(id: string) {
-  const response = await fetch(`/api/v1/labels/${id}/download`, { credentials: "same-origin" });
+async function downloadLabelPdf(id: string, source: "download" | "latest" | "receipt" = "download") {
+  const response = await fetch(`/api/v1/labels/${id}/${source}`, { credentials: "same-origin" });
   if (!response.ok) {
     let message = "Could not download the file.";
     try {
@@ -109,6 +107,7 @@ async function downloadLabelPdf(id: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
+  return response.headers.get("X-Label-Source");
 }
 
 export default function LabelsPage() {
@@ -177,42 +176,21 @@ export default function LabelsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const downloadBarcode = useMutation({
-    mutationFn: downloadLabelPdf,
+  const downloadLatestLabel = useMutation({
+    mutationFn: (id: string) => downloadLabelPdf(id, "latest"),
+    onSuccess: (source) => {
+      if (source === "stored") {
+        toast.warning("India Post is unreachable. Downloaded the label saved at booking.");
+      } else {
+        toast.success("Latest India Post label downloaded.");
+      }
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const downloadPacking = useMutation({
-    mutationFn: async (row: LabelRecord) => {
-      const existing = packingId(row);
-      if (existing) {
-        await downloadLabelPdf(existing);
-        return { created: false };
-      }
-      const created = await api<{ id: string }>(`/api/v1/labels/${barcodeId(row) ?? row.id}/packing-slip`, {
-        method: "POST",
-      });
-      await queryClient.invalidateQueries({ queryKey: ["labels"] });
-      await queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_QUERY_KEY });
-      await downloadLabelPdf(created.id);
-      return { created: true };
-    },
-    onSuccess: (result) => {
-      if (!result.created) return;
-      window.dispatchEvent(
-        new CustomEvent("postbus:new-shopify-orders", {
-          detail: [
-            {
-              id: `labels-ready-${Date.now()}`,
-              type: LABELS_READY_NOTIFICATION,
-              title: LABELS_READY_TITLE,
-              body: "Download the barcode and packing slip.",
-              href: "/dashboard/labels",
-            },
-          ],
-        })
-      );
-    },
+  const downloadReceipt = useMutation({
+    mutationFn: (id: string) => downloadLabelPdf(id, "receipt"),
+    onSuccess: () => toast.success("India Post receipt downloaded."),
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -245,28 +223,30 @@ export default function LabelsPage() {
       cell: (row) => {
         const indiaId = barcodeId(row);
         const packId = packingId(row);
-        const packingBusy = downloadPacking.isPending && downloadPacking.variables?.id === row.id;
+        const labelId = indiaId ?? packId;
+        const labelBusy = downloadLatestLabel.isPending && downloadLatestLabel.variables === labelId;
+        const receiptBusy = downloadReceipt.isPending && downloadReceipt.variables === labelId;
         return (
           <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!indiaId || (downloadBarcode.isPending && downloadBarcode.variables === indiaId)}
-              onClick={() => indiaId && downloadBarcode.mutate(indiaId)}
+              disabled={!labelId || labelBusy}
+              onClick={() => labelId && downloadLatestLabel.mutate(labelId)}
             >
               {indiaId ? <Check className="size-4 text-emerald-600" /> : <QrCode className="size-4" />}
-              Barcode
+              {labelBusy ? "Fetching…" : "Label"}
             </Button>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={packingBusy}
-              onClick={() => downloadPacking.mutate(row)}
+              disabled={!labelId || receiptBusy}
+              onClick={() => labelId && downloadReceipt.mutate(labelId)}
             >
-              {packId ? <Check className="size-4 text-emerald-600" /> : <FileText className="size-4" />}
-              {packId ? "Packing slip" : packingBusy ? "Generating…" : "Packing slip"}
+              <ReceiptText className="size-4" />
+              {receiptBusy ? "Generating…" : "Receipt"}
             </Button>
           </div>
         );
