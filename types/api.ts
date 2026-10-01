@@ -889,6 +889,11 @@ export type TrackingPageRecord = {
   publicUrl: string;
   createdAt?: string;
   updatedAt?: string;
+  hostProvisioning?: {
+    status: "live" | "connecting" | "skipped" | "failed";
+    domain: string;
+    message: string;
+  };
 };
 
 export type SubdomainAvailability = {

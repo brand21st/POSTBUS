@@ -45,6 +45,30 @@ function availabilityLabel(reason?: SubdomainAvailability["reason"]) {
   return null;
 }
 
+function notifyHostProvisioning(page: TrackingPageRecord, title: string) {
+  const provision = page.hostProvisioning;
+  if (!provision) {
+    toast.success(title);
+    return;
+  }
+  if (provision.status === "live") {
+    toast.success(title, { description: provision.message });
+    return;
+  }
+  if (provision.status === "connecting") {
+    toast.success(title, {
+      description: "Connecting the public address. Open it in about a minute.",
+      duration: 8000,
+      action: {
+        label: "Open URL",
+        onClick: () => window.open(page.publicUrl, "_blank", "noopener,noreferrer"),
+      },
+    });
+    return;
+  }
+  toast.warning("Customer URL saved.", { description: provision.message, duration: 8000 });
+}
+
 export function TrackingPageEditor() {
   const me = useMe();
   const entitlements = usePlanEntitlements();
@@ -291,7 +315,7 @@ function EditTrackingPageForm({ page, canManage }: { page: TrackingPageRecord; c
     mutationFn: () => api<TrackingPageRecord>("/api/v1/tracking-pages/publish", { method: "POST" }),
     onSuccess: (next) => {
       queryClient.setQueryData(["tracking-page"], next);
-      toast.success("Tracking page published.");
+      notifyHostProvisioning(next, "Tracking page published.");
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not publish."),
   });
@@ -594,7 +618,7 @@ function CustomerUrlCard({
     onSuccess: (next) => {
       queryClient.setQueryData(["tracking-page"], next);
       setEditing(false);
-      toast.success("Customer URL updated.");
+      notifyHostProvisioning(next, "Customer URL updated.");
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not update the URL."),
   });
@@ -660,6 +684,9 @@ function CustomerUrlCard({
               >
                 {page.publicUrl}
               </a>
+              {page.hostProvisioning?.status === "connecting" ? (
+                <span className="mt-2 block text-sm text-muted">Public address is connecting…</span>
+              ) : null}
             </CardDescription>
           )}
         </div>
@@ -669,7 +696,7 @@ function CustomerUrlCard({
         {editing ? (
           <>
             <Button type="button" onClick={() => save.mutate()} disabled={!canSave}>
-              {save.isPending ? "Saving…" : "Save URL"}
+              {save.isPending ? "Saving URL…" : "Save URL"}
             </Button>
             <Button type="button" variant="secondary" onClick={cancel} disabled={save.isPending}>
               Cancel
