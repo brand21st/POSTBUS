@@ -184,8 +184,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       ? "Weight and parcel dimensions are missing"
       : "Weight + Dimensions missing. Click to add parcel dimensions.";
     triggerContent = (
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-rose-200/80 bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-800 shadow-2xs transition-all hover:bg-rose-100 hover:border-rose-300 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
-        <AlertCircle className="size-3 shrink-0 text-rose-600 dark:text-rose-400" aria-hidden="true" />
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-red-200 bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800 shadow-2xs transition-all hover:bg-red-200/90 hover:border-red-300 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300">
+        <AlertCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
         <span>Weight + Dims Missing</span>
       </span>
     );
@@ -194,8 +194,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       ? "Parcel dimensions are missing"
       : "Parcel dimensions missing. Click to add dimensions.";
     triggerContent = (
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-200/80 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-900 shadow-2xs transition-all hover:bg-amber-100 hover:border-amber-300 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
-        <AlertTriangle className="size-3 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-red-200 bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800 shadow-2xs transition-all hover:bg-red-200/90 hover:border-red-300 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300">
+        <AlertCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
         <span>Dimensions Missing</span>
       </span>
     );
@@ -204,8 +204,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       ? "Weight is missing"
       : "Weight missing. Dimensions saved. Click to edit dimensions.";
     triggerContent = (
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-200/80 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-900 shadow-2xs transition-all hover:bg-amber-100 hover:border-amber-300 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
-        <AlertTriangle className="size-3 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-red-200 bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800 shadow-2xs transition-all hover:bg-red-200/90 hover:border-red-300 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300">
+        <AlertCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
         <span>Weight Missing</span>
       </span>
     );
