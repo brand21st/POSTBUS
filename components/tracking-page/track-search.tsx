@@ -8,12 +8,14 @@ export function TrackSearch({
   onQueryChange,
   onSubmit,
   loading,
+  disabled = false,
   inputRef,
 }: {
   query: string;
   onQueryChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   loading: boolean;
+  disabled?: boolean;
   inputRef: RefObject<HTMLInputElement | null>;
 }) {
   return (
@@ -38,11 +40,12 @@ export function TrackSearch({
             inputMode="text"
             minLength={6}
             required
+            disabled={disabled}
             aria-describedby="tracking-helper"
             className="h-12 bg-white text-base sm:text-sm"
           />
         </div>
-        <Button type="submit" size="lg" className="h-12 min-h-12 sm:w-auto" disabled={loading}>
+        <Button type="submit" size="lg" className="h-12 min-h-12 sm:w-auto" disabled={loading || disabled}>
           {loading ? "Tracking…" : "Track Shipment"}
         </Button>
       </form>

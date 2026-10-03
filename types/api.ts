@@ -263,6 +263,13 @@ export type ShipmentRecord = {
   payment_mode?: string | null;
   weightGrams?: number | null;
   weight_grams?: number | null;
+  lengthCm?: number | null;
+  length_cm?: number | null;
+  widthCm?: number | null;
+  width_cm?: number | null;
+  heightCm?: number | null;
+  height_cm?: number | null;
+  shape?: string | null;
   tariffAmount?: number | string | null;
   tariff_amount?: number | string | null;
   lastError?: string | null;

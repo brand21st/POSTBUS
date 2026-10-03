@@ -19,7 +19,7 @@ type OrderListQuery = z.infer<typeof orderListQuery>;
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
 const ORDER_LIST_SELECT =
-  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, customers(name, phone), order_line_items(id, title, quantity, image_url), shipments(id, status, created_at)";
+  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, parcel_weight_mode, parcel_weight_grams, customers(name, phone), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at)";
 
 function wantsOrderCounts(query: OrderListQuery) {
   const value = (query.includeCounts ?? "").toLowerCase();

@@ -174,7 +174,7 @@ export async function runIndiaPostBooking(
       paymentMode: shipment.payment_mode,
       codAmount: Number(shipment.cod_amount) || 0,
       strictWeight: true,
-      strictDimensions: false,
+      strictDimensions: true,
     });
     try {
       const validated = assertValidatedArticle(draft);
@@ -188,6 +188,23 @@ export async function runIndiaPostBooking(
 
   if (!prepared.length) {
     throw Object.assign(new Error("No articles passed validation."), { code: "VALIDATION_ERROR" });
+  }
+
+  const { logInfo } = await import("@/lib/logger");
+  for (const item of prepared) {
+    const orderData = item.shipment.orders as { id?: string; source?: string } | null;
+    logInfo("india_post.booking.dispatch", {
+      source: String(orderData?.source || "UNKNOWN").toUpperCase(),
+      orderId: item.shipment.order_id,
+      shipmentId: item.shipment.id,
+      weightGrams: item.payload.physical_weight,
+      lengthCm: item.payload.length,
+      widthCm: item.payload.breadth_diameter,
+      heightCm: item.payload.height,
+      breadthDiameter: item.payload.breadth_diameter,
+      shapeOfArticle: item.payload.shape_of_article,
+      serviceCode: item.shipment.service_code,
+    });
   }
 
   const transport = indiaPostBookingTransport(prepared.length);

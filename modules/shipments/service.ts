@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
@@ -194,6 +195,9 @@ export async function createShipmentsForOrders(
           cod_amount: collect.cod_amount,
           service_code: serviceFor(order),
           weight_grams: weight,
+          ...(extras?.lengthCm != null ? { length_cm: extras.lengthCm } : {}),
+          ...(extras?.widthCm != null ? { width_cm: extras.widthCm } : {}),
+          ...(extras?.heightCm != null ? { height_cm: extras.heightCm } : {}),
         })
         .eq("id", current.id);
       const job = await createBackgroundJob(supabase, {
@@ -351,7 +355,17 @@ export async function getShipment(supabase: SupabaseClient, ctx: TenantContext, 
   };
 }
 
-export async function retryShipment(supabase: SupabaseClient, ctx: TenantContext, id: string) {
+export async function retryShipment(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  id: string,
+  extras?: {
+    lengthCm?: number;
+    widthCm?: number;
+    heightCm?: number;
+    weightGrams?: number;
+  }
+) {
   const shipment = await getShipment(supabase, ctx, id);
   const { checkQuota } = await import("@/modules/billing/usage");
   await checkQuota(supabase, ctx.organizationId, 1);
@@ -379,6 +393,10 @@ export async function retryShipment(supabase: SupabaseClient, ctx: TenantContext
       last_error: null,
       last_error_code: null,
       ...(serviceCode ? { service_code: serviceCode } : {}),
+      ...(extras?.weightGrams != null && extras.weightGrams > 0 ? { weight_grams: Math.round(extras.weightGrams) } : {}),
+      ...(extras?.lengthCm != null && extras.lengthCm > 0 ? { length_cm: extras.lengthCm } : {}),
+      ...(extras?.widthCm != null && extras.widthCm > 0 ? { width_cm: extras.widthCm } : {}),
+      ...(extras?.heightCm != null && extras.heightCm > 0 ? { height_cm: extras.heightCm } : {}),
     })
     .eq("id", id);
   const job = await createBackgroundJob(supabase, {
@@ -389,6 +407,177 @@ export async function retryShipment(supabase: SupabaseClient, ctx: TenantContext
     userId: ctx.userId,
   });
   return { shipmentId: id, jobId: job.id, message: "Retry queued." };
+}
+
+export const updateShipmentDimensionsSchema = z.preprocess(
+  (val: unknown) => {
+    if (!val || typeof val !== "object") return val;
+    const v = val as Record<string, unknown>;
+    return {
+      lengthCm: v.lengthCm ?? v.length_cm ?? v.length,
+      widthCm: v.widthCm ?? v.width_cm ?? v.width,
+      heightCm: v.heightCm ?? v.height_cm ?? v.height,
+      shape: v.shape,
+    };
+  },
+  z.object({
+    lengthCm: z.coerce
+      .number()
+      .positive("Length must be greater than 0")
+      .min(14, "Length must be between 14 and 150 cm.")
+      .max(150, "Length must be between 14 and 150 cm."),
+    widthCm: z.coerce
+      .number()
+      .positive("Width must be greater than 0")
+      .min(9, "Width must be between 9 and 150 cm.")
+      .max(150, "Width must be between 9 and 150 cm."),
+    heightCm: z.coerce
+      .number()
+      .positive("Height must be greater than 0")
+      .min(1, "Height must be between 1 and 150 cm.")
+      .max(150, "Height must be between 1 and 150 cm."),
+    shape: z.enum(["NROL", "ROLL"]).optional(),
+  })
+);
+
+export async function updateShipmentDimensions(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentId: string,
+  input: z.infer<typeof updateShipmentDimensionsSchema>
+) {
+  const { data: shipment, error } = await supabase
+    .from("shipments")
+    .select("id, status, order_id, organization_id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", shipmentId)
+    .maybeSingle();
+
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!shipment) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipment not found.");
+
+  if (isIndiaPostAcceptedStatus(String(shipment.status ?? ""))) {
+    throw new AppError(
+      ERROR_CODES.CONFLICT,
+      "Cannot update dimensions for a shipment that is already booked with India Post."
+    );
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from("shipments")
+    .update({
+      length_cm: input.lengthCm,
+      width_cm: input.widthCm,
+      height_cm: input.heightCm,
+    })
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", shipmentId)
+    .select(
+      "*, orders(order_number, total_amount, created_at), customers(name, phone), addresses!shipping_address_id(city, state, pincode), pickup_locations(city, name), shipping_invoices(id, status, invoice_number, error_message)"
+    )
+    .single();
+
+  if (updateError || !updated) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError?.message || "Failed to update shipment dimensions.");
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId,
+    action: "shipment.dimensions_updated",
+    entity_type: "shipment",
+    entity_id: shipmentId,
+    after: {
+      length_cm: input.lengthCm,
+      width_cm: input.widthCm,
+      height_cm: input.heightCm,
+    },
+  });
+
+  return mapShipment(updated);
+}
+
+export async function setOrderShipmentDimensions(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  input: z.infer<typeof updateShipmentDimensionsSchema>
+) {
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("*, order_line_items(quantity, weight_grams, unit_price), shipments(id, status, created_at)")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+
+  const shipments = (order.shipments as Array<{ id: string; status: string; created_at?: string }> | undefined) ?? [];
+  const openShipment = shipments.find((s) => !["CANCELLED"].includes(String(s.status ?? "").toUpperCase()));
+
+  if (openShipment) {
+    return updateShipmentDimensions(supabase, ctx, openShipment.id, input);
+  }
+
+  const choice = await workspaceBookingChoice(supabase, ctx.organizationId);
+  const serviceCode = resolveOrderBookingService({
+    orderService: order.india_post_service,
+    workspaceOverride: choice?.workspaceOverride,
+    defaultService: choice?.defaultService,
+    allowedServices: choice?.allowedServices,
+  });
+  assertIndiaPostService(serviceCode);
+
+  const weight = bookingBoxWeightGrams({
+    parcelWeightMode: order.parcel_weight_mode ?? "auto",
+    parcelWeightGrams: order.parcel_weight_grams != null ? Number(order.parcel_weight_grams) : null,
+    lineItems: (order.order_line_items ?? []).map((item: { quantity?: number; weight_grams?: number | null }) => ({
+      quantity: Number(item.quantity ?? 1),
+      weightGrams: item.weight_grams != null ? Number(item.weight_grams) : null,
+    })),
+  });
+
+  const collect = shipmentCollectFromOrder(order);
+  const { data: shipment, error: shipError } = await supabase
+    .from("shipments")
+    .insert({
+      organization_id: ctx.organizationId,
+      order_id: order.id,
+      customer_id: order.customer_id,
+      shipping_address_id: order.shipping_address_id,
+      service_code: serviceCode,
+      payment_mode: collect.payment_mode,
+      cod_amount: collect.cod_amount,
+      weight_grams: weight,
+      length_cm: input.lengthCm,
+      width_cm: input.widthCm,
+      height_cm: input.heightCm,
+      status: "DRAFT",
+    })
+    .select(
+      "*, orders(order_number, total_amount, created_at), customers(name, phone), addresses!shipping_address_id(city, state, pincode), pickup_locations(city, name), shipping_invoices(id, status, invoice_number, error_message)"
+    )
+    .single();
+
+  if (shipError || !shipment) {
+    throw new AppError(ERROR_CODES.SHIPMENT_FAILED, shipError?.message || "Failed to create shipment.");
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId,
+    action: "shipment.dimensions_created",
+    entity_type: "shipment",
+    entity_id: shipment.id,
+    after: {
+      length_cm: input.lengthCm,
+      width_cm: input.widthCm,
+      height_cm: input.heightCm,
+    },
+  });
+
+  return mapShipment(shipment);
 }
 
 async function requireShipmentStageIntegrations(supabase: SupabaseClient, organizationId: string) {
@@ -630,6 +819,14 @@ function mapShipment(row: Record<string, unknown>) {
     orderId: row.order_id as string | undefined,
     order_id: row.order_id as string | undefined,
     status: row.status as string | undefined,
+    weightGrams: row.weight_grams != null ? Number(row.weight_grams) : undefined,
+    weight_grams: row.weight_grams != null ? Number(row.weight_grams) : undefined,
+    lengthCm: row.length_cm != null ? Number(row.length_cm) : undefined,
+    length_cm: row.length_cm != null ? Number(row.length_cm) : undefined,
+    widthCm: row.width_cm != null ? Number(row.width_cm) : undefined,
+    width_cm: row.width_cm != null ? Number(row.width_cm) : undefined,
+    heightCm: row.height_cm != null ? Number(row.height_cm) : undefined,
+    height_cm: row.height_cm != null ? Number(row.height_cm) : undefined,
     orderNumber: order?.order_number,
     order_number: order?.order_number,
     orderTotal: order?.total_amount ?? null,

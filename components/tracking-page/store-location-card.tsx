@@ -26,8 +26,8 @@ export function StoreLocationCard({ page }: { page: Pick<
   }
 
   return (
-    <section className="rounded-2xl border border-black/10 bg-white/80 p-5 shadow-sm">
-      <h2 className="text-sm font-semibold uppercase tracking-wide opacity-70">Store location</h2>
+    <section className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Store location</h2>
       <p className="mt-2 text-base font-medium">{page.locationName || page.storeName}</p>
       <div className="mt-1 space-y-0.5 text-sm opacity-80">
         {page.line1 ? <p>{page.line1}</p> : null}

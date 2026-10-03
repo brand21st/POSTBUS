@@ -72,6 +72,7 @@ export function mapShipmentToArticle(input: {
   alt?: DraftArticle["alt"];
   altAddressEnabled?: boolean;
   bulkReference?: string;
+  shape?: string;
   strictWeight?: boolean;
   strictDimensions?: boolean;
 }): DraftArticle {
@@ -93,7 +94,7 @@ export function mapShipmentToArticle(input: {
     lengthCm: Number(input.lengthCm) || 0,
     widthCm: Number(input.widthCm) || 0,
     heightCm: Number(input.heightCm) || 0,
-    shape: indiaPostShapeOfArticle(input.serviceCode, weight),
+    shape: input.shape ? input.shape.trim().toUpperCase() : indiaPostShapeOfArticle(input.serviceCode, weight),
     sender: party({
       name: input.senderName,
       company: input.senderCompany,

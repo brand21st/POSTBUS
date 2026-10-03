@@ -18,6 +18,7 @@ import {
   Truck,
 } from "lucide-react";
 import { toast } from "sonner";
+import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
 import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
@@ -88,6 +89,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const DEFAULT_COLUMNS = {
   items: true,
   source: true,
+  dimensions: true,
   payment: true,
   created: true,
   service: true,
@@ -98,6 +100,7 @@ type OptionalColumn = keyof typeof DEFAULT_COLUMNS;
 const COLUMN_LABELS: Record<OptionalColumn, string> = {
   items: "Items",
   source: "Source",
+  dimensions: "Parcel",
   payment: "Payment",
   created: "Created",
   service: "Service",
@@ -506,6 +509,16 @@ export default function OrdersPage() {
       header: "Status",
       cell: (row) => <StatusBadge value={row.status} />,
     },
+    ...(visibleColumns.dimensions
+      ? [
+          {
+            id: "dimensions",
+            header: "Parcel",
+            className: "whitespace-nowrap",
+            cell: (row: OrderRecord) => <OrderDimensionBadge order={row} />,
+          } satisfies DataTableColumn<OrderRecord>,
+        ]
+      : []),
     ...(visibleColumns.payment
       ? [
           {

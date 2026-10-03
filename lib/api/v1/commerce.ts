@@ -18,7 +18,15 @@ import { fetchReceiptPdf } from "@/modules/labels/receipt";
 import { listGroupedLabels } from "@/modules/labels/list";
 import { getLabelTemplate } from "@/modules/labels/template-service";
 import { defaultLabelTemplateId } from "@/modules/labels/template-schema";
-import { createShipmentsForOrders, getShipment, listShipments, retryShipment } from "@/modules/shipments/service";
+import {
+  createShipmentsForOrders,
+  getShipment,
+  listShipments,
+  retryShipment,
+  setOrderShipmentDimensions,
+  updateShipmentDimensions,
+  updateShipmentDimensionsSchema,
+} from "@/modules/shipments/service";
 import { ndrListQuery } from "@/modules/ndr-rto/schema";
 import { getNdrSummary, listNdrShipments, syncNdrShipment } from "@/modules/ndr-rto/service";
 import {
@@ -99,6 +107,11 @@ export async function handleCommerceRoutes(
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "weights") {
     const body = updateOrderWeightsSchema.parse(await request.json());
     return updateOrderWeights(supabase, ctx, slugs[1], body);
+  }
+
+  if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "dimensions") {
+    const body = updateShipmentDimensionsSchema.parse(await request.json());
+    return setOrderShipmentDimensions(supabase, ctx, slugs[1], body);
   }
 
   if (method === "GET" && slugs[0] === "orders" && slugs[1]) {
@@ -186,7 +199,13 @@ export async function handleCommerceRoutes(
   }
 
   if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "retry") {
-    return retryShipment(supabase, ctx, slugs[1]);
+    const body = await request.json().catch(() => ({}));
+    return retryShipment(supabase, ctx, slugs[1], body);
+  }
+
+  if (method === "PATCH" && slugs[0] === "shipments" && slugs[1] && !slugs[2]) {
+    const body = updateShipmentDimensionsSchema.parse(await request.json());
+    return updateShipmentDimensions(supabase, ctx, slugs[1], body);
   }
 
   if (key === "GET labels") {
