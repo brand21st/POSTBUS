@@ -320,4 +320,136 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
     expect(shipmentInsert.status).toBe("DRAFT");
     expect(result.lengthCm).toBe(30);
   });
+
+  it("PATCH /api/v1/shipments/:id updates item weight, box weight, and parcel dimensions in DB atomically", async () => {
+    const supabase = createMockSupabase();
+    const req = new NextRequest("http://localhost:3000/api/v1/shipments/ship-101", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lengthCm: 25,
+        widthCm: 15,
+        heightCm: 10,
+        boxWeightGrams: 750,
+        parcelWeightMode: "manual",
+        lineItems: [
+          {
+            id: "line-item-1",
+            weightGrams: 350,
+            weightMode: "manual",
+          },
+        ],
+      }),
+    });
+
+    const result = (await handleCommerceRoutes(
+      req,
+      supabase as never,
+      ctx,
+      "PATCH shipments/ship-101",
+      "PATCH",
+      ["shipments", "ship-101"]
+    )) as Record<string, unknown>;
+
+    // 1. Line items weight updated in DB
+    const lineItemUpdate = supabase.updates.find((u) => u.table === "order_line_items");
+    expect(lineItemUpdate).toBeDefined();
+    expect(lineItemUpdate?.values).toEqual({
+      weight_grams: 350,
+      weight_edited: true,
+    });
+
+    // 2. Order parcel weight and mode updated in DB
+    const orderUpdate = supabase.updates.find((u) => u.table === "orders");
+    expect(orderUpdate).toBeDefined();
+    expect(orderUpdate?.values).toEqual({
+      parcel_weight_mode: "manual",
+      parcel_weight_grams: 750,
+    });
+
+    // 3. Shipment updated with box weight and dimensions
+    const shipmentUpdate = supabase.updates.find((u) => u.table === "shipments");
+    expect(shipmentUpdate).toBeDefined();
+    expect(shipmentUpdate?.values).toEqual({
+      length_cm: 25,
+      width_cm: 15,
+      height_cm: 10,
+      weight_grams: 750,
+    });
+
+    expect(result.id).toBe("ship-101");
+    expect(result.lengthCm).toBe(25);
+  });
+
+  it("PATCH /api/v1/orders/:id/dimensions persists box weight and item weights when creating draft shipment", async () => {
+    const supabase = createMockSupabase({
+      orderRow: {
+        id: "ord-shopify-weight",
+        organization_id: "org-1",
+        order_number: "#SHOP-200",
+        customer_id: "cust-1",
+        shipping_address_id: "addr-1",
+        india_post_service: "SP_INLAND_PARCEL",
+        parcel_weight_mode: "auto",
+        parcel_weight_grams: null,
+        order_line_items: [{ id: "li-1", quantity: 1, weight_grams: null, unit_price: 1500 }],
+        shipments: [],
+      },
+      shipmentRow: {
+        id: "ship-created-wt",
+        organization_id: "org-1",
+        order_id: "ord-shopify-weight",
+        status: "DRAFT",
+        weight_grams: 1000,
+        length_cm: 30,
+        width_cm: 20,
+        height_cm: 10,
+        orders: { order_number: "#SHOP-200", total_amount: 1500, created_at: "2026-10-02" },
+        customers: { name: "Ananya", phone: "9876543213" },
+        addresses: [{ city: "Kolkata", state: "West Bengal", pincode: "700001" }],
+        pickup_locations: [{ city: "Delhi", name: "Hub" }],
+        shipping_invoices: [],
+      },
+    });
+
+    const req = new NextRequest("http://localhost:3000/api/v1/orders/ord-shopify-weight/dimensions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lengthCm: 30,
+        widthCm: 20,
+        heightCm: 10,
+        boxWeightGrams: 1000,
+        lineItems: [{ id: "li-1", weightGrams: 450, weightMode: "manual" }],
+      }),
+    });
+
+    await handleCommerceRoutes(
+      req,
+      supabase as never,
+      ctx,
+      "PATCH orders/ord-shopify-weight/dimensions",
+      "PATCH",
+      ["orders", "ord-shopify-weight", "dimensions"]
+    );
+
+    // Verify order_line_items updated
+    const lineItemUpdate = supabase.updates.find((u) => u.table === "order_line_items");
+    expect(lineItemUpdate?.values).toEqual({
+      weight_grams: 450,
+      weight_edited: true,
+    });
+
+    // Verify order weight updated
+    const orderUpdate = supabase.updates.find((u) => u.table === "orders");
+    expect(orderUpdate?.values).toEqual({
+      parcel_weight_mode: "manual",
+      parcel_weight_grams: 1000,
+    });
+
+    // Verify shipment created with weight_grams: 1000
+    const shipmentInsert = supabase.inserts.find((ins) => ins.table === "shipments")?.values as Record<string, unknown>;
+    expect(shipmentInsert.weight_grams).toBe(1000);
+    expect(shipmentInsert.length_cm).toBe(30);
+  });
 });

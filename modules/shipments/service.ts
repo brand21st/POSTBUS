@@ -417,6 +417,15 @@ export const updateShipmentDimensionsSchema = z.preprocess(
       lengthCm: v.lengthCm ?? v.length_cm ?? v.length,
       widthCm: v.widthCm ?? v.width_cm ?? v.width,
       heightCm: v.heightCm ?? v.height_cm ?? v.height,
+      boxWeightGrams:
+        v.boxWeightGrams ??
+        v.box_weight_grams ??
+        v.weightGrams ??
+        v.weight_grams ??
+        v.boxWeight ??
+        v.weight,
+      parcelWeightMode: v.parcelWeightMode ?? v.parcel_weight_mode,
+      lineItems: v.lineItems ?? v.line_items,
       shape: v.shape,
     };
   },
@@ -436,6 +445,17 @@ export const updateShipmentDimensionsSchema = z.preprocess(
       .positive("Height must be greater than 0")
       .min(1, "Height must be between 1 and 150 cm.")
       .max(150, "Height must be between 1 and 150 cm."),
+    boxWeightGrams: z.coerce.number().int().min(1, "Box weight must be at least 1 g").optional(),
+    parcelWeightMode: z.enum(["auto", "manual"]).optional(),
+    lineItems: z
+      .array(
+        z.object({
+          id: z.string(),
+          weightGrams: z.coerce.number().int().min(0),
+          weightMode: z.enum(["auto", "manual"]).optional(),
+        })
+      )
+      .optional(),
     shape: z.enum(["NROL", "ROLL"]).optional(),
   })
 );
@@ -463,13 +483,69 @@ export async function updateShipmentDimensions(
     );
   }
 
+  const orderId = shipment.order_id as string | undefined;
+
+  // 1. If line items weights are supplied, update order_line_items
+  if (input.lineItems?.length && orderId) {
+    for (const item of input.lineItems) {
+      if (item.id) {
+        await supabase
+          .from("order_line_items")
+          .update({
+            weight_grams: item.weightGrams > 0 ? item.weightGrams : null,
+            weight_edited: (item.weightMode ?? "manual") === "manual",
+          })
+          .eq("organization_id", ctx.organizationId)
+          .eq("order_id", orderId)
+          .eq("id", item.id);
+      }
+    }
+  }
+
+  // 2. Resolve box weight if boxWeightGrams or lineItems are provided
+  let boxWeight: number | undefined;
+  if (input.boxWeightGrams != null && input.boxWeightGrams > 0) {
+    boxWeight = Math.round(input.boxWeightGrams);
+    if (orderId) {
+      await supabase
+        .from("orders")
+        .update({
+          parcel_weight_mode: input.parcelWeightMode ?? "manual",
+          parcel_weight_grams: boxWeight,
+        })
+        .eq("organization_id", ctx.organizationId)
+        .eq("id", orderId);
+    }
+  } else if (input.lineItems?.length) {
+    boxWeight = bookingBoxWeightGrams({
+      parcelWeightMode: input.parcelWeightMode ?? "auto",
+      lineItems: input.lineItems,
+    });
+    if (orderId) {
+      await supabase
+        .from("orders")
+        .update({
+          parcel_weight_mode: input.parcelWeightMode ?? "auto",
+          parcel_weight_grams: input.parcelWeightMode === "manual" ? boxWeight : null,
+        })
+        .eq("organization_id", ctx.organizationId)
+        .eq("id", orderId);
+    }
+  }
+
+  // 3. Update shipment record
+  const updatePayload: Record<string, unknown> = {
+    length_cm: input.lengthCm,
+    width_cm: input.widthCm,
+    height_cm: input.heightCm,
+  };
+  if (boxWeight != null && boxWeight > 0) {
+    updatePayload.weight_grams = boxWeight;
+  }
+
   const { data: updated, error: updateError } = await supabase
     .from("shipments")
-    .update({
-      length_cm: input.lengthCm,
-      width_cm: input.widthCm,
-      height_cm: input.heightCm,
-    })
+    .update(updatePayload)
     .eq("organization_id", ctx.organizationId)
     .eq("id", shipmentId)
     .select(
@@ -491,6 +567,7 @@ export async function updateShipmentDimensions(
       length_cm: input.lengthCm,
       width_cm: input.widthCm,
       height_cm: input.heightCm,
+      ...(boxWeight != null ? { weight_grams: boxWeight } : {}),
     },
   });
 
@@ -505,7 +582,7 @@ export async function setOrderShipmentDimensions(
 ) {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("*, order_line_items(quantity, weight_grams, unit_price), shipments(id, status, created_at)")
+    .select("*, order_line_items(id, quantity, weight_grams, unit_price), shipments(id, status, created_at)")
     .eq("organization_id", ctx.organizationId)
     .eq("id", orderId)
     .maybeSingle();
@@ -520,6 +597,23 @@ export async function setOrderShipmentDimensions(
     return updateShipmentDimensions(supabase, ctx, openShipment.id, input);
   }
 
+  // 1. If line items weights are supplied, update order_line_items
+  if (input.lineItems?.length) {
+    for (const item of input.lineItems) {
+      if (item.id) {
+        await supabase
+          .from("order_line_items")
+          .update({
+            weight_grams: item.weightGrams > 0 ? item.weightGrams : null,
+            weight_edited: (item.weightMode ?? "manual") === "manual",
+          })
+          .eq("organization_id", ctx.organizationId)
+          .eq("order_id", orderId)
+          .eq("id", item.id);
+      }
+    }
+  }
+
   const choice = await workspaceBookingChoice(supabase, ctx.organizationId);
   const serviceCode = resolveOrderBookingService({
     orderService: order.india_post_service,
@@ -529,14 +623,30 @@ export async function setOrderShipmentDimensions(
   });
   assertIndiaPostService(serviceCode);
 
-  const weight = bookingBoxWeightGrams({
-    parcelWeightMode: order.parcel_weight_mode ?? "auto",
-    parcelWeightGrams: order.parcel_weight_grams != null ? Number(order.parcel_weight_grams) : null,
-    lineItems: (order.order_line_items ?? []).map((item: { quantity?: number; weight_grams?: number | null }) => ({
-      quantity: Number(item.quantity ?? 1),
-      weightGrams: item.weight_grams != null ? Number(item.weight_grams) : null,
-    })),
-  });
+  const weight =
+    input.boxWeightGrams != null && input.boxWeightGrams > 0
+      ? Math.round(input.boxWeightGrams)
+      : bookingBoxWeightGrams({
+          parcelWeightMode: input.parcelWeightMode ?? order.parcel_weight_mode ?? "auto",
+          parcelWeightGrams: order.parcel_weight_grams != null ? Number(order.parcel_weight_grams) : null,
+          lineItems:
+            input.lineItems ??
+            (order.order_line_items ?? []).map((item: { quantity?: number; weight_grams?: number | null }) => ({
+              quantity: Number(item.quantity ?? 1),
+              weightGrams: item.weight_grams != null ? Number(item.weight_grams) : null,
+            })),
+        });
+
+  if (input.boxWeightGrams != null && input.boxWeightGrams > 0) {
+    await supabase
+      .from("orders")
+      .update({
+        parcel_weight_mode: input.parcelWeightMode ?? "manual",
+        parcel_weight_grams: weight,
+      })
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", orderId);
+  }
 
   const collect = shipmentCollectFromOrder(order);
   const { data: shipment, error: shipError } = await supabase
@@ -574,6 +684,7 @@ export async function setOrderShipmentDimensions(
       length_cm: input.lengthCm,
       width_cm: input.widthCm,
       height_cm: input.heightCm,
+      weight_grams: weight,
     },
   });
 
