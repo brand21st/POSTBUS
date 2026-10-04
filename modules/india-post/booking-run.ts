@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import { assertValidatedArticle } from "@/modules/india-post/article-validator";
+import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/modules/india-post/parcel-defaults";
 import { indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
 import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
 import { splitIndiaPostBookingResult } from "@/modules/india-post/booking-apply";
@@ -95,6 +96,7 @@ export async function runIndiaPostBooking(
     shipment: (typeof pending)[number];
     barcode: string;
     payload: Record<string, string | number>;
+    persistDefaults: { dims: boolean; weight: boolean };
   }> = [];
 
   for (const shipment of pending) {
@@ -141,7 +143,14 @@ export async function runIndiaPostBooking(
     );
     const senderMobile = indiaPostMobile(senderIdentity.phone);
     const receiverMobile = indiaPostMobile(address?.phone);
-    const draft = mapShipmentToArticle({
+    const missingDims = !(
+      Number(shipment.length_cm) > 0 &&
+      Number(shipment.width_cm) > 0 &&
+      Number(shipment.height_cm) > 0
+    );
+    const missingWeight = !(Number(shipment.weight_grams) > 0);
+    const draft = applyWorkspaceParcelDefaults(
+      mapShipmentToArticle({
       orderId: shipment.order_id,
       orderNumber: (shipment.orders as { order_number?: string } | null)?.order_number,
       shipmentId: shipment.id,
@@ -175,10 +184,17 @@ export async function runIndiaPostBooking(
       codAmount: Number(shipment.cod_amount) || 0,
       strictWeight: true,
       strictDimensions: true,
-    });
+    }),
+      parcelDefaultsFromConnection(connection)
+    );
     try {
       const validated = assertValidatedArticle(draft);
-      prepared.push({ shipment, barcode, payload: serializeIndiaPostBookingArticle(validated) });
+      prepared.push({
+        shipment,
+        barcode,
+        payload: serializeIndiaPostBookingArticle(validated),
+        persistDefaults: { dims: missingDims, weight: missingWeight },
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Validation failed.";
       await markShipmentBookingFailed(supabase, shipment.id, message);
@@ -236,6 +252,14 @@ export async function runIndiaPostBooking(
             booked_at: bookedAt,
             last_error: null,
             last_error_code: null,
+            ...(item.persistDefaults.dims
+              ? {
+                  length_cm: item.payload.length,
+                  width_cm: item.payload.breadth_diameter,
+                  height_cm: item.payload.height,
+                }
+              : {}),
+            ...(item.persistDefaults.weight ? { weight_grams: item.payload.physical_weight } : {}),
           })
           .eq("id", item.shipment.id);
         await supabase.from("orders").update({ status: "BOOKED" }).eq("id", item.shipment.order_id);

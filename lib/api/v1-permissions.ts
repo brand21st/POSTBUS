@@ -78,6 +78,7 @@ export function permissionForTenantRoute(
 
   if (key === "PATCH integrations/india-post/booking-service") return "shipments.write";
   if (key === "PATCH integrations/india-post/default-service") return "integrations.manage";
+  if (key === "PATCH integrations/india-post/parcel-defaults") return "org.manage";
 
   if (root === "integrations") {
     const readable =
@@ -86,7 +87,8 @@ export function permissionForTenantRoute(
       key === "GET integrations/india-post" ||
       key === "GET integrations/india-post/offices" ||
       key === "GET integrations/wati" ||
-      key === "GET integrations/wati/templates";
+      key === "GET integrations/wati/templates" ||
+      key === "GET integrations/vachat";
     return readable ? undefined : "integrations.manage";
   }
 

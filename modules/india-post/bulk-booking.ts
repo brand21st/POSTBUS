@@ -16,6 +16,7 @@ import { createBackgroundJob } from "@/modules/jobs/service";
 import { createManualOrder } from "@/modules/orders/service";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
+import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/modules/india-post/parcel-defaults";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
@@ -238,7 +239,8 @@ export async function validateOrdersForBooking(
         })
       : 0;
     const collect = shipmentCollectFromOrder(order);
-    const draft: DraftArticle = mapShipmentToArticle({
+    const draft: DraftArticle = applyWorkspaceParcelDefaults(
+      mapShipmentToArticle({
       orderId: order.id,
       orderNumber: order.order_number,
       shipmentId: existing ? String(existing.id) : undefined,
@@ -271,7 +273,9 @@ export async function validateOrdersForBooking(
       codAmount: collect.cod_amount,
       strictWeight: true,
       strictDimensions: true,
-    });
+    }),
+      parcelDefaultsFromConnection(store.connection)
+    );
     const rowIssues = validateIndiaPostArticle(draft);
     if (draft.barcode) {
       const key = draft.barcode.toUpperCase();
@@ -436,7 +440,8 @@ export async function validateExcelBuffer(
 
   for (const article of parsed.articles) {
     const serial = article.serial_number || "";
-    const draft = mapExcelRowToArticle({
+    const draft = applyWorkspaceParcelDefaults(
+      mapExcelRowToArticle({
       serial,
       serviceCode,
       customerId: String(store.connection.bulk_customer_id ?? ""),
@@ -462,7 +467,9 @@ export async function validateExcelBuffer(
           mobile: alt.mobile_no || "",
         };
       })(),
-    });
+    }),
+      parcelDefaultsFromConnection(store.connection)
+    );
     if (indiaPostRequiresOtp(serviceCode)) {
       if (article.otp && ["0", "FALSE", "false", ""].includes(article.otp)) {
         issues.push({

@@ -43,6 +43,32 @@ const WEIGHT_PRESETS = [
   { label: "2kg", weight: 2000 },
 ] as const;
 
+function ParcelPill({
+  tone,
+  children,
+}: {
+  tone: "ok" | "action" | "locked" | "neutral";
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex max-w-[11.5rem] items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4",
+        tone === "ok" &&
+          "border border-emerald-200/80 bg-emerald-50 text-emerald-900 shadow-2xs transition-colors hover:border-emerald-300 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300",
+        tone === "action" &&
+          "border border-red-300 bg-red-100 text-red-950 shadow-2xs transition-all hover:border-red-400 hover:bg-red-200 hover:shadow-sm dark:border-red-800 dark:bg-red-950/70 dark:text-red-100",
+        tone === "locked" &&
+          "border border-red-300/80 bg-red-100/90 text-red-950 dark:border-red-800 dark:bg-red-950/60 dark:text-red-100",
+        tone === "neutral" &&
+          "border border-slate-200/80 bg-slate-50 font-medium text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300"
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 export function OrderDimensionBadge({ order, disabled }: Props) {
   const [open, setOpen] = useState(false);
   const lengthId = useId();
@@ -231,75 +257,87 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const parsedBoxWeight = Number(boxWeightInput) || 0;
   const billableWeightGrams = Math.max(parsedBoxWeight, volumetricGrams);
 
+  const sizeLabel = `${length} × ${width} × ${height} cm`;
+  const needsSetup = !hasDimensions || !hasWeight;
+
   // 1. Non-parcel (e.g. Speed Post DOC)
   if (!isParcel) {
     if (hasDimensions) {
       return (
-        <span
-          className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/80 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300"
-          title={`Document dimensions: ${length} × ${width} × ${height} cm`}
-        >
-          <Check className="size-3 text-slate-500" aria-hidden="true" />
-          <span className="tabular-nums">{length} × {width} × {height} cm</span>
-        </span>
+        <ParcelPill tone="neutral">
+          <span className="tabular-nums" title={`Document: ${sizeLabel}`}>
+            {sizeLabel}
+          </span>
+        </ParcelPill>
       );
     }
     return (
-      <span
-        className="inline-flex items-center whitespace-nowrap rounded-full border border-slate-200/80 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-900/30 dark:text-slate-400"
-        title="Speed Post Document — dimensions not required"
-      >
-        DOC
-      </span>
+      <ParcelPill tone="neutral">
+        <span title="Speed Post Document — size not required">DOC</span>
+      </ParcelPill>
     );
   }
 
-  // 2. Normal parcel cases with Red Pill styling for missing properties
+  const optionalHint = isLocked
+    ? " You can still ship; India Post uses Settings defaults when these are empty."
+    : " Optional — click to add. If skipped, India Post uses Settings → Shipping defaults.";
+
   let triggerContent: React.ReactNode;
   let triggerTitle: string;
+  const missingTone = isLocked ? "locked" : "action";
 
   if (!hasDimensions && !hasWeight) {
-    triggerTitle = isLocked
-      ? "Weight and parcel dimensions are missing"
-      : "Weight + Dimensions missing. Click to add parcel dimensions and weight.";
+    triggerTitle = `Dimensions missing. Weight missing.${optionalHint}`;
     triggerContent = (
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-red-200 bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800 shadow-2xs transition-all hover:bg-red-200/90 hover:border-red-300 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300">
-        <AlertCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
-        <span>Weight + Dims Missing</span>
+      <span className="flex flex-col items-start gap-0.5">
+        <ParcelPill tone={missingTone}>
+          <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
+          <span>Dimensions missing</span>
+        </ParcelPill>
+        <ParcelPill tone={missingTone}>
+          <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
+          <span>Weight missing</span>
+        </ParcelPill>
       </span>
     );
   } else if (!hasDimensions) {
-    triggerTitle = isLocked
-      ? "Parcel dimensions are missing"
-      : "Parcel dimensions missing. Click to add dimensions.";
+    triggerTitle = `Weight ${currentWeightGrams}g saved. Dimensions missing.${optionalHint}`;
     triggerContent = (
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-red-200 bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800 shadow-2xs transition-all hover:bg-red-200/90 hover:border-red-300 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300">
-        <AlertCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
-        <span>Dimensions Missing</span>
+      <span className="flex flex-col items-start gap-0.5">
+        {hasWeight ? (
+          <span className="px-0.5 text-[11px] font-medium tabular-nums text-muted">{currentWeightGrams}g</span>
+        ) : null}
+        <ParcelPill tone={missingTone}>
+          <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
+          <span>Dimensions missing</span>
+        </ParcelPill>
       </span>
     );
   } else if (!hasWeight) {
-    triggerTitle = isLocked
-      ? "Weight is missing"
-      : "Weight missing. Dimensions saved. Click to edit dimensions and weight.";
+    triggerTitle = `${sizeLabel} saved. Weight missing.${optionalHint}`;
     triggerContent = (
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-red-200 bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800 shadow-2xs transition-all hover:bg-red-200/90 hover:border-red-300 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300">
-        <AlertCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
-        <span>Weight Missing</span>
+      <span className="flex flex-col items-start gap-0.5">
+        <span className="px-0.5 text-[11px] font-medium tabular-nums text-muted">
+          {length}×{width}×{height}
+        </span>
+        <ParcelPill tone={missingTone}>
+          <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
+          <span>Weight missing</span>
+        </ParcelPill>
       </span>
     );
   } else {
     triggerTitle = isLocked
-      ? `Parcel: ${length} × ${width} × ${height} cm (${currentWeightGrams}g) · Booked`
-      : `Parcel: ${length} × ${width} × ${height} cm (${currentWeightGrams}g) · Click to edit.`;
+      ? `Parcel ${sizeLabel} · ${currentWeightGrams}g · Booked`
+      : `Parcel ${sizeLabel} · ${currentWeightGrams}g · Click to edit`;
     triggerContent = (
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-200/80 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-900 shadow-2xs transition-all hover:bg-emerald-100 hover:border-emerald-300 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
+      <ParcelPill tone="ok">
         <Check className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-        <span className="tabular-nums">
-          {length} × {width} × {height} cm
+        <span className="tabular-nums font-medium">
+          {length}×{width}×{height}
           {currentWeightGrams > 0 ? ` · ${currentWeightGrams}g` : ""}
         </span>
-      </span>
+      </ParcelPill>
     );
   }
 
@@ -308,6 +346,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       <button
         type="button"
         disabled={isLocked}
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
           if (!isLocked) setOpen(true);
@@ -315,8 +354,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
         title={triggerTitle}
         aria-label={triggerTitle}
         className={cn(
-          "inline-flex whitespace-nowrap text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 rounded-full",
-          !isLocked ? "cursor-pointer active:scale-[0.98]" : "cursor-default opacity-85"
+          "inline-flex max-w-full text-left transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 rounded-full",
+          !isLocked ? "cursor-pointer active:scale-[0.98]" : "cursor-default"
         )}
       >
         {triggerContent}
@@ -326,42 +365,73 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
         <DialogContent
           className="sm:max-w-md max-h-[90vh] overflow-y-auto"
           onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
         >
           <form onSubmit={handleSubmit}>
             <DialogHeader className="gap-1.5">
               <div className="flex items-center gap-2.5">
-                <div className="flex size-9 items-center justify-center rounded-xl bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                <div
+                  className={cn(
+                    "flex size-9 items-center justify-center rounded-xl",
+                    needsSetup
+                      ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                      : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                  )}
+                >
                   <Package className="size-4.5" />
                 </div>
                 <div>
                   <DialogTitle className="text-base font-semibold text-ink">
-                    Parcel & Weight Settings
+                    {needsSetup ? "Add parcel size" : "Edit parcel"}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-muted">
-                    Order {orderNumber(order)} · India Post Parcel
+                    Order {orderNumber(order)} · Optional. Empty fields use Settings defaults at booking.
                   </DialogDescription>
                 </div>
               </div>
             </DialogHeader>
 
             <div className="space-y-4 py-3">
-              {/* Dimensions Presets */}
+              {needsSetup ? (
+                <p className="rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  {!hasDimensions && !hasWeight
+                    ? "You can still ship without entering these. India Post booking will use Settings → Shipping defaults (or 14 × 9 × 1 cm and 100 g)."
+                    : !hasDimensions
+                      ? `Weight is ${currentWeightGrams}g. Size is optional — add L × W × H here, or booking uses Settings defaults.`
+                      : "Size is saved. Weight is optional — add it here, or booking uses the Settings default weight."}
+                </p>
+              ) : null}
+
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1 text-[11px] font-medium text-muted">
                   <Sparkles className="size-3 text-amber-500" />
-                  <span>Box Size Presets</span>
+                  <span>Quick box size</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {DIMENSION_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => applyDimensionPreset(preset)}
-                      className="rounded-lg border border-border bg-surface-soft px-2 py-1 text-[11px] font-medium text-ink transition hover:border-amber-300 hover:bg-amber-50 active:scale-95 dark:hover:bg-amber-950/30"
-                    >
-                      {preset.label} ({preset.length}×{preset.width}×{preset.height})
-                    </button>
-                  ))}
+                  {DIMENSION_PRESETS.map((preset) => {
+                    const selected =
+                      Number(lengthInput) === preset.length &&
+                      Number(widthInput) === preset.width &&
+                      Number(heightInput) === preset.height;
+                    return (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => applyDimensionPreset(preset)}
+                        className={cn(
+                          "rounded-lg border px-2 py-1 text-[11px] font-medium transition active:scale-95",
+                          selected
+                            ? "border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-600 dark:bg-amber-950/50 dark:text-amber-200"
+                            : "border-border bg-surface-soft text-ink hover:border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                        )}
+                      >
+                        {preset.label}
+                        <span className="ml-1 tabular-nums text-muted">
+                          {preset.length}×{preset.width}×{preset.height}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -455,7 +525,12 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                         key={p.label}
                         type="button"
                         onClick={() => applyWeightPreset(p)}
-                        className="rounded-md border border-border bg-card px-1.5 py-0.5 text-[10px] font-medium text-ink transition hover:border-brand hover:text-brand"
+                        className={cn(
+                          "rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition",
+                          Number(boxWeightInput) === p.weight
+                            ? "border-brand bg-brand/10 text-brand"
+                            : "border-border bg-card text-ink hover:border-brand hover:text-brand"
+                        )}
                       >
                         {p.label}
                       </button>
@@ -612,8 +687,10 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                     <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                     Saving…
                   </>
+                ) : needsSetup ? (
+                  "Save parcel"
                 ) : (
-                  "Save Dimensions & Weight"
+                  "Update parcel"
                 )}
               </Button>
             </DialogFooter>

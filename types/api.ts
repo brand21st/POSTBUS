@@ -572,6 +572,7 @@ export type IntegrationCard = {
   appConfigured?: boolean;
   readyToSync?: boolean;
   shopDomain?: string | null;
+  platformManaged?: boolean;
 };
 
 export type IntegrationsResponse = {
@@ -581,6 +582,7 @@ export type IntegrationsResponse = {
   indiaPost?: IntegrationCard;
   india_post?: IntegrationCard;
   wati?: IntegrationCard;
+  vachat?: IntegrationCard;
 };
 
 export type WatiConfig = {
@@ -697,6 +699,14 @@ export type IndiaPostConfig = {
   contracts?: IndiaPostContract[];
   defaultServiceCode?: string;
   bookingServiceOverride?: string | null;
+  defaultLengthCm?: number | null;
+  defaultWidthCm?: number | null;
+  defaultHeightCm?: number | null;
+  defaultWeightGrams?: number | null;
+  default_length_cm?: number | null;
+  default_width_cm?: number | null;
+  default_height_cm?: number | null;
+  default_weight_grams?: number | null;
   barcodeRange?: IndiaPostBarcodeRange | null;
   barcodeRanges?: IndiaPostBarcodeRange[];
 };

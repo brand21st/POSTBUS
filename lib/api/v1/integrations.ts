@@ -10,6 +10,12 @@ import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
 import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
 import { parcelServiceCode, resolveOrderBookingService } from "@/modules/india-post/booking-service";
+import {
+  parcelDefaultsApiPayload,
+  parcelDefaultsFromConnection,
+  parcelDefaultsValidationError,
+  parseParcelDefaultsInput,
+} from "@/modules/india-post/parcel-defaults";
 import { listContracts, saveContracts, saveParcelContract, syncPageContracts } from "@/modules/india-post/contracts";
 import { syncOpenShipmentsService, workspaceBookingChoice } from "@/modules/shipments/service";
 import { DEFAULT_INDIA_POST_SERVICE, DEFAULT_PROVIDER_ENVIRONMENT } from "@/types/domain";
@@ -90,12 +96,17 @@ export async function handleIntegrationRoutes(
   key: string
 ) {
   if (key === "GET integrations") {
-    const [{ data: shopify }, { data: indiaPost }, { data: wati }, syncJob] = await Promise.all([
+    const [{ data: shopify }, { data: indiaPost }, { data: wati }, { data: vachat }, syncJob] =
+      await Promise.all([
       supabase.from("shopify_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("india_post_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("wati_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
+      supabase.from("vachat_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       latestShopifySyncJob(supabase, ctx.organizationId),
     ]);
+    const { isPlatformVachatEnabled } = await import("@/modules/vachat/platform-config");
+    const platformVachat = await isPlatformVachatEnabled();
+    const vachatStatus = platformVachat ? "CONNECTED" : (vachat?.status ?? "NOT_CONNECTED");
     const shopifyConfigured = shopifyAppConfiguredFor(shopify);
     const shopifySyncReady = shopifyReadyToSync(shopify);
     return {
@@ -115,6 +126,13 @@ export async function handleIntegrationRoutes(
         status: indiaPost?.status ?? "NOT_CONNECTED",
         lastVerifiedAt: indiaPost?.last_verified_at,
         lastError: indiaPost?.last_error,
+      },
+      vachat: {
+        provider: "vachat",
+        status: vachatStatus,
+        lastVerifiedAt: platformVachat ? null : vachat?.last_verified_at,
+        lastError: platformVachat ? "Managed by PostBus" : vachat?.last_error,
+        platformManaged: platformVachat,
       },
       wati: {
         provider: "wati",
@@ -141,7 +159,13 @@ export async function handleIntegrationRoutes(
           status: wati?.status ?? "NOT_CONNECTED",
         },
         { provider: "woocommerce", name: "WooCommerce", status: "NOT_CONNECTED", comingLater: true },
-        { provider: "vachat", name: "Vachat", status: "NOT_CONNECTED", comingLater: true },
+        {
+          provider: "vachat",
+          name: "Vachat",
+          status: vachatStatus,
+          lastVerifiedAt: platformVachat ? null : vachat?.last_verified_at,
+          lastError: platformVachat ? "Managed by PostBus" : vachat?.last_error,
+        },
       ],
     };
   }
@@ -457,6 +481,7 @@ export async function handleIntegrationRoutes(
       defaultServiceCode:
         contracts.find((contract) => contract.isDefault)?.serviceCode ?? DEFAULT_INDIA_POST_SERVICE,
       bookingServiceOverride: parcelServiceCode(data?.booking_service_override),
+      ...parcelDefaultsApiPayload(parcelDefaultsFromConnection(data)),
       barcodeRange: range
         ? {
             prefix: range.prefix,
@@ -476,6 +501,35 @@ export async function handleIntegrationRoutes(
         serviceCode: item.service_code ?? null,
       })),
     };
+  }
+
+  if (key === "PATCH integrations/india-post/parcel-defaults") {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    let defaults;
+    try {
+      defaults = parseParcelDefaultsInput(body);
+    } catch (error) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        error instanceof Error ? error.message : "Default size and weight must be numbers."
+      );
+    }
+    const invalid = parcelDefaultsValidationError(defaults);
+    if (invalid) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, invalid);
+    }
+    const { error } = await supabase.from("india_post_connections").upsert(
+      {
+        organization_id: ctx.organizationId,
+        default_length_cm: defaults.lengthCm,
+        default_width_cm: defaults.widthCm,
+        default_height_cm: defaults.heightCm,
+        default_weight_grams: defaults.weightGrams != null ? Math.round(defaults.weightGrams) : null,
+      },
+      { onConflict: "organization_id" }
+    );
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    return parcelDefaultsApiPayload(defaults);
   }
 
   if (key === "PATCH integrations/india-post/booking-service") {
@@ -949,6 +1003,80 @@ export async function handleIntegrationRoutes(
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     return { items: await listWatiTemplates(data) };
+  }
+
+  if (key === "GET integrations/vachat") {
+    const { data } = await supabase
+      .from("vachat_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const { mapVachatConfig } = await import("@/modules/vachat/service");
+    const { isPlatformVachatEnabled } = await import("@/modules/vachat/platform-config");
+    const platformManaged = await isPlatformVachatEnabled();
+    return mapVachatConfig(data, { platformManaged, platformError: platformManaged ? "Managed by PostBus" : null });
+  }
+
+  if (
+    key === "POST integrations/vachat" ||
+    key === "PUT integrations/vachat" ||
+    key === "PATCH integrations/vachat"
+  ) {
+    const { assertMerchantVachatWritable } = await import("@/modules/vachat/service");
+    await assertMerchantVachatWritable();
+    const body = await request.json().catch(() => ({}));
+    const { saveVachatConnection, mapVachatConfig } = await import("@/modules/vachat/service");
+    const saved = await saveVachatConnection(supabase, ctx.organizationId, {
+      apiKey: body.apiKey ?? body.api_key ?? body.token,
+      apiBaseUrl: body.apiBaseUrl ?? body.api_base_url,
+    });
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "vachat.connected",
+      entity_type: "vachat_connection",
+      entity_id: saved.id,
+    });
+    return { ...mapVachatConfig(saved), saved: true };
+  }
+
+  if (key === "DELETE integrations/vachat") {
+    const { assertMerchantVachatWritable, disconnectVachat } = await import("@/modules/vachat/service");
+    await assertMerchantVachatWritable();
+    await disconnectVachat(supabase, ctx.organizationId);
+    return { disconnected: true };
+  }
+
+  if (key === "POST integrations/vachat/test") {
+    const { assertMerchantVachatWritable } = await import("@/modules/vachat/service");
+    await assertMerchantVachatWritable();
+    const { data } = await supabase
+      .from("vachat_connections")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!data?.encrypted_api_key) {
+      throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Save a Vachat API key first.");
+    }
+    const { decryptVachatKey, probeVachatMe, mapVachatConfig } = await import("@/modules/vachat/service");
+    const me = await probeVachatMe(
+      data.api_base_url || "https://cloud.vachat.in",
+      decryptVachatKey(data)
+    );
+    await supabase
+      .from("vachat_connections")
+      .update({ last_verified_at: new Date().toISOString(), last_error: null, status: "CONNECTED" })
+      .eq("id", data.id);
+    return { ...mapVachatConfig({ ...data, status: "CONNECTED" }), probed: true, me };
+  }
+
+  if (key === "POST integrations/vachat/send-test") {
+    const body = await request.json().catch(() => ({}));
+    const { sendVachatTestNotice } = await import("@/modules/vachat/send");
+    return sendVachatTestNotice(supabase, ctx.organizationId, {
+      phone: typeof body.phone === "string" ? body.phone : undefined,
+      event: typeof body.event === "string" ? body.event : undefined,
+    });
   }
 
   if (key === "POST integrations/wati/test") {

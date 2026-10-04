@@ -21,12 +21,12 @@ describe("permissionForTenantRoute", () => {
       ])
     ).toBe("shipments.write");
     expect(
-      permissionForTenantRoute("PATCH", "integrations/india-post/default-service", [
+      permissionForTenantRoute("PATCH", "integrations/india-post/parcel-defaults", [
         "integrations",
         "india-post",
-        "default-service",
+        "parcel-defaults",
       ])
-    ).toBe("integrations.manage");
+    ).toBe("org.manage");
     expect(permissionForTenantRoute("POST", "shipments/abc/retry", ["shipments", "abc", "retry"])).toBe(
       "shipments.write"
     );
@@ -47,6 +47,13 @@ describe("permissionForTenantRoute", () => {
       "integrations.manage"
     );
     expect(permissionForTenantRoute("GET", "integrations/wati", ["integrations", "wati"])).toBeUndefined();
+    expect(permissionForTenantRoute("GET", "integrations/vachat", ["integrations", "vachat"])).toBeUndefined();
+    expect(permissionForTenantRoute("POST", "integrations/vachat", ["integrations", "vachat"])).toBe(
+      "integrations.manage"
+    );
+    expect(
+      permissionForTenantRoute("POST", "integrations/vachat/send-test", ["integrations", "vachat", "send-test"])
+    ).toBe("integrations.manage");
     expect(
       permissionForTenantRoute("GET", "integrations/india-post/offices", ["integrations", "india-post", "offices"])
     ).toBeUndefined();

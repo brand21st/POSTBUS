@@ -182,9 +182,176 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     expect(payload.shape_of_article).toBe("DOC");
   });
 
-  it("runIndiaPostBooking aborts and marks shipment FAILED without calling API when dimensions are missing", async () => {
+  it("runIndiaPostBooking uses workspace defaults when dimensions are missing", async () => {
     bookShipmentMock.mockClear();
+    bookShipmentMock.mockResolvedValueOnce({
+      batch_id: "batch-defaults",
+      correlation_id: "corr-defaults",
+      valid_articles: [{ barcode_no: "ET214330016IN", calculated_tariff: 45 }],
+      error_articles: [],
+    });
     const updateShipmentMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+    const updateOrderMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+
+    const mockSupabase = {
+      from: (table: string) => {
+        if (table === "india_post_connections") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: "conn-1",
+                    status: "CONNECTED",
+                    environment: "TEST",
+                    bulk_customer_id: "1788590988",
+                    contract_id: "41793509",
+                    default_length_cm: 22,
+                    default_width_cm: 16,
+                    default_height_cm: 11,
+                    default_weight_grams: 400,
+                  },
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "shipments") {
+          return {
+            select: () => ({
+              eq: () => ({
+                in: async () => ({
+                  data: [
+                    {
+                      id: "ship-1",
+                      order_id: "ord-1",
+                      status: "QUEUED",
+                      barcode: "ET214330016IN",
+                      service_code: "SP_INLAND_PARCEL",
+                      weight_grams: 500,
+                      length_cm: null,
+                      width_cm: null,
+                      height_cm: null,
+                      payment_mode: "PREPAID",
+                      cod_amount: 0,
+                      orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY" },
+                      customers: { name: "Test Customer", phone: "9876543210" },
+                      addresses: {
+                        name: "Test Customer",
+                        line1: "123 Test St",
+                        city: "Delhi",
+                        state: "Delhi",
+                        pincode: "110001",
+                        phone: "9876543210",
+                      },
+                    },
+                  ],
+                }),
+              }),
+            }),
+            update: updateShipmentMock,
+          };
+        }
+        if (table === "orders") {
+          return { update: updateOrderMock };
+        }
+        if (table === "pickup_locations") {
+          return {
+            select: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: () => ({
+                    maybeSingle: async () => ({
+                      data: {
+                        name: "Main Warehouse",
+                        pincode: "682311",
+                        city: "Ernakulam",
+                        state: "Kerala",
+                        line1: "Pickup Point 1",
+                        phone: "9876543210",
+                      },
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "organizations") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    name: "Merchant Org",
+                    phone: "9876543210",
+                    line1: "Pickup Point 1",
+                    city: "Ernakulam",
+                    state: "Kerala",
+                    pincode: "682311",
+                  },
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "shopify_stores") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: { shop_name: "Test Shop" } }),
+              }),
+            }),
+          };
+        }
+        if (table === "india_post_contracts") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: async () => ({
+                  data: [{ service_code: "SP_INLAND_PARCEL", contract_id: "41793509" }],
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
+      },
+    };
+
+    const outcome = await runIndiaPostBooking(mockSupabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1"],
+    });
+
+    expect(outcome.booked).toBe(1);
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(bookShipmentMock.mock.calls[0][0].articles[0]).toMatchObject({
+      length: 22,
+      breadth_diameter: 16,
+      height: 11,
+      physical_weight: 500,
+    });
+    expect(updateShipmentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "BOOKED",
+        length_cm: 22,
+        width_cm: 16,
+        height_cm: 11,
+      })
+    );
+  });
+
+  it("runIndiaPostBooking falls back to 14×9×1 cm when Settings defaults are empty", async () => {
+    bookShipmentMock.mockClear();
+    bookShipmentMock.mockResolvedValueOnce({
+      batch_id: "batch-fallback",
+      correlation_id: "corr-fallback",
+      valid_articles: [{ barcode_no: "ET214330016IN", calculated_tariff: 45 }],
+      error_articles: [],
+    });
+    const updateShipmentMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+    const updateOrderMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
 
     const mockSupabase = {
       from: (table: string) => {
@@ -217,10 +384,152 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       status: "QUEUED",
                       barcode: "ET214330016IN",
                       service_code: "SP_INLAND_PARCEL",
-                      weight_grams: 500,
-                      length_cm: null, // MISSING DIMENSIONS
+                      weight_grams: 0,
+                      length_cm: null,
                       width_cm: null,
                       height_cm: null,
+                      payment_mode: "PREPAID",
+                      cod_amount: 0,
+                      orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY" },
+                      customers: { name: "Test Customer", phone: "9876543210" },
+                      addresses: {
+                        name: "Test Customer",
+                        line1: "123 Test St",
+                        city: "Delhi",
+                        state: "Delhi",
+                        pincode: "110001",
+                        phone: "9876543210",
+                      },
+                    },
+                  ],
+                }),
+              }),
+            }),
+            update: updateShipmentMock,
+          };
+        }
+        if (table === "orders") {
+          return { update: updateOrderMock };
+        }
+        if (table === "pickup_locations") {
+          return {
+            select: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: () => ({
+                    maybeSingle: async () => ({
+                      data: {
+                        name: "Main Warehouse",
+                        pincode: "682311",
+                        city: "Ernakulam",
+                        state: "Kerala",
+                        line1: "Pickup Point 1",
+                        phone: "9876543210",
+                      },
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "organizations") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    name: "Merchant Org",
+                    phone: "9876543210",
+                    line1: "Pickup Point 1",
+                    city: "Ernakulam",
+                    state: "Kerala",
+                    pincode: "682311",
+                  },
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "shopify_stores") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: { shop_name: "Test Shop" } }),
+              }),
+            }),
+          };
+        }
+        if (table === "india_post_contracts") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: async () => ({
+                  data: [{ service_code: "SP_INLAND_PARCEL", contract_id: "41793509" }],
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
+      },
+    };
+
+    await runIndiaPostBooking(mockSupabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1"],
+    });
+
+    expect(bookShipmentMock.mock.calls[0][0].articles[0]).toMatchObject({
+      length: 14,
+      breadth_diameter: 9,
+      height: 1,
+      physical_weight: 100,
+    });
+  });
+
+  it("runIndiaPostBooking still fails when entered dimensions are outside India Post limits", async () => {
+    bookShipmentMock.mockClear();
+    const updateShipmentMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+
+    const mockSupabase = {
+      from: (table: string) => {
+        if (table === "india_post_connections") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: "conn-1",
+                    status: "CONNECTED",
+                    environment: "TEST",
+                    bulk_customer_id: "1788590988",
+                    contract_id: "41793509",
+                    default_length_cm: 22,
+                    default_width_cm: 16,
+                    default_height_cm: 11,
+                  },
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "shipments") {
+          return {
+            select: () => ({
+              eq: () => ({
+                in: async () => ({
+                  data: [
+                    {
+                      id: "ship-1",
+                      order_id: "ord-1",
+                      status: "QUEUED",
+                      barcode: "ET214330016IN",
+                      service_code: "SP_INLAND_PARCEL",
+                      weight_grams: 500,
+                      length_cm: 5,
+                      width_cm: 4,
+                      height_cm: 2,
                       payment_mode: "PREPAID",
                       cod_amount: 0,
                       orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY" },
@@ -305,24 +614,12 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
       },
     };
 
-    // Attempt booking with missing dimensions
     await expect(
       runIndiaPostBooking(mockSupabase as never, {
         organizationId: "org-1",
         shipmentIds: ["ship-1"],
       })
-    ).rejects.toThrow(/Parcel length, breadth and height are required/i);
-
-    // Verify shipment was marked FAILED with clear validation error
-    expect(updateShipmentMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "FAILED",
-        last_error: expect.stringMatching(/Parcel length, breadth and height are required/i),
-        last_error_code: "VALIDATION_ERROR",
-      })
-    );
-
-    // Verify India Post API was NEVER called
+    ).rejects.toThrow(/Length must be between/i);
     expect(bookShipmentMock).not.toHaveBeenCalled();
   });
 

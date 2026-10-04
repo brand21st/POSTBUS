@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { PrintingSettings } from "@/components/dashboard/printing-settings";
+import { IndiaPostParcelDefaultsSettings } from "@/components/dashboard/india-post-parcel-defaults-settings";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,8 +31,9 @@ export default function SettingsPage() {
   const [tab, setTab] = useState("organization");
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") === "printing") {
-      setTab("printing");
+    const tabParam = new URLSearchParams(window.location.search).get("tab");
+    if (tabParam === "printing" || tabParam === "shipping") {
+      setTab(tabParam);
     }
   }, []);
 
@@ -39,7 +41,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Organization, access, security, notifications, and printing."
+        description="Organization, access, security, notifications, printing, and shipping."
       />
       <Tabs value={tab} onValueChange={setTab} className="space-y-6">
         <TabsList className="flex h-auto w-full flex-wrap justify-start">
@@ -49,6 +51,7 @@ export default function SettingsPage() {
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="printing">Printing</TabsTrigger>
+          <TabsTrigger value="shipping">Shipping</TabsTrigger>
         </TabsList>
         <TabsContent value="organization">
           <OrganizationSection />
@@ -67,6 +70,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="printing">
           <PrintingSettings />
+        </TabsContent>
+        <TabsContent value="shipping">
+          <IndiaPostParcelDefaultsSettings />
         </TabsContent>
       </Tabs>
     </div>

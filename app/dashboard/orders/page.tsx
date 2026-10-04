@@ -849,6 +849,13 @@ export default function OrdersPage() {
                     {customerPhone(row) ? (
                       <p className="truncate text-xs text-muted">{customerPhone(row)}</p>
                     ) : null}
+                    <div
+                      className="mt-2"
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => event.stopPropagation()}
+                    >
+                      <OrderDimensionBadge order={row} />
+                    </div>
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <span className="text-sm font-medium tabular-nums">
                         {formatCurrency(row.totalAmount ?? row.total_amount, row.currency)}
