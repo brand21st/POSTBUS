@@ -112,7 +112,7 @@ function firstRelated<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
-async function loadNoticeContext(
+export async function loadNoticeContext(
   supabase: SupabaseClient,
   organizationId: string,
   ids: WatiNotifyIds
