@@ -73,31 +73,31 @@ const TOGGLES = [
   {
     camel: "autoWatiOrderConfirmation",
     snake: "auto_wati_order_confirmation",
-    title: "Wati · Order confirmation",
-    description: "Send the Order confirmation template from Integrations → Wati when a Shopify order is imported.",
+    title: "WhatsApp · Order confirmation",
+    description: "Send the Order confirmation template through Wati or VaChat when a Shopify order is imported.",
   },
   {
     camel: "autoWatiProcessing",
     snake: "auto_wati_processing",
-    title: "Wati · Processing",
+    title: "WhatsApp · Processing",
     description: "Send the Processing template when the order status becomes Processing, including the Orders page action.",
   },
   {
     camel: "autoWatiBooked",
     snake: "auto_wati_booked",
-    title: "Wati · Booked / packed",
+    title: "WhatsApp · Booked / packed",
     description: "Send the Booked / packed template when India Post returns a tracking id, or when you choose Fulfill on Orders.",
   },
   {
     camel: "autoWatiInTransit",
     snake: "auto_wati_in_transit",
-    title: "Wati · In transit",
+    title: "WhatsApp · In transit",
     description: "Send the In transit template when India Post first moves the article, or when you mark In transit on Orders.",
   },
   {
     camel: "autoWatiDelivered",
     snake: "auto_wati_delivered",
-    title: "Wati · Delivered",
+    title: "WhatsApp · Delivered",
     description: "Send the Delivered template when the shipment is delivered, or when you mark Delivered on Orders.",
   },
 ] as const;
@@ -145,7 +145,7 @@ export default function AutomationPage() {
     <div className="space-y-6">
       <PageHeader
         title="Automation"
-        description="These rules match the order stages on Orders and the Wati templates. Workers skip a step when that integration is not connected."
+        description="These rules match the order stages on Orders and the WhatsApp templates (Wati or VaChat). Workers skip a step when that integration is not connected."
       />
 
       {query.isLoading ? (

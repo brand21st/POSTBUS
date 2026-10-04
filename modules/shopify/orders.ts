@@ -475,10 +475,16 @@ export async function notifyShopifyProcessingWati(
   try {
     const { enqueueWatiNotify } = await import("@/modules/wati/send");
     await enqueueWatiNotify(supabase, organizationId, "processing", { orderId });
-    return { skipped: false };
   } catch {
-    return { skipped: true, reason: "wati_enqueue_failed" };
+    // WhatsApp Wati is optional.
   }
+  try {
+    const { enqueueVachatNotify } = await import("@/modules/vachat/send");
+    await enqueueVachatNotify(supabase, organizationId, "processing", { orderId });
+  } catch {
+    // Vachat is optional.
+  }
+  return { skipped: false };
 }
 
 export function nextShopifyStageTags(
@@ -1667,6 +1673,12 @@ export async function upsertShopifyOrder(
     await enqueueWatiNotify(supabase, input.organizationId, "order_confirmation", { orderId: order.id });
   } catch {
     // WhatsApp confirmation is optional; the Shopify import should still succeed.
+  }
+  try {
+    const { enqueueVachatNotify } = await import("@/modules/vachat/send");
+    await enqueueVachatNotify(supabase, input.organizationId, "order_confirmation", { orderId: order.id });
+  } catch {
+    // Vachat confirmation is optional; the Shopify import should still succeed.
   }
 
   if (input.createShipment) {

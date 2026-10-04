@@ -63,6 +63,26 @@ export async function processJob(queue: string, payload: JobPayload) {
         ids
       );
     }
+    else if (queue === "vachat-notify") {
+      const { sendVachatNotice, vachatEventFromJobProgress, vachatIdsFromJob } = await import("@/modules/vachat/send");
+      const { data: job } = await supabase
+        .from("background_jobs")
+        .select("progress")
+        .eq("id", jobId)
+        .maybeSingle();
+      const ids = vachatIdsFromJob(job?.progress, payload.entityId);
+      if (!ids.shipmentId && !ids.orderId) {
+        throw Object.assign(new Error("Order or shipment id is missing for Vachat notify."), {
+          code: "VALIDATION_ERROR",
+        });
+      }
+      await sendVachatNotice(
+        supabase,
+        payload.organizationId,
+        vachatEventFromJobProgress(job?.progress),
+        ids
+      );
+    }
     else if (queue === "india-post-events") {
       const { processIndiaPostInboxEvent } = await import("@/modules/india-post/webhook");
       if (!payload.entityId) {
@@ -114,6 +134,8 @@ export async function processJob(queue: string, payload: JobPayload) {
     if (
       queue !== "invoice-generation" &&
       queue !== "label-generation" &&
+      queue !== "wati-notify" &&
+      queue !== "vachat-notify" &&
       payload.entityType === "shipment" &&
       payload.entityId
     ) {
@@ -254,6 +276,11 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       });
     }
     await enqueueWatiNotify(supabase, payload.organizationId, "booked", {
+      shipmentId: shipment.id,
+      orderId: shipment.order_id,
+    });
+    const { enqueueVachatNotify } = await import("@/modules/vachat/send");
+    await enqueueVachatNotify(supabase, payload.organizationId, "booked", {
       shipmentId: shipment.id,
       orderId: shipment.order_id,
     });

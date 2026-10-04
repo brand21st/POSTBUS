@@ -14,7 +14,12 @@ import {
 } from "@/modules/shopify/orders";
 
 export function isInboundWebhookPath(path: string) {
-  return Boolean(parseIndiaPostWebhookPath(path) || parseWatiWebhookPath(path) || path === "webhooks/shopify");
+  return Boolean(
+    parseIndiaPostWebhookPath(path) ||
+      parseWatiWebhookPath(path) ||
+      path === "webhooks/shopify" ||
+      path === "integrations/vachat/webhooks"
+  );
 }
 
 export async function handleInboundWebhook(request: NextRequest, path: string) {
@@ -138,6 +143,19 @@ export async function handleInboundWebhook(request: NextRequest, path: string) {
       });
     }
     return { accepted: true };
+  }
+
+  if (path === "integrations/vachat/webhooks" && method === "POST") {
+    const raw = await request.text();
+    const { createWebhookInboxClient, hasAdminClient } = await import("@/lib/supabase/admin");
+    if (!hasAdminClient()) {
+      throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Webhook inbox is not configured.");
+    }
+    const { acceptVachatWebhook } = await import("@/modules/vachat/webhook");
+    return acceptVachatWebhook(createWebhookInboxClient(), {
+      rawBody: raw,
+      signatureHeader: request.headers.get("x-wacrm-signature"),
+    });
   }
 
   return null;

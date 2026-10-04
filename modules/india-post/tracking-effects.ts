@@ -21,6 +21,15 @@ export async function enqueueTrackingStageSideEffects(
     // WhatsApp is optional; tracking updates should still persist.
   }
   try {
+    const { enqueueVachatNotify } = await import("@/modules/vachat/send");
+    await enqueueVachatNotify(supabase, input.organizationId, stage, {
+      shipmentId: input.shipmentId,
+      orderId: input.orderId,
+    });
+  } catch {
+    // Vachat is optional; tracking updates should still persist.
+  }
+  try {
     const { getAutomationSettings } = await import("@/modules/automation/service");
     const automation = await getAutomationSettings(supabase, input.organizationId);
     if (automation.autoShopifyFulfillment !== false) {

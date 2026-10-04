@@ -14,6 +14,15 @@ import {
   saveRazorpaySettings,
   testRazorpaySettings,
 } from "@/modules/razorpay/admin-settings";
+import {
+  loadPlatformVachatLogs,
+  loadPlatformVachatSettings,
+  loadPlatformVachatStats,
+  registerPlatformVachatWebhook,
+  savePlatformVachatSettings,
+  sendPlatformVachatTest,
+  testPlatformVachatSettings,
+} from "@/modules/vachat/admin-settings";
 import { getRazorpayConfig, publicRazorpayStatus } from "@/modules/razorpay/config";
 import { handleAdminTutorials } from "@/lib/api/admin/tutorials";
 
@@ -62,6 +71,13 @@ export async function handleAdminRoutes(
   if (key === "PATCH settings/razorpay") return saveRazorpaySettings(request, supabase, ctx);
   if (key === "POST settings/razorpay/test") return testRazorpaySettings(request, supabase, ctx);
   if (key === "POST settings/razorpay/webhook") return registerRazorpayWebhook(request, supabase, ctx);
+  if (key === "GET settings/vachat") return loadPlatformVachatSettings();
+  if (key === "PATCH settings/vachat") return savePlatformVachatSettings(request, supabase, ctx);
+  if (key === "POST settings/vachat/test") return testPlatformVachatSettings(request, supabase, ctx);
+  if (key === "POST settings/vachat/send-test") return sendPlatformVachatTest(request, supabase, ctx);
+  if (key === "POST settings/vachat/webhook") return registerPlatformVachatWebhook(request, supabase, ctx);
+  if (key === "GET settings/vachat/stats") return loadPlatformVachatStats(supabase);
+  if (key === "GET settings/vachat/logs") return loadPlatformVachatLogs(request, supabase);
   if (key === "GET trial-settings" || (key === "GET settings" && slugs[0] === "trial-settings")) {
     const { data } = await supabase.from("platform_settings").select("*").eq("id", 1).maybeSingle();
     return data ?? { trial_enabled: true, trial_days: 3 };

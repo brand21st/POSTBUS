@@ -788,6 +788,12 @@ async function enqueueOptionalWatiNotify(
   } catch {
     // WhatsApp is optional; the order status change should still succeed.
   }
+  try {
+    const { enqueueVachatNotify } = await import("@/modules/vachat/send");
+    await enqueueVachatNotify(supabase, organizationId, event, ids);
+  } catch {
+    // Vachat is optional; the order status change should still succeed.
+  }
 }
 
 async function markWatiShipmentStage(
