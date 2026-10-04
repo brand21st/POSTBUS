@@ -120,7 +120,9 @@ export async function loadNoticeContext(
   if (ids.shipmentId) {
     const { data: shipment } = await supabase
       .from("shipments")
-      .select("id, barcode, tracking_number, order_id, addresses(name, phone), customers(name, phone), orders(order_number)")
+      .select(
+        "id, barcode, tracking_number, order_id, addresses(name, phone, line1, line2, city, state, pincode), customers(name, phone), orders(order_number, total_amount)"
+      )
       .eq("organization_id", organizationId)
       .eq("id", ids.shipmentId)
       .maybeSingle();
@@ -134,13 +136,17 @@ export async function loadNoticeContext(
       orderNumber: order?.order_number ?? null,
       trackingNumber: shipment.tracking_number ?? shipment.barcode ?? null,
       barcode: shipment.barcode ?? null,
+      amount: order?.total_amount ?? null,
+      deliveryAddress: address,
     };
   }
 
   if (ids.orderId) {
     const { data: order } = await supabase
       .from("orders")
-      .select("id, order_number, customers(name, phone), addresses:shipping_address_id(name, phone)")
+      .select(
+        "id, order_number, total_amount, customers(name, phone), addresses:shipping_address_id(name, phone, line1, line2, city, state, pincode)"
+      )
       .eq("organization_id", organizationId)
       .eq("id", ids.orderId)
       .maybeSingle();
@@ -153,6 +159,8 @@ export async function loadNoticeContext(
       orderNumber: order.order_number ?? null,
       trackingNumber: null,
       barcode: null,
+      amount: order.total_amount ?? null,
+      deliveryAddress: address,
     };
   }
 

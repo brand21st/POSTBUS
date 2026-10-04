@@ -15,6 +15,7 @@ import {
   isPermanentVachatNotifyFailure,
   upsertVachatNotificationLog,
 } from "@/modules/vachat/logs";
+import { vachatAddressParam, vachatAmountParam, vachatSingleLine } from "@/modules/vachat/notice-fields";
 
 export const VACHAT_DEFAULT_TEST_PHONE = "918618456029";
 
@@ -155,11 +156,13 @@ export async function sendVachatNotice(
       notification_type: event,
       external_ref: externalRef,
       to: phone.startsWith("+") ? phone : `+91${phone.replace(/\D/g, "").slice(-10)}`,
-      customer_name: context.customerName,
-      shop_name: org?.name,
-      order_number: context.orderNumber,
-      tracking_number: trackingNumber,
-      tracking_url: trackingUrl,
+      customer_name: vachatSingleLine(context.customerName) || undefined,
+      shop_name: vachatSingleLine(org?.name) || undefined,
+      order_number: vachatSingleLine(context.orderNumber) || undefined,
+      amount: vachatAmountParam(context.amount) || undefined,
+      delivery_address: vachatAddressParam(context.deliveryAddress) || undefined,
+      tracking_number: vachatSingleLine(trackingNumber) || undefined,
+      tracking_url: vachatSingleLine(trackingUrl, 500) || undefined,
       order_id: ids.orderId ?? context.orderNumber,
       shipment_id: ids.shipmentId,
     });
@@ -228,6 +231,8 @@ export async function sendVachatTestNotice(
       customer_name: "Test customer",
       shop_name: input?.shopName ?? org?.name ?? "PostBus",
       order_number: "TEST-001",
+      amount: "100",
+      delivery_address: "Test address, Kochi, Kerala, 682001",
       tracking_number: "TESTTRACKIN",
       tracking_url: trackingUrl,
     });

@@ -542,7 +542,10 @@ export default function AdminSettingsPage() {
                       <td className="p-2 whitespace-nowrap">{new Date(row.created_at).toLocaleString()}</td>
                       <td className="p-2 font-mono">{row.organization_id.slice(0, 8)}</td>
                       <td className="p-2">{row.event}</td>
-                      <td className="p-2">{row.status}</td>
+                      <td className="p-2">
+                        <div>{row.status}</div>
+                        {row.error ? <div className="mt-1 max-w-xs text-destructive">{row.error}</div> : null}
+                      </td>
                       <td className="p-2 font-mono">{row.external_ref}</td>
                     </tr>
                   ))}
