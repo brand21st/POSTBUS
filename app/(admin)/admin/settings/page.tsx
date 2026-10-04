@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Combobox } from "@/components/ui/combobox";
+import { api } from "@/lib/hooks/use-api";
 
 type RazorpaySettings = {
   connected: boolean;
@@ -447,7 +448,8 @@ export default function AdminSettingsPage() {
                 templateDraft[col] ??
                 (vachat?.templates?.[col as keyof NonNullable<VachatSettings["templates"]>] as string | null | undefined) ??
                 "";
-              const approved = vachat?.templates?.approved_templates ?? [];
+              const approved: Array<{ name: string; language: string }> =
+                vachat?.templates?.approved_templates ?? [];
               const options = approved.map((tpl) => ({
                 value: tpl.name,
                 label: `${tpl.name} (${tpl.language})`,
