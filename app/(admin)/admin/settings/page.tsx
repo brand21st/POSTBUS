@@ -244,7 +244,7 @@ export default function AdminSettingsPage() {
     mutationFn: () =>
       api<{ sent: boolean; to: string; event: string }>("/api/admin/settings/vachat/send-test", {
         method: "POST",
-        body: JSON.stringify({ phone: resolvedTestPhone }),
+        body: JSON.stringify({ phone: resolvedTestPhone.trim() || "918618456029" }),
       }),
     onSuccess: (result) => {
       toast.success(`TEST Booked WhatsApp sent to ${result.to}.`);
@@ -491,7 +491,7 @@ export default function AdminSettingsPage() {
                 id="vachat-test-phone"
                 inputMode="tel"
                 autoComplete="off"
-                placeholder="Enter a test number"
+                placeholder="918618456029"
                 value={resolvedTestPhone}
                 onChange={(event) => setVachatTestPhone(event.target.value)}
               />
@@ -499,7 +499,7 @@ export default function AdminSettingsPage() {
                 type="button"
                 variant="secondary"
                 onClick={() => sendVachatTest.mutate()}
-                disabled={sendVachatTest.isPending || !vachat?.connected || !resolvedTestPhone}
+                disabled={sendVachatTest.isPending || !(vachat?.hasApiKey || vachatKey)}
               >
                 {sendVachatTest.isPending ? "Sending…" : "Send TEST booked"}
               </Button>

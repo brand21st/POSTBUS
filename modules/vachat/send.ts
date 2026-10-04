@@ -200,7 +200,14 @@ export async function sendVachatTestNotice(
   input?: { phone?: string | null; event?: string | null; shopName?: string | null }
 ) {
   const connection = await loadOrgVachatRow(supabase, organizationId);
-  const creds = await resolveVachatSendCredentials(organizationId, connection);
+  const platform = await getPlatformVachatConfig();
+  const creds = platform.apiKey
+    ? {
+        source: "platform" as const,
+        apiKey: platform.apiKey,
+        apiBaseUrl: platform.apiBaseUrl,
+      }
+    : await resolveVachatSendCredentials(organizationId, connection);
   if (!creds) {
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Connect VaChat before sending a test WhatsApp.");
   }
@@ -212,17 +219,22 @@ export async function sendVachatTestNotice(
   const { data: org } = await supabase.from("organizations").select("name").eq("id", organizationId).maybeSingle();
   const trackingPage = await getTrackingPage(supabase, organizationId).catch(() => null);
   const trackingUrl = resolveWatiTrackingUrl("TESTTRACKIN", trackingPage);
-  await postVachatNotification(creds, {
-    merchant_id: organizationId,
-    notification_type: event,
-    external_ref: `postbus:test:${event}:${organizationId}:${Date.now()}`,
-    to,
-    customer_name: "Test customer",
-    shop_name: input?.shopName ?? org?.name ?? "PostBus",
-    order_number: "TEST-001",
-    tracking_number: "TESTTRACKIN",
-    tracking_url: trackingUrl,
-  });
+  try {
+    await postVachatNotification(creds, {
+      merchant_id: organizationId,
+      notification_type: event,
+      external_ref: `postbus:test:${event}:${organizationId}:${Date.now()}`,
+      to,
+      customer_name: "Test customer",
+      shop_name: input?.shopName ?? org?.name ?? "PostBus",
+      order_number: "TEST-001",
+      tracking_number: "TESTTRACKIN",
+      tracking_url: trackingUrl,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "VaChat test send failed.";
+    throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
+  }
   return { sent: true, to, event };
 }
 
