@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/hooks/use-api";
+import { Combobox } from "@/components/ui/combobox";
 
 type RazorpaySettings = {
   connected: boolean;
@@ -56,14 +56,15 @@ type VachatSettings = {
     verified_name: string | null;
     account_id: string | null;
   };
-  templates?: {
-    order_confirmation_template_name?: string | null;
-    processing_template_name?: string | null;
-    booked_template_name?: string | null;
-    in_transit_template_name?: string | null;
-    delivered_template_name?: string | null;
-    approved_templates?: Array<{ name: string; language: string }>;
-  } | null;
+    templates?: {
+      order_confirmation_template_name?: string | null;
+      processing_template_name?: string | null;
+      booked_template_name?: string | null;
+      in_transit_template_name?: string | null;
+      delivered_template_name?: string | null;
+      approved_templates?: Array<{ name: string; language: string }>;
+    } | null;
+    templatesLoadError?: string | null;
 };
 
 type VachatStats = {
@@ -431,6 +432,14 @@ export default function AdminSettingsPage() {
             <p className="text-xs text-muted">
               These switches are the Super Admin source of truth for VaChat. Merchant auto_wati_* flags remain WATI-only.
             </p>
+            {vachat?.templatesLoadError ? (
+              <p className="text-sm text-destructive">{vachat.templatesLoadError}</p>
+            ) : null}
+            {vachat?.hasApiKey && !vachat?.templatesLoadError && !(vachat?.templates?.approved_templates?.length) ? (
+              <p className="text-xs text-muted">
+                No approved WhatsApp templates were returned. Sync templates in VaChat, then refresh this page.
+              </p>
+            ) : null}
             {VACHAT_LIVE_EVENTS.map((event) => {
               const col = templateCol[event];
               const checked = eventDraft[event] ?? vachat?.eventSettings?.[event] ?? false;
@@ -439,6 +448,13 @@ export default function AdminSettingsPage() {
                 (vachat?.templates?.[col as keyof NonNullable<VachatSettings["templates"]>] as string | null | undefined) ??
                 "";
               const approved = vachat?.templates?.approved_templates ?? [];
+              const options = approved.map((tpl) => ({
+                value: tpl.name,
+                label: `${tpl.name} (${tpl.language})`,
+              }));
+              if (value && !options.some((opt) => opt.value === value)) {
+                options.unshift({ value, label: value });
+              }
               return (
                 <div key={event} className="space-y-2 rounded-md border px-3 py-2">
                   <div className="flex items-center justify-between gap-3">
@@ -454,23 +470,14 @@ export default function AdminSettingsPage() {
                       }
                     />
                   </div>
-                  <select
-                    className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  <Combobox
+                    id={`vachat-tpl-${event}`}
+                    options={options}
                     value={value}
-                    onChange={(change) =>
-                      setTemplateDraft((prev) => ({ ...prev, [col]: change.target.value }))
-                    }
-                  >
-                    <option value="">Select an approved template</option>
-                    {approved.map((tpl) => (
-                      <option key={`${tpl.name}:${tpl.language}`} value={tpl.name}>
-                        {tpl.name} ({tpl.language})
-                      </option>
-                    ))}
-                    {value && !approved.some((tpl) => tpl.name === value) ? (
-                      <option value={value}>{value}</option>
-                    ) : null}
-                  </select>
+                    onChange={(next) => setTemplateDraft((prev) => ({ ...prev, [col]: next }))}
+                    placeholder="Select an approved template"
+                    emptyText={approved.length ? "No matching template" : "No approved templates loaded"}
+                  />
                 </div>
               );
             })}

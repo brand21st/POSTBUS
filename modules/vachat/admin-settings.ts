@@ -14,6 +14,7 @@ import {
   vachatStatusWebhookUrl,
 } from "@/modules/vachat/platform-config";
 import { listVachatNotificationLogs, vachatNotificationStats } from "@/modules/vachat/logs";
+import { withApprovedVachatTemplates } from "@/modules/vachat/templates";
 
 const saveSchema = z.object({
   enabled: z.boolean().optional(),
@@ -105,6 +106,7 @@ export async function loadPlatformVachatSettings() {
     account_id: string | null;
   } = { display_phone: null, verified_name: null, account_id: null };
   let templates: Record<string, unknown> | null = null;
+  let templatesLoadError: string | null = null;
   if (status.hasApiKey) {
     try {
       const idJson = await vachatApi("/api/postbus/identity");
@@ -123,12 +125,13 @@ export async function loadPlatformVachatSettings() {
     }
     try {
       const tplJson = await vachatApi("/api/postbus/templates");
-      templates = (tplJson.data ?? tplJson) as Record<string, unknown>;
-    } catch {
-      templates = null;
+      templates = withApprovedVachatTemplates(tplJson);
+    } catch (error) {
+      templatesLoadError = error instanceof Error ? error.message : "Could not load VaChat templates.";
+      templates = { approved_templates: [] };
     }
   }
-  return { ...status, identity, templates };
+  return { ...status, identity, templates, templatesLoadError };
 }
 
 export async function savePlatformVachatSettings(
