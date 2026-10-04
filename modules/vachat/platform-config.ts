@@ -78,7 +78,9 @@ async function loadSettingsRow(): Promise<SettingsRow | null> {
     .maybeSingle();
   if (error) {
     logError("vachat.platform.settings_load_failed", { message: error.message });
-    return null;
+    const fallback = await supabase.from("platform_settings").select("*").eq("id", 1).maybeSingle();
+    if (fallback.error || !fallback.data) return null;
+    return fallback.data as SettingsRow;
   }
   return data;
 }

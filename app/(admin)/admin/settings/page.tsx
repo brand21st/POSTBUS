@@ -47,9 +47,10 @@ type VachatSettings = {
   webhookUrl: string;
   lastVerifiedAt: string | null;
   lastError: string | null;
-  lastTestPhone: string | null;
-  eventSettings: Record<VachatEventKey, boolean>;
-  source: string;
+    lastTestPhone: string | null;
+    eventSettings: Record<VachatEventKey, boolean>;
+    source: string;
+    templateSyncError?: string | null;
   identity?: {
     display_phone: string | null;
     verified_name: string | null;
@@ -201,8 +202,11 @@ export default function AdminSettingsPage() {
           lastTestPhone: resolvedTestPhone || null,
         }),
       }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       toast.success("Global VaChat credentials saved.");
+      if (result.templateSyncError) {
+        toast.warning(`Templates were not updated on VaChat: ${result.templateSyncError}`);
+      }
       setVachatKey("");
       client.invalidateQueries({ queryKey: ["admin", "settings", "vachat"] });
     },
@@ -398,6 +402,7 @@ export default function AdminSettingsPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
+              type="button"
               onClick={() => saveVachat.mutate()}
               disabled={saveVachat.isPending || (!vachat?.hasApiKey && !vachatKey)}
             >

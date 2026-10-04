@@ -49,16 +49,19 @@ function ip(request: NextRequest) {
 
 async function vachatApi(
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  creds?: { apiKey: string; apiBaseUrl: string }
 ) {
-  const config = await getPlatformVachatConfig();
-  if (!config.apiKey) {
+  const config = creds ?? (await getPlatformVachatConfig());
+  const apiKey = creds?.apiKey ?? config.apiKey;
+  const apiBaseUrl = creds?.apiBaseUrl ?? config.apiBaseUrl;
+  if (!apiKey) {
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Save a Vachat API key first.");
   }
-  const res = await fetch(`${config.apiBaseUrl.replace(/\/$/, "")}${path}`, {
+  const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}${path}`, {
     ...init,
     headers: {
-      ...vachatHeaders(config.apiKey),
+      ...vachatHeaders(apiKey),
       ...(init?.headers ?? {}),
     },
     signal: AbortSignal.timeout(12000),
@@ -74,6 +77,24 @@ async function vachatApi(
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, message);
   }
   return json as Record<string, unknown>;
+}
+
+function templateSyncPayload(body: z.infer<typeof saveSchema>, settings: ReturnType<typeof parseVachatEventSettings>) {
+  const templates = body.templates;
+  if (!templates) return null;
+  const names = [
+    templates.order_confirmation_template_name,
+    templates.processing_template_name,
+    templates.booked_template_name,
+    templates.in_transit_template_name,
+    templates.delivered_template_name,
+  ];
+  const hasNamedTemplate = names.some((name) => typeof name === "string" && name.trim());
+  if (!hasNamedTemplate) return null;
+  return {
+    ...templates,
+    notification_settings: settings,
+  };
 }
 
 export async function loadPlatformVachatSettings() {
@@ -143,20 +164,42 @@ export async function savePlatformVachatSettings(
     patch.vachat_last_test_phone = body.lastTestPhone.trim() || null;
   }
   const { error } = await supabase.from("platform_settings").update(patch).eq("id", 1);
-  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (error) {
+    const missingColumn = /does not exist/i.test(error.message);
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      missingColumn
+        ? "This database is missing VaChat platform columns. Apply the platform_vachat migrations, then Save again."
+        : error.message
+    );
+  }
 
-  if (body.templates || body.eventSettings) {
-    const settings = parseVachatEventSettings({
-      ...current.eventSettings,
-      ...(body.eventSettings ?? {}),
-    });
-    await vachatApi("/api/postbus/templates", {
-      method: "PUT",
-      body: JSON.stringify({
-        ...(body.templates ?? {}),
-        notification_settings: settings,
-      }),
-    });
+  const nextKey = body.clearKey
+    ? ""
+    : incomingKey && !/^•+$/.test(incomingKey)
+      ? incomingKey
+      : current.apiKey;
+  const settings = parseVachatEventSettings({
+    ...current.eventSettings,
+    ...(body.eventSettings ?? {}),
+  });
+  const syncBody = nextKey ? templateSyncPayload(body, settings) : null;
+  let templateSyncError: string | null = null;
+  if (syncBody) {
+    try {
+      await vachatApi(
+        "/api/postbus/templates",
+        { method: "PUT", body: JSON.stringify(syncBody) },
+        { apiKey: nextKey, apiBaseUrl }
+      );
+      await supabase.from("platform_settings").update({ vachat_last_error: null }).eq("id", 1);
+    } catch (syncError) {
+      templateSyncError = syncError instanceof Error ? syncError.message : "VaChat template sync failed.";
+      await supabase
+        .from("platform_settings")
+        .update({ vachat_last_error: templateSyncError })
+        .eq("id", 1);
+    }
   }
 
   await writeBillingAudit(supabase, {
@@ -173,9 +216,10 @@ export async function savePlatformVachatSettings(
       enabled: patch.vachat_enabled ?? current.flagEnabled,
       eventsUpdated: Boolean(body.eventSettings),
       templatesUpdated: Boolean(body.templates),
+      templateSyncError,
     },
   });
-  return loadPlatformVachatSettings();
+  return { ...(await loadPlatformVachatSettings()), templateSyncError };
 }
 
 export async function testPlatformVachatSettings(
