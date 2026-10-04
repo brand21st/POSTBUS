@@ -15,6 +15,7 @@ export const QUEUE_NAMES = {
   reports: "reports",
   shopifyFulfillment: "shopify-fulfillment",
   watiNotify: "wati-notify",
+  vachatNotify: "vachat-notify",
   invoiceGeneration: "invoice-generation",
 } as const;
 

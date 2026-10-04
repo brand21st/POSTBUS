@@ -37,6 +37,9 @@ export const env = {
   razorpayWebhookSecret: optional(process.env.RAZORPAY_WEBHOOK_SECRET),
   razorpayPublicKeyId: optional(process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID),
   platformAdminEmail: optional(process.env.PLATFORM_ADMIN_EMAIL),
+  vachatApiKey: optional(process.env.VACHAT_API_KEY),
+  vachatApiBaseUrl: optional(process.env.VACHAT_API_BASE_URL),
+  vachatWebhookSecret: optional(process.env.VACHAT_WEBHOOK_SECRET),
   // Coolify persistent volume destination. Relative DB paths are resolved under this root.
   labelStoragePath: optional(process.env.LABEL_STORAGE_PATH) || "/data/labels",
   invoiceStoragePath: (() => {

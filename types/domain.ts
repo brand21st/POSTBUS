@@ -186,6 +186,7 @@ export const JOB_TYPES = [
   "reports",
   "shopify-fulfillment",
   "wati-notify",
+  "vachat-notify",
   "invoice-generation",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
