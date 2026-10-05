@@ -1680,6 +1680,12 @@ export async function upsertShopifyOrder(
   } catch {
     // Vachat confirmation is optional; the Shopify import should still succeed.
   }
+  try {
+    const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
+    scheduleMerchantKnowledgeSync(supabase, input.organizationId);
+  } catch {
+    // VaChat knowledge is optional; the Shopify import should still succeed.
+  }
 
   if (input.createShipment) {
     try {

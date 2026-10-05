@@ -67,7 +67,7 @@ export default function PostbusWhatsappPage() {
     <div className="space-y-6">
       <PageHeader
         title="Postbus-Whatsapp Notifications"
-        description="Customers can message the PostBus WhatsApp number for order and tracking answers. Knowledge is built from this workspace’s PostBus data and stays read-only."
+        description="Customers can message the PostBus WhatsApp number. Answers use this workspace’s latest order, shipment, invoice, and India Post tracking data, and only for the WhatsApp number on the order."
         actions={<StatusBadge value={postbus?.status ?? "NOT_CONNECTED"} />}
       />
       <Card>
@@ -75,7 +75,7 @@ export default function PostbusWhatsappPage() {
           <CardTitle>How it works</CardTitle>
           <CardDescription>
             {connected
-              ? "Booked, in transit, and delivered templates start after the India Post label is generated. The order assistant answers where the parcel is, when it shipped, and merchant phone, website, and address from this workspace. Connect Vachat if you want to send from your own WhatsApp account instead."
+              ? "Booked, in transit, and delivered templates start after the India Post label is generated. The assistant auto-updates VaChat knowledge from this workspace and answers order, shipment, invoice, tracking ID, and timeline questions only for the customer’s own WhatsApp number. Connect Vachat if you want to send from your own WhatsApp account instead."
               : "PostBus WhatsApp is not available for this workspace yet. You can still connect Vachat to send from your own account."}
           </CardDescription>
         </CardHeader>

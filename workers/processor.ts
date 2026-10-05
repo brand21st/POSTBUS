@@ -318,6 +318,12 @@ async function enqueueBookedWhatsAppAfterLabel(
   } catch {
     // Vachat is optional; the label should still be stored.
   }
+  try {
+    const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
+    scheduleMerchantKnowledgeSync(supabase, organizationId);
+  } catch {
+    // VaChat knowledge is optional; the label should still be stored.
+  }
 }
 
 async function generateInvoice(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {

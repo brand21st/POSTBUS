@@ -81,8 +81,8 @@ export async function enqueueTrackingStageSideEffects(
   }
 
   try {
-    const { syncMerchantKnowledge } = await import("@/modules/vachat/knowledge");
-    void syncMerchantKnowledge(supabase, input.organizationId);
+    const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
+    scheduleMerchantKnowledgeSync(supabase, input.organizationId);
   } catch {
     // VaChat knowledge is optional; tracking updates should still persist.
   }

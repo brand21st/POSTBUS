@@ -13,28 +13,38 @@ const knowledge: MerchantKnowledge = {
     phone: "9876543210",
     website: "https://aurimo.example",
     email: "hello@aurimo.example",
+    gstin: "32ABCDE1234F1Z5",
     address: "Kochi, Kerala",
   },
   orders: [
     {
       orderNumber: "1001",
+      customerPhone: "8618456029",
+      customerName: "Ada",
       status: "IN_TRANSIT",
+      paymentStatus: "COD",
       amount: "238",
+      items: ["1x Silk scarf"],
+      invoiceNumber: "INV-2026-000012",
+      invoiceDate: "2026-10-01",
+      invoiceTotal: "238",
       trackingNumber: "CL123456789IN",
       shipmentStatus: "IN_TRANSIT",
       bookedAt: "2026-10-01T10:00:00.000Z",
       lastScan: "Item Bagged",
       lastOffice: "Ernakulam RMS",
       trackingUrl: "https://track.example/CL123456789IN",
+      timeline: [{ at: "2026-10-02T08:00:00.000Z", office: "Ernakulam RMS", description: "Item Bagged" }],
     },
   ],
 };
 
 describe("PostBus WhatsApp order assistant", () => {
-  it("classifies merchant, tracking, shipped, and order questions", () => {
+  it("classifies merchant, tracking, shipped, invoice, and order questions", () => {
     expect(classifyAssistantIntent("what is the merchant phone number")).toBe("merchant");
     expect(classifyAssistantIntent("where is my order now")).toBe("tracking");
     expect(classifyAssistantIntent("when shipped")).toBe("shipped");
+    expect(classifyAssistantIntent("invoice number")).toBe("invoice");
     expect(classifyAssistantIntent("order details")).toBe("order");
   });
 
@@ -52,6 +62,12 @@ describe("PostBus WhatsApp order assistant", () => {
     expect(reply).toContain("CL123456789IN");
   });
 
+  it("answers invoice details from this customer's order", () => {
+    const reply = answerFromKnowledge(knowledge, "what is my invoice number");
+    expect(reply).toContain("INV-2026-000012");
+    expect(reply).toContain("1001");
+  });
+
   it("picks an order by tracking id", () => {
     expect(pickOrder(knowledge, "track CL123456789IN")?.orderNumber).toBe("1001");
   });
@@ -60,6 +76,7 @@ describe("PostBus WhatsApp order assistant", () => {
     const document = formatKnowledgeDocument(knowledge);
     expect(document).toContain("Merchant name: AURIMO BY NISH");
     expect(document).toContain("Order 1001");
+    expect(document).toContain("post@post.com");
     expect(document).toMatch(/read-only/i);
   });
 

@@ -225,6 +225,13 @@ export async function createManualOrder(
     },
   });
 
+  try {
+    const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
+    scheduleMerchantKnowledgeSync(supabase, ctx.organizationId);
+  } catch {
+    // VaChat knowledge is optional; the order should still be created.
+  }
+
   return { ...order, createShipment: Boolean(input.createShipment), shipment: input.shipment };
 }
 

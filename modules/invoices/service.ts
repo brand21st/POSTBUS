@@ -268,6 +268,12 @@ export async function generateShippingInvoice(
       .select("*")
       .maybeSingle();
     if (updateError) throw updateError;
+    try {
+      const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
+      scheduleMerchantKnowledgeSync(supabase, organizationId);
+    } catch {
+      // VaChat knowledge is optional; the invoice should still be stored.
+    }
     return updated ?? row;
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "Invoice generation failed.";

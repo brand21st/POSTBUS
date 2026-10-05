@@ -1,10 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logError } from "@/lib/logger";
 import {
+  CUSTOMER_PHONE_ONLY_REPLY,
   findOrganizationsForCustomerPhone,
   formatKnowledgeDocument,
   loadMerchantKnowledge,
-  phoneDigitsForLookup,
   syncMerchantKnowledge,
   type MerchantKnowledge,
   type MerchantKnowledgeOrder,
@@ -13,47 +13,75 @@ import {
 import { getPlatformVachatConfig, isPlatformVachatActive } from "@/modules/vachat/platform-config";
 import { vachatHeaders } from "@/modules/vachat/service";
 
-export type AssistantIntent = "merchant" | "tracking" | "shipped" | "order" | "unknown";
+export type AssistantIntent =
+  | "merchant"
+  | "tracking"
+  | "shipped"
+  | "invoice"
+  | "shipment"
+  | "order"
+  | "unknown";
 
 export function classifyAssistantIntent(text: string): AssistantIntent {
   const q = text.toLowerCase();
-  if (
-    /merchant|seller|shop name|workspace|phone number|contact|website|address|email/.test(q)
-  ) {
+  if (/merchant|seller|shop name|workspace|phone number|contact|website|address|email|gstin/.test(q)) {
     return "merchant";
   }
-  if (/where|now|current|track|status|location|reached|out for delivery|ndr/.test(q)) {
+  if (/invoice|bill|gst/.test(q)) return "invoice";
+  if (/timeline|scan|history|where|now|current|track|status|location|reached|out for delivery|ndr/.test(q)) {
     return "tracking";
   }
   if (/when shipped|shipped|booked|packed|dispatched|handed over/.test(q)) {
     return "shipped";
   }
-  if (/order|details|amount|cod|my parcel|my packet/.test(q)) {
+  if (/shipment information|shipment details|my shipment/.test(q)) return "shipment";
+  if (/order|details|amount|cod|item|product|my parcel|my packet/.test(q)) {
     return "order";
   }
   return "unknown";
 }
 
+export function looksLikeOrderOrTrackingQuery(text: string) {
+  return /\b[A-Z]{2}\d{9}[A-Z]{2}\b/i.test(text) || /\b(?:order\s*)?#?\s*(?:PB-)?\d{3,}\b/i.test(text);
+}
+
 export function pickOrder(knowledge: MerchantKnowledge, text: string) {
   const upper = text.toUpperCase();
-  const byNumber = knowledge.orders.find((order) => order.orderNumber && upper.includes(order.orderNumber.toUpperCase()));
+  const byNumber = knowledge.orders.find(
+    (order) => order.orderNumber && upper.includes(order.orderNumber.toUpperCase())
+  );
   if (byNumber) return byNumber;
   const byTracking = knowledge.orders.find(
     (order) => order.trackingNumber && upper.includes(order.trackingNumber.toUpperCase())
   );
-  return byTracking ?? knowledge.orders[0] ?? null;
+  if (byTracking) return byTracking;
+  if (looksLikeOrderOrTrackingQuery(text)) return null;
+  return knowledge.orders[0] ?? null;
 }
 
 function orderLines(order: MerchantKnowledgeOrder) {
   return [
     `Order ${order.orderNumber} is ${order.status.replace(/_/g, " ").toLowerCase()}.`,
     order.amount ? `Amount ${order.amount}.` : null,
-    order.trackingNumber ? `Tracking ID ${order.trackingNumber}.` : "Tracking is not assigned yet.",
+    order.paymentStatus ? `Payment ${order.paymentStatus.replace(/_/g, " ").toLowerCase()}.` : null,
+    order.items.length ? `Items: ${order.items.join(", ")}.` : null,
+    order.invoiceNumber ? `Invoice ${order.invoiceNumber}${order.invoiceTotal ? ` total ${order.invoiceTotal}` : ""}.` : null,
+    order.trackingNumber ? `India Post tracking ID ${order.trackingNumber}.` : "Tracking is not assigned yet.",
     order.shipmentStatus ? `Shipment ${order.shipmentStatus.replace(/_/g, " ").toLowerCase()}.` : null,
     order.bookedAt ? `Handed to India Post at ${order.bookedAt}.` : null,
     order.lastScan ? `Latest scan: ${order.lastScan}${order.lastOffice ? ` at ${order.lastOffice}` : ""}.` : null,
     order.trackingUrl ? `Track: ${order.trackingUrl}` : null,
   ].filter(Boolean) as string[];
+}
+
+function timelineLines(order: MerchantKnowledgeOrder) {
+  if (!order.timeline.length) return [] as string[];
+  return [
+    "Tracking timeline:",
+    ...order.timeline.slice(0, 8).map((item) =>
+      [item.at, item.office, item.description].filter(Boolean).join(" · ")
+    ),
+  ];
 }
 
 export function answerFromKnowledge(knowledge: MerchantKnowledge, text: string) {
@@ -65,6 +93,7 @@ export function answerFromKnowledge(knowledge: MerchantKnowledge, text: string) 
       org.phone ? `Phone ${org.phone}.` : null,
       org.website ? `Website ${org.website}.` : null,
       org.email ? `Email ${org.email}.` : null,
+      org.gstin ? `GSTIN ${org.gstin}.` : null,
       org.address ? `Address ${org.address}.` : null,
     ]
       .filter(Boolean)
@@ -72,26 +101,43 @@ export function answerFromKnowledge(knowledge: MerchantKnowledge, text: string) 
   }
   const order = pickOrder(knowledge, text);
   if (!order) {
-    return `I can help with orders and tracking for ${org.name}. Share your order number if you have one.`;
+    return CUSTOMER_PHONE_ONLY_REPLY;
   }
   if (intent === "tracking") {
     return [
       order.lastScan
         ? `Your order ${order.orderNumber} is currently: ${order.lastScan}${order.lastOffice ? ` at ${order.lastOffice}` : ""}.`
         : `Order ${order.orderNumber} is ${order.status.replace(/_/g, " ").toLowerCase()}.`,
-      order.trackingNumber ? `Tracking ID ${order.trackingNumber}.` : null,
+      order.trackingNumber ? `India Post tracking ID ${order.trackingNumber}.` : null,
       order.trackingUrl ? `Track: ${order.trackingUrl}` : null,
+      ...timelineLines(order),
     ]
       .filter(Boolean)
       .join(" ");
   }
   if (intent === "shipped") {
     return order.bookedAt
-      ? `Order ${order.orderNumber} was handed to India Post at ${order.bookedAt}. Tracking ID ${order.trackingNumber ?? "is not assigned yet"}.`
+      ? `Order ${order.orderNumber} was handed to India Post at ${order.bookedAt}. India Post tracking ID ${order.trackingNumber ?? "is not assigned yet"}.`
       : `Order ${order.orderNumber} is ${order.status.replace(/_/g, " ").toLowerCase()}. It is not marked as shipped yet.`;
   }
+  if (intent === "invoice") {
+    return order.invoiceNumber
+      ? `Invoice ${order.invoiceNumber} for order ${order.orderNumber}${order.invoiceDate ? ` dated ${order.invoiceDate}` : ""}${order.invoiceTotal ? ` total ${order.invoiceTotal}` : ""}.`
+      : `No invoice is ready yet for order ${order.orderNumber}.`;
+  }
+  if (intent === "shipment") {
+    return [
+      order.shipmentStatus
+        ? `Shipment for order ${order.orderNumber} is ${order.shipmentStatus.replace(/_/g, " ").toLowerCase()}.`
+        : `No shipment is created yet for order ${order.orderNumber}.`,
+      order.trackingNumber ? `India Post tracking ID ${order.trackingNumber}.` : null,
+      order.bookedAt ? `Booked ${order.bookedAt}.` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
   if (intent === "unknown") {
-    return `I am the ${VACHAT_ASSISTANT_NAME}. I can share order status, where the parcel is now, when it shipped, and ${org.name} contact details.`;
+    return `I am the ${VACHAT_ASSISTANT_NAME}. I can share this number's order information, shipment information, India Post tracking ID, tracking timeline, invoice, and ${org.name} contact details.`;
   }
   return orderLines(order).join(" ");
 }
@@ -122,6 +168,7 @@ async function postAssistantReply(to: string, text: string, merchantId: string |
     method: "POST",
     headers: vachatHeaders(platform.apiKey),
     body: JSON.stringify({
+      account: "post@post.com",
       merchant_id: merchantId,
       to,
       text,
@@ -137,6 +184,24 @@ async function postAssistantReply(to: string, text: string, merchantId: string |
   return { sent: true };
 }
 
+async function knowledgeForSender(
+  supabase: SupabaseClient,
+  from: string,
+  hintedMerchantId?: string | null
+) {
+  const hinted = hintedMerchantId?.trim() || "";
+  if (hinted) {
+    return loadMerchantKnowledge(supabase, hinted, { customerPhone: from });
+  }
+  const orgs = await findOrganizationsForCustomerPhone(supabase, from);
+  for (const organizationId of orgs) {
+    const knowledge = await loadMerchantKnowledge(supabase, organizationId, { customerPhone: from });
+    if (knowledge?.orders.length) return knowledge;
+  }
+  if (orgs[0]) return loadMerchantKnowledge(supabase, orgs[0], { customerPhone: from });
+  return null;
+}
+
 export async function handleVachatAssistantMessage(
   supabase: SupabaseClient,
   input: { from: string; text: string; merchantId?: string | null }
@@ -145,31 +210,19 @@ export async function handleVachatAssistantMessage(
   if (!isPlatformVachatActive(platform)) return { handled: false, reason: "platform_off" };
   if (!input.text.trim()) return { handled: false, reason: "empty" };
 
-  let merchantId = input.merchantId?.trim() || "";
-  if (!merchantId) {
-    const orgs = await findOrganizationsForCustomerPhone(supabase, input.from);
-    merchantId = orgs[0] ?? "";
-  }
-  if (!merchantId) {
-    await postAssistantReply(
-      input.from,
-      "I can help with PostBus orders and tracking. Share the order number from your merchant.",
-      null
-    );
+  const knowledge = await knowledgeForSender(supabase, input.from, input.merchantId);
+  if (!knowledge) {
+    await postAssistantReply(input.from, CUSTOMER_PHONE_ONLY_REPLY, null);
     return { handled: true, reason: "no_merchant" };
   }
 
-  const knowledge = await loadMerchantKnowledge(supabase, merchantId);
-  if (!knowledge) {
-    return { handled: false, reason: "missing_org" };
-  }
   const reply = answerFromKnowledge(knowledge, input.text);
-  await postAssistantReply(input.from, reply, merchantId);
-  void syncMerchantKnowledge(supabase, merchantId).catch((error) => {
+  await postAssistantReply(input.from, reply, knowledge.merchantId);
+  void syncMerchantKnowledge(supabase, knowledge.merchantId).catch((error) => {
     logError("vachat.knowledge.sync_failed", {
-      organizationId: merchantId,
+      organizationId: knowledge.merchantId,
       message: error instanceof Error ? error.message : "unknown",
     });
   });
-  return { handled: true, reply, merchantId, document: formatKnowledgeDocument(knowledge) };
+  return { handled: true, reply, merchantId: knowledge.merchantId, document: formatKnowledgeDocument(knowledge) };
 }
