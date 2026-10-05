@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
+import { breadcrumbs, isNavItemActive, isResourceIdSegment, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
 
 describe("NDR & RTO navigation", () => {
   it("adds the item with the existing sidebar shape", () => {
@@ -15,6 +15,19 @@ describe("NDR & RTO navigation", () => {
     expect(isNavItemActive("/dashboard", "/dashboard/ndr-rto")).toBe(false);
     expect(isNavItemActive("/dashboard/ndr-rto", "/dashboard/ndr-rto")).toBe(true);
     expect(isNavItemActive("/dashboard/shipments", "/dashboard/ndr-rto")).toBe(false);
+  });
+});
+
+describe("breadcrumb resource ids", () => {
+  it("keeps order UUIDs as ids instead of splitting them into words", () => {
+    const crumbs = breadcrumbs("/dashboard/orders/c8c64456-d324-4277-9577-c3ee1086fccf");
+    expect(isResourceIdSegment("c8c64456-d324-4277-9577-c3ee1086fccf")).toBe(true);
+    expect(crumbs.at(-1)).toMatchObject({
+      href: "/dashboard/orders/c8c64456-d324-4277-9577-c3ee1086fccf",
+      resourceId: true,
+      label: "c8c64456-d324-4277-9577-c3ee1086fccf",
+    });
+    expect(crumbs.at(-1)?.label).not.toContain(" ");
   });
 });
 

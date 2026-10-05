@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, ChevronRight, Menu, Search } from "lucide-react";
 import { toast } from "sonner";
 import { CommandSearch } from "@/components/dashboard/command-search";
@@ -18,8 +18,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { breadcrumbs } from "@/lib/dashboard/nav";
+import { breadcrumbs, isResourceIdSegment } from "@/lib/dashboard/nav";
 import { formatRelative, initials } from "@/lib/format";
+import { orderNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { useNotifications } from "@/lib/hooks/use-notifications";
@@ -28,7 +29,7 @@ import { hideWorkspaceBookingToggle } from "@/modules/india-post/contracts";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { indiaPostServiceLabel } from "@/types/domain";
-import type { IndiaPostConfig, MeResponse } from "@/types/api";
+import type { IndiaPostConfig, MeResponse, OrderRecord } from "@/types/api";
 
 export function Topbar({
   me,
@@ -41,6 +42,14 @@ export function Topbar({
   const router = useRouter();
   const queryClient = useQueryClient();
   const crumbs = useMemo(() => breadcrumbs(pathname), [pathname]);
+  const orderCrumbId = crumbs.find((crumb) => crumb.resourceId && crumb.href.startsWith("/dashboard/orders/"))?.label;
+  const order = useQuery({
+    queryKey: ["order", orderCrumbId],
+    queryFn: () => api<OrderRecord>(`/api/v1/orders/${orderCrumbId}`),
+    enabled: Boolean(orderCrumbId && isResourceIdSegment(orderCrumbId)),
+    staleTime: 30_000,
+  });
+  const orderCrumbLabel = order.data ? orderNumber(order.data) : null;
   const indiaPost = useIndiaPost();
   const defaultServiceLabel = indiaPostServiceLabel(
     indiaPost.data?.defaultServiceCode ?? "SP_INLAND_PARCEL"
@@ -122,11 +131,14 @@ export function Topbar({
               href={crumb.href}
               prefetch={false}
               className={cn(
-                "truncate capitalize hover:text-brand",
+                "truncate hover:text-brand",
+                crumb.resourceId ? "font-medium normal-case" : "capitalize",
                 index === crumbs.length - 1 ? "font-medium text-ink" : "text-muted"
               )}
             >
-              {crumb.label}
+              {crumb.resourceId && crumb.href.startsWith("/dashboard/orders/")
+                ? orderCrumbLabel ?? "…"
+                : crumb.label}
             </Link>
           </span>
         ))}

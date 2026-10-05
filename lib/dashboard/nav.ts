@@ -56,9 +56,21 @@ export function isNavItemActive(href: string, pathname: string) {
   return href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
 }
 
-export function breadcrumbs(pathname: string) {
+const RESOURCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isResourceIdSegment(segment: string) {
+  return RESOURCE_ID.test(segment);
+}
+
+export type Breadcrumb = {
+  label: string;
+  href: string;
+  resourceId?: boolean;
+};
+
+export function breadcrumbs(pathname: string): Breadcrumb[] {
   const segments = pathname.split("/").filter(Boolean);
-  const crumbs: { label: string; href: string }[] = [];
+  const crumbs: Breadcrumb[] = [];
   let href = "";
   for (const segment of segments) {
     href += `/${segment}`;
@@ -68,6 +80,10 @@ export function breadcrumbs(pathname: string) {
     }
     if (segment === "tutorials") {
       crumbs.push({ label: "YouTube Tutorials", href });
+      continue;
+    }
+    if (isResourceIdSegment(segment)) {
+      crumbs.push({ label: segment, href, resourceId: true });
       continue;
     }
     crumbs.push({
