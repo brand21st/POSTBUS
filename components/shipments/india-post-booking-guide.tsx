@@ -21,7 +21,7 @@ const SERVICES: GuideService[] = [
     code: "SP_INLAND_DOC",
     title: "Document",
     icon: FileText,
-    weight: "Up to 500 g",
+    weight: "1–500 g",
     length: "1–42 cm",
     width: "1–29 cm",
     height: "1–2 cm",
@@ -32,7 +32,7 @@ const SERVICES: GuideService[] = [
     code: "SP_INLAND_PARCEL",
     title: "Speed Post Parcel",
     icon: Package,
-    weight: "Up to 35 kg",
+    weight: "1 g–35 kg",
     length: "14–150 cm",
     width: "9–150 cm",
     height: "1–150 cm",
@@ -42,7 +42,7 @@ const SERVICES: GuideService[] = [
     code: "BUSINESS_PARCEL",
     title: "Business Parcel",
     icon: Truck,
-    weight: "Up to 35 kg",
+    weight: "1 g–35 kg",
     length: "14–150 cm",
     width: "9–150 cm",
     height: "1–150 cm",
@@ -57,7 +57,7 @@ export function IndiaPostBookingGuide({ selectedService }: { selectedService?: s
         <AlertTriangle className="size-4 shrink-0 text-amber-600" />
         <span className="font-semibold">India Post Booking Guide</span>
         <span className="hidden truncate text-amber-800 sm:inline">
-          · Documents max <strong>500 g</strong> · Parcels need L × W × H
+          · Parcels <strong>1 g–35 kg</strong> · Need L × W × H
         </span>
         <ChevronDown className="ml-auto size-4 shrink-0 text-amber-700 transition-transform group-open:rotate-180" />
       </summary>
@@ -124,35 +124,19 @@ export function IndiaPostBookingGuideBody({
       </div>
 
       <div className="space-y-1 rounded-lg border border-amber-300 bg-white/80 px-2.5 py-1.5 text-center text-ink">
-        <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-medium">
-          <span>
-            <span className="rounded bg-amber-200 px-1 font-bold tabular-nums text-amber-950">500 g</span> or below →{" "}
-            <strong className="text-amber-900">DOCUMENT (DOC)</strong>
-          </span>
-          <span className="text-amber-400" aria-hidden>
-            |
-          </span>
-          <span>
-            <span className="rounded bg-brand/15 px-1 font-bold tabular-nums text-brand">501 g</span> and above →{" "}
-            <strong className="text-brand">PARCEL</strong>
-          </span>
+        <p className="font-medium">
+          Selected <strong>Speed Post Parcel</strong> or <strong>Business Parcel</strong> stays a parcel from{" "}
+          <span className="rounded bg-brand/15 px-1 font-bold tabular-nums text-brand">1 g</span> to{" "}
+          <span className="rounded bg-brand/15 px-1 font-bold tabular-nums text-brand">35 kg</span>
+          . Weight below 500 g does not switch the booking to Document.
         </p>
-        <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
-          <span>
-            <span className="font-semibold tabular-nums text-brand">501 g</span> and above →{" "}
-            <strong className="text-ink">PARCEL</strong>
-          </span>
-          <span className="text-amber-400" aria-hidden>
-            ·
-          </span>
-          <span>
-            Normal square/rectangular parcel: <strong className="text-ink">NROL</strong>
-          </span>
+        <p className="text-[11px] text-muted">
+          Normal square/rectangular parcel shape: <strong className="text-ink">NROL</strong>
         </p>
       </div>
 
       <p className="text-[11px] text-amber-800">
-        Parcel size limits are different from document limits. A box taller than 2 cm cannot go as a document.
+        Document limits (1–500 g, height max 2 cm) apply only to the Document product. Parcel size limits are different.
       </p>
 
       <div className="rounded-lg border border-amber-300 bg-amber-100/60 p-2">

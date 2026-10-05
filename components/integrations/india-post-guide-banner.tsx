@@ -49,9 +49,9 @@ export function IndiaPostGuideBanner({ selectedService }: { selectedService?: st
           <div className="min-w-0">
             <p className="text-sm font-semibold text-amber-950">India Post Booking Guide</p>
             <p className="text-xs leading-relaxed text-amber-800">
-              <span className="rounded bg-amber-200 px-1 font-bold tabular-nums text-amber-950">500 g</span> or below →
-              Document · <span className="rounded bg-brand/15 px-1 font-bold tabular-nums text-brand">501 g</span> and
-              above → Parcel · Parcels need Length, Width and Height.
+              Parcels book from <span className="rounded bg-brand/15 px-1 font-bold tabular-nums text-brand">1 g</span>{" "}
+              to 35 kg. A selected Speed Post Parcel or Business Parcel is not treated as a document when weight is
+              below 500 g. Parcels need Length, Width and Height.
             </p>
           </div>
         </div>

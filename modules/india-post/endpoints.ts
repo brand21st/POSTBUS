@@ -45,11 +45,15 @@ export function indiaPostBookingFileUrl(environment: ProviderEnvironment, custom
 }
 
 /**
- * CEPT process-articles `article_type` and label `service_type`.
- * 30.07.2026 sample payload + validation errors accept SP / BP for Speed Post
- * and Business Parcel. Product codes SP_INLAND_DOC / SP_INLAND_PARCEL are used
- * in tariff tables and tracking responses — see REQUIRES VERIFICATION in the
- * July 30 migration report.
+ * CEPT process-articles `article_type` (documented as Varchar(2) in the field
+ * table) and label `service_type`. Sample process-articles JSON uses "SP" /
+ * "BP" — including a 15 g Speed Post article — not the tariff product codes.
+ * SP_INLAND_DOC / SP_INLAND_PARCEL / BUSINESS_PARCEL appear in tariff tables
+ * and tracking/webhooks. Do not send those long codes on process-articles
+ * unless CEPT documents a new booking enum; that would be an unsupported change.
+ *
+ * Speed Post parcel vs document on booking is `shape_of_article` (NROL/ROLL vs DOC)
+ * together with the selected Postbus service, not a 500 g weight cutoff.
  */
 export function indiaPostBookingArticleType(serviceCode: string) {
   const code = serviceCode.trim().toUpperCase();
@@ -59,14 +63,15 @@ export function indiaPostBookingArticleType(serviceCode: string) {
 }
 
 /**
- * CEPT books `article_type: SP` + `shape_of_article: DOC` as Speed Post Document
- * even under a parcel contract, so an explicit parcel/doc product code must win
- * over the weight heuristic.
+ * Selected parcel products stay parcels at any legal weight (1 g–35 kg).
+ * Weight is only a fallback when the caller sent a bare "SP" with no product.
  */
 export function indiaPostSpeedPostKind(serviceCode: string, weightGrams: number): "PARCEL" | "DOC" {
   const code = serviceCode.trim().toUpperCase();
-  if (code === "SP_INLAND_PARCEL") return "PARCEL";
-  if (code === "SP_INLAND_DOC") return "DOC";
+  if (code === "SP_INLAND_PARCEL" || code === "BUSINESS_PARCEL" || code === "BP" || code === "24_SPP_PARSPL") {
+    return "PARCEL";
+  }
+  if (code === "SP_INLAND_DOC" || code === "24_SPEEDPOST_DOC" || code === "48_SPEEDPOST_DOC") return "DOC";
   return weightGrams >= INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G ? "PARCEL" : "DOC";
 }
 

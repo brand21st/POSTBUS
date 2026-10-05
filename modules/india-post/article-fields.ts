@@ -74,7 +74,7 @@ export const CEPT_BOOKING_FIELDS: CeptBookingField[] = [
     name: "article_type",
     required: "mandatory",
     source: "Store Configuration",
-    transformation: "Postbus service → CEPT article_type (SP / BP / configured NDD code)",
+    transformation: "Postbus service → CEPT article_type SP (Speed Post) or BP (Business Parcel); NDD codes unchanged",
     validation: "Documented product codes only",
   },
   {
@@ -88,7 +88,8 @@ export const CEPT_BOOKING_FIELDS: CeptBookingField[] = [
     name: "shape_of_article",
     required: "mandatory",
     source: "Package Configuration",
-    transformation: "Excel SHAPE OF ARTICLE or derived from service/weight (DOC / NROL / ROLL)",
+    transformation:
+      "Excel SHAPE OF ARTICLE, or NROL for SP_INLAND_PARCEL / BUSINESS_PARCEL at any legal weight (not a 500 g cutoff); DOC only for document products",
     validation: "ROLL, NROL, or DOC",
   },
   {

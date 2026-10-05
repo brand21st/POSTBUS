@@ -83,10 +83,14 @@ describe("article type and shape", () => {
   it("follows the selected Speed Post product and falls back to weight for bare SP", () => {
     expect(indiaPostShapeOfArticle("SP_INLAND_DOC", 250)).toBe("DOC");
     expect(indiaPostShapeOfArticle("SP_INLAND_DOC", 800)).toBe("DOC");
+    expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 1)).toBe("NROL");
+    expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 32)).toBe("NROL");
     expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 100)).toBe("NROL");
     expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 1500)).toBe("NROL");
     expect(indiaPostShapeOfArticle("SP", 400)).toBe("DOC");
     expect(indiaPostShapeOfArticle("SP", 500)).toBe("NROL");
+    expect(indiaPostShapeOfArticle("BUSINESS_PARCEL", 1)).toBe("NROL");
+    expect(indiaPostShapeOfArticle("BUSINESS_PARCEL", 32)).toBe("NROL");
     expect(indiaPostShapeOfArticle("BUSINESS_PARCEL", 550)).toBe("NROL");
   });
 });
