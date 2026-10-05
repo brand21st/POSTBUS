@@ -503,6 +503,7 @@ export async function handleIntegrationRoutes(
       contractId: data?.contract_id,
       pickupDropoffOfficeId: data?.pickup_dropoff_office_id,
       pickupDropoffOfficeName: data?.pickup_dropoff_office_name,
+      pickupDropoffOfficePincode: data?.pickup_dropoff_office_pincode,
       pickupOfficeId: data?.pickup_office_id,
       pickupOfficeName: data?.pickup_office_name,
       pickupOfficePincode: data?.pickup_office_pincode,
@@ -665,6 +666,9 @@ export async function handleIntegrationRoutes(
     const nameProvided =
       Object.prototype.hasOwnProperty.call(body, "pickupDropoffOfficeName") ||
       Object.prototype.hasOwnProperty.call(body, "pickup_dropoff_office_name");
+    const pinProvided =
+      Object.prototype.hasOwnProperty.call(body, "pickupDropoffOfficePincode") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_dropoff_office_pincode");
     const { data: existing, error: existingError } = await supabase
       .from("india_post_connections")
       .select("id, pickup_dropoff_office_id")
@@ -686,16 +690,25 @@ export async function handleIntegrationRoutes(
     }
     const patch: Record<string, unknown> = { pickup_dropoff_office_id: officeId };
     if (officeName !== undefined) patch.pickup_dropoff_office_name = officeName;
+    if (!officeId) patch.pickup_dropoff_office_pincode = null;
+    else if (pinProvided) {
+      patch.pickup_dropoff_office_pincode = normalizeOfficePincode(
+        body.pickupDropoffOfficePincode ?? body.pickup_dropoff_office_pincode
+      );
+    } else if (officeId !== (existing.pickup_dropoff_office_id ?? null)) {
+      patch.pickup_dropoff_office_pincode = null;
+    }
     const { data, error } = await supabase
       .from("india_post_connections")
       .update(patch)
       .eq("organization_id", ctx.organizationId)
-      .select("pickup_dropoff_office_id, pickup_dropoff_office_name")
+      .select("pickup_dropoff_office_id, pickup_dropoff_office_name, pickup_dropoff_office_pincode")
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
     return {
       pickupDropoffOfficeId: data?.pickup_dropoff_office_id ?? null,
       pickupDropoffOfficeName: data?.pickup_dropoff_office_name ?? null,
+      pickupDropoffOfficePincode: data?.pickup_dropoff_office_pincode ?? null,
     };
   }
 
@@ -789,6 +802,10 @@ export async function handleIntegrationRoutes(
       payload.pickup_dropoff_office_id = normalizePickupOfficeId(
         body.pickupDropoffOfficeId ?? body.pickup_dropoff_office_id
       );
+      if (!payload.pickup_dropoff_office_id) {
+        payload.pickup_dropoff_office_name = null;
+        payload.pickup_dropoff_office_pincode = null;
+      }
     }
     if (connect) payload.status = "PENDING";
     if (
@@ -797,6 +814,14 @@ export async function handleIntegrationRoutes(
     ) {
       payload.pickup_dropoff_office_name = normalizePickupOfficeName(
         body.pickupDropoffOfficeName ?? body.pickup_dropoff_office_name
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupDropoffOfficePincode") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_dropoff_office_pincode")
+    ) {
+      payload.pickup_dropoff_office_pincode = normalizeOfficePincode(
+        body.pickupDropoffOfficePincode ?? body.pickup_dropoff_office_pincode
       );
     }
     if (

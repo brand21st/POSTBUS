@@ -3,16 +3,18 @@ import { indiaPostOfficeWritePayload, indiaPostPickupOfficeWritePayload } from "
 
 describe("indiaPostOfficeWritePayload", () => {
   it("saves an 8-digit office id", () => {
-    expect(indiaPostOfficeWritePayload("22360042", "Manjerikla HO")).toEqual({
+    expect(indiaPostOfficeWritePayload("22360042", "Manjerikla HO", "626003")).toEqual({
       pickupDropoffOfficeId: "22360042",
       pickupDropoffOfficeName: "Manjerikla HO",
+      pickupDropoffOfficePincode: "626003",
     });
   });
 
   it("clears the office id and name when the field is empty", () => {
-    expect(indiaPostOfficeWritePayload("", null)).toEqual({
+    expect(indiaPostOfficeWritePayload("", null, null)).toEqual({
       pickupDropoffOfficeId: null,
       pickupDropoffOfficeName: null,
+      pickupDropoffOfficePincode: null,
     });
   });
 

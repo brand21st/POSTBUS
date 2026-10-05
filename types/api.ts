@@ -684,6 +684,8 @@ export type IndiaPostConfig = {
   pickup_dropoff_office_id?: string | null;
   pickupDropoffOfficeName?: string | null;
   pickup_dropoff_office_name?: string | null;
+  pickupDropoffOfficePincode?: string | null;
+  pickup_dropoff_office_pincode?: string | null;
   pickupOfficeId?: string | null;
   pickup_office_id?: string | null;
   pickupOfficeName?: string | null;

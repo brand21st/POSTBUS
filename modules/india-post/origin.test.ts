@@ -97,6 +97,55 @@ describe("resolveIndiaPostOrigin", () => {
     expect(origin.name).toBe("Mysuru H.O");
   });
 
+  it("uses the saved drop-off office pin when the warehouse address pin is empty", async () => {
+    const origin = await resolveIndiaPostOrigin(
+      {
+        async searchPostOffices(pin: string) {
+          if (pin === "682311") {
+            return [
+              {
+                office_id: "22660454",
+                office_name: "Kolenchery SO",
+                pincode: "682311",
+                city_name: "Ernakulam",
+                state_name: "Kerala",
+              },
+            ];
+          }
+          return [];
+        },
+      },
+      { pickup_dropoff_office_id: "22660454", pickup_dropoff_office_pincode: "682311" },
+      { pincode: "" },
+      "683565"
+    );
+    expect(origin.pincode).toBe("682311");
+    expect(origin.officeId).toBe("22660454");
+  });
+
+  it("falls back to the pickup office pin for DROPOFF when drop-off pin is not stored yet", async () => {
+    const origin = await resolveIndiaPostOrigin(
+      {
+        async searchPostOffices(pin: string) {
+          if (pin === "682311") {
+            return [
+              {
+                office_id: "22660454",
+                office_name: "Kolenchery SO",
+                pincode: "682311",
+              },
+            ];
+          }
+          return [];
+        },
+      },
+      { pickup_dropoff_office_id: "22660454", pickup_office_pincode: "682311" },
+      null,
+      "683565"
+    );
+    expect(origin.pincode).toBe("682311");
+  });
+
   it("throws the exact missing drop-off office error", async () => {
     await expect(
       resolveIndiaPostOrigin({ async searchPostOffices() { return []; } }, {}, null, "683565")

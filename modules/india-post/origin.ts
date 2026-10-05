@@ -22,9 +22,32 @@ type OfficeLookup = {
 
 export type IndiaPostOfficeConnection = {
   pickup_dropoff_office_id?: string | null;
+  pickup_dropoff_office_pincode?: string | null;
   pickup_office_id?: string | null;
   pickup_office_pincode?: string | null;
 };
+
+export function indiaPostSixDigitPin(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    const pin = String(value ?? "").replace(/\D/g, "").slice(0, 6);
+    if (/^\d{6}$/.test(pin)) return pin;
+  }
+  return "";
+}
+
+export function indiaPostOriginPincode(
+  pickupOrDropoff: "PICKUP" | "DROPOFF",
+  connection: IndiaPostOfficeConnection,
+  pickup?: IndiaPostPickupRow | null
+) {
+  const dropPin = connection.pickup_dropoff_office_pincode;
+  const pickupOfficePin = connection.pickup_office_pincode;
+  const addressPin = pickup?.pincode;
+  if (pickupOrDropoff === "PICKUP") {
+    return indiaPostSixDigitPin(pickupOfficePin, addressPin, dropPin);
+  }
+  return indiaPostSixDigitPin(dropPin, addressPin, pickupOfficePin);
+}
 
 export function indiaPostBookingOfficeId(
   pickupOrDropoff: "PICKUP" | "DROPOFF",
@@ -60,15 +83,10 @@ export async function resolveIndiaPostOrigin(
   pickupOrDropoff: "PICKUP" | "DROPOFF" = "DROPOFF"
 ) {
   const officeId = indiaPostBookingOfficeId(pickupOrDropoff, connection, pickup);
-  const configuredPickupPin = String(connection.pickup_office_pincode ?? "").replace(/\D/g, "").slice(0, 6);
-  const originPin =
-    pickupOrDropoff === "PICKUP" && /^\d{6}$/.test(configuredPickupPin)
-      ? configuredPickupPin
-      : /^\d{6}$/.test(pickup?.pincode ?? "")
-        ? String(pickup?.pincode)
-        : "";
+  const originPin = indiaPostOriginPincode(pickupOrDropoff, connection, pickup);
+  const dest = indiaPostSixDigitPin(destPin);
   const originOffices = originPin ? await provider.searchPostOffices(originPin) : [];
-  const destOffices = destPin && destPin !== originPin ? await provider.searchPostOffices(destPin) : originOffices;
+  const destOffices = dest && dest !== originPin ? await provider.searchPostOffices(dest) : originOffices;
   const matched =
     indiaPostFindOffice(originOffices, officeId) ||
     indiaPostFindOffice(destOffices, officeId) ||
@@ -110,7 +128,7 @@ export async function resolveIndiaPostOrigin(
       { code: "VALIDATION_ERROR" }
     );
   }
-  if (pincode === destPin && originPin !== destPin) {
+  if (pincode === dest && originPin !== dest) {
     throw Object.assign(
       new Error(
         `India Post origin pin ${pincode} matched the receiver pin. Set the booking office pincode to the origin office, not the receiver.`

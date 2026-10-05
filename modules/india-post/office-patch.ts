@@ -1,11 +1,24 @@
-export function indiaPostOfficeWritePayload(officeId: string, officeName?: string | null) {
+export function indiaPostOfficeWritePayload(
+  officeId: string,
+  officeName?: string | null,
+  pincode?: string | null
+) {
   const digits = String(officeId ?? "").replace(/\D/g, "").slice(0, 8);
   if (digits && digits.length !== 8) {
     return { error: "Office ID is 8 digits." as const };
   }
+  let pin: string | null | undefined;
+  if (pincode !== undefined) {
+    const pinDigits = String(pincode ?? "").replace(/\D/g, "").slice(0, 6);
+    if (pinDigits && pinDigits.length !== 6) {
+      return { error: "Enter a valid 6-digit pincode." as const };
+    }
+    pin = pinDigits || null;
+  }
   return {
     pickupDropoffOfficeId: digits || null,
     ...(officeName !== undefined ? { pickupDropoffOfficeName: officeName } : {}),
+    ...(pin !== undefined ? { pickupDropoffOfficePincode: digits ? pin : null } : {}),
   };
 }
 

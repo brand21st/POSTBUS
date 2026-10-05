@@ -45,6 +45,7 @@ type FormState = {
   password: string;
   pickupDropoffOfficeId: string;
   pickupDropoffOfficeName: string;
+  pickupDropoffOfficePincode: string;
   pickupOfficeId: string;
   pickupOfficeName: string;
   pickupOfficePincode: string;
@@ -68,6 +69,7 @@ const EMPTY: FormState = {
   password: "",
   pickupDropoffOfficeId: "",
   pickupDropoffOfficeName: "",
+  pickupDropoffOfficePincode: "",
   pickupOfficeId: "",
   pickupOfficeName: "",
   pickupOfficePincode: "",
@@ -127,6 +129,9 @@ export default function IndiaPostPage() {
       pickupDropoffOfficeName: String(
         config.pickupDropoffOfficeName ?? config.pickup_dropoff_office_name ?? ""
       ),
+      pickupDropoffOfficePincode: String(
+        config.pickupDropoffOfficePincode ?? config.pickup_dropoff_office_pincode ?? ""
+      ),
       pickupOfficeId: String(config.pickupOfficeId ?? config.pickup_office_id ?? ""),
       pickupOfficeName: String(config.pickupOfficeName ?? config.pickup_office_name ?? ""),
       pickupOfficePincode: String(config.pickupOfficePincode ?? config.pickup_office_pincode ?? ""),
@@ -149,6 +154,9 @@ export default function IndiaPostPage() {
   );
   const savedOfficeName = String(
     config?.pickupDropoffOfficeName ?? config?.pickup_dropoff_office_name ?? ""
+  );
+  const savedOfficePincode = String(
+    config?.pickupDropoffOfficePincode ?? config?.pickup_dropoff_office_pincode ?? ""
   );
   const savedPickupOfficeId = String(config?.pickupOfficeId ?? config?.pickup_office_id ?? "");
   const savedPickupOfficeName = String(config?.pickupOfficeName ?? config?.pickup_office_name ?? "");
@@ -175,6 +183,7 @@ export default function IndiaPostPage() {
     if (replaceSecrets || form.password.trim()) return true;
     if (form.pickupDropoffOfficeId !== savedOfficeId) return true;
     if (form.pickupDropoffOfficeName !== savedOfficeName) return true;
+    if (form.pickupDropoffOfficePincode !== savedOfficePincode) return true;
     if (form.pickupOfficeId !== savedPickupOfficeId) return true;
     if (form.pickupOfficeName !== savedPickupOfficeName) return true;
     if (form.pickupOfficePincode !== savedPickupOfficePincode) return true;
@@ -194,28 +203,39 @@ export default function IndiaPostPage() {
       const saved = config.contracts?.find((item) => item.serviceCode === service.code)?.contractId ?? "";
       return current !== saved;
     });
-  }, [config, form, replaceSecrets, savedOfficeId, savedOfficeName, savedPickupOfficeId, savedPickupOfficeName, savedPickupOfficePincode, savedPickupOfficeTypeCode, savedPickupOfficeCity, savedPickupOfficeState]);
+  }, [config, form, replaceSecrets, savedOfficeId, savedOfficeName, savedOfficePincode, savedPickupOfficeId, savedPickupOfficeName, savedPickupOfficePincode, savedPickupOfficeTypeCode, savedPickupOfficeCity, savedPickupOfficeState]);
 
   const saveOffice = useMutation({
-    mutationFn: ({ officeId, officeName }: { officeId: string; officeName?: string | null }) => {
-      const payload = indiaPostOfficeWritePayload(officeId, officeName);
+    mutationFn: ({
+      officeId,
+      officeName,
+      pincode,
+    }: {
+      officeId: string;
+      officeName?: string | null;
+      pincode?: string | null;
+    }) => {
+      const payload = indiaPostOfficeWritePayload(officeId, officeName, pincode);
       if ("error" in payload) throw new Error(payload.error);
-      return api<{ pickupDropoffOfficeId: string | null; pickupDropoffOfficeName: string | null }>(
-        "/api/v1/integrations/india-post/office",
-        {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        }
-      );
+      return api<{
+        pickupDropoffOfficeId: string | null;
+        pickupDropoffOfficeName: string | null;
+        pickupDropoffOfficePincode: string | null;
+      }>("/api/v1/integrations/india-post/office", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
     },
     onSuccess: async (data) => {
       await queryClient.cancelQueries({ queryKey: INDIA_POST_QUERY_KEY });
       const saved = data.pickupDropoffOfficeId ?? null;
       const savedName = data.pickupDropoffOfficeName ?? null;
+      const savedPin = data.pickupDropoffOfficePincode ?? null;
       setForm((current) => ({
         ...current,
         pickupDropoffOfficeId: saved ?? "",
         pickupDropoffOfficeName: savedName ?? "",
+        pickupDropoffOfficePincode: savedPin ?? "",
       }));
       queryClient.setQueryData<IndiaPostConfig>(INDIA_POST_QUERY_KEY, (current) =>
         current
@@ -225,6 +245,8 @@ export default function IndiaPostPage() {
               pickup_dropoff_office_id: saved,
               pickupDropoffOfficeName: savedName,
               pickup_dropoff_office_name: savedName,
+              pickupDropoffOfficePincode: savedPin,
+              pickup_dropoff_office_pincode: savedPin,
             }
           : current
       );
@@ -244,20 +266,25 @@ export default function IndiaPostPage() {
   const [finderEpoch, setFinderEpoch] = useState(0);
   const officeSaveFlight = useRef<string | null>(null);
 
-  function persistOfficeId(value: string, options?: { force?: boolean; name?: string | null }) {
-    const payload = indiaPostOfficeWritePayload(value, options?.name);
+  function persistOfficeId(
+    value: string,
+    options?: { force?: boolean; name?: string | null; pincode?: string | null }
+  ) {
+    const payload = indiaPostOfficeWritePayload(value, options?.name, options?.pincode);
     if ("error" in payload) {
       setForm((current) => ({ ...current, pickupDropoffOfficeId: savedOfficeId }));
       toast.error(payload.error);
       return;
     }
     const next = payload.pickupDropoffOfficeId ?? "";
-    if (!options?.force && next === savedOfficeId && options?.name === undefined) return;
-    const flight = `${next}:${options?.name === undefined ? "_" : JSON.stringify(options.name)}`;
+    if (!options?.force && next === savedOfficeId && options?.name === undefined && options?.pincode === undefined) {
+      return;
+    }
+    const flight = `${next}:${options?.name === undefined ? "_" : JSON.stringify(options.name)}:${options?.pincode === undefined ? "_" : JSON.stringify(options.pincode)}`;
     if (!options?.force && officeSaveFlight.current === flight) return;
     officeSaveFlight.current = flight;
     saveOffice.mutate(
-      { officeId: next, officeName: options?.name },
+      { officeId: next, officeName: options?.name, pincode: options?.pincode },
       {
         onSettled: () => {
           if (officeSaveFlight.current === flight) officeSaveFlight.current = null;
@@ -771,7 +798,11 @@ export default function IndiaPostPage() {
         <CardHeader className="pb-4">
           <CardTitle>Pickup Location</CardTitle>
           <CardDescription className="mt-1">
-            The India Post office used when a booking is pickup. Search by pincode or enter the 8-digit office ID.
+            The India Post office used when a booking is pickup. Search the 6-digit office pincode and select the office
+            so pickup bookings use that pin as the origin.
+            {savedPickupOfficeId && !savedPickupOfficePincode
+              ? " This pickup office is missing its pincode — search and select it again."
+              : ""}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -873,7 +904,11 @@ export default function IndiaPostPage() {
           <CardHeader className="pb-4">
             <CardTitle>Drop-off office</CardTitle>
             <CardDescription className="mt-1">
-              The post office where you hand over parcels. Search by pincode or enter the 8-digit office ID.
+              The post office where you hand over parcels. Search the 6-digit office pincode and select the office so
+              every merchant booking uses that pin as the India Post origin.
+              {savedOfficeId && !savedOfficePincode
+                ? " This office is missing its pincode — search and select it again."
+                : ""}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -889,6 +924,8 @@ export default function IndiaPostPage() {
                   pickupDropoffOfficeId: next,
                   pickupDropoffOfficeName:
                     next === savedOfficeId ? current.pickupDropoffOfficeName : "",
+                  pickupDropoffOfficePincode:
+                    next === savedOfficeId ? current.pickupDropoffOfficePincode : "",
                 }));
               }}
               onBlur={(value) => persistOfficeId(value)}
@@ -897,14 +934,18 @@ export default function IndiaPostPage() {
               key={finderEpoch}
               idPrefix="drop-office"
               officeId={form.pickupDropoffOfficeId}
-              onOfficeIdChange={(value, officeName) => {
-                const next = value.replace(/\D/g, "").slice(0, 8);
+              onSelect={(office) => {
                 setForm((current) => ({
                   ...current,
-                  pickupDropoffOfficeId: next,
-                  pickupDropoffOfficeName: officeName ?? "",
+                  pickupDropoffOfficeId: office.officeId,
+                  pickupDropoffOfficeName: office.name,
+                  pickupDropoffOfficePincode: office.pincode,
                 }));
-                persistOfficeId(next, { force: true, name: officeName ?? null });
+                persistOfficeId(office.officeId, {
+                  force: true,
+                  name: office.name,
+                  pincode: office.pincode,
+                });
               }}
               canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
             />
@@ -917,6 +958,7 @@ export default function IndiaPostPage() {
                 persistOfficeId(form.pickupDropoffOfficeId, {
                   force: true,
                   name: form.pickupDropoffOfficeName.trim() || null,
+                  pincode: form.pickupDropoffOfficePincode.trim() || null,
                 })
               }
               disabled={saveOffice.isPending}
@@ -931,9 +973,10 @@ export default function IndiaPostPage() {
                   ...current,
                   pickupDropoffOfficeId: "",
                   pickupDropoffOfficeName: "",
+                  pickupDropoffOfficePincode: "",
                 }));
                 setFinderEpoch((current) => current + 1);
-                persistOfficeId("", { force: true, name: null });
+                persistOfficeId("", { force: true, name: null, pincode: null });
               }}
               disabled={saveOffice.isPending || (!savedOfficeId && !form.pickupDropoffOfficeId)}
             >
