@@ -46,6 +46,7 @@ describe("PostBus WhatsApp order assistant", () => {
     expect(classifyAssistantIntent("when shipped")).toBe("shipped");
     expect(classifyAssistantIntent("invoice number")).toBe("invoice");
     expect(classifyAssistantIntent("order details")).toBe("order");
+    expect(classifyAssistantIntent("PB-10948")).toBe("order");
   });
 
   it("answers with workspace contact details", () => {
@@ -86,7 +87,8 @@ describe("PostBus WhatsApp order assistant", () => {
     expect(isInboundAssistantEvent("message.received", { from: "919876543210", text: "where is my order" })).toBe(
       true
     );
-    expect(parseInboundMessage({ from: "919876543210", text: "where is my order" })).toEqual({
+    expect(isInboundAssistantEvent("message.received", { from: "918848772371", text: "PB-10948" })).toBe(true);
+    expect(parseInboundMessage({ from: "919876543210", content_text: "where is my order" })).toEqual({
       from: "919876543210",
       text: "where is my order",
     });

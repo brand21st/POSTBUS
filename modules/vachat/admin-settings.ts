@@ -344,7 +344,7 @@ export async function registerPlatformVachatWebhook(
     headers: vachatHeaders(config.apiKey),
     body: JSON.stringify({
       url: webhookUrl,
-      events: ["message.status_updated"],
+        events: ["message.status_updated", "message.received"],
     }),
     signal: AbortSignal.timeout(8000),
   });

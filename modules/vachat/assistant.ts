@@ -2,16 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logError } from "@/lib/logger";
 import {
   CUSTOMER_PHONE_ONLY_REPLY,
-  findOrganizationsForCustomerPhone,
-  formatKnowledgeDocument,
-  loadMerchantKnowledge,
-  syncMerchantKnowledge,
   type MerchantKnowledge,
   type MerchantKnowledgeOrder,
   VACHAT_ASSISTANT_NAME,
 } from "@/modules/vachat/knowledge";
 import { getPlatformVachatConfig, isPlatformVachatActive } from "@/modules/vachat/platform-config";
-import { vachatHeaders } from "@/modules/vachat/service";
+import { sendVachatSessionText } from "@/modules/vachat/send";
 
 export type AssistantIntent =
   | "merchant"
@@ -35,7 +31,11 @@ export function classifyAssistantIntent(text: string): AssistantIntent {
     return "shipped";
   }
   if (/shipment information|shipment details|my shipment/.test(q)) return "shipment";
-  if (/order|details|amount|cod|item|product|my parcel|my packet/.test(q)) {
+  if (
+    /order|details|amount|cod|item|product|my parcel|my packet/.test(q) ||
+    /\b[A-Z]{2}\d{9}[A-Z]{2}\b/i.test(text) ||
+    /\b(?:order\s*)?#?\s*(?:PB-)?\d{3,}\b/i.test(text)
+  ) {
     return "order";
   }
   return "unknown";
@@ -146,9 +146,25 @@ export function parseInboundMessage(data: Record<string, unknown> | undefined) {
   const record = data ?? {};
   const nested =
     record.message && typeof record.message === "object" ? (record.message as Record<string, unknown>) : record;
-  const from = String(record.from ?? record.wa_id ?? record.phone ?? record.to ?? nested.from ?? "").trim();
+  const contact =
+    record.contact && typeof record.contact === "object" ? (record.contact as Record<string, unknown>) : {};
+  const from = String(
+    record.from ??
+      record.wa_id ??
+      record.phone ??
+      nested.from ??
+      contact.phone ??
+      contact.wa_id ??
+      ""
+  ).trim();
   const text = String(
-    record.text ?? record.body ?? nested.text ?? nested.body ?? (typeof record.message === "string" ? record.message : "")
+    record.text ??
+      record.content_text ??
+      record.body ??
+      nested.text ??
+      nested.content_text ??
+      nested.body ??
+      (typeof record.message === "string" ? record.message : "")
   ).trim();
   return { from, text };
 }
@@ -161,45 +177,8 @@ export function isInboundAssistantEvent(event: string, data?: Record<string, unk
   return false;
 }
 
-async function postAssistantReply(to: string, text: string, merchantId: string | null) {
-  const platform = await getPlatformVachatConfig();
-  if (!isPlatformVachatActive(platform)) return { sent: false };
-  const res = await fetch(`${platform.apiBaseUrl.replace(/\/$/, "")}/api/postbus/messages`, {
-    method: "POST",
-    headers: vachatHeaders(platform.apiKey),
-    body: JSON.stringify({
-      account: "post@post.com",
-      merchant_id: merchantId,
-      to,
-      text,
-      role: "assistant",
-      assistant: VACHAT_ASSISTANT_NAME,
-    }),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) {
-    logError("vachat.assistant.reply_failed", { status: res.status });
-    return { sent: false };
-  }
-  return { sent: true };
-}
-
-async function knowledgeForSender(
-  supabase: SupabaseClient,
-  from: string,
-  hintedMerchantId?: string | null
-) {
-  const hinted = hintedMerchantId?.trim() || "";
-  if (hinted) {
-    return loadMerchantKnowledge(supabase, hinted, { customerPhone: from });
-  }
-  const orgs = await findOrganizationsForCustomerPhone(supabase, from);
-  for (const organizationId of orgs) {
-    const knowledge = await loadMerchantKnowledge(supabase, organizationId, { customerPhone: from });
-    if (knowledge?.orders.length) return knowledge;
-  }
-  if (orgs[0]) return loadMerchantKnowledge(supabase, orgs[0], { customerPhone: from });
-  return null;
+async function postAssistantReply(to: string, text: string) {
+  return sendVachatSessionText(to, text);
 }
 
 export async function handleVachatAssistantMessage(
@@ -208,21 +187,27 @@ export async function handleVachatAssistantMessage(
 ) {
   const platform = await getPlatformVachatConfig();
   if (!isPlatformVachatActive(platform)) return { handled: false, reason: "platform_off" };
-  if (!input.text.trim()) return { handled: false, reason: "empty" };
+  if (!input.text.trim() || !input.from.trim()) return { handled: false, reason: "empty" };
 
-  const knowledge = await knowledgeForSender(supabase, input.from, input.merchantId);
-  if (!knowledge) {
-    await postAssistantReply(input.from, CUSTOMER_PHONE_ONLY_REPLY, null);
-    return { handled: true, reason: "no_merchant" };
-  }
-
-  const reply = answerFromKnowledge(knowledge, input.text);
-  await postAssistantReply(input.from, reply, knowledge.merchantId);
-  void syncMerchantKnowledge(supabase, knowledge.merchantId).catch((error) => {
-    logError("vachat.knowledge.sync_failed", {
-      organizationId: knowledge.merchantId,
+  try {
+    const { searchOrderDetails } = await import("@/modules/vachat/mcp");
+    const search = await searchOrderDetails(supabase, {
+      whatsapp: input.from,
+      query: input.text,
+      merchant_id: input.merchantId,
+      account: "post@post.com",
+    });
+    const sent = await postAssistantReply(input.from, search.answer);
+    return {
+      handled: true,
+      sent: sent.sent,
+      reply: search.answer,
+      merchantId: search.results[0]?.merchant_id ?? search.organizations[0]?.merchant_id ?? null,
+    };
+  } catch (error) {
+    logError("vachat.assistant.search_failed", {
       message: error instanceof Error ? error.message : "unknown",
     });
-  });
-  return { handled: true, reply, merchantId: knowledge.merchantId, document: formatKnowledgeDocument(knowledge) };
+    return { handled: false, reason: "search_failed" };
+  }
 }

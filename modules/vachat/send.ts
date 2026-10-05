@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { logError } from "@/lib/logger";
 import { toIndiaWhatsappE164 } from "@/lib/phone/india-whatsapp";
 import { WATI_NOTIFY_EVENTS, type WatiNotifyEvent } from "@/modules/wati/notify";
 import { loadNoticeContext, resolveWatiTrackingUrl } from "@/modules/wati/send";
@@ -19,6 +20,7 @@ import {
 import { vachatAddressParam, vachatAmountParam, vachatMerchantTemplateFields, vachatSingleLine } from "@/modules/vachat/notice-fields";
 
 export const VACHAT_DEFAULT_TEST_PHONE = "918618456029";
+export const VACHAT_PLATFORM_WEBHOOK_EVENTS = ["message.status_updated", "message.received"] as const;
 
 export type VachatNotifyIds = {
   orderId?: string | null;
@@ -93,6 +95,27 @@ async function postVachatNotification(
     messageId: json?.data?.message_id ?? null,
     whatsappMessageId: json?.data?.whatsapp_message_id ?? null,
   };
+}
+
+export async function sendVachatSessionText(to: string, text: string) {
+  const platform = await getPlatformVachatConfig();
+  if (!isPlatformVachatActive(platform) || !text.trim()) return { sent: false as const };
+  const recipient = vachatRecipientE164(to);
+  const res = await fetch(`${platform.apiBaseUrl.replace(/\/$/, "")}/api/v1/messages`, {
+    method: "POST",
+    headers: vachatHeaders(platform.apiKey),
+    body: JSON.stringify({
+      to: recipient,
+      text: text.trim(),
+      content_text: text.trim(),
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    logError("vachat.session_text.failed", { status: res.status });
+    return { sent: false as const };
+  }
+  return { sent: true as const };
 }
 
 async function loadOrgVachatRow(supabase: SupabaseClient, organizationId: string) {

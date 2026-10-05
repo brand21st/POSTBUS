@@ -167,7 +167,7 @@ async function attachVachatWebhookSecret(
       headers: vachatHeaders(apiKey),
       body: JSON.stringify({
         url: webhookUrl,
-        events: ["message.status_updated"],
+        events: ["message.status_updated", "message.received"],
       }),
       signal: AbortSignal.timeout(8000),
     });
