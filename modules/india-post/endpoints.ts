@@ -45,20 +45,28 @@ export function indiaPostBookingFileUrl(environment: ProviderEnvironment, custom
 }
 
 /**
- * CEPT process-articles `article_type` (documented as Varchar(2) in the field
- * table) and label `service_type`. Sample process-articles JSON uses "SP" /
- * "BP" — including a 15 g Speed Post article — not the tariff product codes.
- * SP_INLAND_DOC / SP_INLAND_PARCEL / BUSINESS_PARCEL appear in tariff tables
- * and tracking/webhooks. Do not send those long codes on process-articles
- * unless CEPT documents a new booking enum; that would be an unsupported change.
+ * CEPT process-articles `article_type`. The field table lists the product
+ * codes India Post uses to pick the booked service:
+ * SP_INLAND_PARCEL (Speed Post Parcel Domestic), BUSINESS_PARCEL, and the NDD
+ * codes. A short "SP" books Inland Speed Post, so parcel bookings must send
+ * the product code even when the article is under 500 g.
  *
- * Speed Post parcel vs document on booking is `shape_of_article` (NROL/ROLL vs DOC)
- * together with the selected Postbus service, not a 500 g weight cutoff.
+ * Label `service_type` stays the short SP / BP values. See
+ * `indiaPostLabelServiceType`.
  */
 export function indiaPostBookingArticleType(serviceCode: string) {
   const code = serviceCode.trim().toUpperCase();
-  if (code === "BP" || code === "BUSINESS_PARCEL") return "BP";
+  if (code === "BP" || code === "BUSINESS_PARCEL") return "BUSINESS_PARCEL";
+  if (code === "SP_INLAND_DOC") return "SP_INLAND_DOC";
   if (code.startsWith("24_") || code.startsWith("48_")) return code;
+  return "SP_INLAND_PARCEL";
+}
+
+/** Domestic label API `service_type`: Speed Post or Business Parcel. */
+export function indiaPostLabelServiceType(serviceCode: string) {
+  const type = indiaPostBookingArticleType(serviceCode);
+  if (type === "BP" || type === "BUSINESS_PARCEL") return "BP";
+  if (type.startsWith("24_") || type.startsWith("48_")) return type;
   return "SP";
 }
 
@@ -77,7 +85,12 @@ export function indiaPostSpeedPostKind(serviceCode: string, weightGrams: number)
 
 export function indiaPostShapeOfArticle(serviceCode: string, weightGrams: number) {
   const bookingType = indiaPostBookingArticleType(serviceCode);
-  if (bookingType === "BP" || bookingType === "24_SPP_PARSPL") return "NROL";
+  if (bookingType === "BP" || bookingType === "BUSINESS_PARCEL" || bookingType === "24_SPP_PARSPL" || bookingType === "SP_INLAND_PARCEL") {
+    return "NROL";
+  }
+  if (bookingType === "SP_INLAND_DOC" || bookingType === "24_SPEEDPOST_DOC" || bookingType === "48_SPEEDPOST_DOC") {
+    return "DOC";
+  }
   if (bookingType === "SP" && indiaPostSpeedPostKind(serviceCode, weightGrams) === "PARCEL") return "NROL";
   return "DOC";
 }
@@ -227,7 +240,8 @@ export function indiaPostVolumetricWeightGrams(lengthCm: number, widthCm: number
 }
 
 export function indiaPostTransmissionMode(serviceCode: string) {
-  return indiaPostBookingArticleType(serviceCode) === "BP" ? "S" : "A";
+  const type = indiaPostBookingArticleType(serviceCode);
+  return type === "BP" || type === "BUSINESS_PARCEL" ? "S" : "A";
 }
 
 export function indiaPostLabelBookingDatetime(value?: string | Date | null) {
@@ -314,7 +328,7 @@ export function indiaPostDomesticLabelPayload(input: {
     user_type: "R",
     user_id: customerId,
     barcode_no: input.barcode,
-    service_type: indiaPostBookingArticleType(input.serviceCode),
+    service_type: indiaPostLabelServiceType(input.serviceCode),
     booking_type: "COMMERCIAL",
     article_length: String(Math.max(0, Number(input.lengthCm) || 0)),
     article_breadth: String(Math.max(0, Number(input.widthCm) || 0)),

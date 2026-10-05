@@ -114,7 +114,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     expect(payload.length).toBe(30);
     expect(payload.breadth_diameter).toBe(20);
     expect(payload.height).toBe(15);
-    expect(payload.article_type).toBe("BP");
+    expect(payload.article_type).toBe("BUSINESS_PARCEL");
     expect(payload.shape_of_article).toBe("NROL");
   });
 

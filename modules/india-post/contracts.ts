@@ -56,7 +56,7 @@ export function hideWorkspaceBookingToggle(config?: IndiaPostServiceConfig) {
 
 export function parcelServiceToggleOptions(config?: IndiaPostServiceConfig) {
   const short: Record<string, { label: string; title: string }> = {
-    SP_INLAND_PARCEL: { label: "SP", title: "Speed Post parcel" },
+    SP_INLAND_PARCEL: { label: "SP", title: "Speed Post Parcel Domestic" },
     BUSINESS_PARCEL: { label: "BP", title: "Business Parcel" },
   };
   return selectableIndiaPostServices(config).map((service) => ({

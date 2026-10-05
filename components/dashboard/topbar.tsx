@@ -51,7 +51,7 @@ export function Topbar({
       label: "Default",
       title: `Use the India Post default service (${defaultServiceLabel})`,
     },
-    { value: "SP_INLAND_PARCEL", label: "SP", title: "Speed Post parcel" },
+    { value: "SP_INLAND_PARCEL", label: "SP", title: "Speed Post Parcel Domestic" },
     { value: "BUSINESS_PARCEL", label: "BP", title: "Business Parcel" },
   ];
   const bookingService = useMutation({

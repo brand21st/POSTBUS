@@ -36,10 +36,10 @@ vi.mock("@/modules/india-post/origin", () => ({
   }),
 }));
 
-/** Documented CEPT process-articles identity. Long product codes are not booking fields. */
+/** India Post process-articles product. Short "SP" books Inland Speed Post. */
 const CEPT_ARTICLE_TYPE = {
-  SP_INLAND_PARCEL: "SP",
-  BUSINESS_PARCEL: "BP",
+  SP_INLAND_PARCEL: "SP_INLAND_PARCEL",
+  BUSINESS_PARCEL: "BUSINESS_PARCEL",
 } as const;
 
 const PARCEL_WEIGHTS_G = [1, 32, 100, 499, 500, 501, 1000, 5000, 35_000] as const;
@@ -86,9 +86,8 @@ function expectCeptParcelPayload(
   weightGrams: number
 ) {
   expect(payload.article_type).toBe(CEPT_ARTICLE_TYPE[serviceCode]);
+  expect(payload.article_type).not.toBe("SP");
   expect(payload.article_type).not.toBe("SP_INLAND_DOC");
-  expect(payload.article_type).not.toBe("SP_INLAND_PARCEL");
-  expect(payload.article_type).not.toBe("BUSINESS_PARCEL");
   expect(payload.physical_weight).toBe(weightGrams);
   expect(payload.shape_of_article).toBe("NROL");
   expect(payload.length).toBe(14);
@@ -230,9 +229,9 @@ function bookingDb(input: {
 }
 
 describe("CEPT parcel identity (documented process-articles fields only)", () => {
-  it("maps Postbus products onto documented SP / BP article_type values", () => {
-    expect(indiaPostBookingArticleType("SP_INLAND_PARCEL")).toBe("SP");
-    expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BP");
+  it("maps Postbus products onto Speed Post Parcel Domestic and Business Parcel", () => {
+    expect(indiaPostBookingArticleType("SP_INLAND_PARCEL")).toBe("SP_INLAND_PARCEL");
+    expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BUSINESS_PARCEL");
   });
 
   it("does not treat selected parcel products as documents below 500 g", () => {

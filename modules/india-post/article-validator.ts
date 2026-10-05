@@ -40,7 +40,8 @@ export function indiaPostDimensionLimits(serviceCode: string, weightGrams = 0): 
   const type = indiaPostBookingArticleType(serviceCode);
   if (type === "24_SPP_PARSPL") return parsplLimits();
   if (type === "24_SPEEDPOST_DOC" || type === "48_SPEEDPOST_DOC") return docLimits();
-  if (type === "BP") return parcelLimits();
+  if (type === "BP" || type === "BUSINESS_PARCEL" || type === "SP_INLAND_PARCEL") return parcelLimits();
+  if (type === "SP_INLAND_DOC") return docLimits();
   if (type === "SP") {
     if (weightGrams <= 0 && serviceCode.trim().toUpperCase() !== "SP_INLAND_DOC") return parcelLimits();
     return indiaPostSpeedPostKind(serviceCode, weightGrams) === "DOC" ? docLimits() : parcelLimits();
@@ -50,8 +51,8 @@ export function indiaPostDimensionLimits(serviceCode: string, weightGrams = 0): 
 
 export function isParcelArticle(serviceCode: string, weightGrams: number) {
   const type = indiaPostBookingArticleType(serviceCode);
-  if (type === "BP" || type === "24_SPP_PARSPL") return true;
-  if (type === "24_SPEEDPOST_DOC" || type === "48_SPEEDPOST_DOC") return false;
+  if (type === "BP" || type === "BUSINESS_PARCEL" || type === "SP_INLAND_PARCEL" || type === "24_SPP_PARSPL") return true;
+  if (type === "24_SPEEDPOST_DOC" || type === "48_SPEEDPOST_DOC" || type === "SP_INLAND_DOC") return false;
   if (type === "SP") return indiaPostSpeedPostKind(serviceCode, weightGrams) === "PARCEL";
   return false;
 }

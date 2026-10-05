@@ -123,7 +123,7 @@ export const DEFAULT_PROVIDER_ENVIRONMENT: ProviderEnvironment = "PRODUCTION";
 export const INDIA_POST_SERVICES = [
   {
     code: "SP_INLAND_PARCEL",
-    label: "Speed Post parcel",
+    label: "Speed Post Parcel Domestic",
     description: "SP Inland Parcel",
   },
   {

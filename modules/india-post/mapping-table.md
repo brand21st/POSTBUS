@@ -11,7 +11,7 @@ Do not invent, rename, or silently default values. OTP is TRUE only for 24_SPP_P
 | barcode_no | System Generated | S10 from barcode_ranges, or Excel BARCODE NO after uniqueness + check-digit checks | mandatory | 13 characters, S10 |
 | pickup_or_dropoff | Shipping Configuration | DROPOFF unless pickup is explicitly enabled; Excel PICKUP ADDRESS FLAG | mandatory | PICKUP or DROPOFF |
 | pickup_dropoff_office_id | India Post API derived | Saved office id resolved via pincode-search; never invented | mandatory | 8-digit number; delivery_office_flag true; office_type_code not BPO |
-| article_type | Store Configuration | Postbus service → CEPT article_type SP (Speed Post) or BP (Business Parcel); NDD codes unchanged | mandatory | Documented product codes only |
+| article_type | Store Configuration | Postbus service → CEPT article_type SP_INLAND_PARCEL (Speed Post Parcel Domestic) or BUSINESS_PARCEL; NDD codes unchanged | mandatory | Documented product codes only |
 | physical_weight | Package Configuration | Shopify/Postbus grams rounded to a whole number; Excel PHYSICAL WEIGHT | mandatory | Whole number 1–35000 grams |
 | shape_of_article | Package Configuration | Excel SHAPE OF ARTICLE, or NROL for SP_INLAND_PARCEL / BUSINESS_PARCEL at any legal weight (not a 500 g cutoff); DOC only for document products | mandatory | ROLL, NROL, or DOC |
 | length | Package Configuration | Shipment/Excel cm; 0 only when the article is not a parcel | mandatory | Numeric cm; article-type min/max from tariff tables |

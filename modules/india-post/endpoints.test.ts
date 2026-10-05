@@ -76,10 +76,12 @@ describe("production login and booking URLs", () => {
 });
 
 describe("article type and shape", () => {
-  it("sends SP and BP as documented for booking and labels", () => {
-    expect(indiaPostBookingArticleType("SP_INLAND_PARCEL")).toBe("SP");
-    expect(indiaPostBookingArticleType("SP_INLAND_DOC")).toBe("SP");
-    expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BP");
+  it("sends the India Post parcel product codes, not Inland Speed Post", () => {
+    expect(indiaPostBookingArticleType("SP_INLAND_PARCEL")).toBe("SP_INLAND_PARCEL");
+    expect(indiaPostBookingArticleType("SP")).toBe("SP_INLAND_PARCEL");
+    expect(indiaPostBookingArticleType("SP_INLAND_DOC")).toBe("SP_INLAND_DOC");
+    expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostBookingArticleType("BP")).toBe("BUSINESS_PARCEL");
   });
 
   it("follows the selected Speed Post product and falls back to weight for bare SP", () => {
@@ -89,7 +91,7 @@ describe("article type and shape", () => {
     expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 32)).toBe("NROL");
     expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 100)).toBe("NROL");
     expect(indiaPostShapeOfArticle("SP_INLAND_PARCEL", 1500)).toBe("NROL");
-    expect(indiaPostShapeOfArticle("SP", 400)).toBe("DOC");
+    expect(indiaPostShapeOfArticle("SP", 400)).toBe("NROL");
     expect(indiaPostShapeOfArticle("SP", 500)).toBe("NROL");
     expect(indiaPostShapeOfArticle("BUSINESS_PARCEL", 1)).toBe("NROL");
     expect(indiaPostShapeOfArticle("BUSINESS_PARCEL", 32)).toBe("NROL");
@@ -229,7 +231,7 @@ describe("indiaPostBookingArticle", () => {
     expect(article.drop_off_pincode).toBe("682311");
     expect(article.sender_pincode).toBe("682311");
     expect(article.receiver_pincode).toBe("626003");
-    expect(article.article_type).toBe("BP");
+    expect(article.article_type).toBe("BUSINESS_PARCEL");
     expect(article.sender_city).not.toBe("NA");
     expect(article.pickup_dropoff_office_id).toBe(22660454);
   });

@@ -74,7 +74,7 @@ export const CEPT_BOOKING_FIELDS: CeptBookingField[] = [
     name: "article_type",
     required: "mandatory",
     source: "Store Configuration",
-    transformation: "Postbus service → CEPT article_type SP (Speed Post) or BP (Business Parcel); NDD codes unchanged",
+    transformation: "Postbus service → CEPT article_type SP_INLAND_PARCEL (Speed Post Parcel Domestic) or BUSINESS_PARCEL; NDD codes unchanged",
     validation: "Documented product codes only",
   },
   {
