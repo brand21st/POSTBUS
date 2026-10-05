@@ -38,6 +38,11 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
     if (inbound !== null) return inbound;
   }
 
+  if (path === "vachat/mcp") {
+    const { handleVachatMcpRequest } = await import("@/modules/vachat/mcp-http");
+    return handleVachatMcpRequest(request);
+  }
+
   if (isPrintAgentApiPath(path)) {
     const printAgent = await handlePrintAgentRoutes(request, path, slugs);
     if (printAgent !== null) return printAgent;

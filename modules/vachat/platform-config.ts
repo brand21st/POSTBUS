@@ -90,6 +90,10 @@ export function vachatStatusWebhookUrl() {
   return `${env.appUrl.replace(/\/$/, "")}/api/v1/integrations/vachat/webhooks`;
 }
 
+export function vachatMcpUrl() {
+  return `${env.appUrl.replace(/\/$/, "")}/api/v1/vachat/mcp`;
+}
+
 export async function getPlatformVachatConfig(): Promise<PlatformVachatConfig> {
   const row = await loadSettingsRow();
   const dbKey = decryptOptional(row?.encrypted_vachat_api_key);
@@ -154,6 +158,8 @@ export function publicPlatformVachatStatus(config: PlatformVachatConfig) {
     webhookSecretConfigured: Boolean(config.webhookSecret),
     webhookEndpointId: config.webhookEndpointId,
     webhookUrl: vachatStatusWebhookUrl(),
+    mcpUrl: vachatMcpUrl(),
+    mcpAccount: "post@post.com",
     lastVerifiedAt: config.lastVerifiedAt,
     lastError: config.lastError,
     lastTestPhone: config.lastTestPhone,

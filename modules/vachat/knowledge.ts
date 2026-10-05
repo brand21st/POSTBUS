@@ -22,6 +22,7 @@ export type MerchantKnowledgeOrder = {
   orderNumber: string;
   customerPhone: string | null;
   customerName: string | null;
+  createdAt?: string | null;
   status: string;
   paymentStatus: string | null;
   amount: string | null;
@@ -330,6 +331,7 @@ export async function loadMerchantKnowledge(
       orderNumber: String(order.order_number ?? ""),
       customerPhone: orderPhone,
       customerName: address?.name ?? customer?.name ?? null,
+      createdAt: order.created_at ? String(order.created_at) : null,
       status: String(order.status ?? ""),
       paymentStatus: order.payment_status ? String(order.payment_status) : null,
       amount: money(order.total_amount),

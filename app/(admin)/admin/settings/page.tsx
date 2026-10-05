@@ -47,6 +47,8 @@ type VachatSettings = {
   webhookSecretConfigured: boolean;
   webhookEndpointId: string | null;
   webhookUrl: string;
+  mcpUrl?: string;
+  mcpAccount?: string;
   lastVerifiedAt: string | null;
   lastError: string | null;
     lastTestPhone: string | null;
@@ -563,6 +565,29 @@ export default function AdminSettingsPage() {
               {!vachatLogsQuery.data?.length ? (
                 <p className="p-3 text-muted">No VaChat sends logged yet.</p>
               ) : null}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>VaChat order-search MCP</Label>
+            <p className="text-sm text-muted">
+              Add this remote MCP in VaChat for account {vachat?.mcpAccount ?? "post@post.com"}. Tool{" "}
+              <span className="font-mono">search_order_details</span> returns live PostBus order, shipment, tracking,
+              and invoice data for the chatting WhatsApp number. Auth: Bearer using the API key above.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input readOnly value={vachat?.mcpUrl ?? ""} />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={async () => {
+                  if (!vachat?.mcpUrl) return;
+                  await navigator.clipboard.writeText(vachat.mcpUrl);
+                  toast.success("MCP URL copied.");
+                }}
+                disabled={!vachat?.mcpUrl}
+              >
+                Copy MCP
+              </Button>
             </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
