@@ -447,6 +447,7 @@ export async function validateExcelBuffer(
       customerId: String(store.connection.bulk_customer_id ?? ""),
       contractId: String(contractId ?? ""),
       officeId: origin.officeId,
+      pickupOfficeId: String(store.connection.pickup_office_id ?? ""),
       originPin: origin.pincode,
       row: article,
       pickup: pickupFromExcel(parsed.pickups.get(serial)),

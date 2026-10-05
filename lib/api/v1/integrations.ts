@@ -6,6 +6,7 @@ import { env } from "@/lib/env";
 import { logError } from "@/lib/logger";
 import { encryptSecret, maskSecret } from "@/lib/security/crypto";
 import type { IndiaPostOffice } from "@/modules/india-post/endpoints";
+import { indiaPostOfficeToApiRow, indiaPostOfficesForSelection } from "@/modules/india-post/endpoints";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
 import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
@@ -89,6 +90,38 @@ function normalizePickupOfficeName(value: unknown) {
   return name || null;
 }
 
+function normalizeOfficeMeta(value: unknown, max = 80) {
+  const text = String(value ?? "").trim().slice(0, max);
+  return text || null;
+}
+
+function normalizeOfficePincode(value: unknown) {
+  const pin = String(value ?? "").replace(/\D/g, "").slice(0, 6);
+  if (!pin) return null;
+  if (pin.length !== 6) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a valid 6-digit pincode.");
+  }
+  return pin;
+}
+
+function pickupOfficeApiPayload(row: {
+  pickup_office_id?: string | null;
+  pickup_office_name?: string | null;
+  pickup_office_pincode?: string | null;
+  pickup_office_type_code?: string | null;
+  pickup_office_city?: string | null;
+  pickup_office_state?: string | null;
+} | null) {
+  return {
+    pickupOfficeId: row?.pickup_office_id ?? null,
+    pickupOfficeName: row?.pickup_office_name ?? null,
+    pickupOfficePincode: row?.pickup_office_pincode ?? null,
+    pickupOfficeTypeCode: row?.pickup_office_type_code ?? null,
+    pickupOfficeCity: row?.pickup_office_city ?? null,
+    pickupOfficeState: row?.pickup_office_state ?? null,
+  };
+}
+
 export async function handleIntegrationRoutes(
   request: NextRequest,
   supabase: SupabaseClient,
@@ -104,9 +137,20 @@ export async function handleIntegrationRoutes(
       supabase.from("vachat_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       latestShopifySyncJob(supabase, ctx.organizationId),
     ]);
-    const { isPlatformVachatEnabled } = await import("@/modules/vachat/platform-config");
-    const platformVachat = await isPlatformVachatEnabled();
-    const vachatStatus = platformVachat ? "CONNECTED" : (vachat?.status ?? "NOT_CONNECTED");
+    const { getPlatformVachatConfig, isPlatformVachatActive } = await import("@/modules/vachat/platform-config");
+    const platformConfig = await getPlatformVachatConfig();
+    const platformVachat = isPlatformVachatActive(platformConfig);
+    const merchantVachatActive = (vachat?.status ?? "").toUpperCase() === "CONNECTED";
+    const merchantVachatStatus = vachat?.status ?? "NOT_CONNECTED";
+    const postbusWhatsapp = {
+      provider: "postbus_whatsapp",
+      name: "Postbus-Whatsapp Notifications",
+      status: platformVachat ? "CONNECTED" : "NOT_CONNECTED",
+      lastVerifiedAt: platformConfig.lastVerifiedAt,
+      lastError: platformConfig.lastError,
+      platformManaged: true,
+      eventSettings: platformConfig.eventSettings,
+    };
     const shopifyConfigured = shopifyAppConfiguredFor(shopify);
     const shopifySyncReady = shopifyReadyToSync(shopify);
     return {
@@ -127,12 +171,13 @@ export async function handleIntegrationRoutes(
         lastVerifiedAt: indiaPost?.last_verified_at,
         lastError: indiaPost?.last_error,
       },
+      postbusWhatsapp,
       vachat: {
         provider: "vachat",
-        status: vachatStatus,
-        lastVerifiedAt: platformVachat ? null : vachat?.last_verified_at,
-        lastError: platformVachat ? "Managed by PostBus" : vachat?.last_error,
-        platformManaged: platformVachat,
+        status: merchantVachatStatus,
+        lastVerifiedAt: vachat?.last_verified_at,
+        lastError: vachat?.last_error,
+        platformManaged: false,
       },
       wati: {
         provider: "wati",
@@ -159,12 +204,13 @@ export async function handleIntegrationRoutes(
           status: wati?.status ?? "NOT_CONNECTED",
         },
         { provider: "woocommerce", name: "WooCommerce", status: "NOT_CONNECTED", comingLater: true },
+        ...(merchantVachatActive ? [] : [postbusWhatsapp]),
         {
           provider: "vachat",
           name: "Vachat",
-          status: vachatStatus,
-          lastVerifiedAt: platformVachat ? null : vachat?.last_verified_at,
-          lastError: platformVachat ? "Managed by PostBus" : vachat?.last_error,
+          status: merchantVachatStatus,
+          lastVerifiedAt: vachat?.last_verified_at,
+          lastError: vachat?.last_error,
         },
       ],
     };
@@ -470,6 +516,12 @@ export async function handleIntegrationRoutes(
       contractId: data?.contract_id,
       pickupDropoffOfficeId: data?.pickup_dropoff_office_id,
       pickupDropoffOfficeName: data?.pickup_dropoff_office_name,
+      pickupOfficeId: data?.pickup_office_id,
+      pickupOfficeName: data?.pickup_office_name,
+      pickupOfficePincode: data?.pickup_office_pincode,
+      pickupOfficeTypeCode: data?.pickup_office_type_code,
+      pickupOfficeCity: data?.pickup_office_city,
+      pickupOfficeState: data?.pickup_office_state,
       usernameMasked: data?.encrypted_username ? maskSecret("user") : "",
       hasPassword: Boolean(data?.encrypted_password),
       lastVerifiedAt: data?.last_verified_at,
@@ -660,6 +712,76 @@ export async function handleIntegrationRoutes(
     };
   }
 
+  if (key === "PATCH integrations/india-post/pickup-office") {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const officeId = normalizePickupOfficeId(body.pickupOfficeId ?? body.pickup_office_id);
+    const nameProvided =
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeName") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_name");
+    const pinProvided =
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficePincode") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_pincode");
+    const typeProvided =
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeTypeCode") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_type_code");
+    const cityProvided =
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeCity") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_city");
+    const stateProvided =
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeState") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_state");
+    const { data: existing, error: existingError } = await supabase
+      .from("india_post_connections")
+      .select("id, pickup_office_id")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (existingError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingError.message);
+    if (!existing) {
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        "Save your India Post customer ID and password first."
+      );
+    }
+    const patch: Record<string, unknown> = { pickup_office_id: officeId };
+    if (!officeId) {
+      patch.pickup_office_name = null;
+      patch.pickup_office_pincode = null;
+      patch.pickup_office_type_code = null;
+      patch.pickup_office_city = null;
+      patch.pickup_office_state = null;
+    } else {
+      if (nameProvided) {
+        patch.pickup_office_name = normalizeOfficeMeta(body.pickupOfficeName ?? body.pickup_office_name);
+      } else if (officeId !== (existing.pickup_office_id ?? null)) {
+        patch.pickup_office_name = null;
+      }
+      if (pinProvided) patch.pickup_office_pincode = normalizeOfficePincode(body.pickupOfficePincode ?? body.pickup_office_pincode);
+      else if (officeId !== (existing.pickup_office_id ?? null)) patch.pickup_office_pincode = null;
+      if (typeProvided) {
+        patch.pickup_office_type_code = normalizeOfficeMeta(
+          body.pickupOfficeTypeCode ?? body.pickup_office_type_code,
+          16
+        );
+      } else if (officeId !== (existing.pickup_office_id ?? null)) {
+        patch.pickup_office_type_code = null;
+      }
+      if (cityProvided) patch.pickup_office_city = normalizeOfficeMeta(body.pickupOfficeCity ?? body.pickup_office_city);
+      else if (officeId !== (existing.pickup_office_id ?? null)) patch.pickup_office_city = null;
+      if (stateProvided) patch.pickup_office_state = normalizeOfficeMeta(body.pickupOfficeState ?? body.pickup_office_state);
+      else if (officeId !== (existing.pickup_office_id ?? null)) patch.pickup_office_state = null;
+    }
+    const { data, error } = await supabase
+      .from("india_post_connections")
+      .update(patch)
+      .eq("organization_id", ctx.organizationId)
+      .select(
+        "pickup_office_id, pickup_office_name, pickup_office_pincode, pickup_office_type_code, pickup_office_city, pickup_office_state"
+      )
+      .single();
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    return pickupOfficeApiPayload(data);
+  }
+
   if (key === "PUT integrations/india-post" || key === "POST integrations/india-post" || key === "PATCH integrations/india-post") {
     const body = await request.json();
     const connect = body.connect !== false;
@@ -689,6 +811,54 @@ export async function handleIntegrationRoutes(
       payload.pickup_dropoff_office_name = normalizePickupOfficeName(
         body.pickupDropoffOfficeName ?? body.pickup_dropoff_office_name
       );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeId") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_id")
+    ) {
+      payload.pickup_office_id = normalizePickupOfficeId(body.pickupOfficeId ?? body.pickup_office_id);
+      if (!payload.pickup_office_id) {
+        payload.pickup_office_name = null;
+        payload.pickup_office_pincode = null;
+        payload.pickup_office_type_code = null;
+        payload.pickup_office_city = null;
+        payload.pickup_office_state = null;
+      }
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeName") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_name")
+    ) {
+      payload.pickup_office_name = normalizeOfficeMeta(body.pickupOfficeName ?? body.pickup_office_name);
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficePincode") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_pincode")
+    ) {
+      payload.pickup_office_pincode = normalizeOfficePincode(
+        body.pickupOfficePincode ?? body.pickup_office_pincode
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeTypeCode") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_type_code")
+    ) {
+      payload.pickup_office_type_code = normalizeOfficeMeta(
+        body.pickupOfficeTypeCode ?? body.pickup_office_type_code,
+        16
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeCity") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_city")
+    ) {
+      payload.pickup_office_city = normalizeOfficeMeta(body.pickupOfficeCity ?? body.pickup_office_city);
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupOfficeState") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_office_state")
+    ) {
+      payload.pickup_office_state = normalizeOfficeMeta(body.pickupOfficeState ?? body.pickup_office_state);
     }
     if (body.username) payload.encrypted_username = encryptSecret(body.username);
     if (body.password) payload.encrypted_password = encryptSecret(body.password);
@@ -830,7 +1000,7 @@ export async function handleIntegrationRoutes(
       .replace(/\D/g, "")
       .slice(0, 6);
     if (!/^\d{6}$/.test(pincode)) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a 6-digit pincode.");
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a valid 6-digit pincode.");
     }
     const { data } = await supabase
       .from("india_post_connections")
@@ -844,17 +1014,19 @@ export async function handleIntegrationRoutes(
       );
     }
     const provider = indiaPostFromRow(data);
-    const offices = await provider.searchPostOffices(pincode);
+    let offices: IndiaPostOffice[] = [];
+    try {
+      offices = await provider.searchPostOffices(pincode);
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        ERROR_CODES.PROVIDER_ERROR,
+        "Unable to fetch India Post offices. Please try again."
+      );
+    }
     return {
       pincode,
-      offices: offices.map((office: IndiaPostOffice) => ({
-        officeId: String(office.office_id ?? ""),
-        name: office.office_name ?? "",
-        pincode: String(office.pincode ?? pincode),
-        city: office.city_name ?? "",
-        state: office.state_name ?? "",
-        officeTypeCode: office.office_type_code ?? "",
-      })),
+      offices: indiaPostOfficesForSelection(offices).map((office) => indiaPostOfficeToApiRow(office, pincode)),
     };
   }
 
@@ -938,6 +1110,19 @@ export async function handleIntegrationRoutes(
     return { ...config, templates, channels };
   }
 
+  if (key === "DELETE integrations/wati") {
+    const { resetWatiConnection } = await import("@/modules/wati/service");
+    await resetWatiConnection(supabase, ctx.organizationId);
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "wati.reset",
+      entity_type: "wati_connection",
+      entity_id: ctx.organizationId,
+    });
+    return { reset: true };
+  }
+
   if (
     key === "POST integrations/wati" ||
     key === "PUT integrations/wati" ||
@@ -1019,9 +1204,7 @@ export async function handleIntegrationRoutes(
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     const { mapVachatConfig } = await import("@/modules/vachat/service");
-    const { isPlatformVachatEnabled } = await import("@/modules/vachat/platform-config");
-    const platformManaged = await isPlatformVachatEnabled();
-    return mapVachatConfig(data, { platformManaged, platformError: platformManaged ? "Managed by PostBus" : null });
+    return mapVachatConfig(data);
   }
 
   if (
@@ -1029,8 +1212,6 @@ export async function handleIntegrationRoutes(
     key === "PUT integrations/vachat" ||
     key === "PATCH integrations/vachat"
   ) {
-    const { assertMerchantVachatWritable } = await import("@/modules/vachat/service");
-    await assertMerchantVachatWritable();
     const body = await request.json().catch(() => ({}));
     const { saveVachatConnection, mapVachatConfig } = await import("@/modules/vachat/service");
     const saved = await saveVachatConnection(supabase, ctx.organizationId, {
@@ -1048,15 +1229,12 @@ export async function handleIntegrationRoutes(
   }
 
   if (key === "DELETE integrations/vachat") {
-    const { assertMerchantVachatWritable, disconnectVachat } = await import("@/modules/vachat/service");
-    await assertMerchantVachatWritable();
+    const { disconnectVachat } = await import("@/modules/vachat/service");
     await disconnectVachat(supabase, ctx.organizationId);
     return { disconnected: true };
   }
 
   if (key === "POST integrations/vachat/test") {
-    const { assertMerchantVachatWritable } = await import("@/modules/vachat/service");
-    await assertMerchantVachatWritable();
     const { data } = await supabase
       .from("vachat_connections")
       .select("*")

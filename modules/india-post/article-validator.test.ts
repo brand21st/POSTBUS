@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mapShipmentToArticle } from "@/modules/india-post/article-mapper";
-import { validateIndiaPostArticle } from "@/modules/india-post/article-validator";
-import { assertPayloadCoversDocumentedFields, indiaPostBookingArticle } from "@/modules/india-post/booking-payload";
+import { assertValidatedArticle, validateIndiaPostArticle } from "@/modules/india-post/article-validator";
+import { assertPayloadCoversDocumentedFields, indiaPostBookingArticle, serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
 import { splitIndiaPostBookingResult } from "@/modules/india-post/booking-apply";
 import { chunkIds, indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
 import { CEPT_BOOKING_FIELD_NAMES } from "@/modules/india-post/article-fields";
@@ -127,6 +127,27 @@ describe("India Post article validation", () => {
     expect(payload.receiver_add_line_3).toBe("");
     expect(assertPayloadCoversDocumentedFields(payload)).toEqual([]);
     expect(Object.keys(payload).sort()).toEqual([...CEPT_BOOKING_FIELD_NAMES].sort());
+  });
+
+  it("sends PICKUP with the configured pickup office id", () => {
+    const draft = baseDraft({
+      officeId: "21360043",
+      pickup: {
+        addresseeName: "Kerlaz",
+        companyName: "Kerlaz Stores",
+        line1: "Warehouse road",
+        city: "Mysuru",
+        state: "Karnataka",
+        pincode: "570001",
+        mobile: "9876543210",
+        scheduleSlot: "10:00-13:00",
+        scheduleDate: "10/05/2026 10:00:00 AM",
+      },
+    });
+    const payload = serializeIndiaPostBookingArticle(assertValidatedArticle(draft));
+    expect(payload.pickup_or_dropoff).toBe("PICKUP");
+    expect(payload.pickup_dropoff_office_id).toBe(21360043);
+    expect(payload.pickup_address_flag).toBe("TRUE");
   });
 });
 

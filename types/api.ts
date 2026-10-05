@@ -573,6 +573,7 @@ export type IntegrationCard = {
   readyToSync?: boolean;
   shopDomain?: string | null;
   platformManaged?: boolean;
+  eventSettings?: Partial<Record<string, boolean>>;
 };
 
 export type IntegrationsResponse = {
@@ -583,6 +584,7 @@ export type IntegrationsResponse = {
   india_post?: IntegrationCard;
   wati?: IntegrationCard;
   vachat?: IntegrationCard;
+  postbusWhatsapp?: IntegrationCard;
 };
 
 export type WatiConfig = {
@@ -682,6 +684,18 @@ export type IndiaPostConfig = {
   pickup_dropoff_office_id?: string | null;
   pickupDropoffOfficeName?: string | null;
   pickup_dropoff_office_name?: string | null;
+  pickupOfficeId?: string | null;
+  pickup_office_id?: string | null;
+  pickupOfficeName?: string | null;
+  pickup_office_name?: string | null;
+  pickupOfficePincode?: string | null;
+  pickup_office_pincode?: string | null;
+  pickupOfficeTypeCode?: string | null;
+  pickup_office_type_code?: string | null;
+  pickupOfficeCity?: string | null;
+  pickup_office_city?: string | null;
+  pickupOfficeState?: string | null;
+  pickup_office_state?: string | null;
   usernameMasked?: string | null;
   username_masked?: string | null;
   hasPassword?: boolean;

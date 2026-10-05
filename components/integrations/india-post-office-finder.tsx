@@ -10,34 +10,47 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
 
-type OfficeRow = {
+export type IndiaPostOfficeRow = {
   officeId: string;
   name: string;
   pincode: string;
   city: string;
   state: string;
   officeTypeCode: string;
+  taluk?: string;
+  village?: string;
+  deliveryOfficeFlag?: boolean;
+  isRolledOut?: boolean;
 };
 
 type SearchResponse = {
   pincode: string;
-  offices: OfficeRow[];
+  offices: IndiaPostOfficeRow[];
 };
 
 export function IndiaPostOfficeFinder({
   officeId,
+  onSelect,
   onOfficeIdChange,
   canSearch,
+  idPrefix = "office-finder",
+  label = "Find by pincode",
 }: {
   officeId: string;
-  onOfficeIdChange: (officeId: string, officeName?: string) => void;
+  onSelect?: (office: IndiaPostOfficeRow) => void;
+  onOfficeIdChange?: (officeId: string, officeName?: string) => void;
   canSearch: boolean;
+  idPrefix?: string;
+  label?: string;
 }) {
   const [pincode, setPincode] = useState("");
 
   const search = useMutation({
     mutationFn: () => {
       const pin = pincode.replace(/\D/g, "").slice(0, 6);
+      if (!/^\d{6}$/.test(pin)) {
+        throw new Error("Enter a valid 6-digit pincode.");
+      }
       return api<SearchResponse>(
         `/api/v1/integrations/india-post/offices?pincode=${encodeURIComponent(pin)}`
       );
@@ -46,14 +59,16 @@ export function IndiaPostOfficeFinder({
   });
 
   const offices = search.data?.offices ?? [];
-  const pinValid = /^\d{6}$/.test(pincode.replace(/\D/g, "").slice(0, 6));
+  const pinDigits = pincode.replace(/\D/g, "").slice(0, 6);
+  const pinValid = /^\d{6}$/.test(pinDigits);
+  const inputId = `${idPrefix}-pincode`;
 
   return (
     <div className="space-y-2">
-      <Label htmlFor="office-finder-pincode">Find by pincode</Label>
+      <Label htmlFor={inputId}>{label}</Label>
       <div className="flex gap-2">
         <Input
-          id="office-finder-pincode"
+          id={inputId}
           inputMode="numeric"
           placeholder="682311"
           value={pincode}
@@ -90,7 +105,13 @@ export function IndiaPostOfficeFinder({
         </Button>
       </div>
       <p className="text-xs text-muted">
-        {canSearch ? "Search India Post offices by the 6-digit pincode." : "Save your customer ID and password first, then search."}
+        {canSearch
+          ? pinDigits && !pinValid
+            ? "Enter a valid 6-digit pincode."
+            : search.isPending
+              ? "Searching India Post offices..."
+              : "Search India Post offices by the 6-digit pincode."
+          : "Save your customer ID and password first, then search."}
       </p>
 
       {offices.length > 0 ? (
@@ -106,7 +127,8 @@ export function IndiaPostOfficeFinder({
                     selected && "bg-brand/5"
                   )}
                   onClick={() => {
-                    onOfficeIdChange(office.officeId, office.name);
+                    onSelect?.(office);
+                    onOfficeIdChange?.(office.officeId, office.name);
                   }}
                 >
                   <span className="min-w-0">
@@ -119,14 +141,16 @@ export function IndiaPostOfficeFinder({
                         .join(" · ")}
                     </span>
                   </span>
-                  <span className="shrink-0 font-mono text-xs text-muted">{office.officeId}</span>
+                  <span className="shrink-0 font-mono text-xs text-muted">
+                    {selected ? "Selected" : office.officeId}
+                  </span>
                 </button>
               </li>
             );
           })}
         </ul>
       ) : search.isSuccess ? (
-        <p className="text-xs text-muted">No offices for this pincode.</p>
+        <p className="text-xs text-muted">No eligible India Post offices found for this pincode.</p>
       ) : null}
     </div>
   );

@@ -138,6 +138,7 @@ export function mapExcelRowToArticle(input: {
   customerId: string;
   contractId: string;
   officeId: string;
+  pickupOfficeId?: string;
   originPin: string;
   row: Record<string, string>;
   pickup?: DraftArticle["pickup"];
@@ -161,7 +162,9 @@ export function mapExcelRowToArticle(input: {
     contractId: input.contractId,
     barcode: row.barcode_no.trim().toUpperCase() || undefined,
     pickupOrDropoff: pickupFlag ? "PICKUP" : "DROPOFF",
-    officeId: row.pickup_dropoff_office_id.trim() || input.officeId,
+    officeId:
+      row.pickup_dropoff_office_id.trim() ||
+      (pickupFlag ? input.pickupOfficeId?.trim() || input.officeId : input.officeId),
     originPin: row.drop_off_pincode.trim() || input.originPin,
     weightGrams: weight,
     lengthCm: Number(row.length) || 0,

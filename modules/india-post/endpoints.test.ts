@@ -12,6 +12,8 @@ import {
   indiaPostShapeOfArticle,
   indiaPostTransmissionMode,
   indiaPostVolumetricWeightGrams,
+  indiaPostIsEligibleBookingOffice,
+  indiaPostOfficesForSelection,
 } from "@/modules/india-post/endpoints";
 
 describe("indiaPostApiRoot", () => {
@@ -260,3 +262,68 @@ describe("indiaPostBookingArticle", () => {
     expect(article.article_type).toBe("24_SPP_PARSPL");
   });
 });
+
+describe("India Post office eligibility", () => {
+  const mysuru = {
+    office_id: "21360043",
+    office_name: "Mysuru H.O",
+    pincode: "570001",
+    office_type_code: "HPO",
+    delivery_office_flag: true,
+    city_name: "MYSURU",
+    state_name: "Karnataka",
+  };
+  const bpo = {
+    office_id: "21360099",
+    office_name: "Mysuru BPO",
+    pincode: "570001",
+    office_type_code: "BPO",
+    delivery_office_flag: true,
+  };
+  const nonDelivery = {
+    office_id: "21360088",
+    office_name: "Mysuru SO",
+    pincode: "570001",
+    office_type_code: "SO",
+    delivery_office_flag: false,
+  };
+  const missingId = {
+    office_name: "Nameless",
+    office_type_code: "HO",
+    delivery_office_flag: true,
+  };
+
+  it("allows a delivery office that is not a BPO", () => {
+    expect(indiaPostIsEligibleBookingOffice(mysuru)).toBe(true);
+  });
+
+  it("rejects BPO offices even when delivery_office_flag is true", () => {
+    expect(indiaPostIsEligibleBookingOffice(bpo)).toBe(false);
+  });
+
+  it("rejects offices that are not delivery offices", () => {
+    expect(indiaPostIsEligibleBookingOffice(nonDelivery)).toBe(false);
+  });
+
+  it("rejects offices without an India Post office_id", () => {
+    expect(indiaPostIsEligibleBookingOffice(missingId)).toBe(false);
+  });
+
+  it("returns every eligible office when a pincode has more than one", () => {
+    const second = {
+      ...mysuru,
+      office_id: "21360044",
+      office_name: "Mysuru City SO",
+      office_type_code: "SO",
+    };
+    expect(indiaPostOfficesForSelection([mysuru, bpo, nonDelivery, missingId, second])).toEqual([
+      mysuru,
+      second,
+    ]);
+  });
+
+  it("returns an empty list when no office is eligible", () => {
+    expect(indiaPostOfficesForSelection([bpo, nonDelivery])).toEqual([]);
+  });
+});
+

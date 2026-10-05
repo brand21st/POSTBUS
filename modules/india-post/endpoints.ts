@@ -96,7 +96,59 @@ export type IndiaPostOffice = {
   delivery_office_flag?: boolean;
   city_name?: string;
   state_name?: string;
+  taluk_name?: string;
+  village_name?: string;
+  is_rolled_out?: boolean;
 };
+
+export function indiaPostDeliveryOfficeFlag(value: unknown) {
+  if (value === true || value === 1) return true;
+  const text = String(value ?? "").trim().toUpperCase();
+  return text === "TRUE" || text === "1" || text === "Y" || text === "YES";
+}
+
+export function indiaPostIsEligibleBookingOffice(office: IndiaPostOffice) {
+  const officeId = String(office.office_id ?? "").replace(/\D/g, "");
+  if (officeId.length !== 8) return false;
+  if (!String(office.office_name ?? "").trim()) return false;
+  if (String(office.office_type_code ?? "").trim().toUpperCase() === "BPO") return false;
+  return indiaPostDeliveryOfficeFlag(office.delivery_office_flag);
+}
+
+export function indiaPostOfficesForSelection(offices: IndiaPostOffice[]) {
+  return offices.filter(indiaPostIsEligibleBookingOffice);
+}
+
+export function indiaPostNormalizeOffice(raw: unknown): IndiaPostOffice {
+  const row = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    office_id: row.office_id as string | number | undefined,
+    office_name: row.office_name != null ? String(row.office_name) : undefined,
+    pincode: row.pincode as string | number | undefined,
+    office_type_code: row.office_type_code != null ? String(row.office_type_code) : undefined,
+    delivery_office_flag: indiaPostDeliveryOfficeFlag(row.delivery_office_flag),
+    city_name: row.city_name != null ? String(row.city_name) : undefined,
+    state_name: row.state_name != null ? String(row.state_name) : undefined,
+    taluk_name: row.taluk_name != null ? String(row.taluk_name) : undefined,
+    village_name: row.village_name != null ? String(row.village_name) : undefined,
+    is_rolled_out: indiaPostDeliveryOfficeFlag(row.is_rolled_out),
+  };
+}
+
+export function indiaPostOfficeToApiRow(office: IndiaPostOffice, fallbackPin: string) {
+  return {
+    officeId: String(office.office_id ?? "").replace(/\D/g, "").slice(0, 8),
+    name: office.office_name ?? "",
+    pincode: String(office.pincode ?? fallbackPin),
+    city: office.city_name ?? "",
+    state: office.state_name ?? "",
+    officeTypeCode: office.office_type_code ?? "",
+    taluk: office.taluk_name ?? "",
+    village: office.village_name ?? "",
+    deliveryOfficeFlag: indiaPostDeliveryOfficeFlag(office.delivery_office_flag),
+    isRolledOut: indiaPostDeliveryOfficeFlag(office.is_rolled_out),
+  };
+}
 
 export function indiaPostRequiredText(value: string | null | undefined, fallback: string) {
   const text = (value ?? "").trim();
@@ -149,12 +201,13 @@ export function indiaPostFindOffice(offices: IndiaPostOffice[], officeId?: strin
   return offices.find((office) => String(office.office_id) === String(officeId)) ?? null;
 }
 
-export function indiaPostOfficesFromPincodeResponse(json: unknown) {
-  if (Array.isArray(json)) return json;
-  if (json && typeof json === "object" && Array.isArray((json as { data?: unknown }).data)) {
-    return (json as { data: unknown[] }).data;
+export function indiaPostOfficesFromPincodeResponse(json: unknown): IndiaPostOffice[] {
+  let rows: unknown[] = [];
+  if (Array.isArray(json)) rows = json;
+  else if (json && typeof json === "object" && Array.isArray((json as { data?: unknown }).data)) {
+    rows = (json as { data: unknown[] }).data;
   }
-  return [];
+  return rows.map(indiaPostNormalizeOffice);
 }
 
 export function indiaPostPickDeliveryOffice(offices: IndiaPostOffice[]) {

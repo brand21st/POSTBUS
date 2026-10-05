@@ -61,6 +61,13 @@ describe("permissionForTenantRoute", () => {
       permissionForTenantRoute("PATCH", "integrations/india-post/office", ["integrations", "india-post", "office"])
     ).toBe("integrations.manage");
     expect(
+      permissionForTenantRoute("PATCH", "integrations/india-post/pickup-office", [
+        "integrations",
+        "india-post",
+        "pickup-office",
+      ])
+    ).toBe("integrations.manage");
+    expect(
       permissionForTenantRoute("PATCH", "integrations/india-post/contracts", [
         "integrations",
         "india-post",
@@ -71,6 +78,9 @@ describe("permissionForTenantRoute", () => {
       permissionForTenantRoute("DELETE", "integrations/india-post", ["integrations", "india-post"])
     ).toBe("integrations.manage");
     expect(permissionForTenantRoute("POST", "integrations/wati", ["integrations", "wati"])).toBe(
+      "integrations.manage"
+    );
+    expect(permissionForTenantRoute("DELETE", "integrations/wati", ["integrations", "wati"])).toBe(
       "integrations.manage"
     );
     expect(permissionForTenantRoute("GET", "members", ["members"])).toBeUndefined();

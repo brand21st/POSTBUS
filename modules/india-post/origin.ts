@@ -20,6 +20,23 @@ type OfficeLookup = {
   searchPostOffices: (pincode: string) => Promise<IndiaPostOffice[]>;
 };
 
+export type IndiaPostOfficeConnection = {
+  pickup_dropoff_office_id?: string | null;
+  pickup_office_id?: string | null;
+  pickup_office_pincode?: string | null;
+};
+
+export function indiaPostBookingOfficeId(
+  pickupOrDropoff: "PICKUP" | "DROPOFF",
+  connection: IndiaPostOfficeConnection,
+  pickup?: IndiaPostPickupRow | null
+) {
+  const dropId = String(connection.pickup_dropoff_office_id ?? pickup?.office_id ?? "").trim();
+  if (pickupOrDropoff !== "PICKUP") return dropId;
+  const pickupId = String(connection.pickup_office_id ?? pickup?.office_id ?? "").trim();
+  return pickupId || dropId;
+}
+
 export function cachedOfficeLookup(provider: OfficeLookup): OfficeLookup {
   const cache = new Map<string, Promise<IndiaPostOffice[]>>();
   return {
@@ -37,12 +54,19 @@ export function cachedOfficeLookup(provider: OfficeLookup): OfficeLookup {
 
 export async function resolveIndiaPostOrigin(
   provider: OfficeLookup,
-  connection: { pickup_dropoff_office_id?: string | null },
+  connection: IndiaPostOfficeConnection,
   pickup: IndiaPostPickupRow | null,
-  destPin: string
+  destPin: string,
+  pickupOrDropoff: "PICKUP" | "DROPOFF" = "DROPOFF"
 ) {
-  const officeId = String(connection.pickup_dropoff_office_id ?? pickup?.office_id ?? "").trim();
-  const originPin = /^\d{6}$/.test(pickup?.pincode ?? "") ? String(pickup?.pincode) : "";
+  const officeId = indiaPostBookingOfficeId(pickupOrDropoff, connection, pickup);
+  const configuredPickupPin = String(connection.pickup_office_pincode ?? "").replace(/\D/g, "").slice(0, 6);
+  const originPin =
+    pickupOrDropoff === "PICKUP" && /^\d{6}$/.test(configuredPickupPin)
+      ? configuredPickupPin
+      : /^\d{6}$/.test(pickup?.pincode ?? "")
+        ? String(pickup?.pincode)
+        : "";
   const originOffices = originPin ? await provider.searchPostOffices(originPin) : [];
   const destOffices = destPin && destPin !== originPin ? await provider.searchPostOffices(destPin) : originOffices;
   const matched =

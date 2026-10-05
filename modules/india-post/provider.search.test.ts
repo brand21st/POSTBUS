@@ -85,4 +85,26 @@ describe("IndiaPostProvider.searchPostOffices", () => {
     expect(await provider.searchPostOffices("12")).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("does not expose India Post errors when pincode-search fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 401,
+        json: async () => ({ message: "invalid_token secret" }),
+      }))
+    );
+
+    const provider = new IndiaPostProvider({
+      environment: "UAT",
+      status: "CONNECTED",
+      encrypted_access_token: encryptSecret("test-token"),
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+
+    await expect(provider.searchPostOffices("570001")).rejects.toThrow(
+      "Unable to fetch India Post offices. Please try again."
+    );
+  });
 });

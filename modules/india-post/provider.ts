@@ -222,6 +222,11 @@ export class IndiaPostProvider implements ShippingProvider {
       { headers: { Authorization: `Bearer ${token}` }, signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search) }
     );
     const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error("Unable to fetch India Post offices. Please try again.");
+      (error as { status?: number }).status = response.status;
+      throw error;
+    }
     return indiaPostOfficesFromPincodeResponse(json);
   }
 

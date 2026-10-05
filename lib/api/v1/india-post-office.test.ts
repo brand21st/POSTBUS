@@ -81,7 +81,7 @@ function officeConnection(initial: string | null | "missing") {
   };
 }
 
-function patch(officeId: string, officeName?: string) {
+function patch(officeId: string | null, officeName?: string | null) {
   return new NextRequest("http://localhost/api/v1/integrations/india-post/office", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
@@ -94,6 +94,23 @@ function patch(officeId: string, officeName?: string) {
 }
 
 describe("PATCH integrations/india-post/office", () => {
+  it("saves office id 22360042 on the connection row", async () => {
+    const db = officeConnection(null);
+    const result = await handleIntegrationRoutes(
+      patch("22360042", "Manjerikla HO"),
+      db.client as never,
+      ctx,
+      "PATCH integrations/india-post/office"
+    );
+    expect(result).toEqual({
+      pickupDropoffOfficeId: "22360042",
+      pickupDropoffOfficeName: "Manjerikla HO",
+    });
+    expect(db.updates).toEqual([
+      { pickup_dropoff_office_id: "22360042", pickup_dropoff_office_name: "Manjerikla HO" },
+    ]);
+  });
+
   it("updates only the office id column", async () => {
     const db = officeConnection("22660454");
     const result = await handleIntegrationRoutes(
@@ -109,9 +126,23 @@ describe("PATCH integrations/india-post/office", () => {
   });
 
   it("clears the office id when the field is empty", async () => {
-    const db = officeConnection("22660454");
+    const db = officeConnection("22360042");
     const result = await handleIntegrationRoutes(
       patch(""),
+      db.client as never,
+      ctx,
+      "PATCH integrations/india-post/office"
+    );
+    expect(result).toEqual({ pickupDropoffOfficeId: null, pickupDropoffOfficeName: null });
+    expect(db.updates).toEqual([
+      { pickup_dropoff_office_id: null, pickup_dropoff_office_name: null },
+    ]);
+  });
+
+  it("clears the office id when the client sends null", async () => {
+    const db = officeConnection("22360042");
+    const result = await handleIntegrationRoutes(
+      patch(null, null),
       db.client as never,
       ctx,
       "PATCH integrations/india-post/office"
