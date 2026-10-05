@@ -160,8 +160,25 @@ describe("India Post booking response split", () => {
       error_articles: [{ barcode_no: "EB468790992IN", errors: ["Dropoff pincode must be exactly 6 digits"] }],
     });
     expect(split.valid.has("EB468827991IN")).toBe(true);
-    expect(split.failed.get("EB468790992IN")).toMatch(/Dropoff pincode/);
+    expect(split.failed.get("EB468790992IN")).toBe("Dropoff pincode must be exactly 6 digits");
     expect(split.valid.has("EB468790992IN")).toBe(false);
+  });
+
+  it("stores every CEPT article error on the shipment", () => {
+    const split = splitIndiaPostBookingResult({
+      error_articles: [
+        {
+          barcode_no: "EB468790992IN",
+          errors: [
+            "Dropoff Officeid is required when pickup_or_dropoff is DROPOFF",
+            "Sender pincode must be exactly 6 digits",
+          ],
+        },
+      ],
+    });
+    expect(split.failed.get("EB468790992IN")).toBe(
+      "Dropoff Officeid is required when pickup_or_dropoff is DROPOFF; Sender pincode must be exactly 6 digits"
+    );
   });
 });
 

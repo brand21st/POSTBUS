@@ -203,7 +203,7 @@ export default function ShipmentDetailPage() {
               Last synced {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
             </p>
             {record.lastError || record.last_error ? (
-              <p className="text-error">{record.lastError ?? record.last_error}</p>
+              <p className="whitespace-pre-wrap break-words text-error">{record.lastError ?? record.last_error}</p>
             ) : (
               <p className="text-muted">No provider error recorded.</p>
             )}

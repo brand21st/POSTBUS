@@ -1,6 +1,7 @@
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { decryptSecret } from "@/lib/security/crypto";
 import { indiaPostBookingFileUrl, indiaPostBookingUrl, indiaPostOfficesFromPincodeResponse, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
+import { indiaPostBookingHasArticleOutcomes, indiaPostFormatBookingFailure, indiaPostJoinMessages } from "@/modules/india-post/error-text";
 import { INDIA_POST_TIMEOUT_MS, indiaPostTimeoutSignal } from "@/modules/india-post/http";
 import { chunkIds } from "@/modules/india-post/booking-batch";
 import { INDIA_POST_TRACKING_BULK_LIMIT } from "@/modules/india-post/spec";
@@ -176,13 +177,7 @@ export class IndiaPostProvider implements ShippingProvider {
       signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
     });
     const json = await response.json().catch(() => ({}));
-    if (!response.ok || json.success === false) {
-      const fieldError = Array.isArray(json.errors) ? json.errors[0]?.msg : null;
-      const error = new Error(fieldError || json.message || "India Post booking failed.");
-      (error as { status?: number }).status = response.status;
-      (error as { details?: unknown }).details = json;
-      throw error;
-    }
+    this.assertBookingResponse(response, json);
     return json;
   }
 
@@ -203,14 +198,18 @@ export class IndiaPostProvider implements ShippingProvider {
       signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
     });
     const json = await response.json().catch(() => ({}));
-    if (!response.ok || json.success === false) {
-      const fieldError = Array.isArray(json.errors) ? json.errors[0]?.msg : null;
-      const error = new Error(fieldError || json.message || "India Post booking failed.");
-      (error as { status?: number }).status = response.status;
-      (error as { details?: unknown }).details = json;
-      throw error;
-    }
+    this.assertBookingResponse(response, json);
     return json;
+  }
+
+  private assertBookingResponse(response: Response, json: unknown) {
+    if (indiaPostBookingHasArticleOutcomes(json)) return;
+    const payload = json as { success?: boolean };
+    if (response.ok && payload?.success !== false) return;
+    const error = new Error(indiaPostFormatBookingFailure(json));
+    (error as { status?: number }).status = response.status;
+    (error as { details?: unknown }).details = json;
+    throw error;
   }
 
   async searchPostOffices(pincode: string) {
@@ -257,10 +256,12 @@ export class IndiaPostProvider implements ShippingProvider {
       } catch {
         json = {};
       }
-      const fieldError = json.error?.field_errors?.[0]?.message;
-      const error = new Error(
-        fieldError || json.error?.message || json.message || "India Post label generation failed."
-      );
+      const fieldError = indiaPostJoinMessages([
+        ...(Array.isArray(json.error?.field_errors) ? json.error.field_errors.map((row) => row?.message) : []),
+        json.error?.message,
+        json.message,
+      ]);
+      const error = new Error(fieldError || "India Post label generation failed.");
       (error as { status?: number }).status = response.status;
       (error as { code?: string }).code = "LABEL_GENERATION_FAILED";
       throw error;

@@ -953,6 +953,8 @@ function mapShipment(row: Record<string, unknown>) {
     shippingPincode: address?.pincode ?? null,
     originCity: pickup?.city ?? null,
     trackingNumber: row.tracking_number,
+    lastError: (row.last_error as string | null | undefined) ?? null,
+    last_error: (row.last_error as string | null | undefined) ?? null,
     serviceCode: row.service_code,
     createdAt: row.created_at,
     operationalStatus: row.operational_status,

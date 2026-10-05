@@ -1,4 +1,5 @@
 import { indiaPostAcceptedArticleId } from "@/modules/india-post/barcode";
+import { indiaPostArticleErrorText } from "@/modules/india-post/error-text";
 
 export type IndiaPostBookingResponse = {
   success?: boolean;
@@ -30,7 +31,7 @@ export function splitIndiaPostBookingResult(result: IndiaPostBookingResponse | n
   }
   for (const article of result?.error_articles ?? []) {
     const barcode = String(article.barcode_no ?? "").toUpperCase();
-    const message = article.errors?.[0] || "Booking rejected.";
+    const message = indiaPostArticleErrorText(article.errors);
     if (barcode) failed.set(barcode, message);
   }
   return {

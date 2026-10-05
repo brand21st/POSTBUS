@@ -74,10 +74,38 @@ export async function resolveIndiaPostOrigin(
     indiaPostFindOffice(destOffices, officeId) ||
     indiaPostPickDeliveryOffice(originOffices);
   const pincode = String(matched?.pincode ?? originPin ?? "");
-  if (!officeId || officeId.length !== 8 || !/^\d{6}$/.test(pincode) || !matched?.office_name) {
+  if (!officeId) {
     throw Object.assign(
       new Error(
-        "Add a pickup location with the 6-digit pincode of your India Post booking office (Kolenchery SO is 682311 for office 22660454). Drop-off pincode must be the origin office, not the receiver."
+        pickupOrDropoff === "PICKUP"
+          ? "Pickup Officeid is required when pickup_or_dropoff is PICKUP. Save Pickup Location on Integrations → India Post."
+          : "Dropoff Officeid is required when pickup_or_dropoff is DROPOFF. Save Drop-off office on Integrations → India Post."
+      ),
+      { code: "VALIDATION_ERROR" }
+    );
+  }
+  if (officeId.length !== 8 || !/^\d+$/.test(officeId)) {
+    throw Object.assign(
+      new Error(
+        pickupOrDropoff === "PICKUP"
+          ? `Pickup Officeid must be exactly 8 digits (got ${officeId}).`
+          : `Dropoff Officeid must be exactly 8 digits (got ${officeId}).`
+      ),
+      { code: "VALIDATION_ERROR" }
+    );
+  }
+  if (!/^\d{6}$/.test(pincode)) {
+    throw Object.assign(
+      new Error(
+        `Sender pincode must be exactly 6 digits (got ${pincode || "empty"}). Save the booking office from its 6-digit pincode on Integrations → India Post.`
+      ),
+      { code: "VALIDATION_ERROR" }
+    );
+  }
+  if (!matched?.office_name) {
+    throw Object.assign(
+      new Error(
+        `India Post pincode-search for ${pincode} did not return office ${officeId}. Search that pin again and save the office on Integrations → India Post.`
       ),
       { code: "VALIDATION_ERROR" }
     );
@@ -85,7 +113,7 @@ export async function resolveIndiaPostOrigin(
   if (pincode === destPin && originPin !== destPin) {
     throw Object.assign(
       new Error(
-        "India Post drop-off pincode was resolving to the receiver pin. Set pickup location pincode to your booking office pin."
+        `India Post origin pin ${pincode} matched the receiver pin. Set the booking office pincode to the origin office, not the receiver.`
       ),
       { code: "VALIDATION_ERROR" }
     );

@@ -82,7 +82,15 @@ export default function ShipmentsPage() {
     {
       id: "error",
       header: "Last error",
-      cell: (row) => row.lastError ?? row.last_error ?? "—",
+      cell: (row) => {
+        const message = String(row.lastError ?? row.last_error ?? "").trim();
+        if (!message) return "—";
+        return (
+          <span className="block max-w-md whitespace-pre-wrap break-words text-error" title={message}>
+            {message}
+          </span>
+        );
+      },
     },
     {
       id: "created",

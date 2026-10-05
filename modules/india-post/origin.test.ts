@@ -96,4 +96,21 @@ describe("resolveIndiaPostOrigin", () => {
     expect(origin.pincode).toBe("570001");
     expect(origin.name).toBe("Mysuru H.O");
   });
+
+  it("throws the exact missing drop-off office error", async () => {
+    await expect(
+      resolveIndiaPostOrigin({ async searchPostOffices() { return []; } }, {}, null, "683565")
+    ).rejects.toThrow("Dropoff Officeid is required when pickup_or_dropoff is DROPOFF");
+  });
+
+  it("throws the exact missing office-for-pin error", async () => {
+    await expect(
+      resolveIndiaPostOrigin(
+        { async searchPostOffices() { return []; } },
+        { pickup_dropoff_office_id: "22660454" },
+        { pincode: "682311" },
+        "683565"
+      )
+    ).rejects.toThrow("India Post pincode-search for 682311 did not return office 22660454");
+  });
 });

@@ -130,64 +130,64 @@ export async function runIndiaPostBooking(
       phone?: string;
     } | null;
     const destPincode = address?.pincode ?? "";
-    const origin = await resolveIndiaPostOrigin(
-      offices,
-      connection,
-      {
-        ...pickup,
-        pincode: senderIdentity.pincode || pickup?.pincode,
-        city: senderIdentity.city || pickup?.city,
-        state: senderIdentity.state || pickup?.state,
-      },
-      destPincode
-    );
-    const senderMobile = indiaPostMobile(senderIdentity.phone);
-    const receiverMobile = indiaPostMobile(address?.phone);
-    const missingDims = !(
-      Number(shipment.length_cm) > 0 &&
-      Number(shipment.width_cm) > 0 &&
-      Number(shipment.height_cm) > 0
-    );
-    const missingWeight = !(Number(shipment.weight_grams) > 0);
-    const draft = applyWorkspaceParcelDefaults(
-      mapShipmentToArticle({
-      orderId: shipment.order_id,
-      orderNumber: (shipment.orders as { order_number?: string } | null)?.order_number,
-      shipmentId: shipment.id,
-      serviceCode,
-      customerId: String(connection.bulk_customer_id ?? ""),
-      contractId: String(contractId),
-      barcode,
-      officeId: origin.officeId,
-      originPin: origin.pincode,
-      weightGrams: Number(shipment.weight_grams) || 0,
-      lengthCm: Number(shipment.length_cm) || 0,
-      widthCm: Number(shipment.width_cm) || 0,
-      heightCm: Number(shipment.height_cm) || 0,
-      senderName: senderIdentity.name,
-      senderCompany: org?.name || pickup?.name || senderIdentity.name,
-      senderLine1: senderIdentity.line1,
-      senderLine2: senderIdentity.line2,
-      senderCity: senderIdentity.city || origin.city,
-      senderState: senderIdentity.state || origin.state,
-      senderPin: origin.pincode,
-      senderMobile: senderMobile || "",
-      receiverName: address?.name ?? "",
-      receiverCompany: address?.name ?? "",
-      receiverLine1: address?.line1 ?? "",
-      receiverLine2: address?.line2 ?? "",
-      receiverCity: address?.city ?? "",
-      receiverState: address?.state ?? "",
-      receiverPin: destPincode,
-      receiverMobile: receiverMobile || "",
-      paymentMode: shipment.payment_mode,
-      codAmount: Number(shipment.cod_amount) || 0,
-      strictWeight: true,
-      strictDimensions: true,
-    }),
-      parcelDefaultsFromConnection(connection)
-    );
     try {
+      const origin = await resolveIndiaPostOrigin(
+        offices,
+        connection,
+        {
+          ...pickup,
+          pincode: senderIdentity.pincode || pickup?.pincode,
+          city: senderIdentity.city || pickup?.city,
+          state: senderIdentity.state || pickup?.state,
+        },
+        destPincode
+      );
+      const senderMobile = indiaPostMobile(senderIdentity.phone);
+      const receiverMobile = indiaPostMobile(address?.phone);
+      const missingDims = !(
+        Number(shipment.length_cm) > 0 &&
+        Number(shipment.width_cm) > 0 &&
+        Number(shipment.height_cm) > 0
+      );
+      const missingWeight = !(Number(shipment.weight_grams) > 0);
+      const draft = applyWorkspaceParcelDefaults(
+        mapShipmentToArticle({
+        orderId: shipment.order_id,
+        orderNumber: (shipment.orders as { order_number?: string } | null)?.order_number,
+        shipmentId: shipment.id,
+        serviceCode,
+        customerId: String(connection.bulk_customer_id ?? ""),
+        contractId: String(contractId),
+        barcode,
+        officeId: origin.officeId,
+        originPin: origin.pincode,
+        weightGrams: Number(shipment.weight_grams) || 0,
+        lengthCm: Number(shipment.length_cm) || 0,
+        widthCm: Number(shipment.width_cm) || 0,
+        heightCm: Number(shipment.height_cm) || 0,
+        senderName: senderIdentity.name,
+        senderCompany: org?.name || pickup?.name || senderIdentity.name,
+        senderLine1: senderIdentity.line1,
+        senderLine2: senderIdentity.line2,
+        senderCity: senderIdentity.city || origin.city,
+        senderState: senderIdentity.state || origin.state,
+        senderPin: origin.pincode,
+        senderMobile: senderMobile || "",
+        receiverName: address?.name ?? "",
+        receiverCompany: address?.name ?? "",
+        receiverLine1: address?.line1 ?? "",
+        receiverLine2: address?.line2 ?? "",
+        receiverCity: address?.city ?? "",
+        receiverState: address?.state ?? "",
+        receiverPin: destPincode,
+        receiverMobile: receiverMobile || "",
+        paymentMode: shipment.payment_mode,
+        codAmount: Number(shipment.cod_amount) || 0,
+        strictWeight: true,
+        strictDimensions: true,
+      }),
+        parcelDefaultsFromConnection(connection)
+      );
       const validated = assertValidatedArticle(draft);
       prepared.push({
         shipment,
@@ -197,8 +197,9 @@ export async function runIndiaPostBooking(
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Validation failed.";
-      await markShipmentBookingFailed(supabase, shipment.id, message);
-      if (pending.length === 1) throw Object.assign(new Error(message), { code: "VALIDATION_ERROR" });
+      const code = String((error as { code?: string })?.code || "VALIDATION_ERROR");
+      await markShipmentBookingFailed(supabase, shipment.id, message, code);
+      if (pending.length === 1) throw Object.assign(new Error(message), { code });
     }
   }
 
