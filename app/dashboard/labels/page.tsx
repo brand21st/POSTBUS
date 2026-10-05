@@ -3,28 +3,18 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Download, LayoutGrid, Printer, QrCode, ReceiptText, Settings2, Tag, Truck } from "lucide-react";
+import { Check, Download, LayoutGrid, QrCode, Tag, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { ApiError, api } from "@/lib/hooks/use-api";
-import { openLabelPdf } from "@/lib/labels/preview";
-import { usePrintStation } from "@/lib/hooks/use-print-station";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
 import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
-import { shipmentPrintJobs, shipmentPrintLabel, type ShipmentPrintTarget } from "@/modules/labels/print-targets";
 import {
   defaultLabelTemplatePage,
   templatePageSizeLabel,
@@ -89,30 +79,68 @@ async function downloadLabelsZip(ids: string[]) {
   throw new ApiError(message, response.status);
 }
 
-async function downloadLabelPdf(id: string, source: "download" | "latest" | "receipt" | "shipping-slip" = "download") {
+async function fetchLabelPdf(id: string, source: "latest" | "shipping-slip") {
   const response = await fetch(`/api/v1/labels/${id}/${source}`, { credentials: "same-origin" });
   if (!response.ok) {
-    let message = "Could not download the file.";
+    let message = "Could not load the file.";
     try {
       const payload = (await response.json()) as { message?: string };
       message = payload.message || message;
     } catch {
-      message = "Could not download the file.";
+      message = "Could not load the file.";
     }
     throw new ApiError(message, response.status);
   }
   const blob = await response.blob();
+  const type = (response.headers.get("Content-Type") ?? blob.type).toLowerCase();
+  if (!type.includes("pdf") && !type.includes("octet-stream")) {
+    throw new ApiError("The server did not return a PDF.", response.status);
+  }
+  const disposition = response.headers.get("Content-Disposition");
+  const match = disposition?.match(/filename="?([^"]+)"?/i);
+  return {
+    blob,
+    filename: match?.[1] || (source === "shipping-slip" ? "shipping-slip.pdf" : "india-post-label.pdf"),
+    sourceHeader: response.headers.get("X-Label-Source"),
+  };
+}
+
+async function previewLabelPdf(
+  id: string,
+  source: "latest" | "shipping-slip",
+  tab: Window | null
+) {
+  try {
+    const { blob, sourceHeader } = await fetchLabelPdf(id, source);
+    const href = URL.createObjectURL(blob);
+    if (tab && !tab.closed) {
+      tab.location.replace(href);
+    } else {
+      window.open(href, "_blank", "noopener,noreferrer");
+    }
+    window.setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    return sourceHeader;
+  } catch (error) {
+    tab?.close();
+    throw error;
+  }
+}
+
+function openPreviewTab() {
+  return window.open("about:blank", "_blank");
+}
+
+async function downloadLabelPdf(id: string, source: "latest" | "shipping-slip") {
+  const { blob, filename, sourceHeader } = await fetchLabelPdf(id, source);
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = href;
-  const disposition = response.headers.get("Content-Disposition");
-  const match = disposition?.match(/filename="?([^"]+)"?/i);
-  link.download = match?.[1] || "label.pdf";
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  return response.headers.get("X-Label-Source");
+  return sourceHeader;
 }
 
 export default function LabelsPage() {
@@ -120,11 +148,9 @@ export default function LabelsPage() {
   const [kind, setKind] = useState<"ALL" | "COMPLETE" | "INCOMPLETE">("ALL");
   const [selected, setSelected] = useState<string[]>([]);
   const queryClient = useQueryClient();
-  const station = usePrintStation();
   const entitlements = usePlanEntitlements();
   const canBulk = entitlements.allows(FEATURE.bulk);
   const canPacking = entitlements.allows(FEATURE.packing);
-  const connected = Boolean(station.data?.connected);
 
   const query = useQuery({
     queryKey: ["labels", page, kind],
@@ -152,69 +178,34 @@ export default function LabelsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const print = useMutation({
-    mutationFn: async (input: { row: LabelRecord; target: ShipmentPrintTarget }) => {
-      const jobs = shipmentPrintJobs(input.row, input.target);
-      if (!jobs.length) throw new ApiError("Nothing is ready to print yet.", 400);
-      if (connected) {
-        for (const job of jobs) {
-          await api<{ message?: string }>(`/api/v1/labels/${job.id}/print`, {
-            method: "POST",
-            body: JSON.stringify({ paperSize: job.paperSize }),
-          });
-        }
-        return { connected: true, target: input.target, count: jobs.length };
-      }
-      for (const job of jobs) {
-        window.open(`/api/v1/labels/${job.id}/download`, "_blank", "noopener,noreferrer");
-      }
-      return { connected: false, target: input.target, count: jobs.length };
+  const previewLatestLabel = useMutation({
+    mutationFn: (input: { id: string; tab: Window | null }) => previewLabelPdf(input.id, "latest", input.tab),
+    onSuccess: () => {
+      toast.success("India Post label opened.");
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
     },
-    onSuccess: async (result) => {
-      if (result.connected) {
-        toast.success(
-          result.target === "both" && result.count === 2
-            ? "Barcode and packing slip sent to the printer."
-            : result.target === "packing"
-              ? "Packing slip sent to the printer."
-              : "Barcode sent to the printer."
-        );
-      } else {
-        toast.success(
-          result.count === 2 ? "Opened both PDFs for printing." : "Opened the PDF for printing."
-        );
-      }
-      await queryClient.invalidateQueries({ queryKey: ["labels"] });
-    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const previewShippingSlip = useMutation({
+    mutationFn: (input: { id: string; tab: Window | null }) =>
+      previewLabelPdf(input.id, "shipping-slip", input.tab),
+    onSuccess: () => toast.success("Shipping slip opened."),
     onError: (error: Error) => toast.error(error.message),
   });
 
   const downloadLatestLabel = useMutation({
     mutationFn: (id: string) => downloadLabelPdf(id, "latest"),
-    onSuccess: (source) => {
-      if (source === "stored") {
-        toast.warning("India Post is unreachable. Downloaded the label saved at booking.");
-      } else {
-        toast.success("Latest India Post label downloaded.");
-      }
+    onSuccess: () => {
+      toast.success("India Post label downloaded.");
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
     },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const downloadReceipt = useMutation({
-    mutationFn: (id: string) => downloadLabelPdf(id, "receipt"),
-    onSuccess: () => toast.success("India Post receipt downloaded."),
     onError: (error: Error) => toast.error(error.message),
   });
 
   const downloadShippingSlip = useMutation({
     mutationFn: (id: string) => downloadLabelPdf(id, "shipping-slip"),
     onSuccess: () => toast.success("Shipping slip downloaded."),
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const preview = useMutation({
-    mutationFn: (id: string) => openLabelPdf(id),
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -243,9 +234,12 @@ export default function LabelsPage() {
         const indiaId = barcodeId(row);
         const packId = packingId(row);
         const labelId = indiaId ?? packId;
-        const labelBusy = downloadLatestLabel.isPending && downloadLatestLabel.variables === labelId;
-        const receiptBusy = downloadReceipt.isPending && downloadReceipt.variables === labelId;
-        const slipBusy = downloadShippingSlip.isPending && downloadShippingSlip.variables === labelId;
+        const labelPreviewBusy = previewLatestLabel.isPending && previewLatestLabel.variables?.id === labelId;
+        const slipPreviewBusy = previewShippingSlip.isPending && previewShippingSlip.variables?.id === labelId;
+        const labelDownloadBusy = downloadLatestLabel.isPending && downloadLatestLabel.variables === labelId;
+        const slipDownloadBusy = downloadShippingSlip.isPending && downloadShippingSlip.variables === labelId;
+        const labelBusy = labelPreviewBusy || labelDownloadBusy;
+        const slipBusy = slipPreviewBusy || slipDownloadBusy;
         const indiaReady =
           Boolean(indiaId) &&
           String(row.barcodeStatus ?? row.barcode_status ?? (indiaId ? row.status : "")).toUpperCase() === "READY";
@@ -256,20 +250,35 @@ export default function LabelsPage() {
               variant="secondary"
               size="sm"
               disabled={!labelId || labelBusy}
-              onClick={() => labelId && downloadLatestLabel.mutate(labelId)}
+              onClick={() => labelId && previewLatestLabel.mutate({ id: labelId, tab: openPreviewTab() })}
             >
               {indiaId ? <Check className="size-4 text-emerald-600" /> : <QrCode className="size-4" />}
-              {labelBusy ? "Fetching…" : "Label"}
+              {labelPreviewBusy ? "Opening…" : "India Post Label"}
             </Button>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!labelId || receiptBusy}
-              onClick={() => labelId && downloadReceipt.mutate(labelId)}
+              disabled={!labelId || labelBusy}
+              onClick={() => labelId && downloadLatestLabel.mutate(labelId)}
             >
-              <ReceiptText className="size-4" />
-              {receiptBusy ? "Generating…" : "Receipt"}
+              <Download className="size-4" />
+              {labelDownloadBusy ? "Downloading…" : "Download Label PDF"}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!indiaReady || slipBusy}
+              onClick={() => labelId && previewShippingSlip.mutate({ id: labelId, tab: openPreviewTab() })}
+            >
+              <Truck className="size-4" />
+              {slipPreviewBusy ? "Opening…" : "Shipping Slip"}
+              {slipSize ? (
+                <span className="rounded bg-brand px-1 py-px text-[9px] font-bold leading-none text-white">
+                  {slipSize}
+                </span>
+              ) : null}
             </Button>
             <Button
               type="button"
@@ -278,13 +287,8 @@ export default function LabelsPage() {
               disabled={!indiaReady || slipBusy}
               onClick={() => labelId && downloadShippingSlip.mutate(labelId)}
             >
-              <Truck className="size-4" />
-              {slipBusy ? "Generating…" : "Shipping Slip"}
-              {slipSize ? (
-                <span className="rounded bg-brand px-1 py-px text-[9px] font-bold leading-none text-white">
-                  {slipSize}
-                </span>
-              ) : null}
+              <Download className="size-4" />
+              {slipDownloadBusy ? "Downloading…" : "Download Slip PDF"}
             </Button>
           </div>
         );
@@ -307,80 +311,13 @@ export default function LabelsPage() {
         );
       },
     },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: (row) => {
-        const indiaId = barcodeId(row);
-        const packId = packingId(row);
-        const jobs = shipmentPrintJobs(row, "both");
-        const busy = print.isPending && print.variables?.row.id === row.id;
-        return (
-          <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!indiaId || (preview.isPending && preview.variables === indiaId)}
-              onClick={() => indiaId && preview.mutate(indiaId)}
-            >
-              Preview
-            </Button>
-            <div className="inline-flex">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="rounded-r-none"
-                disabled={jobs.length === 0 || busy}
-                onClick={() => print.mutate({ row, target: jobs.length === 2 ? "both" : jobs[0]?.kind === "packing" ? "packing" : "barcode" })}
-              >
-                <Printer className="size-4" />
-                {shipmentPrintLabel(row)}
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="rounded-l-none border-l-0 px-2"
-                    disabled={jobs.length === 0 || busy}
-                    aria-label="Print options"
-                  >
-                    <ChevronDown className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem disabled={!indiaId} onSelect={() => print.mutate({ row, target: "barcode" })}>
-                    Print barcode
-                    <span className="ml-auto text-xs text-muted">A6</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem disabled={!packId} onSelect={() => print.mutate({ row, target: "packing" })}>
-                    Print packing slip
-                    <span className="ml-auto text-xs text-muted">A4</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    disabled={!indiaId || !packId}
-                    onSelect={() => print.mutate({ row, target: "both" })}
-                  >
-                    Print both
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </div>
-        );
-      },
-    },
   ];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Labels"
-        description="One row per shipment. Print both sends the barcode (A6) and packing slip (A4)."
+        description="One row per shipment. Preview the India Post barcode and packing slip from the same row."
         actions={
           <>
             <Link href="/dashboard/labels/templates">
@@ -396,12 +333,6 @@ export default function LabelsPage() {
                 </Button>
               </Link>
             ) : null}
-            <Link href="/dashboard/labels/customize">
-              <Button type="button" variant="secondary">
-                <Settings2 className="size-4" />
-                {canPacking ? "Customize Label" : "Upgrade plan"}
-              </Button>
-            </Link>
             <Button
               type="button"
               variant="secondary"
