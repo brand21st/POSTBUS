@@ -672,8 +672,15 @@ export async function handleIntegrationRoutes(
       environment,
       bulk_customer_id: body.bulkCustomerId ?? body.bulk_customer_id,
       contract_id: body.contractId ?? body.contract_id,
-      pickup_dropoff_office_id: body.pickupDropoffOfficeId ?? body.pickup_dropoff_office_id,
     };
+    if (
+      Object.prototype.hasOwnProperty.call(body, "pickupDropoffOfficeId") ||
+      Object.prototype.hasOwnProperty.call(body, "pickup_dropoff_office_id")
+    ) {
+      payload.pickup_dropoff_office_id = normalizePickupOfficeId(
+        body.pickupDropoffOfficeId ?? body.pickup_dropoff_office_id
+      );
+    }
     if (connect) payload.status = "PENDING";
     if (
       Object.prototype.hasOwnProperty.call(body, "pickupDropoffOfficeName") ||

@@ -65,6 +65,19 @@ export function IndiaPostOfficeFinder({
             }
           }}
         />
+        {pincode ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="shrink-0 px-3"
+            onClick={() => {
+              setPincode("");
+              search.reset();
+            }}
+          >
+            Clear
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="secondary"

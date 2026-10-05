@@ -285,9 +285,30 @@ describe("POST integrations/india-post connect:false", () => {
     );
     expect(result).toEqual({ saved: true, status: "CONNECTED" });
     expect(db.connectionUpserts[0]).not.toHaveProperty("status");
+    expect(db.connectionUpserts[0]).toMatchObject({ pickup_dropoff_office_id: "22660454" });
     expect(db.connectionUpdates.some((row) => "encrypted_access_token" in row)).toBe(false);
     expect(db.deletes).toContain("SP_INLAND_PARCEL");
     expect(db.contracts().map((row) => row.service_code)).toEqual(["BUSINESS_PARCEL"]);
+  });
+
+  it("clears the drop-off office when the office id is empty", async () => {
+    const db = saveDb([]);
+    const request = new NextRequest("http://localhost/api/v1/integrations/india-post", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        connect: false,
+        environment: "PRODUCTION",
+        bulkCustomerId: "1788590988",
+        pickupDropoffOfficeId: "",
+        pickupDropoffOfficeName: "",
+      }),
+    });
+    await handleIntegrationRoutes(request, db.client as never, ctx, "POST integrations/india-post");
+    expect(db.connectionUpserts[0]).toMatchObject({
+      pickup_dropoff_office_id: null,
+      pickup_dropoff_office_name: null,
+    });
   });
 
   it("does not rewrite an unchanged barcode series", async () => {

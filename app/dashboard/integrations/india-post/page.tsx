@@ -197,12 +197,15 @@ export default function IndiaPostPage() {
           ? savedName
             ? `${savedName} (${saved}) saved.`
             : `Office ID ${saved} saved.`
-          : "Office ID cleared."
+          : "Drop-off office cleared."
       );
+      queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["integrations"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const [finderEpoch, setFinderEpoch] = useState(0);
   const officeSaveFlight = useRef<string | null>(null);
 
   function persistOfficeId(value: string, options?: { force?: boolean; name?: string | null }) {
@@ -239,8 +242,8 @@ export default function IndiaPostPage() {
           username: replaceSecrets || !hasSecrets ? customerId || undefined : undefined,
           password: replaceSecrets || (!hasSecrets && snapshot.password.trim()) ? snapshot.password || undefined : undefined,
           bulkCustomerId: customerId || undefined,
-          pickupDropoffOfficeId: snapshot.pickupDropoffOfficeId.trim() || undefined,
-          pickupDropoffOfficeName: snapshot.pickupDropoffOfficeName.trim() || undefined,
+          pickupDropoffOfficeId: snapshot.pickupDropoffOfficeId.trim() || null,
+          pickupDropoffOfficeName: snapshot.pickupDropoffOfficeName.trim() || null,
           contracts: INDIA_POST_SERVICES.map((service) => {
             const row = snapshot.contracts.find((item) => item.serviceCode === service.code);
             return {
@@ -295,8 +298,8 @@ export default function IndiaPostPage() {
           username: customerId,
           password: snapshot.password,
           bulkCustomerId: customerId,
-          pickupDropoffOfficeId: snapshot.pickupDropoffOfficeId.trim() || undefined,
-          pickupDropoffOfficeName: snapshot.pickupDropoffOfficeName.trim() || undefined,
+          pickupDropoffOfficeId: snapshot.pickupDropoffOfficeId.trim() || null,
+          pickupDropoffOfficeName: snapshot.pickupDropoffOfficeName.trim() || null,
         }),
       });
     },
@@ -606,6 +609,7 @@ export default function IndiaPostPage() {
               onBlur={(value) => persistOfficeId(value)}
             />
             <IndiaPostOfficeFinder
+              key={finderEpoch}
               officeId={form.pickupDropoffOfficeId}
               onOfficeIdChange={(value, officeName) => {
                 const next = value.replace(/\D/g, "").slice(0, 8);
@@ -614,19 +618,40 @@ export default function IndiaPostPage() {
                   pickupDropoffOfficeId: next,
                   pickupDropoffOfficeName: officeName ?? "",
                 }));
-                persistOfficeId(next, { name: officeName ?? null });
+                persistOfficeId(next, { force: true, name: officeName ?? null });
               }}
               canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
             />
           </CardContent>
-          <CardFooter className="border-t border-border pt-4">
+          <CardFooter className="flex flex-wrap gap-2 border-t border-border pt-4">
             <Button
               type="button"
               variant="secondary"
-              onClick={() => persistOfficeId(form.pickupDropoffOfficeId, { force: true })}
+              onClick={() =>
+                persistOfficeId(form.pickupDropoffOfficeId, {
+                  force: true,
+                  name: form.pickupDropoffOfficeName.trim() || null,
+                })
+              }
               disabled={saveOffice.isPending}
             >
               {saveOffice.isPending ? "Saving…" : "Save office ID"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setForm((current) => ({
+                  ...current,
+                  pickupDropoffOfficeId: "",
+                  pickupDropoffOfficeName: "",
+                }));
+                setFinderEpoch((current) => current + 1);
+                persistOfficeId("", { force: true, name: null });
+              }}
+              disabled={saveOffice.isPending || (!savedOfficeId && !form.pickupDropoffOfficeId)}
+            >
+              Clear office
             </Button>
           </CardFooter>
         </Card>
