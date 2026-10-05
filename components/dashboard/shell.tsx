@@ -96,11 +96,18 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
         <NewOrderAlerts />
         <WebusbJobListener />
-        <main id="main-content" className="flex-1 px-4 py-6 lg:px-8 lg:py-8">
+        <main
+          id="main-content"
+          className={
+            pathname === "/dashboard/orders"
+              ? "min-w-0 flex-1 px-3 py-4 sm:px-4 sm:py-6 lg:px-6 lg:py-8 xl:px-8"
+              : "flex-1 px-4 py-6 lg:px-8 lg:py-8"
+          }
+        >
           <div
             className={
               pathname === "/dashboard/orders"
-                ? "mx-auto w-full max-w-[1760px]"
+                ? "mx-auto w-full min-w-0 max-w-full"
                 : "mx-auto w-full max-w-[1280px]"
             }
           >

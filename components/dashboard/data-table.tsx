@@ -54,6 +54,10 @@ export type DataTableProps<TData extends Record<string, unknown>> = {
   paginationStyle?: "simple" | "numbered";
   density?: "default" | "compact";
   mobileView?: ReactNode;
+  /** Hide the table and show `mobileView` below this breakpoint. */
+  stackBelow?: "md" | "lg" | "xl";
+  /** When false, the table shrinks to the container instead of forcing a min width. */
+  fitContainer?: boolean;
   onRowHover?: (row: TData) => void;
   getRowId?: (row: TData) => string;
   selectable?: boolean;
@@ -77,6 +81,12 @@ function paginationPages(page: number, pageCount: number) {
   return pages;
 }
 
+function stackDisplay(until: "md" | "lg" | "xl") {
+  if (until === "lg") return { cards: "lg:hidden", table: "hidden lg:block" };
+  if (until === "xl") return { cards: "xl:hidden", table: "hidden xl:block" };
+  return { cards: "md:hidden", table: "hidden md:block" };
+}
+
 export function DataTable<TData extends Record<string, unknown>>({
   columns,
   data,
@@ -95,6 +105,8 @@ export function DataTable<TData extends Record<string, unknown>>({
   paginationStyle = "simple",
   density = "default",
   mobileView,
+  stackBelow = "md",
+  fitContainer = false,
   onRowHover,
   getRowId,
   selectable,
@@ -105,6 +117,7 @@ export function DataTable<TData extends Record<string, unknown>>({
 }: DataTableProps<TData>) {
   const compact = density === "compact";
   const cellPad = compact ? "px-3 py-2" : "px-4 py-3";
+  const stacked = stackDisplay(stackBelow);
   const columnById = useMemo(
     () => new Map(columns.map((column) => [column.id, column])),
     [columns]
@@ -351,9 +364,14 @@ export function DataTable<TData extends Record<string, unknown>>({
         />
       ) : (
         <>
-          {mobileView ? <div className="md:hidden">{mobileView}</div> : null}
-          <div className={cn("overflow-x-auto", mobileView && "hidden md:block")}>
-            <table className={cn("w-full text-left text-sm", compact ? "min-w-[880px]" : "min-w-[720px]")}>
+          {mobileView ? <div className={stacked.cards}>{mobileView}</div> : null}
+          <div className={cn("overflow-x-auto", mobileView && stacked.table)}>
+            <table
+              className={cn(
+                "w-full text-left text-sm",
+                fitContainer ? "table-fixed" : compact ? "min-w-[880px]" : "min-w-[720px]"
+              )}
+            >
               <thead className="border-b border-border bg-surface-soft/70">
                 {table.getHeaderGroups().map((group) => (
                   <tr key={group.id}>
@@ -365,6 +383,7 @@ export function DataTable<TData extends Record<string, unknown>>({
                           cellPad,
                           index === 0 && "pl-6",
                           index === group.headers.length - 1 && "pr-6",
+                          fitContainer && "overflow-hidden",
                           header.id === "_select" && "w-10",
                           columnById.get(header.id)?.className
                         )}
@@ -398,6 +417,7 @@ export function DataTable<TData extends Record<string, unknown>>({
                             cellPad,
                             index === 0 && "pl-6",
                             index === cells.length - 1 && "pr-6",
+                            fitContainer && "overflow-hidden",
                             columnById.get(cell.column.id)?.className
                           )}
                         >

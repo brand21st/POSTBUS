@@ -452,7 +452,7 @@ export default function OrdersPage() {
     {
       id: "order",
       header: "# Order",
-      className: "whitespace-nowrap",
+      className: "w-[7.5rem] whitespace-nowrap",
       cell: (row) => (
         <Link href={`/dashboard/orders/${row.id}`} className="font-medium hover:text-brand">
           {orderNumber(row)}
@@ -462,6 +462,7 @@ export default function OrdersPage() {
     {
       id: "customer",
       header: "Customer",
+      className: "min-w-0",
       cell: (row) => {
         const phone = customerPhone(row);
         return (
@@ -484,7 +485,7 @@ export default function OrdersPage() {
               const preview = itemNamesPreview(row);
               const thumbTitle = lineItems(row)[0]?.title ?? preview;
               return (
-                <div className="flex max-w-[360px] items-center gap-2" title={summary}>
+                <div className="flex min-w-0 max-w-full items-center gap-2 xl:max-w-[22rem]" title={summary}>
                   <LineItemThumb title={thumbTitle} imageUrl={firstLineItemImage(row)} />
                   <div className="min-w-0">
                     <p className="font-medium text-ink">{count === 1 ? "1 item" : `${count} items`}</p>
@@ -550,7 +551,7 @@ export default function OrdersPage() {
     {
       id: "actions",
       header: "Actions",
-      className: "whitespace-nowrap",
+      className: "w-[10.5rem] overflow-visible whitespace-nowrap",
       cell: (row) => rowActions(row),
     },
   ];
@@ -600,10 +601,12 @@ export default function OrdersPage() {
     : "Filter, export, and ship orders.";
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <PageHeader
         title="Orders"
         description={description}
+        className="min-w-0"
+        actionsClassName="w-full justify-start sm:w-auto sm:justify-end"
         icon={
           <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-brand">
             <ShoppingBag className="size-5" />
@@ -681,7 +684,7 @@ export default function OrdersPage() {
         }}
       />
 
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <OrderDateFilter
           value={dateFilter}
           counts={{
@@ -716,20 +719,20 @@ export default function OrdersPage() {
         </DropdownMenu>
       </div>
 
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+      <div className="flex min-w-0 flex-col gap-2 xl:flex-row xl:items-center">
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search order number, customer, phone…"
-          className="h-9 shadow-none lg:max-w-sm lg:flex-1"
+          className="h-9 w-full min-w-0 shadow-none xl:max-w-sm xl:flex-1"
         />
-        <div className="hidden min-w-0 flex-1 grid-cols-3 gap-2 lg:grid">
+        <div className="hidden min-w-0 flex-1 grid-cols-3 gap-2 xl:grid">
           {filterSelects}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button type="button" variant="secondary" size="sm">
+              <Button type="button" variant="secondary" size="sm" className="xl:hidden">
                 <SlidersHorizontal className="size-4" />
                 More filters
                 <ChevronDown className="size-3.5 opacity-70" />
@@ -820,6 +823,8 @@ export default function OrdersPage() {
         onRowHover={(row) => router.prefetch(`/dashboard/orders/${row.id}`)}
         getRowId={(row) => row.id}
         getRowClassName={(row) => orderStatusRowClass(row.status)}
+        stackBelow="lg"
+        fitContainer
         mobileView={
           <div className="divide-y divide-border">
             {list.items.map((row) => {
