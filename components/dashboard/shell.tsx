@@ -97,7 +97,13 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         <NewOrderAlerts />
         <WebusbJobListener />
         <main id="main-content" className="flex-1 px-4 py-6 lg:px-8 lg:py-8">
-          <div className="mx-auto w-full max-w-[1280px]">
+          <div
+            className={
+              pathname === "/dashboard/orders"
+                ? "mx-auto w-full max-w-[1760px]"
+                : "mx-auto w-full max-w-[1280px]"
+            }
+          >
             {mountChildren ? (
               <DashboardPlanGate pathname={pathname}>{children}</DashboardPlanGate>
             ) : (

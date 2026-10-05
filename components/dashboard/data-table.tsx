@@ -357,12 +357,14 @@ export function DataTable<TData extends Record<string, unknown>>({
               <thead className="border-b border-border bg-surface-soft/70">
                 {table.getHeaderGroups().map((group) => (
                   <tr key={group.id}>
-                    {group.headers.map((header) => (
+                    {group.headers.map((header, index) => (
                       <th
                         key={header.id}
                         className={cn(
                           "text-xs font-semibold uppercase tracking-wide text-muted",
                           cellPad,
+                          index === 0 && "pl-6",
+                          index === group.headers.length - 1 && "pr-6",
                           header.id === "_select" && "w-10",
                           columnById.get(header.id)?.className
                         )}
@@ -374,32 +376,37 @@ export function DataTable<TData extends Record<string, unknown>>({
                 ))}
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    className={cn(
-                      "border-b border-border last:border-0 transition-colors duration-150",
-                      getRowClassName?.(row.original) ?? "hover:bg-surface-soft/60",
-                      onRowClick && "cursor-pointer",
-                      selectedIds?.includes(row.id) && "ring-1 ring-inset ring-brand/20"
-                    )}
-                    onClick={() => onRowClick?.(row.original)}
-                    onMouseEnter={() => onRowHover?.(row.original)}
-                  >
-                    {row.getAllCells().map((cell) => (
-                      <td
-                        key={cell.id}
-                        className={cn(
-                          "align-middle text-foreground",
-                          cellPad,
-                          columnById.get(cell.column.id)?.className
-                        )}
-                      >
-                        <table.FlexRender cell={cell} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {rows.map((row) => {
+                  const cells = row.getAllCells();
+                  return (
+                    <tr
+                      key={row.id}
+                      className={cn(
+                        "border-b border-border last:border-0 transition-colors duration-150",
+                        getRowClassName?.(row.original) ?? "hover:bg-surface-soft/60",
+                        onRowClick && "cursor-pointer",
+                        selectedIds?.includes(row.id) && "ring-1 ring-inset ring-brand/20"
+                      )}
+                      onClick={() => onRowClick?.(row.original)}
+                      onMouseEnter={() => onRowHover?.(row.original)}
+                    >
+                      {cells.map((cell, index) => (
+                        <td
+                          key={cell.id}
+                          className={cn(
+                            "align-middle text-foreground",
+                            cellPad,
+                            index === 0 && "pl-6",
+                            index === cells.length - 1 && "pr-6",
+                            columnById.get(cell.column.id)?.className
+                          )}
+                        >
+                          <table.FlexRender cell={cell} />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
