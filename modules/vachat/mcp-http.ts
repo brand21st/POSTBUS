@@ -73,7 +73,14 @@ export async function handleVachatMcpRequest(request: NextRequest) {
     }
 
     const args = parseSearchOrderDetailsArgs(raw);
-    const result = await search(args);
+    const toolName = String(
+      raw && typeof raw === "object" ? (raw as { tool?: string; name?: string }).tool ?? (raw as { name?: string }).name ?? "" : ""
+    ).trim();
+    const result = await search(
+      toolName === "search_merchant_organization"
+        ? { ...args, query: args.query?.trim() || "merchant phone number website email gstin address" }
+        : args
+    );
     logInfo("vachat.mcp.search", { found: result.found, orders: result.results.length });
     return mcpResponse(mcpToolCallResult(result));
   } catch (error) {

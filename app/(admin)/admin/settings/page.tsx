@@ -49,6 +49,7 @@ type VachatSettings = {
   webhookUrl: string;
   mcpUrl?: string;
   mcpAccount?: string;
+  mcpWhatsapp?: string;
   lastVerifiedAt: string | null;
   lastError: string | null;
     lastTestPhone: string | null;
@@ -373,11 +374,16 @@ export default function AdminSettingsPage() {
           </p>
           {vachat?.identity?.display_phone || vachat?.identity?.verified_name ? (
             <p className="text-sm">
-              Official number: <span className="font-medium">{vachat.identity.display_phone ?? "—"}</span>
-              {vachat.identity.verified_name ? ` · ${vachat.identity.verified_name}` : ""}
+              Official number:{" "}
+              <span className="font-medium">
+                {vachat.identity.display_phone ?? vachat.mcpWhatsapp ?? "+918618456029"}
+              </span>
+              {vachat.identity.verified_name ? ` · ${vachat.identity.verified_name}` : " · post@post.com"}
             </p>
           ) : (
-            <p className="text-sm text-muted">Official number appears after Test API once WhatsApp is connected on VaChat.</p>
+            <p className="text-sm text-muted">
+              Official PostBus WhatsApp: {vachat?.mcpWhatsapp ?? "+918618456029"} · account post@post.com
+            </p>
           )}
           {vachat?.lastError ? <p className="text-sm text-destructive">{vachat.lastError}</p> : null}
           {vachat?.lastVerifiedAt ? (
@@ -570,9 +576,12 @@ export default function AdminSettingsPage() {
           <div className="space-y-2">
             <Label>VaChat order-search MCP</Label>
             <p className="text-sm text-muted">
-              Add this remote MCP in VaChat for account {vachat?.mcpAccount ?? "post@post.com"}. Tool{" "}
-              <span className="font-mono">search_order_details</span> returns live PostBus order, shipment, tracking,
-              and invoice data for the chatting WhatsApp number. Auth: Bearer using the API key above.
+              Add this remote MCP in VaChat for account {vachat?.mcpAccount ?? "post@post.com"} on WhatsApp{" "}
+              {vachat?.mcpWhatsapp ?? "+918618456029"}. Tools{" "}
+              <span className="font-mono">search_order_details</span> and{" "}
+              <span className="font-mono">search_merchant_organization</span> live-fetch tenant organization, orders,
+              shipments, invoices, India Post tracking IDs, timelines, and tracking links at{" "}
+              https://www.postbus.in/track for the chatting WhatsApp number. Auth: Bearer using the API key above.
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input readOnly value={vachat?.mcpUrl ?? ""} />

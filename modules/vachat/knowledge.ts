@@ -1,16 +1,25 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { siteConfig } from "@/lib/site-config";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { vachatSingleLine } from "@/modules/vachat/notice-fields";
 import { getPlatformVachatConfig, isPlatformVachatActive } from "@/modules/vachat/platform-config";
 import { vachatHeaders } from "@/modules/vachat/service";
-import { resolveWatiTrackingUrl } from "@/modules/wati/send";
+import { customerTrackingLink } from "@/modules/tracking-pages/host";
 import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { logError, logInfo } from "@/lib/logger";
 
 export const VACHAT_ASSISTANT_ACCOUNT = "post@post.com";
 export const VACHAT_ASSISTANT_NAME = "Order management WhatsApp AI Assistant";
+export const VACHAT_BUSINESS_WHATSAPP = "+918618456029";
 export const CUSTOMER_PHONE_ONLY_REPLY =
   "I can only share order, shipment, invoice, and tracking details for the WhatsApp number that placed the order.";
+export const POSTBUS_PUBLIC_TRACK_URL = `${siteConfig.url}/track`;
+
+export function postbusTrackingLink(trackingNumber?: string | null) {
+  const id = trackingNumber?.trim();
+  if (!id) return POSTBUS_PUBLIC_TRACK_URL;
+  return customerTrackingLink(POSTBUS_PUBLIC_TRACK_URL, id);
+}
 
 export type TrackingTimelineItem = {
   at: string | null;
@@ -33,6 +42,7 @@ export type MerchantKnowledgeOrder = {
   trackingNumber: string | null;
   shipmentStatus: string | null;
   bookedAt: string | null;
+  shipmentWeightGrams?: string | null;
   lastScan: string | null;
   lastOffice: string | null;
   trackingUrl: string | null;
@@ -122,7 +132,7 @@ export function formatKnowledgeDocument(knowledge: MerchantKnowledge) {
         order.bookedAt ? `shipped ${order.bookedAt}` : null,
         order.lastScan ? `now ${order.lastScan}` : null,
         order.lastOffice ? `at ${order.lastOffice}` : null,
-        order.trackingUrl ? `track ${order.trackingUrl}` : null,
+        `track ${postbusTrackingLink(order.trackingNumber)}`,
         timeline ? `timeline ${timeline}` : null,
       ]
         .filter(Boolean)
@@ -307,7 +317,6 @@ export async function loadMerchantKnowledge(
     }
   }
 
-  const trackingPage = await getTrackingPage(supabase, organizationId).catch(() => null);
   const shipmentByOrder = new Map<string, (typeof shipmentRows)[number]>();
   for (const shipment of shipmentRows) {
     const orderId = String(shipment.order_id ?? "");
@@ -342,9 +351,10 @@ export async function loadMerchantKnowledge(
       trackingNumber,
       shipmentStatus: shipment ? String(shipment.status ?? "") : null,
       bookedAt: shipment?.booked_at ? String(shipment.booked_at) : null,
+      shipmentWeightGrams: shipment?.weight_grams != null ? String(shipment.weight_grams) : null,
       lastScan: scan?.description ?? null,
       lastOffice: scan?.office ?? null,
-      trackingUrl: trackingNumber ? resolveWatiTrackingUrl(trackingNumber, trackingPage) : null,
+      trackingUrl: postbusTrackingLink(trackingNumber),
       timeline,
     });
   }

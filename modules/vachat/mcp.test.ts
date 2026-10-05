@@ -7,6 +7,7 @@ import {
   isJsonRpcPayload,
   mcpTools,
   parseSearchOrderDetailsArgs,
+  SEARCH_MERCHANT_ORGANIZATION_TOOL,
   SEARCH_ORDER_DETAILS_TOOL,
   type OrderDetailsSearchResult,
 } from "@/modules/vachat/mcp";
@@ -14,9 +15,23 @@ import {
 const sample: OrderDetailsSearchResult = {
   account: "post@post.com",
   assistant: "Order management WhatsApp AI Assistant",
+  fetched_at: "2026-10-05T12:00:00.000Z",
+  live: true,
+  tracking_page: "https://www.postbus.in/track",
   customer_whatsapp: "8848772371",
   found: true,
   answer: "Order PB-10948 is booked. India Post tracking ID EY362666494IN.",
+  organizations: [
+    {
+      merchant_id: "org-zoura",
+      name: "Zoura Parfums",
+      phone: "9000000000",
+      website: null,
+      email: null,
+      gstin: null,
+      address: null,
+    },
+  ],
   results: [
     {
       merchant_id: "org-zoura",
@@ -26,6 +41,41 @@ const sample: OrderDetailsSearchResult = {
       merchant_email: null,
       merchant_gstin: null,
       merchant_address: null,
+      organization: {
+        id: "org-zoura",
+        name: "Zoura Parfums",
+        phone: "9000000000",
+        website: null,
+        email: null,
+        gstin: null,
+        address: null,
+      },
+      order_information: {
+        order_number: "PB-10948",
+        created_at: "2026-10-05T10:00:00.000Z",
+        status: "BOOKED",
+        payment_status: "COD",
+        amount: "499",
+        items: ["1x Perfume"],
+        customer_name: "Ada",
+      },
+      shipment_information: {
+        status: "BOOKED",
+        booked_at: "2026-10-05T12:00:00.000Z",
+        weight_grams: "32",
+      },
+      invoice: {
+        number: "INV-2026-000002",
+        date: "2026-10-05",
+        total: "499",
+      },
+      tracking: {
+        india_post_tracking_id: "EY362666494IN",
+        tracking_link: "https://www.postbus.in/track?tracking=EY362666494IN",
+        last_scan: "Item Booked",
+        last_office: "Kochi HO",
+        timeline: [{ at: "2026-10-05T12:00:00.000Z", office: "Kochi HO", description: "Item Booked" }],
+      },
       order_number: "PB-10948",
       created_at: "2026-10-05T10:00:00.000Z",
       status: "BOOKED",
@@ -40,17 +90,23 @@ const sample: OrderDetailsSearchResult = {
       booked_at: "2026-10-05T12:00:00.000Z",
       last_scan: "Item Booked",
       last_office: "Kochi HO",
-      tracking_url: "https://track.example/EY362666494IN",
+      tracking_url: "https://www.postbus.in/track?tracking=EY362666494IN",
       timeline: [{ at: "2026-10-05T12:00:00.000Z", office: "Kochi HO", description: "Item Booked" }],
     },
   ],
 };
 
 describe("VaChat PostBus MCP", () => {
-  it("exposes search_order_details for post@post.com", () => {
-    expect(mcpTools()[0]?.name).toBe(SEARCH_ORDER_DETAILS_TOOL);
+  it("exposes live order and merchant organization search tools", () => {
+    expect(mcpTools().map((tool) => tool.name)).toEqual([
+      SEARCH_ORDER_DETAILS_TOOL,
+      SEARCH_MERCHANT_ORGANIZATION_TOOL,
+    ]);
     expect(initializeResult().instructions).toMatch(/search_order_details/);
+    expect(initializeResult().instructions).toMatch(/search_merchant_organization/);
+    expect(initializeResult().instructions).toContain("+918618456029");
     expect(initializeResult().instructions).toMatch(/post@post.com/);
+    expect(initializeResult().instructions).toContain("https://www.postbus.in/track");
   });
 
   it("requires the chatting WhatsApp number", () => {
@@ -61,6 +117,10 @@ describe("VaChat PostBus MCP", () => {
       merchant_id: undefined,
       account: "post@post.com",
     });
+  });
+
+  it("rejects the PostBus WhatsApp line as the customer number", () => {
+    expect(() => parseSearchOrderDetailsArgs({ whatsapp: "+918618456029" })).toThrow(/FROM number/i);
   });
 
   it("rejects a different VaChat account", () => {
@@ -105,6 +165,9 @@ describe("VaChat PostBus MCP", () => {
     expect(text).toContain("PB-10948");
     expect(text).toContain("EY362666494IN");
     expect(text).toContain("Zoura Parfums");
+    expect(text).toContain("https://www.postbus.in/track?tracking=EY362666494IN");
+    expect(text).toContain("Merchant organization");
+    expect(text).toContain("Item Booked");
   });
 
   it("detects JSON-RPC vs a plain search body", () => {

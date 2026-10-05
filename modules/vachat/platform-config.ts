@@ -160,6 +160,7 @@ export function publicPlatformVachatStatus(config: PlatformVachatConfig) {
     webhookUrl: vachatStatusWebhookUrl(),
     mcpUrl: vachatMcpUrl(),
     mcpAccount: "post@post.com",
+    mcpWhatsapp: "+918618456029",
     lastVerifiedAt: config.lastVerifiedAt,
     lastError: config.lastError,
     lastTestPhone: config.lastTestPhone,

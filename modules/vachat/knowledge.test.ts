@@ -4,6 +4,8 @@ import {
   customerPhonesMatch,
   filterKnowledgeOrdersForPhone,
   formatKnowledgeDocument,
+  postbusTrackingLink,
+  POSTBUS_PUBLIC_TRACK_URL,
   type MerchantKnowledge,
 } from "@/modules/vachat/knowledge";
 import { answerFromKnowledge, looksLikeOrderOrTrackingQuery, pickOrder } from "@/modules/vachat/assistant";
@@ -71,6 +73,13 @@ describe("VaChat knowledge phone scope", () => {
     expect(document).toContain("India Post tracking ID CL123456789IN");
     expect(document).toContain("INV-2026-000012");
     expect(document).toContain("Item Booked");
+    expect(document).toContain("https://www.postbus.in/track?tracking=CL123456789IN");
     expect(document).toMatch(/Never share another customer's/i);
+  });
+
+  it("sends the public PostBus tracking page", () => {
+    expect(POSTBUS_PUBLIC_TRACK_URL).toBe("https://www.postbus.in/track");
+    expect(postbusTrackingLink("EY362666494IN")).toBe("https://www.postbus.in/track?tracking=EY362666494IN");
+    expect(postbusTrackingLink(null)).toBe("https://www.postbus.in/track");
   });
 });
