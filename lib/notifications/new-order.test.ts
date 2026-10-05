@@ -6,6 +6,7 @@ import {
   isShopifyOrderNotification,
   SHOPIFY_ORDER_NOTIFICATION,
   LABELS_READY_NOTIFICATION,
+  NEW_ORDER_SOUND_SRC,
   usesCompletionSound,
 } from "@/lib/notifications/new-order";
 import { orderStageNotificationType } from "@/lib/notifications/order-stage";
@@ -95,5 +96,9 @@ describe("order stage dashboard alerts", () => {
     expect(usesCompletionSound(["tracking.host_live"])).toBe(true);
     expect(usesCompletionSound([SHOPIFY_ORDER_NOTIFICATION, LABELS_READY_NOTIFICATION])).toBe(true);
     expect(usesCompletionSound([SHOPIFY_ORDER_NOTIFICATION])).toBe(false);
+  });
+
+  it("plays the PostBus order MP3 for new-order alerts", () => {
+    expect(NEW_ORDER_SOUND_SRC).toBe("/sounds/postbus-order-notification.mp3");
   });
 });

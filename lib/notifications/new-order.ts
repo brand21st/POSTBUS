@@ -43,6 +43,9 @@ export function collectNewShopifyOrderAlerts<
 }
 
 let sharedContext: AudioContext | null = null;
+let orderAudio: HTMLAudioElement | null = null;
+
+export const NEW_ORDER_SOUND_SRC = "/sounds/postbus-order-notification.mp3";
 
 function audioContext() {
   const Ctor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -51,9 +54,31 @@ function audioContext() {
   return sharedContext;
 }
 
+function orderSoundElement() {
+  if (typeof Audio === "undefined") return null;
+  if (!orderAudio) {
+    orderAudio = new Audio(NEW_ORDER_SOUND_SRC);
+    orderAudio.preload = "auto";
+  }
+  return orderAudio;
+}
+
 export function unlockNewOrderSound() {
   const ctx = audioContext();
   if (ctx?.state === "suspended") void ctx.resume();
+  const audio = orderSoundElement();
+  if (!audio) return;
+  audio.muted = true;
+  void audio
+    .play()
+    .then(() => {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+    })
+    .catch(() => {
+      audio.muted = false;
+    });
 }
 
 async function primedContext() {
@@ -91,6 +116,18 @@ function tone(
 }
 
 export async function playNewOrderSound() {
+  const audio = orderSoundElement();
+  if (audio) {
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      await audio.play();
+      return;
+    } catch {
+      // Fall through to the synthesized ping if the file cannot autoplay.
+    }
+  }
   const ctx = await primedContext();
   if (!ctx) return;
   const start = ctx.currentTime;
