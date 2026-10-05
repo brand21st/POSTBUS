@@ -194,7 +194,7 @@ export async function handleVachatAssistantMessage(
     const search = await searchOrderDetails(supabase, {
       whatsapp: input.from,
       query: input.text,
-      merchant_id: input.merchantId,
+      merchant_id: input.merchantId || undefined,
       account: "post@post.com",
     });
     const sent = await postAssistantReply(input.from, search.answer);
