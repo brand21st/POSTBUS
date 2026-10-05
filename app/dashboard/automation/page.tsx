@@ -11,13 +11,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { boolField } from "@/lib/dashboard/records";
+import { boolField, isMerchantVachatConnected, isWatiConnected } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
-import { automationToggleLock } from "@/modules/billing/entitlements";
-import type { AutomationSettings } from "@/types/api";
+import { automationToggleLock, FEATURE } from "@/modules/billing/entitlements";
+import type { AutomationSettings, IntegrationsResponse } from "@/types/api";
 import type { MemberRole } from "@/types/domain";
 
 const TOGGLES = [
@@ -25,7 +25,7 @@ const TOGGLES = [
     camel: "autoShopifySync",
     snake: "auto_shopify_sync",
     title: "Auto Shopify sync",
-    description: "Import new and updated Shopify orders from store webhooks.",
+    description: "Import new and updated Shopify orders from store webhooks into PostBus.",
   },
   {
     camel: "autoShipmentCreation",
@@ -61,44 +61,45 @@ const TOGGLES = [
     camel: "autoTrackingSync",
     snake: "auto_tracking_sync",
     title: "Auto tracking sync",
-    description: "Pull India Post scan events into the tracking timeline.",
+    description:
+      "Poll India Post for scan events. CEPT webhooks still update tracking, order status, Shopify, and WhatsApp even when this is off.",
   },
   {
     camel: "autoShopifyFulfillment",
     snake: "auto_shopify_fulfillment",
     title: "Auto Shopify fulfillment",
     description:
-      "When an order is booked, write the tracking id and tracking link to Shopify. Later In transit and Delivered statuses add the matching Shopify fulfillment events.",
+      "On booking, write the tracking id to Shopify. CEPT In transit and Delivered scans add the matching Shopify fulfillment events.",
   },
-  {
-    camel: "autoWatiOrderConfirmation",
-    snake: "auto_wati_order_confirmation",
-    title: "WhatsApp · Order confirmation",
-    description: "Send the Order confirmation template through Wati or VaChat when a Shopify order is imported.",
-  },
-  {
-    camel: "autoWatiProcessing",
-    snake: "auto_wati_processing",
-    title: "WhatsApp · Processing",
-    description: "Send the Processing template when the order status becomes Processing, including the Orders page action.",
-  },
+] as const;
+
+const WHATSAPP_TOGGLES = [
   {
     camel: "autoWatiBooked",
     snake: "auto_wati_booked",
-    title: "WhatsApp · Booked / packed",
-    description: "Send the Booked / packed template when India Post returns a tracking id, or when you choose Fulfill on Orders.",
+    event: "booked" as const,
+    watiTitle: "Wati · Booked / packed",
+    merchantTitle: "Vachat · Booked / packed",
+    vachatTitle: "PostBus WhatsApp · Booked / packed",
+    description: "Sent when the India Post shipping label is generated. This starts the WhatsApp flow.",
   },
   {
     camel: "autoWatiInTransit",
     snake: "auto_wati_in_transit",
-    title: "WhatsApp · In transit",
-    description: "Send the In transit template when India Post first moves the article, or when you mark In transit on Orders.",
+    event: "in_transit" as const,
+    watiTitle: "Wati · In transit",
+    merchantTitle: "Vachat · In transit",
+    vachatTitle: "PostBus WhatsApp · In transit",
+    description: "After the label exists, when an India Post CEPT scan first moves the article.",
   },
   {
     camel: "autoWatiDelivered",
     snake: "auto_wati_delivered",
-    title: "WhatsApp · Delivered",
-    description: "Send the Delivered template when the shipment is delivered, or when you mark Delivered on Orders.",
+    event: "delivered" as const,
+    watiTitle: "Wati · Delivered",
+    merchantTitle: "Vachat · Delivered",
+    vachatTitle: "PostBus WhatsApp · Delivered",
+    description: "After the label exists, when CEPT reports consignee delivery.",
   },
 ] as const;
 
@@ -113,6 +114,21 @@ export default function AutomationPage() {
     queryKey: ["automation"],
     queryFn: () => api<AutomationSettings>("/api/v1/automation"),
   });
+
+  const integrations = useQuery({
+    queryKey: ["integrations"],
+    queryFn: () => api<IntegrationsResponse>("/api/v1/integrations"),
+  });
+  const postbusWhatsapp = integrations.data?.postbusWhatsapp;
+  const watiActive = isWatiConnected(integrations.data);
+  const merchantVachatActive = isMerchantVachatConnected(integrations.data);
+  const platformWhatsApp = Boolean(
+    !merchantVachatActive &&
+      ((postbusWhatsapp?.status ?? "").toUpperCase() === "CONNECTED" || postbusWhatsapp?.platformManaged)
+  );
+  const channelReady = !integrations.isLoading;
+  const showWatiToggles = channelReady && watiActive;
+  const showVachatToggles = channelReady && !watiActive;
 
   const mutation = useMutation({
     mutationFn: (payload: Record<string, boolean>) =>
@@ -145,7 +161,7 @@ export default function AutomationPage() {
     <div className="space-y-6">
       <PageHeader
         title="Automation"
-        description="These rules match the order stages on Orders and the WhatsApp templates (Wati or VaChat). Workers skip a step when that integration is not connected."
+        description="Shopify import, India Post booking, CEPT tracking, order status, Shopify fulfillment events, and WhatsApp templates for this workspace."
       />
 
       {query.isLoading ? (
@@ -162,6 +178,18 @@ export default function AutomationPage() {
         />
       ) : (
         <div className="space-y-3">
+          <Card>
+            <CardHeader>
+              <CardTitle>Live order path</CardTitle>
+              <CardDescription>
+                {showWatiToggles
+                  ? "Wati is connected, so template messages use Wati. PostBus WhatsApp is paused. Messages start when the India Post label is generated."
+                  : merchantVachatActive
+                    ? "Your Vachat integration is connected, so PostBus WhatsApp Notifications are paused. Messages start when the India Post label is generated."
+                    : "PostBus WhatsApp templates start when the India Post label is generated. Connect Wati or Vachat to switch this workspace away from the official PostBus number."}
+              </CardDescription>
+            </CardHeader>
+          </Card>
           {TOGGLES.map((item) => {
             const checked = boolField(query.data as Record<string, unknown>, item.camel, item.snake);
             const lockedFeature = lock?.camel === item.camel ? lock.feature : null;
@@ -203,6 +231,65 @@ export default function AutomationPage() {
               </PlanLock>
             );
           })}
+          {(showWatiToggles || showVachatToggles) &&
+            WHATSAPP_TOGGLES.map((item) => {
+              const checked = boolField(query.data as Record<string, unknown>, item.camel, item.snake);
+              const lockedFeature = lock?.camel === item.camel ? lock.feature : null;
+              const platformEventOff =
+                showVachatToggles &&
+                !merchantVachatActive &&
+                platformWhatsApp &&
+                postbusWhatsapp?.eventSettings?.[item.event] === false;
+              return (
+                <PlanLock
+                  key={item.camel}
+                  compact
+                  locked={Boolean(lockedFeature)}
+                  feature={lockedFeature}
+                  onDismiss={() => setLock(null)}
+                >
+                  <Card>
+                    <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+                      <div>
+                        <CardTitle>
+                          {showWatiToggles
+                            ? item.watiTitle
+                            : merchantVachatActive
+                              ? item.merchantTitle
+                              : item.vachatTitle}
+                        </CardTitle>
+                        <CardDescription className="mt-1">{item.description}</CardDescription>
+                      </div>
+                      <Switch
+                        checked={checked}
+                        disabled={!canManage || mutation.isPending}
+                        onCheckedChange={(value) => {
+                          const feature = showWatiToggles
+                            ? automationToggleLock(item.camel, entitlements.allows)
+                            : entitlements.allows(FEATURE.automation)
+                              ? null
+                              : FEATURE.automation;
+                          if (feature) {
+                            setLock({ camel: item.camel, feature });
+                            return;
+                          }
+                          mutation.mutate({ [item.camel]: value });
+                        }}
+                      />
+                    </CardHeader>
+                    <CardContent className="pt-0 text-xs text-muted">
+                      {showWatiToggles
+                        ? "Uses your Wati templates. PostBus WhatsApp will not send while Wati is connected."
+                        : merchantVachatActive
+                          ? "Uses your Vachat account. PostBus WhatsApp Notifications will not send while Vachat is connected."
+                        : platformEventOff
+                          ? "Super Admin must enable the matching PostBus WhatsApp event and template before this sends."
+                          : "Uses the official PostBus WhatsApp number."}
+                    </CardContent>
+                  </Card>
+                </PlanLock>
+              );
+            })}
         </div>
       )}
     </div>

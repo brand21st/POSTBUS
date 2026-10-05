@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Copy, MoreHorizontal, PackageX } from "lucide-react";
+import { Copy, MoreHorizontal, PackageX, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -30,9 +30,11 @@ import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
 import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
-import { SHIPMENT_STATUSES, type NdrBucket } from "@/types/domain";
+import { SHIPMENT_STATUSES, NDR_BUCKETS, type MemberRole, type NdrBucket } from "@/types/domain";
 import type { NdrSummary, Paginated, ShipmentRecord } from "@/types/api";
 import { cn } from "@/lib/utils";
+import { useMe } from "@/lib/hooks/use-me";
+import { hasPermission } from "@/lib/permissions/rbac";
 
 const BUCKETS: Array<{ id: "all" | NdrBucket; label: string; summary?: keyof NdrSummary }> = [
   { id: "all", label: "All" },
@@ -67,12 +69,25 @@ function trackingId(row: NdrRow) {
   return text(row, "trackingNumber", "tracking_number") ?? row.barcode ?? "";
 }
 
+function isNdrRow(row: NdrRow) {
+  return badgeValue(row) === "NDR" || Boolean(text(row, "ndrReason", "ndr_reason"));
+}
+
+function parseBucket(value: string | null): "all" | NdrBucket {
+  if (value && (NDR_BUCKETS as readonly string[]).includes(value)) return value as NdrBucket;
+  return "all";
+}
+
 export default function NdrRtoPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const me = useMe();
+  const canSync = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "shipments.write");
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
-  const [bucket, setBucket] = useState<"all" | NdrBucket>("all");
+  const [bucket, setBucket] = useState<"all" | NdrBucket>(() => parseBucket(searchParams.get("bucket")));
   const [status, setStatus] = useState("all");
   const [event, setEvent] = useState("");
   const [customer, setCustomer] = useState("");
@@ -81,6 +96,35 @@ export default function NdrRtoPage() {
   const [pincode, setPincode] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+
+  useEffect(() => {
+    setBucket(parseBucket(searchParams.get("bucket")));
+  }, [searchParams]);
+
+  function applyBucket(next: "all" | NdrBucket) {
+    setBucket(next);
+    setPage(1);
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "all") params.delete("bucket");
+    else params.set("bucket", next);
+    const query = params.toString();
+    router.replace(query ? `/dashboard/ndr-rto?${query}` : "/dashboard/ndr-rto");
+  }
+
+  function clearFilters() {
+    setSearch("");
+    setDebounced("");
+    setStatus("all");
+    setEvent("");
+    setCustomer("");
+    setOrderId("");
+    setTracking("");
+    setPincode("");
+    setFrom("");
+    setTo("");
+    setPage(1);
+    applyBucket("all");
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -114,9 +158,23 @@ export default function NdrRtoPage() {
           to,
         })}`
       ),
+    refetchInterval: 20_000,
+  });
+
+  const sync = useMutation({
+    mutationFn: (shipmentId: string) => api(`/api/v1/ndr-rto/${shipmentId}/sync`, { method: "POST" }),
+    onSuccess: () => {
+      toast.success("Tracking refreshed.");
+      queryClient.invalidateQueries({ queryKey: ["ndr-rto"] });
+      queryClient.invalidateQueries({ queryKey: ["ndr-rto-summary"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const rows = asPaginated<NdrRow>(list.data, ["items"]);
+  const filtersActive = Boolean(
+    debounced || event || customer || orderId || tracking || pincode || from || to || status !== "all" || bucket !== "all"
+  );
 
   const columns: DataTableColumn<NdrRow>[] = [
     {
@@ -198,6 +256,21 @@ export default function NdrRtoPage() {
       },
     },
     {
+      id: "reason",
+      header: "NDR / RTO",
+      cell: (row) => {
+        const reason = text(row, "ndrReason", "ndr_reason") ?? text(row, "rtoReason", "rto_reason");
+        const attempts = Number(row.ndrAttemptCount ?? row.ndr_attempt_count ?? 0);
+        if (!reason && attempts < 1) return "—";
+        return (
+          <div>
+            <p>{reason || "Attempt recorded"}</p>
+            {attempts > 0 ? <p className="text-xs text-muted">{attempts} attempt{attempts === 1 ? "" : "s"}</p> : null}
+          </div>
+        );
+      },
+    },
+    {
       id: "status",
       header: "Status",
       cell: (row) => <StatusBadge value={badgeValue(row)} />,
@@ -229,9 +302,22 @@ export default function NdrRtoPage() {
               {order ? (
                 <DropdownMenuItem onClick={() => router.push(`/dashboard/orders/${order}`)}>View Order</DropdownMenuItem>
               ) : null}
+              {article && canSync ? (
+                <DropdownMenuItem
+                  disabled={sync.isPending}
+                  onClick={() => sync.mutate(shipmentId)}
+                >
+                  Refresh tracking
+                </DropdownMenuItem>
+              ) : null}
               {isReturn(row) ? (
                 <DropdownMenuItem onClick={() => router.push(`/dashboard/shipments/${shipmentId}#rto`)}>
                   View RTO
+                </DropdownMenuItem>
+              ) : null}
+              {isNdrRow(row) ? (
+                <DropdownMenuItem onClick={() => router.push(`/dashboard/shipments/${shipmentId}#ndr`)}>
+                  View NDR
                 </DropdownMenuItem>
               ) : null}
             </DropdownMenuContent>
@@ -246,6 +332,27 @@ export default function NdrRtoPage() {
       <PageHeader
         title="NDR & RTO"
         description="India Post delivery attempts, non-delivery, and return-to-origin scans for this workspace."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {filtersActive ? (
+              <Button type="button" variant="secondary" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                void summary.refetch();
+                void list.refetch();
+              }}
+              disabled={list.isFetching || summary.isFetching}
+            >
+              <RefreshCw className="size-4" />
+              Refresh
+            </Button>
+          </div>
+        }
       />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -258,15 +365,11 @@ export default function NdrRtoPage() {
               role="button"
               tabIndex={0}
               className={cn("cursor-pointer", active && "ring-2 ring-brand")}
-              onClick={() => {
-                setBucket(item.id);
-                setPage(1);
-              }}
+              onClick={() => applyBucket(item.id)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  setBucket(item.id);
-                  setPage(1);
+                  applyBucket(item.id);
                 }
               }}
             >
@@ -288,10 +391,7 @@ export default function NdrRtoPage() {
             type="button"
             size="sm"
             variant={bucket === item.id ? "primary" : "secondary"}
-            onClick={() => {
-              setBucket(item.id);
-              setPage(1);
-            }}
+            onClick={() => applyBucket(item.id)}
           >
             {item.label}
           </Button>

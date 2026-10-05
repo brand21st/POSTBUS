@@ -16,6 +16,7 @@ export function defaultVachatEventSettings(): VachatEventSettings {
     processing: false,
     booked: false,
     in_transit: false,
+    shipment_delayed: false,
     delivered: false,
   };
 }
@@ -174,6 +175,15 @@ export type ResolvedVachatCredentials = {
   connectionId?: string | null;
 };
 
+export function merchantVachatRowReady(
+  orgRow?: {
+    encrypted_api_key?: string | null;
+    status?: string | null;
+  } | null
+) {
+  return Boolean(orgRow?.encrypted_api_key) && (orgRow?.status ?? "").toUpperCase() === "CONNECTED";
+}
+
 export async function resolveVachatSendCredentials(
   _organizationId: string,
   orgRow?: {
@@ -183,6 +193,18 @@ export async function resolveVachatSendCredentials(
     id?: string;
   } | null
 ): Promise<ResolvedVachatCredentials | null> {
+  if (merchantVachatRowReady(orgRow)) {
+    try {
+      return {
+        source: "organization",
+        apiKey: decryptSecret(orgRow!.encrypted_api_key!),
+        apiBaseUrl: String(orgRow?.api_base_url || "https://cloud.vachat.in").replace(/\/$/, ""),
+        connectionId: orgRow?.id ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }
   const platform = await getPlatformVachatConfig();
   if (isPlatformVachatActive(platform)) {
     return {
@@ -192,15 +214,5 @@ export async function resolveVachatSendCredentials(
       webhookSecret: platform.webhookSecret,
     };
   }
-  if (!orgRow?.encrypted_api_key || orgRow.status !== "CONNECTED") return null;
-  try {
-    return {
-      source: "organization",
-      apiKey: decryptSecret(orgRow.encrypted_api_key),
-      apiBaseUrl: String(orgRow.api_base_url || "https://cloud.vachat.in").replace(/\/$/, ""),
-      connectionId: orgRow.id ?? null,
-    };
-  } catch {
-    return null;
-  }
+  return null;
 }

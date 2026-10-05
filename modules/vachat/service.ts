@@ -60,16 +60,6 @@ export function mapVachatConfig(
   };
 }
 
-export async function assertMerchantVachatWritable() {
-  const { isPlatformVachatEnabled } = await import("@/modules/vachat/platform-config");
-  if (await isPlatformVachatEnabled()) {
-    throw new AppError(
-      ERROR_CODES.FORBIDDEN,
-      "WhatsApp is managed by PostBus. Event toggles stay under Automation."
-    );
-  }
-}
-
 export function vachatHeaders(apiKey: string) {
   return {
     Authorization: `Bearer ${apiKey}`,

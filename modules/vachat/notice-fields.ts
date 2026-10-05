@@ -33,3 +33,13 @@ export function vachatAddressParam(address?: VachatAddressFields | null) {
     240
   );
 }
+
+/** Template "Merchant Name" / shop_name both use the PostBus workspace name. */
+export function vachatMerchantTemplateFields(workspaceName?: string | null) {
+  const name = vachatSingleLine(workspaceName);
+  if (!name) return {};
+  return {
+    merchant_name: name,
+    shop_name: name,
+  };
+}

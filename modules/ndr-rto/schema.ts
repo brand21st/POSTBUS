@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { NDR_BUCKETS } from "@/types/domain";
+import { NDR_BUCKETS, SHIPMENT_STATUSES } from "@/types/domain";
 
 function blankToUndefined(value: unknown) {
   if (typeof value !== "string") return value;
@@ -14,7 +14,7 @@ export const ndrListQuery = z.object({
   bucket: z.preprocess(blankToUndefined, z.enum(NDR_BUCKETS).optional()),
   from: z.preprocess(blankToUndefined, z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()),
   to: z.preprocess(blankToUndefined, z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()),
-  status: z.preprocess(blankToUndefined, z.string().max(40).optional()),
+  status: z.preprocess(blankToUndefined, z.enum(SHIPMENT_STATUSES).optional()),
   event: z.preprocess(blankToUndefined, z.string().max(120).optional()),
   customer: z.preprocess(blankToUndefined, z.string().max(120).optional()),
   orderId: z.preprocess(blankToUndefined, z.string().max(80).optional()),

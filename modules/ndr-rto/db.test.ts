@@ -273,6 +273,56 @@ describe("NDR RTO database migration", () => {
     expect(history.rows[0].classification).toBe("NDR");
   });
 
+  it("stores CEPT out-for-delivery, return, and consignee delivery scans", async () => {
+    const ofd = await applyIndiaPostTracking(client(), snapshot(), {
+      eventCode: "OFD",
+      eventDescription: "Out for delivery",
+      officeName: "Pandhana S.O",
+      officeId: null,
+      occurredAt: "2026-09-28T08:00:00.000Z",
+      raw: {},
+      nonDeliveryReason: null,
+    });
+    expect(ofd.snapshot.status).toBe("OUT_FOR_DELIVERY");
+    expect(ofd.snapshot.operationalStatus).toBe("OUT_FOR_DELIVERY");
+
+    const returned = await applyIndiaPostTracking(client(), ofd.snapshot, {
+      eventCode: "ITEM_RETURNED",
+      eventDescription: "Item returned",
+      officeName: "Pandhana S.O",
+      officeId: null,
+      occurredAt: "2026-09-29T08:00:00.000Z",
+      raw: {},
+      nonDeliveryReason: null,
+    });
+    expect(returned.snapshot.status).toBe("RTO");
+    expect(returned.snapshot.operationalStatus).toBe("RTO");
+    expect(returned.snapshot.rtoInitiatedAt).toBe("2026-09-29T08:00:00.000Z");
+
+    const toSender = await applyIndiaPostTracking(client(), returned.snapshot, {
+      eventCode: "ITEM_DELIVERED",
+      eventDescription: "Delivered to sender",
+      officeName: "KADUGODI BNPL CENTRE",
+      officeId: null,
+      occurredAt: "2026-09-30T08:00:00.000Z",
+      raw: {},
+      nonDeliveryReason: null,
+    });
+    expect(toSender.snapshot.status).toBe("RTO");
+    expect(toSender.snapshot.operationalStatus).toBe("RTO_DELIVERED");
+    expect(toSender.orderStatus).toBeNull();
+
+    const counts = await db.query<{ operational_status: string; n: number }>(
+      `select operational_status, count(*)::int as n from public.shipments
+       where organization_id = $1 and barcode is not null
+       group by operational_status`,
+      [orgA]
+    );
+    expect(counts.rows).toEqual(
+      expect.arrayContaining([{ operational_status: "RTO_DELIVERED", n: 1 }])
+    );
+  });
+
   it("rejects a tracking event that does not belong to a shipment", async () => {
     await expect(
       db.query(

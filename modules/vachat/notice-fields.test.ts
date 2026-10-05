@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { vachatAddressParam, vachatAmountParam, vachatSingleLine } from "@/modules/vachat/notice-fields";
+import { vachatAddressParam, vachatAmountParam, vachatMerchantTemplateFields, vachatSingleLine } from "@/modules/vachat/notice-fields";
 
 describe("vachat notice fields", () => {
   it("formats money without a trailing .00", () => {
@@ -22,5 +22,13 @@ describe("vachat notice fields", () => {
 
   it("strips line breaks from template values", () => {
     expect(vachatSingleLine("Ada\nDas")).toBe("Ada Das");
+  });
+
+  it("maps Merchant Name to the PostBus workspace name", () => {
+    expect(vachatMerchantTemplateFields("AURIMO BY NISH")).toEqual({
+      merchant_name: "AURIMO BY NISH",
+      shop_name: "AURIMO BY NISH",
+    });
+    expect(vachatMerchantTemplateFields("  ")).toEqual({});
   });
 });

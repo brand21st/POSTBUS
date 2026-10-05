@@ -17,6 +17,7 @@ function config(overrides: Partial<PlatformVachatConfig> = {}): PlatformVachatCo
       processing: false,
       booked: false,
       in_transit: false,
+      shipment_delayed: false,
       delivered: false,
     },
     source: "none",
@@ -45,5 +46,38 @@ describe("parseVachatEventSettings", () => {
     expect(
       isPlatformVachatEventEnabled(config({ enabled: false, apiKey: "k", eventSettings: parseVachatEventSettings({ booked: true }) }), "booked")
     ).toBe(false);
+  });
+});
+
+describe("merchant VaChat overrides PostBus WhatsApp", () => {
+  it("treats a connected org row as merchant-ready", async () => {
+    const { merchantVachatRowReady } = await import("@/modules/vachat/platform-config");
+    expect(merchantVachatRowReady({ status: "CONNECTED", encrypted_api_key: "enc" })).toBe(true);
+    expect(merchantVachatRowReady({ status: "NOT_CONNECTED", encrypted_api_key: "enc" })).toBe(false);
+    expect(merchantVachatRowReady({ status: "CONNECTED" })).toBe(false);
+  });
+
+  it("resolves merchant credentials instead of the platform number", async () => {
+    const { encryptSecret } = await import("@/lib/security/crypto");
+    const { resolveVachatSendCredentials } = await import("@/modules/vachat/platform-config");
+    const creds = await resolveVachatSendCredentials("org-1", {
+      encrypted_api_key: encryptSecret("merchant-key"),
+      api_base_url: "https://cloud.vachat.in",
+      status: "CONNECTED",
+      id: "c1",
+    });
+    expect(creds).toEqual(
+      expect.objectContaining({ source: "organization", apiKey: "merchant-key", connectionId: "c1" })
+    );
+  });
+
+  it("does not fall back to PostBus WhatsApp when the merchant key cannot be decrypted", async () => {
+    const { resolveVachatSendCredentials } = await import("@/modules/vachat/platform-config");
+    await expect(
+      resolveVachatSendCredentials("org-1", {
+        encrypted_api_key: "not-valid",
+        status: "CONNECTED",
+      })
+    ).resolves.toBeNull();
   });
 });

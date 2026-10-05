@@ -13,7 +13,10 @@ import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBooki
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { renderCustomShippingLabel } from "@/modules/labels/custom-label-service";
-import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
+import {
+  generateAndStoreOfficialIndiaPostLabelPdf,
+  indiaPostLabelRequestError,
+} from "@/modules/labels/official-fetch";
 import { fetchReceiptPdf } from "@/modules/labels/receipt";
 import { listGroupedLabels } from "@/modules/labels/list";
 import { getLabelTemplate } from "@/modules/labels/template-service";
@@ -255,7 +258,11 @@ export async function handleCommerceRoutes(
     const shipmentId = String(row.shipment_id);
     const filename = `india-post-label-${shipmentId}.pdf`;
     try {
-      const official = await fetchOfficialIndiaPostLabelPdf(supabase, ctx.organizationId, shipmentId);
+      const official = await generateAndStoreOfficialIndiaPostLabelPdf(
+        supabase,
+        ctx.organizationId,
+        shipmentId
+      );
       const response = labelPdfFileResponse(official.pdf, filename);
       response.headers.set("X-Label-Source", "india-post");
       return response;
@@ -265,31 +272,7 @@ export async function handleCommerceRoutes(
         shipmentId,
         message: error instanceof Error ? error.message : "unknown",
       });
-      const { data: stored } = await supabase
-        .from("labels")
-        .select("id, file_path, file_url, shipment_id")
-        .eq("organization_id", ctx.organizationId)
-        .eq("shipment_id", shipmentId)
-        .eq("kind", "INDIA_POST")
-        .eq("status", "READY")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (!stored?.file_path && !stored?.file_url) {
-        throw new AppError(
-          ERROR_CODES.PROVIDER_ERROR,
-          error instanceof Error ? error.message : "India Post label generation failed."
-        );
-      }
-      const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, {
-        id: String(stored.id),
-        file_path: stored.file_path || "",
-        file_url: stored.file_url,
-        shipment_id: stored.shipment_id,
-      });
-      const response = labelPdfFileResponse(bytes, filename);
-      response.headers.set("X-Label-Source", "stored");
-      return response;
+      throw indiaPostLabelRequestError(error);
     }
   }
 

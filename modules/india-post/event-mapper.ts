@@ -9,6 +9,7 @@ export type IndiaPostShipmentUpdate = {
   shouldUpdateStatus: boolean;
   ndrReason: string | null;
   rtoReason: string | null;
+  delayScan: boolean;
 };
 
 const STATUS_RANK: Record<ShipmentStatus, number> = {
@@ -46,12 +47,15 @@ const RETURN_OPERATIONAL = new Set<OperationalStatus>(["RTO", "RTO_IN_TRANSIT", 
 
 const ALREADY_MOVING = new Set(["IN_TRANSIT", "OUT_FOR_DELIVERY", "NDR", "RTO", "DELIVERED"]);
 
+export type TrackingWhatsAppEvent = "in_transit" | "delivered" | "shipment_delayed";
+
 export type TrackingPlan = {
   updateLastScan: boolean;
   applyStatus: boolean;
   shipmentStatus: ShipmentStatus | null;
   operationalStatus: OperationalStatus | null;
   orderStatus: "IN_TRANSIT" | "DELIVERED" | null;
+  whatsappEvents: TrackingWhatsAppEvent[];
 };
 
 function eventKey(event: { eventCode?: string | null; eventDescription?: string | null }) {
@@ -126,6 +130,24 @@ function classifyEvent(key: string, nonDeliveryReason: string | null): Operation
   return null;
 }
 
+export function isIndiaPostDelayScan(key: string, classification: OperationalStatus | null) {
+  if (
+    classification === "DELIVERED" ||
+    classification === "NDR" ||
+    classification === "RTO" ||
+    classification === "RTO_IN_TRANSIT" ||
+    classification === "RTO_DELIVERED"
+  ) {
+    return false;
+  }
+  return (
+    hasPhrase(key, "delay") ||
+    hasPhrase(key, "delayed") ||
+    hasPhrase(key, "held_up") ||
+    hasPhrase(key, "detention")
+  );
+}
+
 export function shipmentStatusForOperational(operational: OperationalStatus): ShipmentStatus {
   if (operational === "RTO" || operational === "RTO_IN_TRANSIT" || operational === "RTO_DELIVERED") {
     return "RTO";
@@ -145,6 +167,8 @@ export function mapIndiaPostEventToShipmentUpdate(event: {
   const eventDescription = event.eventDescription ?? null;
   const ndrReason = event.nonDeliveryReason?.trim() || null;
   const classification = classifyEvent(eventKey(event), ndrReason);
+  const key = eventKey(event);
+  const delayScan = isIndiaPostDelayScan(key, classification);
   const shipmentStatus = classification ? shipmentStatusForOperational(classification) : null;
   const rtoReason =
     classification === "RTO" || classification === "RTO_IN_TRANSIT" || classification === "RTO_DELIVERED"
@@ -160,6 +184,7 @@ export function mapIndiaPostEventToShipmentUpdate(event: {
     shouldUpdateStatus: Boolean(classification),
     ndrReason: classification === "NDR" ? ndrReason || eventDescription || eventCode : null,
     rtoReason,
+    delayScan,
   };
 }
 
@@ -191,12 +216,25 @@ export function planTrackingUpdate(input: {
     shipmentStatus: null,
     operationalStatus: null,
     orderStatus: null,
+    whatsappEvents: [],
   };
   if (input.currentStatus === "CANCELLED") return none;
 
   const older = eventIsOlder(input.eventAt, input.lastEventAt);
-  if (older || !input.mapped.classification || !input.mapped.operationalStatus || !input.mapped.shipmentStatus) {
-    return { ...none, updateLastScan: !older };
+  if (older) {
+    return none;
+  }
+
+  if (
+    !input.mapped.classification ||
+    !input.mapped.operationalStatus ||
+    !input.mapped.shipmentStatus
+  ) {
+    return {
+      ...none,
+      updateLastScan: true,
+      whatsappEvents: input.mapped.delayScan ? ["shipment_delayed"] : [],
+    };
   }
 
   let operational = input.mapped.operationalStatus;
@@ -232,11 +270,25 @@ export function planTrackingUpdate(input: {
     orderStatus = "IN_TRANSIT";
   }
 
+  const whatsappEvents: TrackingWhatsAppEvent[] = [];
+  if (orderStatus === "IN_TRANSIT") whatsappEvents.push("in_transit");
+  if (orderStatus === "DELIVERED") whatsappEvents.push("delivered");
+  if (
+    operational === "OUT_FOR_DELIVERY" &&
+    input.currentOperational !== "OUT_FOR_DELIVERY" &&
+    input.currentStatus !== "DELIVERED" &&
+    !whatsappEvents.includes("in_transit")
+  ) {
+    whatsappEvents.push("in_transit");
+  }
+  if (input.mapped.delayScan) whatsappEvents.push("shipment_delayed");
+
   return {
     updateLastScan: true,
     applyStatus: true,
     shipmentStatus,
     operationalStatus: operational,
     orderStatus,
+    whatsappEvents,
   };
 }

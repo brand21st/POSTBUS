@@ -125,6 +125,7 @@ export async function isAutoWatiEventEnabled(
   organizationId: string,
   event: string
 ): Promise<boolean> {
+  if (event === "shipment_delayed") return false;
   const key = WATI_EVENT_FLAG[event];
   if (!key) return true;
   try {

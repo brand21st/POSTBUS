@@ -172,6 +172,10 @@ export function isWatiConnected(payload?: IntegrationsResponse | null) {
   return (payload?.wati?.status ?? "").toUpperCase() === "CONNECTED";
 }
 
+export function isMerchantVachatConnected(payload?: IntegrationsResponse | null) {
+  return (payload?.vachat?.status ?? "").toUpperCase() === "CONNECTED";
+}
+
 export function isShopifyConnected(payload?: IntegrationsResponse | null) {
   const status = (payload?.shopify?.status ?? "").toUpperCase();
   return status === "CONNECTED" || Boolean(payload?.shopify?.readyToSync);

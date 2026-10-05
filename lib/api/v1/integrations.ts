@@ -137,9 +137,23 @@ export async function handleIntegrationRoutes(
       supabase.from("vachat_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       latestShopifySyncJob(supabase, ctx.organizationId),
     ]);
-    const { isPlatformVachatEnabled } = await import("@/modules/vachat/platform-config");
-    const platformVachat = await isPlatformVachatEnabled();
-    const vachatStatus = platformVachat ? "CONNECTED" : (vachat?.status ?? "NOT_CONNECTED");
+    const { getPlatformVachatConfig, isPlatformVachatActive, merchantVachatRowReady } = await import(
+      "@/modules/vachat/platform-config"
+    );
+    const platform = await getPlatformVachatConfig();
+    const merchantVachatActive = merchantVachatRowReady(vachat);
+    const merchantVachatStatus = vachat?.status ?? "NOT_CONNECTED";
+    const postbusActive = isPlatformVachatActive(platform) && !merchantVachatActive;
+    const postbusWhatsapp = merchantVachatActive
+      ? undefined
+      : {
+          provider: "POSTBUS_WHATSAPP",
+          name: "Postbus-Whatsapp Notifications",
+          status: postbusActive ? "CONNECTED" : "NOT_CONNECTED",
+          platformManaged: postbusActive,
+          eventSettings: platform.eventSettings,
+          lastError: postbusActive ? null : platform.lastError,
+        };
     const shopifyConfigured = shopifyAppConfiguredFor(shopify);
     const shopifySyncReady = shopifyReadyToSync(shopify);
     return {
@@ -162,11 +176,12 @@ export async function handleIntegrationRoutes(
       },
       vachat: {
         provider: "vachat",
-        status: vachatStatus,
-        lastVerifiedAt: platformVachat ? null : vachat?.last_verified_at,
-        lastError: platformVachat ? "Managed by PostBus" : vachat?.last_error,
-        platformManaged: platformVachat,
+        status: merchantVachatStatus,
+        lastVerifiedAt: vachat?.last_verified_at,
+        lastError: vachat?.last_error,
+        platformManaged: false,
       },
+      postbusWhatsapp,
       wati: {
         provider: "wati",
         status: wati?.status ?? "NOT_CONNECTED",
@@ -192,12 +207,13 @@ export async function handleIntegrationRoutes(
           status: wati?.status ?? "NOT_CONNECTED",
         },
         { provider: "woocommerce", name: "WooCommerce", status: "NOT_CONNECTED", comingLater: true },
+        ...(postbusWhatsapp ? [postbusWhatsapp] : []),
         {
           provider: "vachat",
           name: "Vachat",
-          status: vachatStatus,
-          lastVerifiedAt: platformVachat ? null : vachat?.last_verified_at,
-          lastError: platformVachat ? "Managed by PostBus" : vachat?.last_error,
+          status: merchantVachatStatus,
+          lastVerifiedAt: vachat?.last_verified_at,
+          lastError: vachat?.last_error,
         },
       ],
     };
@@ -1196,6 +1212,19 @@ export async function handleIntegrationRoutes(
     return { items: await listWatiTemplates(data) };
   }
 
+  if (key === "DELETE integrations/wati") {
+    const { resetWatiConnection } = await import("@/modules/wati/service");
+    await resetWatiConnection(supabase, ctx.organizationId);
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "wati.reset",
+      entity_type: "wati_connection",
+      entity_id: ctx.organizationId,
+    });
+    return { reset: true };
+  }
+
   if (key === "GET integrations/vachat") {
     const { data } = await supabase
       .from("vachat_connections")
@@ -1203,9 +1232,7 @@ export async function handleIntegrationRoutes(
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     const { mapVachatConfig } = await import("@/modules/vachat/service");
-    const { isPlatformVachatEnabled } = await import("@/modules/vachat/platform-config");
-    const platformManaged = await isPlatformVachatEnabled();
-    return mapVachatConfig(data, { platformManaged, platformError: platformManaged ? "Managed by PostBus" : null });
+    return mapVachatConfig(data);
   }
 
   if (
@@ -1213,8 +1240,6 @@ export async function handleIntegrationRoutes(
     key === "PUT integrations/vachat" ||
     key === "PATCH integrations/vachat"
   ) {
-    const { assertMerchantVachatWritable } = await import("@/modules/vachat/service");
-    await assertMerchantVachatWritable();
     const body = await request.json().catch(() => ({}));
     const { saveVachatConnection, mapVachatConfig } = await import("@/modules/vachat/service");
     const saved = await saveVachatConnection(supabase, ctx.organizationId, {
@@ -1232,15 +1257,12 @@ export async function handleIntegrationRoutes(
   }
 
   if (key === "DELETE integrations/vachat") {
-    const { assertMerchantVachatWritable, disconnectVachat } = await import("@/modules/vachat/service");
-    await assertMerchantVachatWritable();
+    const { disconnectVachat } = await import("@/modules/vachat/service");
     await disconnectVachat(supabase, ctx.organizationId);
     return { disconnected: true };
   }
 
   if (key === "POST integrations/vachat/test") {
-    const { assertMerchantVachatWritable } = await import("@/modules/vachat/service");
-    await assertMerchantVachatWritable();
     const { data } = await supabase
       .from("vachat_connections")
       .select("*")

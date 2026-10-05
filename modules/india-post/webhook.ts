@@ -235,12 +235,13 @@ export async function processIndiaPostInboxEvent(
     }
   );
 
-  if (applied.orderStatus && shipment.order_id) {
+  if (applied.whatsappEvents.length || applied.orderStatus) {
     await enqueueTrackingStageSideEffects(supabase, {
       organizationId,
       shipmentId: shipment.id,
       orderId: shipment.order_id,
       orderStatus: applied.orderStatus,
+      events: applied.whatsappEvents,
       body: parsed.eventDescription ?? parsed.eventCode,
     });
   } else if (applied.inserted) {
@@ -278,6 +279,7 @@ export async function processIndiaPostInboxEvent(
     eventCode: parsed.eventCode,
     trackingNumber: maskTrackingNumber(parsed.barcode),
     statusUpdated: applied.statusUpdated,
+    whatsappEvents: applied.whatsappEvents,
   });
 
   return { processed: true, shipmentId: shipment.id };

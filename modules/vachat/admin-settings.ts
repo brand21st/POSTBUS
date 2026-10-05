@@ -27,6 +27,7 @@ const saveSchema = z.object({
       processing: z.boolean().optional(),
       booked: z.boolean().optional(),
       in_transit: z.boolean().optional(),
+      shipment_delayed: z.boolean().optional(),
       delivered: z.boolean().optional(),
     })
     .optional(),
@@ -36,6 +37,7 @@ const saveSchema = z.object({
       processing_template_name: z.string().nullable().optional(),
       booked_template_name: z.string().nullable().optional(),
       in_transit_template_name: z.string().nullable().optional(),
+      shipment_delayed_template_name: z.string().nullable().optional(),
       delivered_template_name: z.string().nullable().optional(),
       notification_settings: z.record(z.string(), z.boolean()).optional(),
       template_language: z.string().optional(),
@@ -88,6 +90,7 @@ function templateSyncPayload(body: z.infer<typeof saveSchema>, settings: ReturnT
     templates.processing_template_name,
     templates.booked_template_name,
     templates.in_transit_template_name,
+    templates.shipment_delayed_template_name,
     templates.delivered_template_name,
   ];
   const hasNamedTemplate = names.some((name) => typeof name === "string" && name.trim());

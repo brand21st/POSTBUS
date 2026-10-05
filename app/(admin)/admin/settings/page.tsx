@@ -31,6 +31,7 @@ const VACHAT_LIVE_EVENTS = [
   "processing",
   "booked",
   "in_transit",
+  "shipment_delayed",
   "delivered",
 ] as const;
 
@@ -62,6 +63,7 @@ type VachatSettings = {
       processing_template_name?: string | null;
       booked_template_name?: string | null;
       in_transit_template_name?: string | null;
+      shipment_delayed_template_name?: string | null;
       delivered_template_name?: string | null;
       approved_templates?: Array<{ name: string; language: string }>;
     } | null;
@@ -123,6 +125,7 @@ export default function AdminSettingsPage() {
     processing: "processing_template_name",
     booked: "booked_template_name",
     in_transit: "in_transit_template_name",
+    shipment_delayed: "shipment_delayed_template_name",
     delivered: "delivered_template_name",
   };
 
@@ -186,6 +189,7 @@ export default function AdminSettingsPage() {
             processing: eventDraft.processing ?? vachat?.eventSettings?.processing ?? false,
             booked: eventDraft.booked ?? vachat?.eventSettings?.booked ?? false,
             in_transit: eventDraft.in_transit ?? vachat?.eventSettings?.in_transit ?? false,
+            shipment_delayed: eventDraft.shipment_delayed ?? vachat?.eventSettings?.shipment_delayed ?? false,
             delivered: eventDraft.delivered ?? vachat?.eventSettings?.delivered ?? false,
           },
           templates: {
@@ -198,6 +202,10 @@ export default function AdminSettingsPage() {
             booked_template_name: templateDraft.booked_template_name ?? vachat?.templates?.booked_template_name ?? null,
             in_transit_template_name:
               templateDraft.in_transit_template_name ?? vachat?.templates?.in_transit_template_name ?? null,
+            shipment_delayed_template_name:
+              templateDraft.shipment_delayed_template_name ??
+              vachat?.templates?.shipment_delayed_template_name ??
+              null,
             delivered_template_name:
               templateDraft.delivered_template_name ?? vachat?.templates?.delivered_template_name ?? null,
           },
@@ -350,15 +358,16 @@ export default function AdminSettingsPage() {
       </Card>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle>Global WhatsApp (VaChat)</CardTitle>
+          <CardTitle>PostBus WhatsApp Notifications</CardTitle>
           <Badge variant={vachat?.connected ? "success" : "warning"}>
             {vachat?.connected ? "Connected" : "Not configured"}
           </Badge>
         </CardHeader>
         <CardContent className="space-y-5 p-6 pt-0">
           <p className="text-sm text-muted">
-            One official PostBus number on one VaChat account. Super Admin only. Merchants never paste a VaChat key
-            while this is enabled. WATI stays independent.
+            One official PostBus number on one VaChat account. Super Admin only. Merchants who connect their own
+            Vachat use that account instead — PostBus WhatsApp Notifications stay hidden for that workspace. WATI stays
+            independent.
           </p>
           {vachat?.identity?.display_phone || vachat?.identity?.verified_name ? (
             <p className="text-sm">
@@ -379,7 +388,7 @@ export default function AdminSettingsPage() {
               checked={resolvedVachatEnabled}
               onChange={(event) => setVachatEnabled(event.target.checked)}
             />
-            <Label htmlFor="vachat-enabled">Enable global VaChat for all merchants</Label>
+            <Label htmlFor="vachat-enabled">Enable PostBus WhatsApp Notifications for merchants without Vachat</Label>
           </div>
           <div className="space-y-2">
             <Label htmlFor="vachat-url">VaChat base URL</Label>

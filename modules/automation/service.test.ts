@@ -134,5 +134,7 @@ describe("automation settings", () => {
     });
     await expect(isAutoWatiEventEnabled(on as never, "org-1", "processing")).resolves.toBe(true);
     await expect(isAutoWatiEventEnabled(off as never, "org-1", "processing")).resolves.toBe(false);
+    await expect(isAutoWatiEventEnabled(on as never, "org-1", "in_transit")).resolves.toBe(true);
+    await expect(isAutoWatiEventEnabled(on as never, "org-1", "shipment_delayed")).resolves.toBe(false);
   });
 });

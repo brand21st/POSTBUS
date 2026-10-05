@@ -20,6 +20,7 @@ describe("ndr list query", () => {
     expect(() => ndrListQuery.parse({ page: 0 })).toThrow();
     expect(() => ndrListQuery.parse({ bucket: "RETURNED" })).toThrow();
     expect(() => ndrListQuery.parse({ from: "yesterday" })).toThrow();
+    expect(() => ndrListQuery.parse({ status: "RETURNED" })).toThrow();
     expect(ndrListQuery.parse({}).page).toBe(1);
     expect(ndrListQuery.parse({ q: "  " }).q).toBeUndefined();
   });
@@ -87,6 +88,71 @@ describe("NDR APIs", () => {
     const result = await listNdrShipments(supabase as never, ctx, ndrListQuery.parse({ customer: "Nobody" }));
     expect(result.items).toEqual([]);
     expect(result.total).toBe(0);
+  });
+
+  it("maps nested customer and order rows for the dashboard", async () => {
+    const supabase = {
+      from() {
+        const api = {
+          select() {
+            return api;
+          },
+          eq() {
+            return api;
+          },
+          not() {
+            return api;
+          },
+          in() {
+            return api;
+          },
+          order() {
+            return api;
+          },
+          range() {
+            return api;
+          },
+          then(resolve: (value: { data: unknown[]; error: null; count: number }) => void) {
+            resolve({
+              data: [
+                {
+                  id: "ship-a",
+                  barcode: "AW784699994IN",
+                  tracking_number: "AW784699994IN",
+                  order_id: "order-a",
+                  status: "NDR",
+                  operational_status: "NDR",
+                  last_event_code: "DELIVERY_ATTEMPTED",
+                  last_event_description: "Delivery attempted",
+                  last_scan_office: "Pandhana S.O",
+                  last_event_at: "2026-09-27T10:15:00.000Z",
+                  ndr_reason: "Addressee cannot be located",
+                  ndr_attempt_count: 1,
+                  orders: [{ order_number: "PB-1001", total_amount: 499 }],
+                  customers: [{ name: "Nilesh", phone: "9876543210" }],
+                  addresses: [{ city: "East Nimar", pincode: "450661" }],
+                  pickup_locations: { city: "Bangalore" },
+                },
+              ],
+              error: null,
+              count: 1,
+            });
+          },
+        };
+        return api;
+      },
+    };
+    const result = await listNdrShipments(supabase as never, ctx, ndrListQuery.parse({ bucket: "NDR" }));
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({
+      orderNumber: "PB-1001",
+      customer: { name: "Nilesh", phone: "9876543210" },
+      shippingCity: "East Nimar",
+      shippingPincode: "450661",
+      originCity: "Bangalore",
+      lastEventCode: "DELIVERY_ATTEMPTED",
+      ndrReason: "Addressee cannot be located",
+    });
   });
 
   it("does not load another tenant shipment and reports India Post failures", async () => {

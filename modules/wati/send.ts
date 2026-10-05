@@ -173,6 +173,8 @@ export async function enqueueWatiNotify(
   event: WatiNotifyEvent,
   ids: WatiNotifyIds
 ) {
+  const { canSendIndiaPostWhatsApp } = await import("@/modules/whatsapp/label-gate");
+  if (!(await canSendIndiaPostWhatsApp(supabase, organizationId, event, ids.shipmentId))) return;
   const { data } = await supabase
     .from("wati_connections")
     .select(TEMPLATE_COLUMNS)

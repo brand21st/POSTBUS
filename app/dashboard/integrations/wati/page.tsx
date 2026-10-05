@@ -173,6 +173,30 @@ export default function WatiIntegrationPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const reset = useMutation({
+    mutationFn: () => api<{ reset: boolean }>("/api/v1/integrations/wati", { method: "DELETE" }),
+    onSuccess: () => {
+      toast.success("Wati data cleared for this workspace.");
+      setToken("");
+      setClientId("");
+      setBaseUrl("");
+      setReplaceToken(false);
+      setTestPhone("");
+      setChannelPhone("");
+      setSlots({
+        orderConfirmation: "",
+        processing: "",
+        booked: "",
+        inTransit: "",
+        delivered: "",
+      });
+      setHydrated(false);
+      queryClient.invalidateQueries({ queryKey: ["wati"] });
+      queryClient.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const webhookUrl = config?.webhookUrl ?? config?.webhook_url ?? "";
   const canRegisterWebhook = Boolean(config?.canRegisterWebhook ?? config?.can_register_webhook);
   const lastWebhookAt = config?.lastWebhookAt ?? config?.last_webhook_at;
@@ -398,6 +422,23 @@ export default function WatiIntegrationPage() {
           disabled={!hasToken || test.isPending || !testPhone.trim() || !selectedTemplate}
         >
           Send test
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={reset.isPending}
+          onClick={() => {
+            if (
+              !window.confirm(
+                "Reset Wati for this workspace? This deletes the saved token, templates, webhook, and Wati jobs."
+              )
+            ) {
+              return;
+            }
+            reset.mutate();
+          }}
+        >
+          {reset.isPending ? "Resetting…" : "Reset"}
         </Button>
       </div>
     </div>

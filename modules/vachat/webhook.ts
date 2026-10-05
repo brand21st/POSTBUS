@@ -33,6 +33,12 @@ function parseEnvelope(rawBody: string) {
       merchant_id?: string;
       message_id?: string;
       whatsapp_message_id?: string;
+      from?: string;
+      wa_id?: string;
+      phone?: string;
+      text?: string;
+      body?: string;
+      message?: unknown;
     };
   } = {};
   try {
@@ -131,6 +137,25 @@ export async function acceptVachatWebhook(
       throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Vachat webhook signature.");
     }
     const body = parseEnvelope(input.rawBody);
+    const { isInboundAssistantEvent, parseInboundMessage, handleVachatAssistantMessage } = await import(
+      "@/modules/vachat/assistant"
+    );
+    if (isInboundAssistantEvent(body.event ?? "", body.data as Record<string, unknown> | undefined)) {
+      const inbound = parseInboundMessage(body.data as Record<string, unknown> | undefined);
+      const result = await handleVachatAssistantMessage(supabase, {
+        from: inbound.from,
+        text: inbound.text,
+        merchantId: String(body.data?.merchant_id ?? "").trim() || null,
+      });
+      const merchantId = result.merchantId || String(body.data?.merchant_id ?? "").trim();
+      if (merchantId) {
+        const { data: org } = await supabase.from("organizations").select("id").eq("id", merchantId).maybeSingle();
+        if (org?.id) {
+          return recordAccepted(supabase, { id: "platform", organization_id: org.id }, input, body);
+        }
+      }
+      return { accepted: true, duplicate: false, assistant: true };
+    }
     const merchantId = String(body.data?.merchant_id ?? "").trim();
     if (!merchantId) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "merchant_id is required for global VaChat webhooks.");

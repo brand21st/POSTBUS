@@ -12,6 +12,7 @@ const platform = vi.hoisted(() => ({
 vi.mock("@/modules/vachat/platform-config", () => ({
   getPlatformVachatConfig: (...args: unknown[]) => platform.getPlatformVachatConfig(...args),
   isPlatformVachatActive: (...args: unknown[]) => platform.isPlatformVachatActive(...args),
+  merchantVachatRowReady: () => false,
 }));
 
 describe("verifyVachatSignature", () => {

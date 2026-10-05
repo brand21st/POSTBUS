@@ -9,6 +9,7 @@ import { WatiLogo } from "@/components/brand/wati-logo";
 import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
 import { IndiaPostWatchTutorialLink } from "@/components/integrations/india-post-watch-tutorial-link";
 import { ShopifyWatchTutorialLink } from "@/components/integrations/shopify-watch-tutorial-link";
+import { VachatSignupLink } from "@/components/integrations/vachat-signup-link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -27,6 +28,7 @@ const FALLBACK: IntegrationCard[] = [
   { provider: "INDIA_POST", name: "India Post", status: "NOT_CONNECTED" },
   { provider: "WATI", name: "Wati", status: "NOT_CONNECTED" },
   { provider: "WOOCOMMERCE", name: "WooCommerce", status: "NOT_CONNECTED", comingLater: true },
+  { provider: "POSTBUS_WHATSAPP", name: "Postbus-Whatsapp Notifications", status: "NOT_CONNECTED" },
   { provider: "VACHAT", name: "Vachat", status: "NOT_CONNECTED" },
 ];
 
@@ -40,8 +42,19 @@ function cardsFromPayload(payload?: IntegrationsResponse | null): IntegrationCar
     byProvider.set("INDIA_POST", { ...india, provider: "INDIA_POST", name: "India Post" });
   }
   if (payload.wati) byProvider.set("WATI", { ...payload.wati, provider: "WATI", name: "Wati" });
+  if (payload.postbusWhatsapp) {
+    byProvider.set("POSTBUS_WHATSAPP", {
+      ...payload.postbusWhatsapp,
+      provider: "POSTBUS_WHATSAPP",
+      name: payload.postbusWhatsapp.name ?? "Postbus-Whatsapp Notifications",
+    });
+  }
   if (payload.vachat) byProvider.set("VACHAT", { ...payload.vachat, provider: "VACHAT", name: "Vachat" });
-  return FALLBACK.map((item) => ({ ...item, ...byProvider.get(item.provider) }));
+  const merchantVachatActive = (byProvider.get("VACHAT")?.status ?? "").toUpperCase() === "CONNECTED";
+  return FALLBACK.filter((item) => !(merchantVachatActive && item.provider === "POSTBUS_WHATSAPP")).map((item) => ({
+    ...item,
+    ...byProvider.get(item.provider),
+  }));
 }
 
 export default function IntegrationsPage() {
@@ -57,7 +70,7 @@ export default function IntegrationsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Integrations"
-        description="Shopify, India Post, Wati, and Vachat WhatsApp are live. WooCommerce stays reserved."
+        description="Shopify, India Post, Wati, PostBus WhatsApp, and merchant Vachat are live. WooCommerce stays reserved."
       />
 
       {query.isLoading ? (
@@ -83,6 +96,8 @@ export default function IntegrationsPage() {
                   ? "/dashboard/integrations/shopify"
                   : card.provider === "WATI"
                     ? "/dashboard/integrations/wati"
+                    : card.provider === "POSTBUS_WHATSAPP"
+                      ? "/dashboard/integrations/postbus-whatsapp"
                     : card.provider === "VACHAT"
                       ? "/dashboard/integrations/vachat"
                     : undefined;
@@ -100,6 +115,14 @@ export default function IntegrationsPage() {
               ? null
               : card.lastError || card.last_error
                 ? card.lastError ?? card.last_error
+                : card.provider === "POSTBUS_WHATSAPP"
+                  ? connected
+                    ? "Shipment WhatsApp updates from the PostBus number."
+                    : "PostBus WhatsApp is not available for this workspace yet."
+                  : card.provider === "VACHAT"
+                    ? connected
+                      ? "Your VaChat account. PostBus WhatsApp Notifications are paused."
+                      : "Connect your own VaChat account for this workspace."
                 : connected
                   ? "Connected and ready for background jobs."
                   : "Not connected.";
@@ -130,6 +153,8 @@ export default function IntegrationsPage() {
                         <ShopifyWatchTutorialLink className="mt-2" />
                       ) : card.provider === "INDIA_POST" ? (
                         <IndiaPostWatchTutorialLink className="mt-2" />
+                      ) : card.provider === "VACHAT" ? (
+                        <VachatSignupLink className="mt-2" />
                       ) : null}
                     </div>
                     <StatusBadge value={comingLater ? "COMING_LATER" : card.status ?? "NOT_CONNECTED"} />

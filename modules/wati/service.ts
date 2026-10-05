@@ -308,3 +308,19 @@ async function refreshWatiRow(supabase: SupabaseClient, id: string | undefined, 
   const { data } = await supabase.from("wati_connections").select("*").eq("id", id).maybeSingle();
   return (data ?? fallback) as WatiConnectionRow;
 }
+
+export async function resetWatiConnection(supabase: SupabaseClient, organizationId: string) {
+  const jobs = await supabase
+    .from("background_jobs")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("job_type", "wati-notify");
+  if (jobs.error) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, jobs.error.message);
+  }
+  const connection = await supabase.from("wati_connections").delete().eq("organization_id", organizationId);
+  if (connection.error) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, connection.error.message);
+  }
+  return { reset: true };
+}

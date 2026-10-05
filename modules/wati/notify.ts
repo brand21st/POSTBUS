@@ -5,6 +5,7 @@ export const WATI_NOTIFY_EVENTS = [
   "processing",
   "booked",
   "in_transit",
+  "shipment_delayed",
   "delivered",
 ] as const;
 
@@ -15,6 +16,7 @@ export type WatiTemplateMap = {
   processing_template_name?: string | null;
   booked_template_name?: string | null;
   in_transit_template_name?: string | null;
+  shipment_delayed_template_name?: string | null;
   delivered_template_name?: string | null;
 };
 
@@ -33,6 +35,7 @@ const TEMPLATE_COLUMN: Record<WatiNotifyEvent, keyof WatiTemplateMap> = {
   processing: "processing_template_name",
   booked: "booked_template_name",
   in_transit: "in_transit_template_name",
+  shipment_delayed: "shipment_delayed_template_name",
   delivered: "delivered_template_name",
 };
 
@@ -99,10 +102,29 @@ export function watiTemplateCustomParams(
     seen.add(name);
     params.push({ name, value });
   };
-  names.forEach((name, index) => add(name, positional[index] || ""));
+  names.forEach((name, index) => add(name, namedTemplateValue(name, input, positional[index] || "")));
   positional.forEach((value, index) => add(String(index + 1), value));
   for (const param of watiShipmentParams(input)) add(param.name, param.value);
   return params;
+}
+
+function namedTemplateValue(name: string, input: WatiNotifyShipment, fallback: string) {
+  const key = name.trim().toLowerCase().replace(/\s+/g, "_");
+  const customer = input.customerName?.trim() || "Customer";
+  const shop = input.shopName?.trim() || "";
+  const order = input.orderNumber?.trim() || "";
+  const tracking = input.trackingNumber?.trim() || input.barcode?.trim() || "";
+  const link = input.trackingUrl?.trim() || "";
+  if (key === "merchant_name" || key === "merchant" || key === "shop_name" || key === "workspace_name") {
+    return shop || fallback;
+  }
+  if (key === "customer_name" || key === "name") return customer || fallback;
+  if (key === "order_number" || key === "order_id") return order || fallback;
+  if (key === "tracking_number" || key === "tracking_id" || key === "barcode") return tracking || fallback;
+  if (key === "tracking_url" || key === "tracking_link" || key === "tracking_url_partial_variable") {
+    return link || fallback;
+  }
+  return fallback;
 }
 
 export function watiShipmentParams(input: WatiNotifyShipment): WatiTemplateParam[] {
@@ -115,6 +137,9 @@ export function watiShipmentParams(input: WatiNotifyShipment): WatiTemplateParam
     ["customer_name", customer],
     ["name", customer],
     ["shop_name", shop],
+    ["merchant_name", shop],
+    ["merchant", shop],
+    ["workspace_name", shop],
     ["order_id", order],
     ["order_number", order],
     ["tracking_number", tracking],

@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { logError } from "@/lib/logger";
 import { persistIndiaPostTokens } from "@/modules/india-post/session";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import {
@@ -6,6 +8,7 @@ import {
   indiaPostMobile,
 } from "@/modules/india-post/endpoints";
 import { cachedOfficeLookup, resolveIndiaPostOrigin } from "@/modules/india-post/origin";
+import { persistLabelPdf } from "@/modules/labels/persist";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 
@@ -131,4 +134,40 @@ export async function fetchOfficialIndiaPostLabelPdf(
   });
 
   return { pdf: preserveOfficialIndiaPostPdf(pdf), shipmentId: String(shipment.id) };
+}
+
+export function indiaPostLabelRequestError(error: unknown) {
+  if (error instanceof AppError) return error;
+  const message = error instanceof Error ? error.message : "India Post label generation failed.";
+  const code = (error as { code?: string }).code;
+  if (code === "VALIDATION_ERROR") return new AppError(ERROR_CODES.VALIDATION_ERROR, message);
+  if (code === "PERMANENT_AUTH_ERROR") {
+    return new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, message);
+  }
+  return new AppError(ERROR_CODES.PROVIDER_ERROR, message);
+}
+
+/** Calls CEPT POST /v1/label/create/domestic and stores the returned PDF. */
+export async function generateAndStoreOfficialIndiaPostLabelPdf(
+  supabase: SupabaseClient,
+  organizationId: string,
+  shipmentId: string
+) {
+  const official = await fetchOfficialIndiaPostLabelPdf(supabase, organizationId, shipmentId);
+  try {
+    const stored = await persistLabelPdf(supabase, {
+      organizationId,
+      shipmentId: official.shipmentId,
+      kind: "INDIA_POST",
+      bytes: official.pdf,
+    });
+    return { ...official, labelId: stored.id };
+  } catch (error) {
+    logError("LABEL_OFFICIAL_SAVE_FAILED", {
+      organizationId,
+      shipmentId: official.shipmentId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+    return { ...official, labelId: null as string | null };
+  }
 }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -9,7 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { VachatSignupLink } from "@/components/integrations/vachat-signup-link";
 import { api } from "@/lib/hooks/use-api";
+
+const VACHAT_BASE_URL = "https://cloud.vachat.in";
 
 type VachatConfig = {
   status?: string;
@@ -21,21 +25,19 @@ type VachatConfig = {
   last_verified_at?: string | null;
   lastError?: string | null;
   last_error?: string | null;
-  platformManaged?: boolean;
 };
 
 export default function VachatIntegrationPage() {
   const queryClient = useQueryClient();
   const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [testPhone, setTestPhone] = useState("918618456029");
+  const [testPhone, setTestPhone] = useState("");
   const query = useQuery({
     queryKey: ["vachat"],
     queryFn: () => api<VachatConfig>("/api/v1/integrations/vachat"),
   });
   const config = query.data;
   const hasKey = Boolean(config?.hasApiKey ?? config?.has_api_key);
-  const platformManaged = Boolean(config?.platformManaged);
+  const baseUrl = config?.apiBaseUrl || config?.api_base_url || VACHAT_BASE_URL;
 
   const save = useMutation({
     mutationFn: () => {
@@ -44,7 +46,7 @@ export default function VachatIntegrationPage() {
         method: "POST",
         body: JSON.stringify({
           apiKey: apiKey.trim() || undefined,
-          apiBaseUrl: baseUrl.trim() || config?.apiBaseUrl || config?.api_base_url,
+          apiBaseUrl: baseUrl,
         }),
       });
     },
@@ -77,41 +79,26 @@ export default function VachatIntegrationPage() {
   });
 
   const sendTest = useMutation({
-    mutationFn: () =>
-      api<{ sent: boolean; to: string; event: string }>("/api/v1/integrations/vachat/send-test", {
+    mutationFn: () => {
+      if (!testPhone.trim()) throw new Error("Enter your WhatsApp number.");
+      return api<{ sent: boolean; to: string; event: string }>("/api/v1/integrations/vachat/send-test", {
         method: "POST",
         body: JSON.stringify({ phone: testPhone }),
-      }),
+      });
+    },
     onSuccess: (result) => {
       toast.success(`Booked test WhatsApp sent to ${result.to}.`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const canSendTest = platformManaged || hasKey;
-
   return (
     <div className="space-y-6">
       <PageHeader
         title="Vachat"
-        description={
-          platformManaged
-            ? "WhatsApp is managed by PostBus. Turn shipment events on or off under Automation."
-            : "Send PostBus shipment WhatsApp notices through Vachat Cloud API. Test Connection only calls GET /api/v1/me."
-        }
+        description="Direct VaChat for this workspace. When connected, PostBus WhatsApp Notifications are paused."
         actions={<StatusBadge value={config?.status ?? "NOT_CONNECTED"} />}
       />
-      {platformManaged ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Managed by PostBus</CardTitle>
-            <CardDescription>
-              Super Admin connected a global VaChat account. This organization cannot paste its own API key
-              while global WhatsApp is enabled. Event toggles stay under Automation.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      ) : (
       <Card>
         <CardHeader>
           <CardTitle>API key</CardTitle>
@@ -122,16 +109,28 @@ export default function VachatIntegrationPage() {
               ? ` Last error: ${config?.lastError ?? config?.last_error}`
               : ""}
           </CardDescription>
+          <VachatSignupLink className="mt-2" />
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="vachat-url">Vachat base URL</Label>
-            <Input
-              id="vachat-url"
-              value={baseUrl || config?.apiBaseUrl || config?.api_base_url || ""}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://cloud.vachat.in"
-            />
+            <div className="flex gap-2">
+              <Input id="vachat-url" readOnly value={baseUrl} className="font-mono text-xs" />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-11"
+                disabled={!baseUrl}
+                onClick={async () => {
+                  await navigator.clipboard.writeText(baseUrl);
+                  toast.success("Vachat base URL copied.");
+                }}
+              >
+                <Copy />
+                Copy
+              </Button>
+            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="vachat-key">{hasKey ? "Replace API key" : "Vachat API key"}</Label>
@@ -161,29 +160,33 @@ export default function VachatIntegrationPage() {
           </div>
         </CardContent>
       </Card>
-      )}
       <Card>
         <CardHeader>
           <CardTitle>Automation test</CardTitle>
           <CardDescription>
-            Send a Booked template to this WhatsApp number through VaChat. Shipment automations still go to the
-            customer on the order.
+            Enter your WhatsApp number and send a Booked test through your VaChat account.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="vachat-test-phone">Test WhatsApp number</Label>
-            <Input
-              id="vachat-test-phone"
-              inputMode="tel"
-              value={testPhone}
-              onChange={(e) => setTestPhone(e.target.value)}
-              placeholder="918618456029"
-            />
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                id="vachat-test-phone"
+                inputMode="tel"
+                value={testPhone}
+                onChange={(e) => setTestPhone(e.target.value)}
+                placeholder="Enter your WhatsApp number"
+              />
+              <Button
+                onClick={() => sendTest.mutate()}
+                disabled={sendTest.isPending || !hasKey || !testPhone.trim()}
+                className="sm:h-11"
+              >
+                {sendTest.isPending ? "Sending…" : "Test"}
+              </Button>
+            </div>
           </div>
-          <Button onClick={() => sendTest.mutate()} disabled={sendTest.isPending || !canSendTest}>
-            {sendTest.isPending ? "Sending…" : "Send booked test"}
-          </Button>
         </CardContent>
       </Card>
     </div>

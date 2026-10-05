@@ -12,9 +12,8 @@ import {
   renderSampleCustomShippingLabel,
   type CustomLabelRequest,
 } from "@/modules/labels/custom-label-service";
-import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
+import { generateAndStoreOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
-import { persistLabelPdf } from "@/modules/labels/persist";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
 import { parseLabelTemplate } from "@/modules/labels/template-schema";
@@ -183,23 +182,24 @@ export async function handleLabelTemplateRoutes(
       .maybeSingle();
     if (!existing) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label not found.");
 
-    const official = await fetchOfficialIndiaPostLabelPdf(supabase, ctx.organizationId, String(existing.shipment_id));
-    const created = await persistLabelPdf(supabase, {
-      organizationId: ctx.organizationId,
-      shipmentId: official.shipmentId,
-      kind: "INDIA_POST",
-      bytes: official.pdf,
-    });
+    const created = await generateAndStoreOfficialIndiaPostLabelPdf(
+      supabase,
+      ctx.organizationId,
+      String(existing.shipment_id)
+    );
+    if (!created.labelId) {
+      throw new AppError(ERROR_CODES.LABEL_GENERATION_FAILED, "Could not save the India Post label.");
+    }
     try {
-      await persistPackingSlip(supabase, ctx.organizationId, official.shipmentId, { replace: true });
+      await persistPackingSlip(supabase, ctx.organizationId, created.shipmentId, { replace: true });
     } catch (error) {
       logError("PACKING_LABEL_FAILED", {
         organizationId: ctx.organizationId,
-        shipmentId: official.shipmentId,
+        shipmentId: created.shipmentId,
         message: error instanceof Error ? error.message : "unknown",
       });
       return {
-        id: created.id,
+        id: created.labelId,
         kind: "INDIA_POST",
         message:
           error instanceof Error
@@ -207,7 +207,11 @@ export async function handleLabelTemplateRoutes(
             : "A new India Post label was generated. Packing slip skipped.",
       };
     }
-    return { id: created.id, kind: "INDIA_POST", message: "A new India Post label and packing slip were generated." };
+    return {
+      id: created.labelId,
+      kind: "INDIA_POST",
+      message: "A new India Post label and packing slip were generated.",
+    };
   }
 
   return null;

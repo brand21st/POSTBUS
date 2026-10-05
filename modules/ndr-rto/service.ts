@@ -103,21 +103,23 @@ async function matchingIds(
   return (data ?? []).map((row) => String(row.id));
 }
 
+function nestedOne<T extends Record<string, unknown>>(value: unknown): T | null {
+  if (!value) return null;
+  if (Array.isArray(value)) return (value[0] as T | undefined) ?? null;
+  if (typeof value === "object") return value as T;
+  return null;
+}
+
 function mapNdrRow(row: Record<string, unknown>) {
-  const order = row.orders as {
+  const order = nestedOne<{
     order_number?: string;
     total_amount?: number | string;
     created_at?: string;
     source_order_id?: string | null;
-  } | null;
-  const customer = row.customers as { name?: string; phone?: string } | null;
-  const address = (Array.isArray(row.addresses) ? row.addresses[0] : row.addresses) as {
-    city?: string;
-    pincode?: string;
-  } | null;
-  const pickup = (Array.isArray(row.pickup_locations) ? row.pickup_locations[0] : row.pickup_locations) as {
-    city?: string;
-  } | null;
+  }>(row.orders);
+  const customer = nestedOne<{ name?: string; phone?: string }>(row.customers);
+  const address = nestedOne<{ city?: string; pincode?: string }>(row.addresses);
+  const pickup = nestedOne<{ city?: string }>(row.pickup_locations);
   return {
     ...row,
     orderId: row.order_id,
@@ -204,10 +206,9 @@ export async function listNdrShipments(supabase: SupabaseClient, ctx: TenantCont
     builder = builder.eq("operational_status", query.bucket);
   }
   if (query.status) builder = builder.eq("status", query.status);
-  const orGroups: string[] = [];
   if (query.event) {
     const eventFilter = orIlike(["last_event_code", "last_event_description"], query.event);
-    if (eventFilter) orGroups.push(eventFilter);
+    if (eventFilter) builder = builder.or(eventFilter);
   }
   if (customerIds) builder = builder.in("customer_id", customerIds);
   if (pincodeAddressIds) builder = builder.in("shipping_address_id", pincodeAddressIds);
@@ -215,7 +216,7 @@ export async function listNdrShipments(supabase: SupabaseClient, ctx: TenantCont
   if (orderIds) builder = builder.in("order_id", orderIds);
   if (query.trackingId) {
     const tracking = orIlike(["barcode", "tracking_number"], query.trackingId);
-    if (tracking) orGroups.push(tracking);
+    if (tracking) builder = builder.or(tracking);
   }
   if (query.from) builder = builder.gte("last_event_at", istInstant(query.from));
   if (query.to) builder = builder.lte("last_event_at", istInstant(query.to, true));
@@ -229,11 +230,7 @@ export async function listNdrShipments(supabase: SupabaseClient, ctx: TenantCont
     if (matchedOrders.length) parts.push(matchedOrders.map((id) => `order_id.eq.${id}`).join(","));
     if (UUID_RE.test(query.q)) parts.push(`id.eq.${query.q}`);
     if (!parts.length) return emptyPage(query);
-    orGroups.push(parts.join(","));
-  }
-  if (orGroups.length === 1) builder = builder.or(orGroups[0]);
-  if (orGroups.length > 1) {
-    builder = builder.or(`and(${orGroups.map((group) => `or(${group})`).join(",")})`);
+    builder = builder.or(parts.join(","));
   }
 
   const { data, error, count } = await builder;
@@ -300,12 +297,13 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
     shipment: snapshotFromShipmentRow(data, ctx.organizationId),
     article,
   });
-  if (ingested.orderStatus && data.order_id) {
+  if (ingested.whatsappEvents.length || ingested.orderStatus) {
     await enqueueTrackingStageSideEffects(supabase, {
       organizationId: ctx.organizationId,
       shipmentId: data.id,
       orderId: data.order_id,
       orderStatus: ingested.orderStatus,
+      events: ingested.whatsappEvents,
     });
   }
   return {

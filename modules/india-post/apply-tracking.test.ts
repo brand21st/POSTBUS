@@ -68,6 +68,7 @@ describe("planTrackingUpdate", () => {
     });
     expect(afterNdr.applyStatus).toBe(true);
     expect(afterNdr.shipmentStatus).toBe("OUT_FOR_DELIVERY");
+    expect(afterNdr.whatsappEvents).toEqual(["in_transit"]);
 
     const delivered = planTrackingUpdate({
       currentStatus: "NDR",
@@ -79,6 +80,64 @@ describe("planTrackingUpdate", () => {
     });
     expect(delivered.orderStatus).toBe("DELIVERED");
     expect(delivered.operationalStatus).toBe("DELIVERED");
+    expect(delivered.whatsappEvents).toEqual(["delivered"]);
+  });
+
+  it("queues in_transit WhatsApp when a booked article first moves", () => {
+    const plan = planTrackingUpdate({
+      currentStatus: "BOOKED",
+      currentOperational: "BOOKED",
+      returnStarted: false,
+      lastEventAt: "2026-09-01T00:00:00.000Z",
+      eventAt: "2026-09-02T00:00:00.000Z",
+      mapped: mapIndiaPostEventToShipmentUpdate({ eventCode: "BAG_CLOSE", eventDescription: "Bag Close" }),
+    });
+    expect(plan.orderStatus).toBe("IN_TRANSIT");
+    expect(plan.whatsappEvents).toEqual(["in_transit"]);
+  });
+
+  it("queues in_transit WhatsApp on first out-for-delivery after the article is already moving", () => {
+    const plan = planTrackingUpdate({
+      currentStatus: "IN_TRANSIT",
+      currentOperational: "IN_TRANSIT",
+      returnStarted: false,
+      lastEventAt: "2026-09-01T00:00:00.000Z",
+      eventAt: "2026-09-02T00:00:00.000Z",
+      mapped: mapIndiaPostEventToShipmentUpdate({ eventCode: "OFD", eventDescription: "Out for delivery" }),
+    });
+    expect(plan.orderStatus).toBeNull();
+    expect(plan.whatsappEvents).toEqual(["in_transit"]);
+  });
+
+  it("does not queue WhatsApp for a later in-transit scan", () => {
+    const plan = planTrackingUpdate({
+      currentStatus: "IN_TRANSIT",
+      currentOperational: "IN_TRANSIT",
+      returnStarted: false,
+      lastEventAt: "2026-09-01T00:00:00.000Z",
+      eventAt: "2026-09-02T00:00:00.000Z",
+      mapped: mapIndiaPostEventToShipmentUpdate({ eventCode: "ITEM_RECEIVED", eventDescription: "Item Received" }),
+    });
+    expect(plan.applyStatus).toBe(true);
+    expect(plan.whatsappEvents).toEqual([]);
+  });
+
+  it("queues shipment_delayed WhatsApp when India Post reports a delay", () => {
+    const mapped = mapIndiaPostEventToShipmentUpdate({
+      eventCode: "ITEM_DELAYED",
+      eventDescription: "Item Delayed",
+    });
+    expect(mapped.delayScan).toBe(true);
+    const plan = planTrackingUpdate({
+      currentStatus: "IN_TRANSIT",
+      currentOperational: "IN_TRANSIT",
+      returnStarted: false,
+      lastEventAt: "2026-09-01T00:00:00.000Z",
+      eventAt: "2026-09-02T00:00:00.000Z",
+      mapped,
+    });
+    expect(plan.whatsappEvents).toEqual(["shipment_delayed"]);
+    expect(plan.applyStatus).toBe(false);
   });
 
   it("does not move status for an older scan", () => {

@@ -9,13 +9,14 @@ import { vachatHeaders, type VachatConnectionRow } from "@/modules/vachat/servic
 import {
   getPlatformVachatConfig,
   isPlatformVachatActive,
+  merchantVachatRowReady,
   resolveVachatSendCredentials,
 } from "@/modules/vachat/platform-config";
 import {
   isPermanentVachatNotifyFailure,
   upsertVachatNotificationLog,
 } from "@/modules/vachat/logs";
-import { vachatAddressParam, vachatAmountParam, vachatSingleLine } from "@/modules/vachat/notice-fields";
+import { vachatAddressParam, vachatAmountParam, vachatMerchantTemplateFields, vachatSingleLine } from "@/modules/vachat/notice-fields";
 
 export const VACHAT_DEFAULT_TEST_PHONE = "918618456029";
 
@@ -44,11 +45,17 @@ export function vachatRecipientE164(raw?: string | null) {
 async function isVachatEventAllowed(
   supabase: SupabaseClient,
   organizationId: string,
-  event: WatiNotifyEvent
+  event: WatiNotifyEvent,
+  orgRow?: VachatConnectionRow | null
 ) {
+  if (merchantVachatRowReady(orgRow)) {
+    return isAutoWatiEventEnabled(supabase, organizationId, event);
+  }
   const platform = await getPlatformVachatConfig();
   if (isPlatformVachatActive(platform)) {
-    return Boolean(platform.eventSettings[event]);
+    if (!platform.eventSettings[event]) return false;
+    if (event === "shipment_delayed") return true;
+    return isAutoWatiEventEnabled(supabase, organizationId, event);
   }
   return isAutoWatiEventEnabled(supabase, organizationId, event);
 }
@@ -104,7 +111,21 @@ export async function sendVachatNotice(
   ids: VachatNotifyIds
 ) {
   const externalRef = vachatExternalRef(event, ids);
-  if (!(await isVachatEventAllowed(supabase, organizationId, event))) {
+  const { isOrgWatiConnected } = await import("@/modules/whatsapp/channel");
+  if (await isOrgWatiConnected(supabase, organizationId)) {
+    await upsertVachatNotificationLog(supabase, {
+      organizationId,
+      orderId: ids.orderId,
+      shipmentId: ids.shipmentId,
+      event,
+      externalRef,
+      status: "skipped",
+      error: "wati_active",
+    });
+    return { skipped: true, reason: "wati_active" };
+  }
+  const connection = await loadOrgVachatRow(supabase, organizationId);
+  if (!(await isVachatEventAllowed(supabase, organizationId, event, connection))) {
     await upsertVachatNotificationLog(supabase, {
       organizationId,
       orderId: ids.orderId,
@@ -116,7 +137,6 @@ export async function sendVachatNotice(
     });
     return { skipped: true, reason: "event_disabled" };
   }
-  const connection = await loadOrgVachatRow(supabase, organizationId);
   const creds = await resolveVachatSendCredentials(organizationId, connection);
   if (!creds) {
     return { skipped: true };
@@ -157,7 +177,7 @@ export async function sendVachatNotice(
       external_ref: externalRef,
       to: phone.startsWith("+") ? phone : `+91${phone.replace(/\D/g, "").slice(-10)}`,
       customer_name: vachatSingleLine(context.customerName) || undefined,
-      shop_name: vachatSingleLine(org?.name) || undefined,
+      ...vachatMerchantTemplateFields(org?.name),
       order_number: vachatSingleLine(context.orderNumber) || undefined,
       amount: vachatAmountParam(context.amount) || undefined,
       delivery_address: vachatAddressParam(context.deliveryAddress) || undefined,
@@ -203,14 +223,7 @@ export async function sendVachatTestNotice(
   input?: { phone?: string | null; event?: string | null; shopName?: string | null }
 ) {
   const connection = await loadOrgVachatRow(supabase, organizationId);
-  const platform = await getPlatformVachatConfig();
-  const creds = platform.apiKey
-    ? {
-        source: "platform" as const,
-        apiKey: platform.apiKey,
-        apiBaseUrl: platform.apiBaseUrl,
-      }
-    : await resolveVachatSendCredentials(organizationId, connection);
+  const creds = await resolveVachatSendCredentials(organizationId, connection);
   if (!creds) {
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Connect VaChat before sending a test WhatsApp.");
   }
@@ -229,7 +242,7 @@ export async function sendVachatTestNotice(
       external_ref: `postbus:test:${event}:${organizationId}:${Date.now()}`,
       to,
       customer_name: "Test customer",
-      shop_name: input?.shopName ?? org?.name ?? "PostBus",
+      ...vachatMerchantTemplateFields(input?.shopName ?? org?.name ?? "PostBus"),
       order_number: "TEST-001",
       amount: "100",
       delivery_address: "Test address, Kochi, Kerala, 682001",
@@ -249,8 +262,12 @@ export async function enqueueVachatNotify(
   event: WatiNotifyEvent,
   ids: VachatNotifyIds
 ) {
-  if (!(await isVachatEventAllowed(supabase, organizationId, event))) return;
+  const { isOrgWatiConnected } = await import("@/modules/whatsapp/channel");
+  if (await isOrgWatiConnected(supabase, organizationId)) return;
   const connection = await loadOrgVachatRow(supabase, organizationId);
+  if (!(await isVachatEventAllowed(supabase, organizationId, event, connection))) return;
+  const { canSendIndiaPostWhatsApp } = await import("@/modules/whatsapp/label-gate");
+  if (!(await canSendIndiaPostWhatsApp(supabase, organizationId, event, ids.shipmentId))) return;
   const creds = await resolveVachatSendCredentials(organizationId, connection);
   if (!creds) return;
   const entityId = ids.shipmentId ?? ids.orderId;

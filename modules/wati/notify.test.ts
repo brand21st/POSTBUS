@@ -23,6 +23,7 @@ describe("watiTemplateForEvent", () => {
     expect(watiTemplateForEvent("processing", templates)).toBe("order_processing");
     expect(watiTemplateForEvent("booked", templates)).toBe("order_booked");
     expect(watiTemplateForEvent("in_transit", templates)).toBeNull();
+    expect(watiTemplateForEvent("shipment_delayed", templates)).toBeNull();
     expect(watiTemplateForEvent("delivered", templates)).toBe("order_delivered");
   });
 });
@@ -87,6 +88,25 @@ describe("watiNotifyRecipient", () => {
 
   it("skips shipments without a WhatsApp number", () => {
     expect(watiNotifyRecipient({ phone: "123" })).toBeNull();
+  });
+
+  it("maps Merchant Name to the workspace shop name", () => {
+    expect(
+      watiTemplateCustomParams(
+        {
+          customerName: "Priya",
+          shopName: "AURIMO BY NISH",
+          orderNumber: "1001",
+        },
+        { customParams: [{ name: "Merchant Name" }, { name: "order_number" }] }
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        { name: "Merchant Name", value: "AURIMO BY NISH" },
+        { name: "merchant_name", value: "AURIMO BY NISH" },
+        { name: "order_number", value: "1001" },
+      ])
+    );
   });
 });
 

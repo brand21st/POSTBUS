@@ -192,7 +192,6 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   const automation = await loadAutomation(supabase, payload.organizationId);
   const { createBackgroundJob } = await import("@/modules/jobs/service");
   const { consumeQuota } = await import("@/modules/billing/usage");
-  const { enqueueWatiNotify } = await import("@/modules/wati/send");
 
   if (outcome.bookedIds.length) {
     await supabase
@@ -275,15 +274,6 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         entityId: shipment.id,
       });
     }
-    await enqueueWatiNotify(supabase, payload.organizationId, "booked", {
-      shipmentId: shipment.id,
-      orderId: shipment.order_id,
-    });
-    const { enqueueVachatNotify } = await import("@/modules/vachat/send");
-    await enqueueVachatNotify(supabase, payload.organizationId, "booked", {
-      shipmentId: shipment.id,
-      orderId: shipment.order_id,
-    });
   });
 }
 
@@ -295,6 +285,38 @@ async function loadAutomation(
     return await getAutomationSettings(supabase, organizationId);
   } catch {
     return mapAutomationSettings({ organization_id: organizationId, ...AUTOMATION_DEFAULTS });
+  }
+}
+
+async function enqueueBookedWhatsAppAfterLabel(
+  supabase: ReturnType<typeof createAdminClient>,
+  organizationId: string,
+  shipmentId: string
+) {
+  const { data: shipment } = await supabase
+    .from("shipments")
+    .select("id, order_id")
+    .eq("id", shipmentId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (!shipment) return;
+  try {
+    const { enqueueWatiNotify } = await import("@/modules/wati/send");
+    await enqueueWatiNotify(supabase, organizationId, "booked", {
+      shipmentId: shipment.id,
+      orderId: shipment.order_id,
+    });
+  } catch {
+    // WhatsApp is optional; the label should still be stored.
+  }
+  try {
+    const { enqueueVachatNotify } = await import("@/modules/vachat/send");
+    await enqueueVachatNotify(supabase, organizationId, "booked", {
+      shipmentId: shipment.id,
+      orderId: shipment.order_id,
+    });
+  } catch {
+    // Vachat is optional; the label should still be stored.
   }
 }
 
@@ -322,6 +344,7 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
         message: error instanceof Error ? error.message : "unknown",
       });
     }
+    await enqueueBookedWhatsAppAfterLabel(supabase, payload.organizationId, payload.entityId);
     return;
   }
 
@@ -372,6 +395,7 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
       entityId: officialPdf.shipmentId,
     });
   }
+  await enqueueBookedWhatsAppAfterLabel(supabase, payload.organizationId, officialPdf.shipmentId);
 }
 
 async function generateManifest(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
@@ -527,12 +551,13 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
       shipment: snapshotFromShipmentRow(shipment, payload.organizationId),
       article,
     });
-    if (ingested.orderStatus && shipment.order_id) {
+    if (ingested.whatsappEvents.length || ingested.orderStatus) {
       await enqueueTrackingStageSideEffects(supabase, {
         organizationId: payload.organizationId,
         shipmentId: shipment.id,
         orderId: shipment.order_id,
         orderStatus: ingested.orderStatus,
+        events: ingested.whatsappEvents,
       });
     }
   }

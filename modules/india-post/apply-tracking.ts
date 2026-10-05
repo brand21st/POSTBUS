@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { mapIndiaPostEventToShipmentUpdate, planTrackingUpdate } from "@/modules/india-post/event-mapper";
+import { mapIndiaPostEventToShipmentUpdate, planTrackingUpdate, type TrackingWhatsAppEvent } from "@/modules/india-post/event-mapper";
 
 export const TRACKING_POLL_STATUSES = [
   "BOOKED",
@@ -30,6 +30,7 @@ export type ApplyTrackingResult = {
   shipmentStatus: string | null;
   operationalStatus: string | null;
   snapshot: ShipmentTrackingSnapshot;
+  whatsappEvents: TrackingWhatsAppEvent[];
 };
 
 export type BulkTrackingArticle = {
@@ -200,6 +201,7 @@ export async function applyIndiaPostTracking(
     shipmentStatus: next.status,
     operationalStatus: next.operationalStatus,
     snapshot: next,
+    whatsappEvents: plan.whatsappEvents,
   };
 }
 
@@ -216,6 +218,7 @@ export async function ingestBulkTrackingArticle(
   });
   let snapshot = input.shipment;
   let orderStatus: "IN_TRANSIT" | "DELIVERED" | null = null;
+  const whatsappEvents: TrackingWhatsAppEvent[] = [];
 
   for (const event of details) {
     const result = await applyIndiaPostTracking(supabase, snapshot, {
@@ -229,6 +232,9 @@ export async function ingestBulkTrackingArticle(
     });
     snapshot = result.snapshot;
     if (result.orderStatus) orderStatus = result.orderStatus;
+    for (const notify of result.whatsappEvents) {
+      if (!whatsappEvents.includes(notify)) whatsappEvents.push(notify);
+    }
   }
 
   const deliveredFlag = input.article.del_status?.del_status?.toLowerCase() === "delivered";
@@ -245,6 +251,9 @@ export async function ingestBulkTrackingArticle(
     });
     snapshot = result.snapshot;
     if (result.orderStatus) orderStatus = result.orderStatus;
+    for (const notify of result.whatsappEvents) {
+      if (!whatsappEvents.includes(notify)) whatsappEvents.push(notify);
+    }
   } else if (!details.length) {
     await supabase
       .from("shipments")
@@ -253,5 +262,5 @@ export async function ingestBulkTrackingArticle(
       .eq("organization_id", input.organizationId);
   }
 
-  return { snapshot, orderStatus };
+  return { snapshot, orderStatus, whatsappEvents };
 }
