@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
-import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import {
@@ -63,8 +62,6 @@ import {
   asPaginated,
   customerName,
   customerPhone,
-  firstLineItemImage,
-  lineItems,
   itemCount,
   itemNamesPreview,
   itemSummary,
@@ -462,7 +459,7 @@ export default function OrdersPage() {
     {
       id: "customer",
       header: "Customer",
-      className: "min-w-0",
+      className: "w-[11rem]",
       cell: (row) => {
         const phone = customerPhone(row);
         return (
@@ -478,21 +475,19 @@ export default function OrdersPage() {
           {
             id: "items",
             header: "Items",
-            className: "min-w-0",
+            className: "min-w-0 whitespace-normal",
             cell: (row: OrderRecord) => {
               const summary = itemSummary(row);
               if (summary === "—") return "—";
               const count = itemCount(row);
               const preview = itemNamesPreview(row);
-              const thumbTitle = lineItems(row)[0]?.title ?? preview;
               return (
-                <div className="flex min-w-0 max-w-full items-center gap-1.5" title={summary}>
-                  <LineItemThumb className="size-7" title={thumbTitle} imageUrl={firstLineItemImage(row)} />
-                  <div className="min-w-0">
-                    <p className="font-medium text-ink">{count === 1 ? "1 item" : `${count} items`}</p>
-                    <p className="truncate text-[11px] text-muted">{preview}</p>
-                  </div>
-                </div>
+                <p className="line-clamp-2 min-w-0 break-words text-[12px] leading-snug" title={summary}>
+                  <span className="font-medium text-ink">
+                    {count === 1 ? "1 item" : `${count} items`}
+                  </span>
+                  {preview ? <span className="text-muted"> · {preview}</span> : null}
+                </p>
               );
             },
           } satisfies DataTableColumn<OrderRecord>,
