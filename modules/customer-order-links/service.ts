@@ -13,6 +13,10 @@ import {
   customerOrderWorkspaceSlug,
   type ConfirmCustomerOrderLinkInput,
 } from "@/modules/customer-order-links/schema";
+import {
+  hashedCustomerOrderPublicId,
+  isCustomerOrderPublicId,
+} from "@/modules/customer-order-links/public-id";
 
 const LINK_SELECT =
   "id, organization_id, status, expires_at, public_workspace, public_code, customer_name, phone, line1, line2, city, state, pincode, opened_at, submitted_at, confirmed_at, disabled_at, order_id, created_at, updated_at";
@@ -40,8 +44,22 @@ type LinkRow = {
   updated_at: string;
 };
 
-function publicLinkUrl(workspace: string) {
-  return `${env.appUrl.replace(/\/$/, "")}${customerOrderLinkPath(workspace)}`;
+function publicLinkUrl(workspace: string, publicId: string) {
+  return `${env.appUrl.replace(/\/$/, "")}${customerOrderLinkPath(workspace, publicId)}`;
+}
+
+async function uniquePublicCode(supabase: SupabaseClient, organizationId: string) {
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const code = hashedCustomerOrderPublicId(organizationId, attempt);
+    const { data } = await supabase
+      .from("customer_order_links")
+      .select("id, organization_id")
+      .eq("public_code", code)
+      .limit(1)
+      .maybeSingle();
+    if (!data || data.organization_id === organizationId) return code;
+  }
+  throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Could not allocate a public order link id.");
 }
 
 async function uniqueWorkspace(
@@ -75,10 +93,21 @@ export async function getMerchantCollectionLink(supabase: SupabaseClient, ctx: T
     .maybeSingle();
 
   if (existing?.public_workspace) {
+    const workspace = existing.public_workspace as string;
+    const publicId = isCustomerOrderPublicId(existing.public_code as string | null)
+      ? (existing.public_code as string)
+      : await uniquePublicCode(supabase, ctx.organizationId);
+    if (publicId !== existing.public_code) {
+      await supabase
+        .from("customer_order_links")
+        .update({ public_code: publicId })
+        .eq("id", existing.id);
+    }
     return {
       id: existing.id as string,
-      slug: existing.public_workspace as string,
-      url: publicLinkUrl(existing.public_workspace as string),
+      slug: workspace,
+      publicId,
+      url: publicLinkUrl(workspace, publicId),
       status: "ACTIVE" as const,
     };
   }
@@ -98,17 +127,26 @@ export async function getMerchantCollectionLink(supabase: SupabaseClient, ctx: T
     )
   );
 
+  const publicId = await uniquePublicCode(supabase, ctx.organizationId);
+
   if (existing) {
     await supabase
       .from("customer_order_links")
       .update({
         status: "ACTIVE",
         public_workspace: workspace,
+        public_code: publicId,
         expires_at: null,
         disabled_at: null,
       })
       .eq("id", existing.id);
-    return { id: existing.id as string, slug: workspace, url: publicLinkUrl(workspace), status: "ACTIVE" as const };
+    return {
+      id: existing.id as string,
+      slug: workspace,
+      publicId,
+      url: publicLinkUrl(workspace, publicId),
+      status: "ACTIVE" as const,
+    };
   }
 
   const id = randomUUID();
@@ -121,7 +159,7 @@ export async function getMerchantCollectionLink(supabase: SupabaseClient, ctx: T
       created_by: ctx.userId,
       token_hash: hashSecret(token.toLowerCase()),
       public_workspace: workspace,
-      public_code: id.replace(/-/g, "").slice(0, 4).toLowerCase(),
+      public_code: publicId,
       status: "ACTIVE",
       expires_at: null,
     })
@@ -140,7 +178,13 @@ export async function getMerchantCollectionLink(supabase: SupabaseClient, ctx: T
     entity_id: data.id,
   });
 
-  return { id: data.id as string, slug: workspace, url: publicLinkUrl(workspace), status: "ACTIVE" as const };
+  return {
+    id: data.id as string,
+    slug: workspace,
+    publicId,
+    url: publicLinkUrl(workspace, publicId),
+    status: "ACTIVE" as const,
+  };
 }
 
 export async function listWhatsAppPendingOrders(supabase: SupabaseClient, ctx: TenantContext) {

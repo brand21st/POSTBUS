@@ -1,4 +1,5 @@
 import { ShopifyLogo } from "@/components/brand/shopify-logo";
+import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
 import { Badge } from "@/components/ui/badge";
 import { titleCase } from "@/lib/format";
 
@@ -89,6 +90,9 @@ export function StatusBadge({ value }: { value?: string | null }) {
   if (key === "SHOPIFY") {
     return <ShopifyLogo />;
   }
+  if (key === "WHATSAPP") {
+    return <WhatsAppLogo />;
+  }
   const variant = SUCCESS.has(key)
     ? "success"
     : WARNING.has(key)
@@ -116,9 +120,7 @@ export function StatusBadge({ value }: { value?: string | null }) {
           ? "Printed"
           : key === "LABEL_PENDING"
             ? "Generating label"
-            : key === "WHATSAPP"
-              ? "WhatsApp Order"
-              : titleCase(value)}
+            : titleCase(value)}
     </Badge>
   );
 }

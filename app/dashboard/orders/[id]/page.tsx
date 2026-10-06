@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
+import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -201,7 +202,19 @@ export default function OrderDetailPage() {
               label="Fulfillment"
               value={<StatusBadge value={record.fulfillmentStatus ?? record.fulfillment_status} />}
             />
-            <Row label="Source" value={<StatusBadge value={record.source} />} />
+            <Row
+              label="Source"
+              value={
+                String(record.source ?? "").toUpperCase() === "WHATSAPP" ? (
+                  <span className="inline-flex items-center gap-2">
+                    <WhatsAppLogo />
+                    WhatsApp Order
+                  </span>
+                ) : (
+                  <StatusBadge value={record.source} />
+                )
+              }
+            />
             <Row
               label="Total"
               value={formatCurrency(record.totalAmount ?? record.total_amount, record.currency)}

@@ -13,6 +13,7 @@ import {
   parseCustomerOrderLinkParts,
   submitCustomerOrderLinkSchema,
 } from "@/modules/customer-order-links/schema";
+import { hashedCustomerOrderPublicId } from "@/modules/customer-order-links/public-id";
 import {
   confirmLegacyCustomerOrderLink,
   getMerchantCollectionLink,
@@ -71,13 +72,19 @@ const activeLink = {
   status: "ACTIVE",
   expires_at: null,
   public_workspace: "merchant-a",
-  public_code: "abcd",
+  public_code: "4821",
 };
 
 describe("customer order link schemas", () => {
   it("builds a permanent merchant path", () => {
-    expect(customerOrderLinkPath("priya-stores", "0081")).toBe("/order/priya-stores");
+    expect(customerOrderLinkPath("zoura-parfums", "1234")).toBe(
+      "/order/1234/zoura-parfums/WhatsApp-order-form"
+    );
     expect(parseCustomerOrderLinkParts(["merchant-a"])).toEqual({ workspace: "merchant-a" });
+    expect(parseCustomerOrderLinkParts(["1234", "zoura-parfums", "WhatsApp-order-form"])).toEqual({
+      workspace: "zoura-parfums",
+      publicId: "1234",
+    });
     expect(parseCustomerOrderLinkParts(["Priya-Stores", "0081", "whatsapp-order-form"])).toEqual({
       workspace: "priya-stores",
       publicId: "0081",
@@ -110,9 +117,10 @@ describe("getMerchantCollectionLink", () => {
     expect(result).toMatchObject({
       id: "link-1",
       slug: "merchant-a",
+      publicId: "4821",
       status: "ACTIVE",
     });
-    expect(result.url).toMatch(/\/order\/merchant-a$/);
+    expect(result.url).toMatch(/\/order\/4821\/merchant-a\/WhatsApp-order-form$/);
   });
 
   it("creates one ACTIVE link when the merchant has none", async () => {
@@ -138,8 +146,11 @@ describe("getMerchantCollectionLink", () => {
     const result = await getMerchantCollectionLink(client as never, ctx);
     expect(inserted?.status).toBe("ACTIVE");
     expect(inserted?.public_workspace).toBe("priya-stores");
+    expect(inserted?.public_code).toBe(hashedCustomerOrderPublicId("org-1"));
     expect(inserted?.expires_at).toBeNull();
-    expect(result.url).toMatch(/\/order\/priya-stores$/);
+    expect(result.url).toMatch(
+      new RegExp(`/order/${hashedCustomerOrderPublicId("org-1")}/priya-stores/WhatsApp-order-form$`)
+    );
   });
 });
 

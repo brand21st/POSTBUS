@@ -82,7 +82,11 @@ async function findByPath(supabase: SupabaseClient, workspace: string, publicId?
     .limit(1)
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-  if (data) return data as PublicLinkRow;
+  if (data) {
+    const row = data as PublicLinkRow;
+    if (publicId && row.public_code && row.public_code !== publicId) return null;
+    return row;
+  }
 
   let builder = supabase.from("customer_order_links").select(LINK_COLS).eq("public_workspace", workspace);
   if (publicId) builder = builder.eq("public_code", publicId);

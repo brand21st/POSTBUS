@@ -10,8 +10,9 @@ export function normalizeCustomerOrderLinkToken(token: string) {
 }
 
 export const CUSTOMER_ORDER_WORKSPACE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-export const CUSTOMER_ORDER_PUBLIC_ID = /^[a-f0-9]{4}$/i;
+export const CUSTOMER_ORDER_PUBLIC_ID = /^\d{4}$/;
 export const WHATSAPP_ORDER_FORM_SLUG = "whatsapp-order-form";
+export const WHATSAPP_ORDER_FORM_PATH = "WhatsApp-order-form";
 
 export function customerOrderWorkspaceSlug(name: string, slug?: string | null) {
   const fromName = name
@@ -28,12 +29,8 @@ export function customerOrderWorkspaceSlug(name: string, slug?: string | null) {
   return "workspace";
 }
 
-export function customerOrderLinkPublicId(id: string) {
-  return id.replace(/-/g, "").slice(0, 4).toLowerCase();
-}
-
-export function customerOrderLinkPath(workspace: string, _publicId?: string) {
-  return `/order/${workspace}`;
+export function customerOrderLinkPath(workspace: string, publicId: string) {
+  return `/order/${publicId}/${workspace}/${WHATSAPP_ORDER_FORM_PATH}`;
 }
 
 export function parseCustomerOrderLinkParts(parts: string[]) {
@@ -46,17 +43,27 @@ export function parseCustomerOrderLinkParts(parts: string[]) {
     return { workspace: value.toLowerCase() };
   }
   if (segments.length === 2) {
-    return { workspace: segments[0].toLowerCase(), token: segments[1] };
+    const [first, second] = segments;
+    if (CUSTOMER_ORDER_PUBLIC_ID.test(first) && CUSTOMER_ORDER_WORKSPACE.test(second.toLowerCase())) {
+      return { publicId: first, workspace: second.toLowerCase() };
+    }
+    return { workspace: first.toLowerCase(), token: second };
   }
   if (segments.length === 3) {
-    const [workspace, publicId, last] = segments;
+    const [first, second, last] = segments;
     const slug = last.toLowerCase();
     if (slug === WHATSAPP_ORDER_FORM_SLUG) {
-      return { workspace: workspace.toLowerCase(), publicId: publicId.toLowerCase() };
+      if (CUSTOMER_ORDER_PUBLIC_ID.test(first)) {
+        return { publicId: first, workspace: second.toLowerCase() };
+      }
+      if (CUSTOMER_ORDER_PUBLIC_ID.test(second)) {
+        return { workspace: first.toLowerCase(), publicId: second };
+      }
+      return { workspace: first.toLowerCase(), publicId: second.toLowerCase() };
     }
     return {
-      workspace: workspace.toLowerCase(),
-      publicId: publicId.toLowerCase(),
+      workspace: first.toLowerCase(),
+      publicId: second.toLowerCase(),
       token: last,
     };
   }

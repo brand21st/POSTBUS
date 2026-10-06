@@ -18,6 +18,7 @@ import { api } from "@/lib/hooks/use-api";
 type MerchantLink = {
   id: string;
   slug: string;
+  publicId?: string;
   url: string;
   status: "ACTIVE";
 };
