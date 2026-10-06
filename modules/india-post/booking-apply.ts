@@ -1,5 +1,5 @@
 import { indiaPostAcceptedArticleId } from "@/modules/india-post/barcode";
-import { indiaPostArticleErrorText } from "@/modules/india-post/error-text";
+import { indiaPostArticleErrorText, isIndiaPostDuplicateArticleMessage } from "@/modules/india-post/error-text";
 
 export type IndiaPostBookingResponse = {
   success?: boolean;
@@ -18,7 +18,7 @@ export type IndiaPostBookingResponse = {
 };
 
 export function splitIndiaPostBookingResult(result: IndiaPostBookingResponse | null | undefined) {
-  const valid = new Map<string, { barcode: string; tariff?: number; articleId: string }>();
+  const valid = new Map<string, { barcode: string; tariff?: number; articleId: string; duplicate?: boolean }>();
   const failed = new Map<string, string>();
   for (const article of result?.valid_articles ?? []) {
     const barcode = String(article.barcode_no ?? "").toUpperCase();
@@ -32,7 +32,16 @@ export function splitIndiaPostBookingResult(result: IndiaPostBookingResponse | n
   for (const article of result?.error_articles ?? []) {
     const barcode = String(article.barcode_no ?? "").toUpperCase();
     const message = indiaPostArticleErrorText(article.errors);
-    if (barcode) failed.set(barcode, message);
+    if (!barcode) continue;
+    if (isIndiaPostDuplicateArticleMessage(message)) {
+      valid.set(barcode, {
+        barcode,
+        articleId: indiaPostAcceptedArticleId(article, barcode),
+        duplicate: true,
+      });
+      continue;
+    }
+    failed.set(barcode, message);
   }
   return {
     batchId: result?.batch_id ?? null,

@@ -5,27 +5,137 @@ import { assertValidatedArticle } from "@/modules/india-post/article-validator";
 import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/modules/india-post/parcel-defaults";
 import { indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
 import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
-import { splitIndiaPostBookingResult } from "@/modules/india-post/booking-apply";
+import { splitIndiaPostBookingResult, type IndiaPostBookingResponse } from "@/modules/india-post/booking-apply";
 import { indiaPostMobile } from "@/modules/india-post/endpoints";
-import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import {
+  BOOKING_CLAIMABLE_STATUSES,
+  barcodeLogRef,
+  isAuthoritativeIndiaPostBooking,
+  isIndiaPostBookingUnknown,
+  isIndiaPostDuplicateArticleMessage,
+  shipmentBarcode,
+  trackingHasArticle,
+} from "@/modules/india-post/booking-idempotency";
 import { cachedOfficeLookup, resolveIndiaPostOrigin } from "@/modules/india-post/origin";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { persistIndiaPostTokens } from "@/modules/india-post/session";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
+import { logInfo, logError } from "@/lib/logger";
 
 type Admin = SupabaseClient;
+
+function isRetryableCeptUncertainty(error: unknown) {
+  const anyError = error as { name?: string; code?: string; message?: string };
+  return (
+    anyError?.name === "AbortError" ||
+    anyError?.name === "TimeoutError" ||
+    anyError?.code === "ABORT_ERR" ||
+    anyError?.code === "ETIMEDOUT" ||
+    /timeout|network|econn/i.test(String(anyError?.message ?? ""))
+  );
+}
 
 export async function markShipmentBookingFailed(
   supabase: Admin,
   shipmentId: string,
   message: string,
-  code = "VALIDATION_ERROR"
+  code = "VALIDATION_ERROR",
+  organizationId?: string
 ) {
-  await supabase
+  let query = supabase
     .from("shipments")
     .update({ status: "FAILED", last_error: message, last_error_code: code })
-    .eq("id", shipmentId);
+    .eq("id", shipmentId)
+    .is("booked_at", null)
+    .in("status", [...BOOKING_CLAIMABLE_STATUSES, "BOOKING"]);
+  if (organizationId) query = query.eq("organization_id", organizationId);
+  await query;
+}
+
+async function persistBookedShipment(
+  supabase: Admin,
+  input: {
+    organizationId: string;
+    shipmentId: string;
+    orderId?: string | null;
+    barcode: string;
+    articleId: string;
+    tariff?: number | null;
+    batchId?: string | null;
+    correlationId?: string | null;
+    bookedAt?: string | null;
+    persistDefaults?: { dims: boolean; weight: boolean };
+    payload?: Record<string, string | number>;
+  }
+) {
+  const bookedAt = input.bookedAt || new Date().toISOString();
+  const { data, error } = await supabase
+    .from("shipments")
+    .update({
+      status: "BOOKED",
+      tracking_number: input.articleId,
+      barcode: input.articleId || input.barcode,
+      tariff_amount: input.tariff ?? null,
+      provider_ref: input.batchId ?? null,
+      correlation_id: input.correlationId ?? null,
+      booked_at: bookedAt,
+      last_error: null,
+      last_error_code: null,
+      ...(input.persistDefaults?.dims && input.payload
+        ? {
+            length_cm: input.payload.length,
+            width_cm: input.payload.breadth_diameter,
+            height_cm: input.payload.height,
+          }
+        : {}),
+      ...(input.persistDefaults?.weight && input.payload
+        ? { weight_grams: input.payload.physical_weight }
+        : {}),
+    })
+    .eq("id", input.shipmentId)
+    .eq("organization_id", input.organizationId)
+    .in("status", ["BOOKING", "FAILED", "QUEUED", "VALIDATING", "DRAFT", "BOOKED"])
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    logInfo("booking.persistence_conflict", {
+      organizationId: input.organizationId,
+      shipmentId: input.shipmentId,
+      barcodeRef: barcodeLogRef(input.barcode),
+    });
+    return false;
+  }
+  if (input.orderId) {
+    await supabase.from("orders").update({ status: "BOOKED" }).eq("id", input.orderId);
+  }
+  logInfo("booking.persistence_success", {
+    organizationId: input.organizationId,
+    shipmentId: input.shipmentId,
+    barcodeRef: barcodeLogRef(input.barcode),
+  });
+  return true;
+}
+
+async function claimShipmentForBooking(
+  supabase: Admin,
+  input: { organizationId: string; shipmentId: string; barcode?: string | null }
+) {
+  const barcode = shipmentBarcode(input.barcode) || null;
+  const patch: Record<string, unknown> = { status: "BOOKING" };
+  if (barcode) patch.barcode = barcode;
+  const { data, error } = await supabase
+    .from("shipments")
+    .update(patch)
+    .eq("id", input.shipmentId)
+    .eq("organization_id", input.organizationId)
+    .in("status", [...BOOKING_CLAIMABLE_STATUSES])
+    .is("booked_at", null)
+    .select("id, barcode, status, booked_at")
+    .maybeSingle();
+  if (error) throw error;
+  return data as { id: string; barcode: string | null; status: string; booked_at: string | null } | null;
 }
 
 export async function runIndiaPostBooking(
@@ -33,6 +143,7 @@ export async function runIndiaPostBooking(
   input: {
     organizationId: string;
     shipmentIds: string[];
+    jobId?: string;
   }
 ) {
   const { data: connection } = await supabase
@@ -53,9 +164,37 @@ export async function runIndiaPostBooking(
     throw Object.assign(new Error("Shipment not found."), { code: "VALIDATION_ERROR" });
   }
 
-  const alreadyBooked = shipments.filter((row) => isIndiaPostAcceptedStatus(row.status) && row.barcode);
-  const pending = shipments.filter((row) => !isIndiaPostAcceptedStatus(row.status));
-  if (!pending.length) return { booked: alreadyBooked.length, failed: 0, bookedIds: [], failedIds: [] };
+  const alreadyBooked = shipments.filter((row) => isAuthoritativeIndiaPostBooking(row));
+  const unknown = shipments.filter((row) => isIndiaPostBookingUnknown(row));
+  const pending = shipments.filter(
+    (row) => !isAuthoritativeIndiaPostBooking(row) && !isIndiaPostBookingUnknown(row)
+  );
+  const bookedIds: string[] = alreadyBooked.map((row) => row.id);
+  const failedIds: string[] = [];
+
+  for (const row of alreadyBooked) {
+    logInfo("booking.already_booked", {
+      organizationId: input.organizationId,
+      shipmentId: row.id,
+      jobId: input.jobId,
+      barcodeRef: barcodeLogRef(row.barcode || row.tracking_number),
+      status: row.status,
+    });
+    if (String(row.status).toUpperCase() === "FAILED" && row.booked_at) {
+      await persistBookedShipment(supabase, {
+        organizationId: input.organizationId,
+        shipmentId: row.id,
+        orderId: row.order_id,
+        barcode: shipmentBarcode(row.barcode || row.tracking_number),
+        articleId: shipmentBarcode(row.tracking_number || row.barcode),
+        bookedAt: row.booked_at,
+      });
+    }
+  }
+
+  if (!pending.length && !unknown.length) {
+    return { booked: bookedIds.length, failed: 0, bookedIds, failedIds, prepared: [], result: null };
+  }
 
   const { data: pickup } = await supabase
     .from("pickup_locations")
@@ -87,6 +226,46 @@ export async function runIndiaPostBooking(
 
   const provider = indiaPostFromRow(connection);
   const offices = cachedOfficeLookup(provider);
+
+  for (const row of unknown) {
+    const barcode = shipmentBarcode(row.barcode);
+    logInfo("booking.cept_unknown", {
+      organizationId: input.organizationId,
+      shipmentId: row.id,
+      jobId: input.jobId,
+      barcodeRef: barcodeLogRef(barcode),
+    });
+    let recovered = false;
+    if (typeof provider.trackShipment === "function" && barcode) {
+      try {
+        const tracked = await provider.trackShipment([barcode]);
+        if (trackingHasArticle(tracked, barcode)) {
+          recovered = await persistBookedShipment(supabase, {
+            organizationId: input.organizationId,
+            shipmentId: row.id,
+            orderId: row.order_id,
+            barcode,
+            articleId: barcode,
+            bookedAt: row.booked_at,
+          });
+        }
+      } catch {
+        recovered = false;
+      }
+    }
+    if (recovered) {
+      bookedIds.push(row.id);
+    } else {
+      throw Object.assign(new Error("India Post booking result is unknown. The article was not submitted again."), {
+        code: "ETIMEDOUT",
+      });
+    }
+  }
+
+  if (!pending.length) {
+    return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared: [], result: null };
+  }
+
   const session = await provider.ensureSession();
   if (!session.reused && session.tokens) {
     await persistIndiaPostTokens(supabase, connection, session.tokens);
@@ -104,21 +283,41 @@ export async function runIndiaPostBooking(
     const contractId = contractByService.get(serviceCode) || connection.contract_id;
     if (!contractId) {
       const message = `No India Post contract is set for ${serviceCode}. Add it on the India Post integration page.`;
-      await markShipmentBookingFailed(supabase, shipment.id, message, "INVALID_CONTRACT");
+      await markShipmentBookingFailed(supabase, shipment.id, message, "INVALID_CONTRACT", input.organizationId);
       throw Object.assign(new Error(message), { code: "INVALID_CONTRACT" });
     }
 
-    let barcode = String(shipment.barcode ?? "").trim().toUpperCase();
+    let barcode = shipmentBarcode(shipment.barcode);
     if (!barcode) {
       barcode = await allocateNextBarcode(supabase, {
         organizationId: input.organizationId,
         serviceCode,
         environment: connection.environment,
       });
-      await supabase.from("shipments").update({ status: "BOOKING", barcode }).eq("id", shipment.id);
-    } else if (shipment.status !== "BOOKING") {
-      await supabase.from("shipments").update({ status: "BOOKING" }).eq("id", shipment.id);
     }
+
+    const claimed = await claimShipmentForBooking(supabase, {
+      organizationId: input.organizationId,
+      shipmentId: shipment.id,
+      barcode,
+    });
+    logInfo("booking.claimed", {
+      organizationId: input.organizationId,
+      shipmentId: shipment.id,
+      jobId: input.jobId,
+      barcodeRef: barcodeLogRef(barcode),
+      claimed: Boolean(claimed),
+    });
+    if (!claimed) {
+      logInfo("booking.guard", {
+        organizationId: input.organizationId,
+        shipmentId: shipment.id,
+        jobId: input.jobId,
+        barcodeRef: barcodeLogRef(barcode),
+      });
+      continue;
+    }
+    barcode = shipmentBarcode(claimed.barcode) || barcode;
 
     const address = shipment.addresses as {
       name?: string;
@@ -198,16 +397,18 @@ export async function runIndiaPostBooking(
     } catch (error) {
       const message = error instanceof Error ? error.message : "Validation failed.";
       const code = String((error as { code?: string })?.code || "VALIDATION_ERROR");
-      await markShipmentBookingFailed(supabase, shipment.id, message, code);
+      await markShipmentBookingFailed(supabase, shipment.id, message, code, input.organizationId);
       if (pending.length === 1) throw Object.assign(new Error(message), { code });
     }
   }
 
   if (!prepared.length) {
+    if (bookedIds.length) {
+      return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result: null };
+    }
     throw Object.assign(new Error("No articles passed validation."), { code: "VALIDATION_ERROR" });
   }
 
-  const { logInfo } = await import("@/lib/logger");
   for (const item of prepared) {
     const orderData = item.shipment.orders as { id?: string; source?: string } | null;
     logInfo("india_post.booking.dispatch", {
@@ -227,57 +428,120 @@ export async function runIndiaPostBooking(
   const transport = indiaPostBookingTransport(prepared.length);
   const articles = prepared.map((item) => item.payload);
   const { timed } = await import("@/lib/jobs/timing");
-  const result = await timed(
-    "india_post.book",
-    {
-      organizationId: input.organizationId,
-      articleCount: articles.length,
-      transport,
-    },
-    () =>
-      transport === "file"
-        ? provider.bookShipmentFile(articles)
-        : provider.bookShipment({ articles })
-  );
-  const split = splitIndiaPostBookingResult(result);
-  const bookedIds: string[] = [];
-  const failedIds: string[] = [];
+  logInfo("booking.cept_call", {
+    organizationId: input.organizationId,
+    jobId: input.jobId,
+    articleCount: articles.length,
+    transport,
+    shipmentId: prepared[0]?.shipment.id,
+  });
+  let result: IndiaPostBookingResponse | null = null;
+  try {
+    result = (await timed(
+      "india_post.book",
+      {
+        organizationId: input.organizationId,
+        articleCount: articles.length,
+        transport,
+      },
+      () =>
+        transport === "file"
+          ? provider.bookShipmentFile(articles)
+          : provider.bookShipment({ articles })
+    )) as IndiaPostBookingResponse;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "India Post booking failed.";
+    if (isIndiaPostDuplicateArticleMessage(message)) {
+      logInfo("booking.duplicate_response", {
+        organizationId: input.organizationId,
+        jobId: input.jobId,
+        shipmentId: prepared[0]?.shipment.id,
+        barcodeRef: barcodeLogRef(prepared[0]?.barcode),
+      });
+      for (const item of prepared) {
+        bookedIds.push(item.shipment.id);
+        await persistBookedShipment(supabase, {
+          organizationId: input.organizationId,
+          shipmentId: item.shipment.id,
+          orderId: item.shipment.order_id,
+          barcode: item.barcode,
+          articleId: item.barcode,
+          persistDefaults: item.persistDefaults,
+          payload: item.payload,
+        });
+      }
+      logInfo("booking.cept_success", {
+        organizationId: input.organizationId,
+        duplicate: true,
+        booked: bookedIds.length,
+      });
+      return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result: null };
+    }
+    if (isRetryableCeptUncertainty(error)) {
+      logError("booking.cept_unknown", {
+        organizationId: input.organizationId,
+        jobId: input.jobId,
+        shipmentId: prepared.map((item) => item.shipment.id),
+        message,
+      });
+      throw Object.assign(new Error("India Post booking timed out after the request was sent. The article was not submitted again."), {
+        code: "ETIMEDOUT",
+      });
+    }
+    throw error;
+  }
 
-  const bookedAt = new Date().toISOString();
+  const split = splitIndiaPostBookingResult(result);
+  logInfo("booking.cept_success", {
+    organizationId: input.organizationId,
+    jobId: input.jobId,
+    valid: split.valid.size,
+    failed: split.failed.size,
+  });
+
   await Promise.all(
     prepared.map(async (item) => {
       const key = item.barcode.toUpperCase();
       const ok = split.valid.get(key);
       if (ok) {
+        if (ok.duplicate) {
+          logInfo("booking.duplicate_response", {
+            organizationId: input.organizationId,
+            shipmentId: item.shipment.id,
+            barcodeRef: barcodeLogRef(item.barcode),
+          });
+        }
         bookedIds.push(item.shipment.id);
-        await supabase
-          .from("shipments")
-          .update({
-            status: "BOOKED",
-            tracking_number: ok.articleId,
-            barcode: ok.articleId,
-            tariff_amount: ok.tariff ?? null,
-            provider_ref: split.batchId,
-            correlation_id: split.correlationId,
-            booked_at: bookedAt,
-            last_error: null,
-            last_error_code: null,
-            ...(item.persistDefaults.dims
-              ? {
-                  length_cm: item.payload.length,
-                  width_cm: item.payload.breadth_diameter,
-                  height_cm: item.payload.height,
-                }
-              : {}),
-            ...(item.persistDefaults.weight ? { weight_grams: item.payload.physical_weight } : {}),
-          })
-          .eq("id", item.shipment.id);
-        await supabase.from("orders").update({ status: "BOOKED" }).eq("id", item.shipment.order_id);
+        await persistBookedShipment(supabase, {
+          organizationId: input.organizationId,
+          shipmentId: item.shipment.id,
+          orderId: item.shipment.order_id,
+          barcode: item.barcode,
+          articleId: ok.articleId,
+          tariff: ok.tariff,
+          batchId: split.batchId,
+          correlationId: split.correlationId,
+          persistDefaults: item.persistDefaults,
+          payload: item.payload,
+        });
+        return;
+      }
+      const message = split.failed.get(key) || "Booking rejected.";
+      if (isIndiaPostDuplicateArticleMessage(message)) {
+        bookedIds.push(item.shipment.id);
+        await persistBookedShipment(supabase, {
+          organizationId: input.organizationId,
+          shipmentId: item.shipment.id,
+          orderId: item.shipment.order_id,
+          barcode: item.barcode,
+          articleId: item.barcode,
+          persistDefaults: item.persistDefaults,
+          payload: item.payload,
+        });
         return;
       }
       failedIds.push(item.shipment.id);
-      const message = split.failed.get(key) || "Booking rejected.";
-      await markShipmentBookingFailed(supabase, item.shipment.id, message, "INDIA_POST_VALIDATION");
+      await markShipmentBookingFailed(supabase, item.shipment.id, message, "INDIA_POST_VALIDATION", input.organizationId);
       if (prepared.length === 1) {
         throw Object.assign(new Error(message), { code: "VALIDATION_ERROR" });
       }

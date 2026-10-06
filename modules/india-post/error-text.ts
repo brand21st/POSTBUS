@@ -38,6 +38,12 @@ export function indiaPostArticleErrorText(errors: unknown): string {
   return indiaPostJoinMessages(list) || "Booking rejected.";
 }
 
+export function isIndiaPostDuplicateArticleMessage(value?: string | null) {
+  const text = String(value ?? "");
+  if (!text) return false;
+  return /duplicate article/i.test(text) || /already booked today or yesterday/i.test(text);
+}
+
 export function indiaPostFormatBookingFailure(json: unknown): string {
   const rec = json && typeof json === "object" ? (json as Record<string, unknown>) : {};
   const field = Array.isArray(rec.errors) ? indiaPostJoinMessages(rec.errors) : "";

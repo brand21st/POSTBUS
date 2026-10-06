@@ -36,6 +36,21 @@ vi.mock("@/modules/india-post/origin", () => ({
   }),
 }));
 
+function chainableWrite(
+  data: unknown = { id: "ship-1", barcode: "ET214330016IN", status: "BOOKING", booked_at: null }
+) {
+  const self: Record<string, unknown> = {};
+  const next = () => self;
+  self.eq = next;
+  self.in = next;
+  self.is = next;
+  self.select = next;
+  self.maybeSingle = async () => ({ data, error: null });
+  self.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+    Promise.resolve({ data, error: null }).then(resolve, reject);
+  return self;
+}
+
 /** India Post process-articles product. Short "SP" books Inland Speed Post. */
 const CEPT_ARTICLE_TYPE = {
   SP_INLAND_PARCEL: "SP_INLAND_PARCEL",
@@ -100,7 +115,7 @@ function bookingDb(input: {
   serviceCode: "SP_INLAND_PARCEL" | "BUSINESS_PARCEL";
   weightGrams: number;
 }) {
-  const updateShipmentMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+  const updateShipmentMock = vi.fn().mockReturnValue(chainableWrite());
   const supabase = {
     from: (table: string) => {
       if (table === "india_post_connections") {

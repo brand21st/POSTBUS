@@ -158,14 +158,16 @@ export async function processJob(queue: string, payload: JobPayload) {
       payload.entityType === "shipment" &&
       payload.entityId
     ) {
-      await supabase
-        .from("shipments")
-        .update({
-          status: retryable ? "QUEUED" : "FAILED",
-          last_error: classified.message,
-          last_error_code: classified.code,
-        })
-        .eq("id", payload.entityId);
+    await supabase
+      .from("shipments")
+      .update({
+        status: retryable ? "QUEUED" : "FAILED",
+        last_error: classified.message,
+        last_error_code: classified.code,
+      })
+      .eq("id", payload.entityId)
+      .is("booked_at", null)
+      .in("status", retryable ? ["QUEUED", "VALIDATING", "DRAFT", "FAILED"] : ["QUEUED", "VALIDATING", "DRAFT"]);
       await supabase.from("notifications").insert({
         organization_id: payload.organizationId,
         type: retryable ? "shipment.retrying" : "shipment.failed",
@@ -199,7 +201,8 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     await supabase
       .from("shipments")
       .update({ status: "FAILED", last_error: message, last_error_code: "BILLING_LIMIT" })
-      .in("id", shipmentIds);
+      .in("id", shipmentIds)
+      .is("booked_at", null);
     throw Object.assign(new Error(message), { code: "VALIDATION_ERROR" });
   }
 
@@ -207,6 +210,7 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   const outcome = await runIndiaPostBooking(supabase, {
     organizationId: payload.organizationId,
     shipmentIds,
+    jobId: payload.jobId,
   });
   logInfo("booking.completed", {
     organizationId: payload.organizationId,

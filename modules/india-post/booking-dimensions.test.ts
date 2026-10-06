@@ -26,6 +26,21 @@ vi.mock("@/modules/india-post/origin", () => ({
   }),
 }));
 
+function chainableWrite(
+  data: unknown = { id: "ship-1", barcode: "ET214330016IN", status: "BOOKING", booked_at: null }
+) {
+  const self: Record<string, unknown> = {};
+  const next = () => self;
+  self.eq = next;
+  self.in = next;
+  self.is = next;
+  self.select = next;
+  self.maybeSingle = async () => ({ data, error: null });
+  self.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+    Promise.resolve({ data, error: null }).then(resolve, reject);
+  return self;
+}
+
 function mockOrderArticle(overrides: Record<string, unknown> = {}) {
   return mapShipmentToArticle({
     orderId: "ord-1",
@@ -190,7 +205,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
       valid_articles: [{ barcode_no: "ET214330016IN", calculated_tariff: 45 }],
       error_articles: [],
     });
-    const updateShipmentMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+    const updateShipmentMock = vi.fn().mockReturnValue(chainableWrite());
     const updateOrderMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
 
     const mockSupabase = {
@@ -350,7 +365,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
       valid_articles: [{ barcode_no: "ET214330016IN", calculated_tariff: 45 }],
       error_articles: [],
     });
-    const updateShipmentMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+    const updateShipmentMock = vi.fn().mockReturnValue(chainableWrite());
     const updateOrderMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
 
     const mockSupabase = {
@@ -490,7 +505,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
 
   it("runIndiaPostBooking still fails when entered dimensions are outside India Post limits", async () => {
     bookShipmentMock.mockClear();
-    const updateShipmentMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+    const updateShipmentMock = vi.fn().mockReturnValue(chainableWrite());
 
     const mockSupabase = {
       from: (table: string) => {
@@ -631,7 +646,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
       valid_articles: [{ barcode_no: "ET214330016IN", calculated_tariff: 45 }],
       error_articles: [],
     });
-    const updateShipmentMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
+    const updateShipmentMock = vi.fn().mockReturnValue(chainableWrite());
     const updateOrderMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({}) });
 
     const mockSupabase = {

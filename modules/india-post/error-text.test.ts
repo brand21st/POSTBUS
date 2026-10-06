@@ -3,6 +3,7 @@ import {
   indiaPostArticleErrorText,
   indiaPostBookingHasArticleOutcomes,
   indiaPostFormatBookingFailure,
+  isIndiaPostDuplicateArticleMessage,
 } from "@/modules/india-post/error-text";
 
 describe("indiaPostFormatBookingFailure", () => {
@@ -30,6 +31,11 @@ describe("indiaPostFormatBookingFailure", () => {
     ).toBe(
       "Dropoff Officeid is required when pickup_or_dropoff is DROPOFF; Sender pincode must be exactly 6 digits"
     );
+  });
+
+  it("detects duplicate-article CEPT copy", () => {
+    expect(isIndiaPostDuplicateArticleMessage("Duplicate article: Already booked today or yesterday")).toBe(true);
+    expect(isIndiaPostDuplicateArticleMessage("Dropoff pincode must be exactly 6 digits")).toBe(false);
   });
 
   it("detects per-article CEPT outcomes", () => {
