@@ -55,6 +55,15 @@ export function orderNumber(order: { orderNumber?: string; order_number?: string
   return pickString(order.orderNumber, order.order_number, order.id.slice(0, 8));
 }
 
+export function shipmentNumber(shipment: {
+  trackingNumber?: string | null;
+  tracking_number?: string | null;
+  barcode?: string | null;
+  id: string;
+}) {
+  return pickString(shipment.trackingNumber, shipment.tracking_number, shipment.barcode, shipment.id.slice(0, 8));
+}
+
 export function createdAt(record: { createdAt?: string; created_at?: string }) {
   return record.createdAt ?? record.created_at ?? null;
 }
