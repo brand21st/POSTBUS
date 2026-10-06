@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   createColumnHelper,
   rowSelectionFeature,
@@ -34,6 +34,9 @@ export type DataTableColumn<TData extends Record<string, unknown>> = {
   accessorKey?: keyof TData & string;
   cell?: (row: TData) => ReactNode;
   className?: string;
+  resizable?: boolean;
+  minWidth?: number;
+  maxWidth?: number;
 };
 
 export type DataTableProps<TData extends Record<string, unknown>> = {
@@ -65,6 +68,8 @@ export type DataTableProps<TData extends Record<string, unknown>> = {
   onSelectionChange?: (ids: string[]) => void;
   onRowClick?: (row: TData) => void;
   getRowClassName?: (row: TData) => string | undefined;
+  columnWidths?: Record<string, number>;
+  onColumnWidthsChange?: (widths: Record<string, number>) => void;
 };
 
 function paginationPages(page: number, pageCount: number) {
@@ -85,6 +90,103 @@ function stackDisplay(until: "md" | "lg" | "xl") {
   if (until === "lg") return { cards: "lg:hidden", table: "hidden lg:block" };
   if (until === "xl") return { cards: "xl:hidden", table: "hidden xl:block" };
   return { cards: "md:hidden", table: "hidden md:block" };
+}
+
+function columnBoxStyle(width?: number): CSSProperties | undefined {
+  if (!width) return undefined;
+  return { width, minWidth: width, maxWidth: width };
+}
+
+function applyColumnWidth(table: HTMLTableElement | null, columnId: string, width: number) {
+  if (!table) return;
+  table.querySelectorAll<HTMLElement>(`[data-col-id="${columnId}"]`).forEach((cell) => {
+    cell.style.width = `${width}px`;
+    cell.style.minWidth = `${width}px`;
+    cell.style.maxWidth = `${width}px`;
+  });
+}
+
+function ColumnResizeHandle({
+  columnId,
+  label,
+  minWidth,
+  maxWidth,
+  onResize,
+  onReset,
+}: {
+  columnId: string;
+  label: string;
+  minWidth: number;
+  maxWidth: number;
+  onResize: (id: string, width: number) => void;
+  onReset: (id: string) => void;
+}) {
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${label} column`}
+      title="Drag to resize. Double-click to reset."
+      className="absolute right-0 top-0 z-10 h-full w-2.5 cursor-col-resize touch-none select-none after:absolute after:inset-y-1.5 after:right-1 after:w-px after:rounded-full after:bg-border after:transition-colors after:duration-150 after:content-[''] hover:after:bg-brand active:after:bg-brand"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const th = event.currentTarget.parentElement;
+        const table = th?.closest("table");
+        if (!th || !table) return;
+        const startX = event.clientX;
+        const startWidth = th.getBoundingClientRect().width;
+        const pointerId = event.pointerId;
+        const handle = event.currentTarget;
+        let latest = startWidth;
+        let frame = 0;
+        handle.setPointerCapture(pointerId);
+        table.dataset.resizing = "true";
+
+        const onMove = (move: PointerEvent) => {
+          latest = Math.round(
+            Math.min(maxWidth, Math.max(minWidth, startWidth + (move.clientX - startX)))
+          );
+          if (frame) return;
+          frame = window.requestAnimationFrame(() => {
+            frame = 0;
+            applyColumnWidth(table, columnId, latest);
+          });
+        };
+        const onUp = () => {
+          if (frame) window.cancelAnimationFrame(frame);
+          applyColumnWidth(table, columnId, latest);
+          delete table.dataset.resizing;
+          handle.releasePointerCapture(pointerId);
+          handle.removeEventListener("pointermove", onMove);
+          handle.removeEventListener("pointerup", onUp);
+          handle.removeEventListener("pointercancel", onUp);
+          document.body.style.removeProperty("cursor");
+          document.body.style.removeProperty("user-select");
+          onResize(columnId, latest);
+        };
+
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        handle.addEventListener("pointermove", onMove);
+        handle.addEventListener("pointerup", onUp);
+        handle.addEventListener("pointercancel", onUp);
+      }}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const table = event.currentTarget.parentElement?.closest("table");
+        if (table) {
+          table.querySelectorAll<HTMLElement>(`[data-col-id="${columnId}"]`).forEach((cell) => {
+            cell.style.removeProperty("width");
+            cell.style.removeProperty("min-width");
+            cell.style.removeProperty("max-width");
+          });
+        }
+        onReset(columnId);
+      }}
+    />
+  );
 }
 
 export function DataTable<TData extends Record<string, unknown>>({
@@ -114,10 +216,41 @@ export function DataTable<TData extends Record<string, unknown>>({
   onSelectionChange,
   onRowClick,
   getRowClassName,
+  columnWidths,
+  onColumnWidthsChange,
 }: DataTableProps<TData>) {
   const compact = density === "compact";
-          const cellPad = compact ? "px-2.5 py-1.5" : "px-4 py-3";
+  const cellPad = compact ? "px-2.5 py-1.5" : "px-4 py-3";
   const stacked = stackDisplay(stackBelow);
+  const [widths, setWidths] = useState<Record<string, number>>(columnWidths ?? {});
+
+  useEffect(() => {
+    if (columnWidths) setWidths(columnWidths);
+  }, [columnWidths]);
+
+  const setColumnWidth = useCallback(
+    (id: string, width: number) => {
+      setWidths((current) => {
+        const next = { ...current, [id]: width };
+        onColumnWidthsChange?.(next);
+        return next;
+      });
+    },
+    [onColumnWidthsChange]
+  );
+
+  const resetColumnWidth = useCallback(
+    (id: string) => {
+      setWidths((current) => {
+        if (!(id in current)) return current;
+        const next = { ...current };
+        delete next[id];
+        onColumnWidthsChange?.(next);
+        return next;
+      });
+    },
+    [onColumnWidthsChange]
+  );
   const columnById = useMemo(
     () => new Map(columns.map((column) => [column.id, column])),
     [columns]
@@ -368,30 +501,46 @@ export function DataTable<TData extends Record<string, unknown>>({
           <div className={cn("overflow-x-auto", mobileView && stacked.table)}>
             <table
               className={cn(
-                "w-full text-left text-sm",
+                "w-full text-left text-sm [&[data-resizing]_td]:!transition-none [&[data-resizing]_th]:!transition-none",
                 fitContainer ? "table-fixed" : compact ? "min-w-[880px]" : "min-w-[720px]"
               )}
             >
               <thead className="border-b border-border bg-surface-soft/70">
                 {table.getHeaderGroups().map((group) => (
                   <tr key={group.id}>
-                    {group.headers.map((header, index) => (
+                    {group.headers.map((header, index) => {
+                      const column = columnById.get(header.id);
+                      return (
                       <th
                         key={header.id}
+                        data-col-id={header.id}
                         className={cn(
-                          "text-xs font-semibold uppercase text-muted",
+                          "text-xs font-semibold uppercase text-muted transition-[width,min-width,max-width] duration-150 ease-out",
                           compact ? "tracking-normal" : "tracking-wide",
                           cellPad,
                           index === 0 && (compact ? "pl-3" : "pl-6"),
                           index === group.headers.length - 1 && (compact ? "pr-3" : "pr-6"),
                           fitContainer && "overflow-hidden",
                           header.id === "_select" && "w-10",
-                          columnById.get(header.id)?.className
+                          column?.resizable && "relative",
+                          column?.className
                         )}
+                        style={columnBoxStyle(widths[header.id])}
                       >
                         {header.isPlaceholder ? null : <table.FlexRender header={header} />}
+                        {column?.resizable ? (
+                          <ColumnResizeHandle
+                            columnId={header.id}
+                            label={column.header}
+                            minWidth={column.minWidth ?? 72}
+                            maxWidth={column.maxWidth ?? 480}
+                            onResize={setColumnWidth}
+                            onReset={resetColumnWidth}
+                          />
+                        ) : null}
                       </th>
-                    ))}
+                      );
+                    })}
                   </tr>
                 ))}
               </thead>
@@ -413,14 +562,16 @@ export function DataTable<TData extends Record<string, unknown>>({
                       {cells.map((cell, index) => (
                         <td
                           key={cell.id}
+                          data-col-id={cell.column.id}
                           className={cn(
-                            "align-middle text-foreground",
+                            "align-middle text-foreground transition-[width,min-width,max-width] duration-150 ease-out",
                             cellPad,
                             index === 0 && (compact ? "pl-3" : "pl-6"),
                             index === cells.length - 1 && (compact ? "pr-3" : "pr-6"),
                             fitContainer && "overflow-hidden",
                             columnById.get(cell.column.id)?.className
                           )}
+                          style={columnBoxStyle(widths[cell.column.id])}
                         >
                           <table.FlexRender cell={cell} />
                         </td>

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { timed } from "@/lib/jobs/timing";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { saveLabelPdf } from "@/modules/labels/storage";
@@ -48,6 +49,15 @@ export async function persistLabelPdf(
     templateSnapshot?: LabelTemplate | null;
   }
 ) {
+  return timed(
+    "label.persist",
+    {
+      organizationId: input.organizationId,
+      shipmentId: input.shipmentId,
+      entityId: input.shipmentId,
+      kind: input.kind,
+    },
+    async () => {
   const id = randomUUID();
   const path = await saveLabelPdf({
     organizationId: input.organizationId,
@@ -88,4 +98,6 @@ export async function persistLabelPdf(
     });
   }
   return data as { id: string; file_path: string; file_url: string | null; kind: LabelKind };
+    }
+  );
 }

@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs/retry";
-import { logError } from "@/lib/logger";
+import { logError, logInfo } from "@/lib/logger";
 import {
   AUTOMATION_DEFAULTS,
   getAutomationSettings,
@@ -29,6 +29,17 @@ import type { AutomationSettings } from "@/types/api";
 export async function processJob(queue: string, payload: JobPayload) {
   const supabase = createAdminClient();
   const jobId = payload.jobId;
+  const started = Date.now();
+  const timing = {
+    jobId,
+    jobType: queue,
+    organizationId: payload.organizationId,
+    entityId: payload.entityId,
+    shipmentId: payload.entityType === "shipment" ? payload.entityId : undefined,
+    attempt: payload.attempt,
+    queueWaitMs: payload.queueWaitMs,
+  };
+  logInfo("job.started", timing);
 
   await supabase
     .from("background_jobs")
@@ -99,7 +110,14 @@ export async function processJob(queue: string, payload: JobPayload) {
       .from("background_jobs")
       .update({ status: "SUCCEEDED", completed_at: new Date().toISOString(), last_error: null })
       .eq("id", jobId);
+    logInfo("job.completed", { ...timing, durationMs: Date.now() - started, status: "ok" });
   } catch (error) {
+    logError("job.failed", {
+      ...timing,
+      durationMs: Date.now() - started,
+      status: "failed",
+      message: error instanceof Error ? error.message : "job failed",
+    });
     const classified = classifyProviderError(error);
     const { data: job } = await supabase
       .from("background_jobs")
@@ -190,6 +208,14 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     organizationId: payload.organizationId,
     shipmentIds,
   });
+  logInfo("booking.completed", {
+    organizationId: payload.organizationId,
+    jobId: payload.jobId,
+    jobType: "shipment-booking",
+    booked: outcome.bookedIds.length,
+    failed: outcome.failedIds.length,
+    durationMs: Date.now() - bookingStarted,
+  });
 
   const automation = await loadAutomation(supabase, payload.organizationId);
   const { createBackgroundJob } = await import("@/modules/jobs/service");
@@ -204,19 +230,19 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       .eq("status", "BOOKED");
   }
 
-  for (const shipmentId of outcome.bookedIds) {
+  if (outcome.bookedIds.length) {
     try {
-      await consumeQuota(supabase, payload.organizationId);
+      await consumeQuota(supabase, payload.organizationId, outcome.bookedIds.length);
     } catch (error) {
       logError("BILLING_QUOTA_CONSUME_FAILED", {
         organizationId: payload.organizationId,
-        shipmentId,
+        quantity: outcome.bookedIds.length,
         message: error instanceof Error ? error.message : "unknown",
       });
       await supabase.from("usage_events").insert({
         organization_id: payload.organizationId,
         metric: "shipments",
-        quantity: 1,
+        quantity: outcome.bookedIds.length,
       });
     }
   }

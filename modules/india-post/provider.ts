@@ -1,5 +1,6 @@
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { decryptSecret } from "@/lib/security/crypto";
+import { timed } from "@/lib/jobs/timing";
+import { decryptSecret, encryptSecret } from "@/lib/security/crypto";
 import { indiaPostBookingFileUrl, indiaPostBookingUrl, indiaPostOfficesFromPincodeResponse, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
 import { indiaPostBookingHasArticleOutcomes, indiaPostFormatBookingFailure, indiaPostJoinMessages } from "@/modules/india-post/error-text";
 import { INDIA_POST_TIMEOUT_MS, indiaPostTimeoutSignal } from "@/modules/india-post/http";
@@ -23,7 +24,10 @@ type Connection = {
   encrypted_username?: string | null;
   encrypted_password?: string | null;
   encrypted_access_token?: string | null;
+  encrypted_refresh_token?: string | null;
+  encrypted_id_token?: string | null;
   expires_at?: string | null;
+  refresh_expires_at?: string | null;
   bulk_customer_id?: string | null;
   contract_id?: string | null;
   pickup_dropoff_office_id?: string | null;
@@ -77,13 +81,37 @@ export class IndiaPostProvider implements ShippingProvider {
         response.status === 401 ? "PERMANENT_AUTH_ERROR" : `HTTP_${response.status}`;
       throw error;
     }
-    return json.data as {
+    const tokens = json.data as {
       access_token: string;
       refresh_token: string;
       id_token: string;
       expires_in: number;
       refresh_expires_in: number;
     };
+    this.rememberSession(tokens);
+    return tokens;
+  }
+
+  private rememberSession(tokens: {
+    access_token: string;
+    refresh_token?: string;
+    id_token?: string;
+    expires_in: number;
+    refresh_expires_in?: number;
+  }) {
+    this.connection.encrypted_access_token = encryptSecret(tokens.access_token);
+    this.connection.expires_at = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
+    this.connection.encrypted_refresh_token = tokens.refresh_token
+      ? encryptSecret(tokens.refresh_token)
+      : this.connection.encrypted_refresh_token;
+    this.connection.encrypted_id_token = tokens.id_token
+      ? encryptSecret(tokens.id_token)
+      : this.connection.encrypted_id_token;
+    if (tokens.refresh_expires_in != null) {
+      this.connection.refresh_expires_at = new Date(
+        Date.now() + tokens.refresh_expires_in * 1000
+      ).toISOString();
+    }
   }
 
   private async token() {
@@ -230,6 +258,14 @@ export class IndiaPostProvider implements ShippingProvider {
   }
 
   async generateLabel(input: Record<string, unknown>) {
+    return timed(
+      "india_post.label",
+      {
+        organizationId: Array.isArray(input) ? undefined : input.organizationId,
+        shipmentId: Array.isArray(input) ? undefined : input.shipmentId,
+        entityId: Array.isArray(input) ? undefined : input.shipmentId,
+      },
+      async () => {
     const token = await this.token();
     const articles = Array.isArray(input)
       ? input
@@ -271,6 +307,8 @@ export class IndiaPostProvider implements ShippingProvider {
       throw error;
     }
     return buffer;
+      }
+    );
   }
 
   async createManifest() {

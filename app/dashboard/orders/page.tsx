@@ -82,6 +82,7 @@ import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS 
 import type { BulkOrderStatusResult, DashboardKpis, IndiaPostConfig, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
 
 const COLUMN_STORAGE = "postbus.orders.columns";
+const WIDTH_STORAGE = "postbus.orders.column-widths";
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const DEFAULT_COLUMNS = {
   items: true,
@@ -133,6 +134,20 @@ export default function OrdersPage() {
   const [confirmFulfill, setConfirmFulfill] = useState(false);
   const [columnsReady, setColumnsReady] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState(DEFAULT_COLUMNS);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+
+  const tableLayout = useQuery({
+    queryKey: ["ui-table-layout", "orders"],
+    queryFn: () => api<{ tableKey: string; columnWidths: Record<string, number> }>("/api/v1/ui/table-layouts/orders"),
+    staleTime: 60_000,
+  });
+  const saveTableLayout = useMutation({
+    mutationFn: (widths: Record<string, number>) =>
+      api<{ tableKey: string; columnWidths: Record<string, number> }>("/api/v1/ui/table-layouts/orders", {
+        method: "PUT",
+        body: JSON.stringify({ columnWidths: widths }),
+      }),
+  });
 
   const kpiWindow = useMemo(() => {
     const now = new Date();
@@ -168,6 +183,30 @@ export default function OrdersPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!tableLayout.isSuccess) return;
+    const fromDb = tableLayout.data.columnWidths ?? {};
+    if (Object.keys(fromDb).length > 0) {
+      setColumnWidths(fromDb);
+      return;
+    }
+    try {
+      const storedWidths = window.localStorage.getItem(WIDTH_STORAGE);
+      if (!storedWidths) return;
+      const parsed = JSON.parse(storedWidths) as Record<string, unknown>;
+      const next: Record<string, number> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === "number" && Number.isFinite(value)) next[key] = value;
+      }
+      if (Object.keys(next).length === 0) return;
+      setColumnWidths(next);
+      saveTableLayout.mutate(next);
+      window.localStorage.removeItem(WIDTH_STORAGE);
+    } catch {
+      /* ignore */
+    }
+  }, [tableLayout.isSuccess, tableLayout.data]);
 
   useEffect(() => {
     if (!columnsReady) return;
@@ -450,6 +489,9 @@ export default function OrdersPage() {
       id: "order",
       header: "# Order",
       className: "w-[4.75rem] whitespace-nowrap",
+      resizable: true,
+      minWidth: 64,
+      maxWidth: 280,
       cell: (row) => (
         <Link href={`/dashboard/orders/${row.id}`} className="font-medium hover:text-brand">
           {orderNumber(row)}
@@ -460,6 +502,9 @@ export default function OrdersPage() {
       id: "customer",
       header: "Customer",
       className: "w-[11rem]",
+      resizable: true,
+      minWidth: 96,
+      maxWidth: 420,
       cell: (row) => {
         const phone = customerPhone(row);
         return (
@@ -476,6 +521,9 @@ export default function OrdersPage() {
             id: "items",
             header: "Items",
             className: "min-w-0 whitespace-normal",
+            resizable: true,
+            minWidth: 120,
+            maxWidth: 560,
             cell: (row: OrderRecord) => {
               const summary = itemSummary(row);
               if (summary === "—") return "—";
@@ -827,6 +875,11 @@ export default function OrdersPage() {
         onRowHover={(row) => router.prefetch(`/dashboard/orders/${row.id}`)}
         getRowId={(row) => row.id}
         getRowClassName={(row) => orderStatusRowClass(row.status)}
+        columnWidths={columnWidths}
+        onColumnWidthsChange={(widths) => {
+          setColumnWidths(widths);
+          saveTableLayout.mutate(widths);
+        }}
         stackBelow="lg"
         fitContainer
         mobileView={

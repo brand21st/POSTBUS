@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { env } from "@/lib/env";
 import { authorizeCron } from "@/lib/jobs/cron-auth";
 import { DEFAULT_DRAIN_LIMIT, drainDueJobs } from "@/lib/jobs/drain";
+import { parseJobTypes } from "@/lib/jobs/job-lanes";
 import { logError } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -28,8 +29,16 @@ export async function POST(request: NextRequest) {
   const limit =
     Number.isFinite(requested) && requested > 0 ? Math.min(Math.trunc(requested), 25) : DEFAULT_DRAIN_LIMIT;
 
+  let jobTypes: ReturnType<typeof parseJobTypes>;
   try {
-    return NextResponse.json({ success: true, data: await drainDueJobs(limit) });
+    jobTypes = parseJobTypes(request.nextUrl.searchParams.get("types"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown job type.";
+    return NextResponse.json({ success: false, message }, { status: 400 });
+  }
+
+  try {
+    return NextResponse.json({ success: true, data: await drainDueJobs(limit, jobTypes) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not drain background jobs.";
     logError("jobs.drain_error", { message });

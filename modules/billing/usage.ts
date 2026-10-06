@@ -131,20 +131,24 @@ export async function checkQuota(
   return snapshot;
 }
 
-export async function consumeQuota(supabase: SupabaseClient, organizationId: string) {
-  await checkQuota(supabase, organizationId, 1);
-  const { data, error } = await supabase.rpc("consume_order_quota", { p_org: organizationId });
+export async function consumeQuota(supabase: SupabaseClient, organizationId: string, quantity = 1) {
+  const qty = Math.max(0, Math.floor(quantity) || 0);
+  if (qty === 0) return null;
+  await checkQuota(supabase, organizationId, qty);
+  const rpcArgs: { p_org: string; p_quantity?: number } = { p_org: organizationId };
+  if (qty !== 1) rpcArgs.p_quantity = qty;
+  const { data, error } = await supabase.rpc("consume_order_quota", rpcArgs);
   if (error) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   }
   const row = (Array.isArray(data) ? data[0] : data) as { orders_used?: number; order_limit?: number } | null;
-  if (!row?.orders_used) {
+  if (row?.orders_used == null) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, ORDER_LIMIT_MESSAGE);
   }
   await supabase.from("usage_events").insert({
     organization_id: organizationId,
     metric: "shipments",
-    quantity: 1,
+    quantity: qty,
   });
   await maybeAlertUsage(supabase, organizationId, Number(row.orders_used), row.order_limit ?? null);
   return row;

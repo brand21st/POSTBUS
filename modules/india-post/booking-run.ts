@@ -226,10 +226,19 @@ export async function runIndiaPostBooking(
 
   const transport = indiaPostBookingTransport(prepared.length);
   const articles = prepared.map((item) => item.payload);
-  const result =
-    transport === "file"
-      ? await provider.bookShipmentFile(articles)
-      : await provider.bookShipment({ articles });
+  const { timed } = await import("@/lib/jobs/timing");
+  const result = await timed(
+    "india_post.book",
+    {
+      organizationId: input.organizationId,
+      articleCount: articles.length,
+      transport,
+    },
+    () =>
+      transport === "file"
+        ? provider.bookShipmentFile(articles)
+        : provider.bookShipment({ articles })
+  );
   const split = splitIndiaPostBookingResult(result);
   const bookedIds: string[] = [];
   const failedIds: string[] = [];

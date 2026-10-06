@@ -117,6 +117,8 @@ export function permissionForTenantRoute(
 
   if (path === "search") return "orders.read";
 
+  if (root === "ui") return undefined;
+
   if (root === "tutorials") {
     return method === "GET" ? undefined : "org.manage";
   }

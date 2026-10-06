@@ -37,6 +37,8 @@ export type JobPayload = {
   entityId?: string;
   shipmentIds?: string[];
   userId?: string;
+  attempt?: number;
+  queueWaitMs?: number;
 };
 
 const defaultJobOptions: JobsOptions = {

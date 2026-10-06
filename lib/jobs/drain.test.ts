@@ -47,6 +47,8 @@ describe("claimedJobFromRow", () => {
       entity_id: "s1",
       created_by: null,
       attempt_count: 0,
+      created_at: null,
+      locked_at: null,
       progress: null,
     });
   });

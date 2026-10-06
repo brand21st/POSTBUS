@@ -48,15 +48,23 @@ writes a `background_jobs` row that nothing ever executes, and shipments sit in
 `SUPABASE_SERVICE_ROLE_KEY` is not optional: jobs write across tenants and bypass RLS,
 so without it every drain fails and shipments stay `QUEUED`.
 
-Then add a **Scheduled Task** on the PostBus resource:
+Then add **three** scheduled tasks on the **same** PostBus web container (do not create a second Coolify application). Overlapping runs are safe: `claim_background_jobs` uses `FOR UPDATE SKIP LOCKED`. Keep frequency `* * * * *`. Do not raise `INDIA_POST_BOOKING_CONCURRENCY` or `INDIA_POST_BOOKING_BATCH_SIZE` in this phase.
 
-- Command: `node scripts/drain-jobs.mjs`
-- Frequency: `* * * * *`
-- Container: the web container (it posts to `http://127.0.0.1:$PORT/api/cron/jobs`)
+| Lane | Command |
+| --- | --- |
+| Booking | `JOB_TYPES=shipment-booking node scripts/drain-jobs.mjs` |
+| Labels | `JOB_TYPES=label-generation node scripts/drain-jobs.mjs` |
+| Other | `JOB_TYPES=invoice-generation,tracking-sync,shopify-fulfillment,wati-notify,vachat-notify,manifest-generation,webhook-processing,shopify-sync,india-post-events,notifications,cleanup,reports node scripts/drain-jobs.mjs` |
+
+`scripts/drain-jobs.mjs` appends `JOB_TYPES` as `?types=` on `POST /api/cron/jobs`. Unknown types are rejected. An untyped drain (`node scripts/drain-jobs.mjs` with no `JOB_TYPES`) still claims every due job.
+
+Label-only and other-only drains run the rest pool at concurrency 4. A mixed untyped drain still runs `shipment-booking` first at booking concurrency (default 4), then remaining jobs at concurrency 2.
 
 `POST /api/cron/jobs` requires `Authorization: Bearer $CRON_SECRET` and refuses to run
 when `JOB_RUNNER=redis`. Verify with `GET /api/health`: `jobRunner` must be `database`
 and `jobs` must be `Healthy`. `jobs: "Warning"` means the scheduled task is not running.
+
+Duplicate CEPT booking on HTTP timeout remains a residual risk: the worker may retry after CEPT already accepted the article. Do not raise CEPT concurrency to compensate.
 
 ## Shipping label files on Coolify
 

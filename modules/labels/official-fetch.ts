@@ -99,9 +99,11 @@ export async function fetchOfficialIndiaPostLabelPdf(
   const senderMobile = indiaPostMobile(sender.phone) || receiverMobile;
 
   const pdf = await provider.generateLabel({
+    organizationId,
+    shipmentId,
     timeoutMs: options?.timeoutMs,
     payload: [
-      indiaPostDomesticLabelPayload({
+        indiaPostDomesticLabelPayload({
         customerId: String(connection.bulk_customer_id ?? ""),
         barcode: String(shipment.barcode),
         serviceCode: String(shipment.service_code || DEFAULT_INDIA_POST_SERVICE),
