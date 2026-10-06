@@ -1,13 +1,36 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { AppError } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import {
   CUSTOMER_PHONE_ONLY_REPLY,
+  findOrganizationsForCustomerPhone,
   type MerchantKnowledge,
   type MerchantKnowledgeOrder,
   VACHAT_ASSISTANT_NAME,
 } from "@/modules/vachat/knowledge";
+import {
+  listEligibleOrders,
+  type EligibleOrderChoice,
+} from "@/modules/vachat/eligible-orders";
 import { getPlatformVachatConfig, isPlatformVachatActive } from "@/modules/vachat/platform-config";
+import { searchOrderDetails } from "@/modules/vachat/mcp";
+import { platformSupportMcpContext } from "@/modules/vachat/mcp-context";
 import { sendVachatSessionText } from "@/modules/vachat/send";
+import { selectSupportOrder } from "@/modules/vachat/select-order";
+import {
+  getOrCreateSupportSession,
+  getSupportSessionByPhone,
+  setSupportSessionState,
+  type WhatsappSupportSession,
+} from "@/modules/vachat/support-session";
+import {
+  formatPolicyWhatsAppReply,
+  loadOrganizationPolicies,
+  loadPolicyReplyContext,
+  matchPolicyIntent,
+  POLICY_PICK_MERCHANT_REPLY,
+  policyExtrasMap,
+} from "@/modules/vachat/policies";
 
 export type AssistantIntent =
   | "merchant"
@@ -43,6 +66,18 @@ export function classifyAssistantIntent(text: string): AssistantIntent {
 
 export function looksLikeOrderOrTrackingQuery(text: string) {
   return /\b[A-Z]{2}\d{9}[A-Z]{2}\b/i.test(text) || /\b(?:order\s*)?#?\s*(?:PB-)?\d{3,}\b/i.test(text);
+}
+
+export function isPlatformOrderSupportTurn(text: string, session?: WhatsappSupportSession | null) {
+  const intent = classifyAssistantIntent(text);
+  if (intent === "tracking" || intent === "shipped" || intent === "shipment" || intent === "order" || intent === "invoice") {
+    return true;
+  }
+  if (session?.state === "AWAIT_SELECTION") {
+    const raw = text.trim();
+    if (/^\d+$/.test(raw) || looksLikeOrderOrTrackingQuery(text)) return true;
+  }
+  return false;
 }
 
 export function pickOrder(knowledge: MerchantKnowledge, text: string) {
@@ -177,37 +212,189 @@ export function isInboundAssistantEvent(event: string, data?: Record<string, unk
   return false;
 }
 
+export const NO_ELIGIBLE_ORDERS_REPLY =
+  "We couldn't find any active orders linked to this WhatsApp number. Please contact the merchant if you believe this is incorrect.";
+
+export const SUPPORT_UNAVAILABLE_REPLY =
+  "Sorry, I couldn't retrieve that information right now. Please try again shortly.";
+
+export function formatOrderPicker(choices: EligibleOrderChoice[]) {
+  const lines = choices.map(
+    (choice, index) => `${index + 1}. ${choice.merchant_name} — ${choice.order_ref} — ${choice.status}`
+  );
+  return [
+    "I found multiple orders linked to this WhatsApp number:",
+    "",
+    ...lines,
+    "",
+    "Please reply with the number of the order you want help with.",
+  ].join("\n");
+}
+
+export function matchPickerSelection(text: string, choices: EligibleOrderChoice[]) {
+  const raw = text.trim();
+  if (!raw || !choices.length) return null;
+  if (/^\d+$/.test(raw)) {
+    const index = Number(raw);
+    if (index >= 1 && index <= choices.length) return choices[index - 1] ?? null;
+    return null;
+  }
+  const upper = raw.toUpperCase();
+  const hits = choices.filter((choice) => upper.includes(choice.order_ref.toUpperCase()));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+function isBusinessLineError(error: unknown) {
+  return error instanceof AppError && /PostBus WhatsApp line/i.test(error.message);
+}
+
+export async function handlePlatformSupportTurn(
+  supabase: SupabaseClient,
+  input: { from: string; text: string; now?: Date }
+) {
+  const now = input.now ?? new Date();
+  const session = await getOrCreateSupportSession(supabase, input.from, now);
+
+  if (session.state === "ORDER_BOUND" && session.selected_order_id && session.selected_organization_id) {
+    const trusted = platformSupportMcpContext(session.id);
+    const bound = await searchOrderDetails(supabase, { query: input.text, now }, trusted);
+    if (!bound.found) {
+      return { reply: bound.answer, session, organizationId: null as string | null };
+    }
+    return {
+      reply: bound.answer,
+      session,
+      organizationId: session.selected_organization_id,
+    };
+  }
+
+  const listed = await listEligibleOrders(supabase, { session, now });
+  const choices = listed.choices;
+
+  if (choices.length === 0) {
+    await setSupportSessionState(supabase, session.id, "LIST_ELIGIBLE", now);
+    return { reply: NO_ELIGIBLE_ORDERS_REPLY, session, organizationId: null as string | null };
+  }
+
+  if (choices.length === 1) {
+    const selected = await selectSupportOrder(supabase, {
+      sessionId: session.id,
+      choiceRef: choices[0].ref,
+      now,
+    });
+    if (!selected.ok) {
+      return { reply: selected.message, session, organizationId: null as string | null };
+    }
+    return {
+      reply: `I've selected ${choices[0].merchant_name} order ${choices[0].order_ref}. How can I help?`,
+      session: selected.session,
+      organizationId: selected.organization_id,
+    };
+  }
+
+  const awaiting = session.state === "AWAIT_SELECTION";
+  const picked = awaiting ? matchPickerSelection(input.text, choices) : null;
+  if (picked) {
+    const selected = await selectSupportOrder(supabase, {
+      sessionId: session.id,
+      choiceRef: picked.ref,
+      now,
+    });
+    if (!selected.ok) {
+      return { reply: selected.message, session, organizationId: null as string | null };
+    }
+    return {
+      reply: `I've selected ${picked.merchant_name} order ${picked.order_ref}. How can I help?`,
+      session: selected.session,
+      organizationId: selected.organization_id,
+    };
+  }
+
+  const waiting = await setSupportSessionState(supabase, session.id, "AWAIT_SELECTION", now);
+  return {
+    reply: formatOrderPicker(choices),
+    session: waiting,
+    organizationId: null as string | null,
+  };
+}
+
 async function postAssistantReply(to: string, text: string) {
   return sendVachatSessionText(to, text);
 }
 
 export async function handleVachatAssistantMessage(
   supabase: SupabaseClient,
-  input: { from: string; text: string; merchantId?: string | null }
+  input: { from: string; text: string }
 ) {
   const platform = await getPlatformVachatConfig();
   if (!isPlatformVachatActive(platform)) return { handled: false, reason: "platform_off" };
   if (!input.text.trim() || !input.from.trim()) return { handled: false, reason: "empty" };
 
   try {
-    const { searchOrderDetails } = await import("@/modules/vachat/mcp");
-    const search = await searchOrderDetails(supabase, {
-      whatsapp: input.from,
-      query: input.text,
-      merchant_id: input.merchantId || undefined,
-      account: "post@post.com",
-    });
-    const sent = await postAssistantReply(input.from, search.answer);
+    let existing: WhatsappSupportSession | null = null;
+    try {
+      existing = await getSupportSessionByPhone(supabase, input.from);
+    } catch (error) {
+      if (isBusinessLineError(error)) {
+        return { handled: false, reason: "business_number" };
+      }
+      throw error;
+    }
+    if (isPlatformOrderSupportTurn(input.text, existing)) {
+      const turn = await handlePlatformSupportTurn(supabase, { from: input.from, text: input.text });
+      const sent = await postAssistantReply(input.from, turn.reply);
+      return {
+        handled: true,
+        sent: sent.sent,
+        reply: turn.reply,
+        organizationId: turn.organizationId,
+      };
+    }
+    const extras = existing?.selected_organization_id
+      ? policyExtrasMap(await loadOrganizationPolicies(supabase, existing.selected_organization_id))
+      : undefined;
+    const policyKind = matchPolicyIntent(input.text, extras);
+    if (!policyKind) {
+      return { handled: false, reason: "native" };
+    }
+    let organizationId = existing?.selected_organization_id ?? null;
+    if (!organizationId) {
+      const orgIds = await findOrganizationsForCustomerPhone(supabase, input.from);
+      if (orgIds.length > 1) {
+        const sent = await postAssistantReply(input.from, POLICY_PICK_MERCHANT_REPLY);
+        return {
+          handled: true,
+          sent: sent.sent,
+          reply: POLICY_PICK_MERCHANT_REPLY,
+          organizationId: null,
+        };
+      }
+      organizationId = orgIds[0] ?? null;
+    }
+    if (!organizationId) {
+      return { handled: false, reason: "native" };
+    }
+    const context = await loadPolicyReplyContext(supabase, organizationId);
+    const reply = formatPolicyWhatsAppReply(policyKind, context.policies, context.merchant);
+    const sent = await postAssistantReply(input.from, reply);
     return {
       handled: true,
       sent: sent.sent,
-      reply: search.answer,
-      merchantId: search.results[0]?.merchant_id ?? search.organizations[0]?.merchant_id ?? null,
+      reply,
+      organizationId,
     };
   } catch (error) {
-    logError("vachat.assistant.search_failed", {
+    if (isBusinessLineError(error)) {
+      return { handled: false, reason: "business_number" };
+    }
+    logError("vachat.assistant.support_failed", {
       message: error instanceof Error ? error.message : "unknown",
     });
+    try {
+      await postAssistantReply(input.from, SUPPORT_UNAVAILABLE_REPLY);
+    } catch {
+      // keep original failure
+    }
     return { handled: false, reason: "search_failed" };
   }
 }

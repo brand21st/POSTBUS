@@ -1,4 +1,12 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  scryptSync,
+  timingSafeEqual,
+} from "crypto";
 import { env } from "@/lib/env";
 
 const ALGO = "aes-256-gcm";
@@ -39,6 +47,10 @@ export function decryptSecret(payload: string) {
 
 export function hashSecret(value: string) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+export function hmacSha256(value: string) {
+  return createHmac("sha256", encryptionSecret()).update(value).digest("hex");
 }
 
 export function randomToken(bytes = 32) {

@@ -7,6 +7,7 @@ import { vachatHeaders } from "@/modules/vachat/service";
 import { customerTrackingLink } from "@/modules/tracking-pages/host";
 import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { logError, logInfo } from "@/lib/logger";
+import { formatPolicyKnowledgeSections, loadOrganizationPolicies, type OrganizationPolicies } from "@/modules/vachat/policies";
 
 export const VACHAT_ASSISTANT_ACCOUNT = "post@post.com";
 export const VACHAT_ASSISTANT_NAME = "Order management WhatsApp AI Assistant";
@@ -59,6 +60,7 @@ export type MerchantKnowledge = {
     gstin: string | null;
     address: string | null;
   };
+  policies?: OrganizationPolicies | null;
   orders: MerchantKnowledgeOrder[];
 };
 
@@ -92,6 +94,25 @@ export function customerPhonesMatch(left?: string | null, right?: string | null)
 export function filterKnowledgeOrdersForPhone(orders: MerchantKnowledgeOrder[], phone?: string | null) {
   if (!phoneDigitsForLookup(phone)) return [];
   return orders.filter((order) => customerPhonesMatch(order.customerPhone, phone));
+}
+
+export function formatMerchantOnlyKnowledgeDocument(
+  knowledge: Pick<MerchantKnowledge, "organization" | "policies">
+) {
+  const org = knowledge.organization;
+  return [
+    `${VACHAT_ASSISTANT_NAME}. VaChat account ${VACHAT_ASSISTANT_ACCOUNT}. Read-only PostBus merchant profile for ${org.name}.`,
+    "Do not answer customer-specific order status, tracking, shipment, or invoice questions from this knowledge.",
+    `Merchant name: ${org.name}.`,
+    org.phone ? `Merchant phone: ${org.phone}.` : null,
+    org.website ? `Website: ${org.website}.` : null,
+    org.email ? `Email: ${org.email}.` : null,
+    org.gstin ? `GSTIN: ${org.gstin}.` : null,
+    org.address ? `Address: ${org.address}.` : null,
+    ...formatPolicyKnowledgeSections(knowledge.policies),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function formatKnowledgeDocument(knowledge: MerchantKnowledge) {
@@ -181,7 +202,7 @@ async function loadOrgKnowledge(
   };
 }
 
-async function orderIdsForCustomerPhone(
+export async function orderIdsForCustomerPhone(
   supabase: SupabaseClient,
   organizationId: string,
   phone: string
@@ -218,6 +239,7 @@ export async function loadMerchantKnowledge(
 ): Promise<MerchantKnowledge | null> {
   const organization = await loadOrgKnowledge(supabase, organizationId);
   if (!organization) return null;
+  const policies = await loadOrganizationPolicies(supabase, organizationId);
 
   const customerPhone = options?.customerPhone ?? null;
   let orderQuery = supabase
@@ -232,7 +254,7 @@ export async function loadMerchantKnowledge(
   if (customerPhone) {
     const ids = await orderIdsForCustomerPhone(supabase, organizationId, customerPhone);
     if (!ids.length) {
-      return { merchantId: organizationId, organization, orders: [] };
+      return { merchantId: organizationId, organization, policies, orders: [] };
     }
     orderQuery = orderQuery.in("id", ids);
   }
@@ -362,6 +384,7 @@ export async function loadMerchantKnowledge(
   return {
     merchantId: organizationId,
     organization,
+    policies,
     orders: knowledgeOrders.filter((row) => row.orderNumber),
   };
 }
@@ -371,7 +394,7 @@ export async function syncMerchantKnowledge(supabase: SupabaseClient, organizati
   if (!isPlatformVachatActive(platform)) return { synced: false, reason: "platform_off" as const };
   const knowledge = await loadMerchantKnowledge(supabase, organizationId);
   if (!knowledge) return { synced: false, reason: "missing_org" as const };
-  const document = formatKnowledgeDocument(knowledge);
+  const document = formatMerchantOnlyKnowledgeDocument(knowledge);
   const res = await fetch(`${platform.apiBaseUrl.replace(/\/$/, "")}/api/postbus/knowledge`, {
     method: "PUT",
     headers: vachatHeaders(platform.apiKey),
@@ -384,7 +407,7 @@ export async function syncMerchantKnowledge(supabase: SupabaseClient, organizati
       merchant_name: knowledge.organization.name,
       document,
       organization: knowledge.organization,
-      orders: knowledge.orders,
+      orders: [],
     }),
     signal: AbortSignal.timeout(15000),
   });
@@ -393,7 +416,7 @@ export async function syncMerchantKnowledge(supabase: SupabaseClient, organizati
     logError("vachat.knowledge.sync_failed", { organizationId, status: res.status });
     return { synced: false, reason: message };
   }
-  logInfo("vachat.knowledge.synced", { organizationId, orders: knowledge.orders.length });
+    logInfo("vachat.knowledge.synced", { organizationId, orders: 0 });
   return { synced: true, document };
 }
 

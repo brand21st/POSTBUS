@@ -81,3 +81,25 @@ export const completeWebusbJobSchema = z.object({
   status: z.enum(["PRINTED", "FAILED", "PENDING"]),
   errorMessage: z.string().trim().max(200).optional(),
 });
+
+const policyKeywordsSchema = z
+  .union([z.array(z.string()), z.string()])
+  .optional()
+  .transform((value) => (value === undefined ? undefined : value));
+
+const policyBodySchema = z.string().max(8000).optional();
+
+export const updateOrganizationPoliciesSchema = z.object({
+  shippingPolicyBody: policyBodySchema,
+  contactBody: policyBodySchema,
+  returnsBody: policyBodySchema,
+  termsBody: policyBodySchema,
+  shippingPolicyKeywords: policyKeywordsSchema,
+  contactKeywords: policyKeywordsSchema,
+  returnsKeywords: policyKeywordsSchema,
+  termsKeywords: policyKeywordsSchema,
+  shippingPolicyEnabled: z.boolean().optional(),
+  contactEnabled: z.boolean().optional(),
+  returnsEnabled: z.boolean().optional(),
+  termsEnabled: z.boolean().optional(),
+});

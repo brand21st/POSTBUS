@@ -4,6 +4,7 @@ import {
   customerPhonesMatch,
   filterKnowledgeOrdersForPhone,
   formatKnowledgeDocument,
+  formatMerchantOnlyKnowledgeDocument,
   postbusTrackingLink,
   POSTBUS_PUBLIC_TRACK_URL,
   type MerchantKnowledge,
@@ -75,6 +76,40 @@ describe("VaChat knowledge phone scope", () => {
     expect(document).toContain("Item Booked");
     expect(document).toContain("https://www.postbus.in/track?tracking=CL123456789IN");
     expect(document).toMatch(/Never share another customer's/i);
+  });
+
+  it("syncs merchant-only knowledge without customer orders", () => {
+    const document = formatMerchantOnlyKnowledgeDocument(knowledge);
+    expect(document).toContain("AURIMO BY NISH");
+    expect(document).not.toContain("Customer WhatsApp");
+    expect(document).not.toContain("CL123456789IN");
+    expect(document).not.toContain("1001");
+    expect(document).toMatch(/Do not answer customer-specific/i);
+  });
+
+  it("includes merchant policy sections in the synced knowledge document", () => {
+    const document = formatMerchantOnlyKnowledgeDocument({
+      ...knowledge,
+      policies: {
+        shippingPolicyBody: "Free shipping over 499.",
+        contactBody: "",
+        returnsBody: "7 day returns.",
+        termsBody: "",
+        shippingPolicyKeywords: [],
+        contactKeywords: [],
+        returnsKeywords: [],
+        termsKeywords: [],
+        shippingPolicyEnabled: true,
+        contactEnabled: true,
+        returnsEnabled: true,
+        termsEnabled: true,
+      },
+    });
+    expect(document).toContain("Shipping policy. Keywords:");
+    expect(document).toContain("Free shipping over 499.");
+    expect(document).toContain("Return / exchange");
+    expect(document).toContain("7 day returns.");
+    expect(document).not.toContain("Customer WhatsApp");
   });
 
   it("sends the public PostBus tracking page", () => {

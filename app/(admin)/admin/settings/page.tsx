@@ -579,9 +579,10 @@ export default function AdminSettingsPage() {
               Add this remote MCP in VaChat for account {vachat?.mcpAccount ?? "post@post.com"} on WhatsApp{" "}
               {vachat?.mcpWhatsapp ?? "+918618456029"}. Tools{" "}
               <span className="font-mono">search_order_details</span> and{" "}
-              <span className="font-mono">search_merchant_organization</span> live-fetch tenant organization, orders,
-              shipments, invoices, India Post tracking IDs, timelines, and tracking links at{" "}
-              https://www.postbus.in/track for the chatting WhatsApp number. Auth: Bearer using the API key above.
+              <span className="font-mono">search_merchant_organization</span> live-fetch the bound support session’s
+              merchant, order, and India Post tracking at https://www.postbus.in/track. Session context is injected by
+              the PostBus webhook — do not treat <span className="font-mono">session_id</span> or WhatsApp fields as
+              authorization. Auth: Bearer using the API key above.
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input readOnly value={vachat?.mcpUrl ?? ""} />

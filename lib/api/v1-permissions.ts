@@ -105,6 +105,8 @@ export function permissionForTenantRoute(
   if (root === "members") return "members.manage";
 
   if (key === "GET settings/notifications") return undefined;
+  if (key === "GET settings/policies") return undefined;
+  if (key === "PATCH settings/policies") return "settings.manage";
   if (root === "settings") return "settings.manage";
 
   if (root === "api-keys") return "api_keys.manage";

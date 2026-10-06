@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { PrintingSettings } from "@/components/dashboard/printing-settings";
+import { PoliciesSettings } from "@/components/dashboard/policies-settings";
 import { IndiaPostParcelDefaultsSettings } from "@/components/dashboard/india-post-parcel-defaults-settings";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
@@ -32,7 +33,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const tabParam = new URLSearchParams(window.location.search).get("tab");
-    if (tabParam === "printing" || tabParam === "shipping") {
+    if (tabParam === "printing" || tabParam === "shipping" || tabParam === "policies") {
       setTab(tabParam);
     }
   }, []);
@@ -41,7 +42,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Organization, access, security, notifications, printing, and shipping."
+        description="Organization, access, security, notifications, printing, shipping, and policies."
       />
       <Tabs value={tab} onValueChange={setTab} className="space-y-6">
         <TabsList className="flex h-auto w-full flex-wrap justify-start">
@@ -52,6 +53,7 @@ export default function SettingsPage() {
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="printing">Printing</TabsTrigger>
           <TabsTrigger value="shipping">Shipping</TabsTrigger>
+          <TabsTrigger value="policies">Policies</TabsTrigger>
         </TabsList>
         <TabsContent value="organization">
           <OrganizationSection />
@@ -73,6 +75,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="shipping">
           <IndiaPostParcelDefaultsSettings />
+        </TabsContent>
+        <TabsContent value="policies">
+          <PoliciesSettings />
         </TabsContent>
       </Tabs>
     </div>

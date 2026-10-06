@@ -876,6 +876,21 @@ export type OrganizationSettings = {
   logo_url?: string | null;
 };
 
+export type OrganizationPoliciesSettings = {
+  shippingPolicyBody: string;
+  contactBody: string;
+  returnsBody: string;
+  termsBody: string;
+  shippingPolicyKeywords: string[];
+  contactKeywords: string[];
+  returnsKeywords: string[];
+  termsKeywords: string[];
+  shippingPolicyEnabled: boolean;
+  contactEnabled: boolean;
+  returnsEnabled: boolean;
+  termsEnabled: boolean;
+};
+
 export type TrackingPageStatus = "DRAFT" | "PUBLISHED" | "DISABLED";
 
 export type TrackingPageSocial = {

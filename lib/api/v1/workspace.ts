@@ -9,6 +9,7 @@ import {
   createApiKeySchema,
   createWebhookEndpointSchema,
   memberInviteSchema,
+  updateOrganizationPoliciesSchema,
   updateOrganizationSchema,
 } from "@/lib/api/v1-schemas";
 import { isBillingConfiguredAsync } from "@/modules/razorpay/config";
@@ -20,6 +21,12 @@ import {
   type OrganizationIdentityRow,
 } from "@/modules/organizations/branding";
 import { WEBHOOK_EVENTS } from "@/types/domain";
+import {
+  mapOrganizationPolicies,
+  normalizePolicyKeywords,
+  POLICY_BODY_MAX,
+  type OrganizationPolicies,
+} from "@/modules/vachat/policies";
 
 function uniqueById<T extends { id: string }>(rows: T[]) {
   const seen = new Set<string>();
@@ -221,6 +228,77 @@ export async function handleWorkspaceRoutes(
 
   if (key === "PATCH settings/notifications") {
     return await request.json();
+  }
+
+  if (key === "GET settings/policies") {
+    const { data } = await supabase
+      .from("organization_policies")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    return mapOrganizationPolicies(data);
+  }
+
+  if (key === "PATCH settings/policies") {
+    const body = updateOrganizationPoliciesSchema.parse(await request.json().catch(() => ({})));
+    const { data: existing } = await supabase
+      .from("organization_policies")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const current = mapOrganizationPolicies(existing);
+    const next: OrganizationPolicies = {
+      shippingPolicyBody: body.shippingPolicyBody !== undefined ? body.shippingPolicyBody : current.shippingPolicyBody,
+      contactBody: body.contactBody !== undefined ? body.contactBody : current.contactBody,
+      returnsBody: body.returnsBody !== undefined ? body.returnsBody : current.returnsBody,
+      termsBody: body.termsBody !== undefined ? body.termsBody : current.termsBody,
+      shippingPolicyKeywords:
+        body.shippingPolicyKeywords !== undefined
+          ? normalizePolicyKeywords(body.shippingPolicyKeywords)
+          : current.shippingPolicyKeywords,
+      contactKeywords:
+        body.contactKeywords !== undefined ? normalizePolicyKeywords(body.contactKeywords) : current.contactKeywords,
+      returnsKeywords:
+        body.returnsKeywords !== undefined ? normalizePolicyKeywords(body.returnsKeywords) : current.returnsKeywords,
+      termsKeywords:
+        body.termsKeywords !== undefined ? normalizePolicyKeywords(body.termsKeywords) : current.termsKeywords,
+      shippingPolicyEnabled: body.shippingPolicyEnabled ?? current.shippingPolicyEnabled,
+      contactEnabled: body.contactEnabled ?? current.contactEnabled,
+      returnsEnabled: body.returnsEnabled ?? current.returnsEnabled,
+      termsEnabled: body.termsEnabled ?? current.termsEnabled,
+    };
+    if (
+      next.shippingPolicyBody.length > POLICY_BODY_MAX ||
+      next.contactBody.length > POLICY_BODY_MAX ||
+      next.returnsBody.length > POLICY_BODY_MAX ||
+      next.termsBody.length > POLICY_BODY_MAX
+    ) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Policy text is too long.");
+    }
+    const row = {
+      organization_id: ctx.organizationId,
+      shipping_policy_body: next.shippingPolicyBody,
+      contact_body: next.contactBody,
+      returns_body: next.returnsBody,
+      terms_body: next.termsBody,
+      shipping_policy_keywords: next.shippingPolicyKeywords,
+      contact_keywords: next.contactKeywords,
+      returns_keywords: next.returnsKeywords,
+      terms_keywords: next.termsKeywords,
+      shipping_policy_enabled: next.shippingPolicyEnabled,
+      contact_enabled: next.contactEnabled,
+      returns_enabled: next.returnsEnabled,
+      terms_enabled: next.termsEnabled,
+    };
+    const { data, error } = await supabase
+      .from("organization_policies")
+      .upsert(row, { onConflict: "organization_id" })
+      .select("*")
+      .single();
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
+    scheduleMerchantKnowledgeSync(supabase, ctx.organizationId);
+    return mapOrganizationPolicies(data);
   }
 
   if (key === "GET api-keys") {

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { CUSTOMER_PHONE_ONLY_REPLY, type MerchantKnowledge } from "@/modules/vachat/knowledge";
 import {
   formatOrderDetailsText,
   handleMcpRpc,
@@ -107,24 +106,32 @@ describe("VaChat PostBus MCP", () => {
     expect(initializeResult().instructions).toContain("+918618456029");
     expect(initializeResult().instructions).toMatch(/post@post.com/);
     expect(initializeResult().instructions).toContain("https://www.postbus.in/track");
+    expect(initializeResult().instructions).toMatch(/server-trusted/i);
+    expect(mcpTools()[0]?.inputSchema.required).toBeUndefined();
   });
 
-  it("requires the chatting WhatsApp number", () => {
-    expect(() => parseSearchOrderDetailsArgs({})).toThrow(/whatsapp is required/i);
-    expect(parseSearchOrderDetailsArgs({ whatsapp: "+918848772371", query: "where is my order" })).toEqual({
-      whatsapp: "+918848772371",
+  it("ignores caller identity fields including session_id", () => {
+    expect(parseSearchOrderDetailsArgs({})).toEqual({ query: undefined, account: "post@post.com" });
+    expect(parseSearchOrderDetailsArgs({ whatsapp: "+918848772371" })).toEqual({
+      query: undefined,
+      account: "post@post.com",
+    });
+    expect(
+      parseSearchOrderDetailsArgs({
+        session_id: "sess-b",
+        query: "where is my order",
+        whatsapp: "+919998887776",
+        merchant_id: "org-b",
+        order_id: "ord-b",
+      })
+    ).toEqual({
       query: "where is my order",
-      merchant_id: undefined,
       account: "post@post.com",
     });
   });
 
-  it("rejects the PostBus WhatsApp line as the customer number", () => {
-    expect(() => parseSearchOrderDetailsArgs({ whatsapp: "+918618456029" })).toThrow(/FROM number/i);
-  });
-
   it("rejects a different VaChat account", () => {
-    expect(() => parseSearchOrderDetailsArgs({ whatsapp: "8848772371", account: "other@shop.com" })).toThrow(
+    expect(() => parseSearchOrderDetailsArgs({ session_id: "sess-a", account: "other@shop.com" })).toThrow(
       /post@post.com/
     );
   });
@@ -146,11 +153,13 @@ describe("VaChat PostBus MCP", () => {
         method: "tools/call",
         params: {
           name: SEARCH_ORDER_DETAILS_TOOL,
-          arguments: { whatsapp: "+918848772371", query: "order details" },
+          arguments: { session_id: "sess-a", query: "order details", whatsapp: "+918848772371" },
         },
       },
       async (args) => {
-        expect(args.whatsapp).toBe("+918848772371");
+        expect(args.query).toBe("order details");
+        expect(args).not.toHaveProperty("sessionId");
+        expect(args).not.toHaveProperty("whatsapp");
         return sample;
       }
     );
@@ -172,23 +181,6 @@ describe("VaChat PostBus MCP", () => {
 
   it("detects JSON-RPC vs a plain search body", () => {
     expect(isJsonRpcPayload({ jsonrpc: "2.0", method: "tools/list", id: 1 })).toBe(true);
-    expect(isJsonRpcPayload({ whatsapp: "+918848772371" })).toBe(false);
-  });
-
-  it("keeps the phone-only refusal in empty answers", () => {
-    expect(CUSTOMER_PHONE_ONLY_REPLY).toMatch(/WhatsApp number that placed the order/i);
-    const knowledge: MerchantKnowledge = {
-      merchantId: "org-1",
-      organization: {
-        name: "Test",
-        phone: null,
-        website: null,
-        email: null,
-        gstin: null,
-        address: null,
-      },
-      orders: [],
-    };
-    expect(knowledge.orders).toHaveLength(0);
+    expect(isJsonRpcPayload({ session_id: "sess-a" })).toBe(false);
   });
 });

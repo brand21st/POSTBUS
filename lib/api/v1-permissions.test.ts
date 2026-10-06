@@ -151,6 +151,10 @@ describe("permissionForTenantRoute", () => {
       "labels.read"
     );
     expect(permissionForTenantRoute("GET", "notifications", ["notifications"])).toBeUndefined();
+    expect(permissionForTenantRoute("GET", "settings/policies", ["settings", "policies"])).toBeUndefined();
+    expect(permissionForTenantRoute("PATCH", "settings/policies", ["settings", "policies"])).toBe(
+      "settings.manage"
+    );
     expect(permissionForTenantRoute("GET", "billing", ["billing"])).toBeUndefined();
     expect(permissionForTenantRoute("GET", "billing/plans", ["billing", "plans"])).toBeUndefined();
     expect(permissionForTenantRoute("POST", "billing/subscribe", ["billing", "subscribe"])).toBe("org.billing");

@@ -145,11 +145,10 @@ export async function acceptVachatWebhook(
       const result = await handleVachatAssistantMessage(supabase, {
         from: inbound.from,
         text: inbound.text,
-        merchantId: String(body.data?.merchant_id ?? "").trim() || null,
       });
-      const merchantId = result.merchantId || String(body.data?.merchant_id ?? "").trim();
-      if (merchantId) {
-        const { data: org } = await supabase.from("organizations").select("id").eq("id", merchantId).maybeSingle();
+      const organizationId = result.organizationId || "";
+      if (organizationId) {
+        const { data: org } = await supabase.from("organizations").select("id").eq("id", organizationId).maybeSingle();
         if (org?.id) {
           return recordAccepted(supabase, { id: "platform", organization_id: org.id }, input, body);
         }

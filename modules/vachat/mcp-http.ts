@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { fail } from "@/lib/api/response";
-import { logError, logInfo } from "@/lib/logger";
+import { createRequestId, logError, logInfo } from "@/lib/logger";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import {
@@ -13,6 +13,7 @@ import {
   mcpTools,
   parseSearchOrderDetailsArgs,
   mcpToolCallResult,
+  SEARCH_MERCHANT_ORGANIZATION_TOOL,
   searchOrderDetails,
 } from "@/modules/vachat/mcp";
 
@@ -64,11 +65,16 @@ export async function handleVachatMcpRequest(request: NextRequest) {
     }
     const raw = await request.json().catch(() => null);
     const supabase = createAdminClient();
-    const search = (args: Parameters<typeof searchOrderDetails>[1]) => searchOrderDetails(supabase, args);
+    const requestId = createRequestId();
+    const search = (args: Parameters<typeof searchOrderDetails>[1]) =>
+      searchOrderDetails(supabase, { ...args, requestId });
 
     if (isJsonRpcPayload(raw)) {
-      const handled = await handleMcpRpc(raw, search);
-      logInfo("vachat.mcp.rpc", { method: Array.isArray(raw) ? "batch" : (raw as { method?: string })?.method });
+      const handled = await handleMcpRpc(raw, search, { requestId });
+      logInfo("vachat.mcp.rpc", {
+        requestId,
+        method: Array.isArray(raw) ? "batch" : (raw as { method?: string })?.method,
+      });
       return mcpResponse(handled.body, handled.status);
     }
 
@@ -76,12 +82,11 @@ export async function handleVachatMcpRequest(request: NextRequest) {
     const toolName = String(
       raw && typeof raw === "object" ? (raw as { tool?: string; name?: string }).tool ?? (raw as { name?: string }).name ?? "" : ""
     ).trim();
-    const result = await search(
-      toolName === "search_merchant_organization"
-        ? { ...args, query: args.query?.trim() || "merchant phone number website email gstin address" }
-        : args
-    );
-    logInfo("vachat.mcp.search", { found: result.found, orders: result.results.length });
+    const result = await search({
+      ...args,
+      tool: toolName === SEARCH_MERCHANT_ORGANIZATION_TOOL ? SEARCH_MERCHANT_ORGANIZATION_TOOL : undefined,
+    });
+    logInfo("vachat.mcp.search", { requestId, found: result.found, orders: result.results.length });
     return mcpResponse(mcpToolCallResult(result));
   } catch (error) {
     logError("vachat.mcp.failed", { message: error instanceof Error ? error.message : "unknown" });

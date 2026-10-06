@@ -1,38 +1,41 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { logInfo } from "@/lib/logger";
 import { safeEqual } from "@/lib/security/crypto";
 import {
-  answerFromKnowledge,
-  pickOrder,
-} from "@/modules/vachat/assistant";
-import {
-  CUSTOMER_PHONE_ONLY_REPLY,
-  customerPhonesMatch,
-  findOrganizationsForCustomerPhone,
-  loadMerchantKnowledge,
-  phoneDigitsForLookup,
   POSTBUS_PUBLIC_TRACK_URL,
-  postbusTrackingLink,
   VACHAT_ASSISTANT_ACCOUNT,
   VACHAT_ASSISTANT_NAME,
-  VACHAT_BUSINESS_WHATSAPP,
-  type MerchantKnowledge,
   type MerchantKnowledgeOrder,
 } from "@/modules/vachat/knowledge";
 import {
   getPlatformVachatConfig,
   isPlatformVachatActive,
 } from "@/modules/vachat/platform-config";
+import {
+  resolveTrustedSupportSessionId,
+  type PlatformSupportMcpContext,
+} from "@/modules/vachat/mcp-context";
+import {
+  formatBoundSupportOrderReply,
+  getBoundSupportOrder,
+  type BoundSupportOrder,
+} from "@/modules/vachat/support-order";
 
 export const MCP_PROTOCOL_VERSION = "2025-03-26";
 export const SEARCH_ORDER_DETAILS_TOOL = "search_order_details";
 export const SEARCH_MERCHANT_ORGANIZATION_TOOL = "search_merchant_organization";
+export const MCP_UNAUTHORIZED = "Unauthorized request.";
+export const MCP_ORDER_UNAVAILABLE = "Order access is not available in this support session.";
+
+export type PlatformMcpAuthContext = PlatformSupportMcpContext;
 
 export type SearchOrderDetailsArgs = {
-  whatsapp: string;
   query?: string;
-  merchant_id?: string;
   account?: string;
+  now?: Date;
+  requestId?: string;
+  tool?: string;
 };
 
 export type OrderDetailsHit = {
@@ -127,53 +130,59 @@ type JsonRpcRequest = {
   params?: unknown;
 };
 
+const IGNORED_IDENTITY = {
+  type: "string",
+  description:
+    "Ignored. Not used for authorization. Order, merchant, customer, and tracking come from the support session.",
+};
+
 export function mcpTools() {
-  const whatsapp = {
-    type: "string",
-    description:
-      "Customer WhatsApp FROM number that is chatting. Never pass the PostBus line +918618456029. Account post@post.com receives on that line.",
-  };
-  const merchantId = {
-    type: "string",
-    description: "Optional PostBus organization UUID if VaChat already knows the merchant.",
-  };
   const account = {
     type: "string",
     description: "Must be post@post.com when sent.",
+  };
+  const query = {
+    type: "string",
+    description: "Optional customer question. Does not select or authorize an order.",
+  };
+  const identityProperties = {
+    session_id: IGNORED_IDENTITY,
+    whatsapp: IGNORED_IDENTITY,
+    phone: IGNORED_IDENTITY,
+    from: IGNORED_IDENTITY,
+    wa_id: IGNORED_IDENTITY,
+    customer_id: IGNORED_IDENTITY,
+    order_id: IGNORED_IDENTITY,
+    organization_id: IGNORED_IDENTITY,
+    merchant_id: IGNORED_IDENTITY,
+    tracking_number: IGNORED_IDENTITY,
   };
   return [
     {
       name: SEARCH_ORDER_DETAILS_TOOL,
       description:
-        "Live-fetch updated PostBus tenant merchant organization, order information, shipment information, invoice, India Post tracking ID, tracking timeline, and tracking link (https://www.postbus.in/track) for the chatting WhatsApp number. Account post@post.com. Never look up another customer's records.",
+        "Live-fetch the bound support session's merchant, order, shipment, and India Post tracking. Session context is injected by PostBus, not by this tool's arguments.",
       inputSchema: {
         type: "object",
-        additionalProperties: false,
-        required: ["whatsapp"],
+        additionalProperties: true,
         properties: {
-          whatsapp,
-          query: {
-            type: "string",
-            description:
-              "Optional customer question, order number, India Post tracking ID, or invoice number.",
-          },
-          merchant_id: merchantId,
+          query,
           account,
+          ...identityProperties,
         },
       },
     },
     {
       name: SEARCH_MERCHANT_ORGANIZATION_TOOL,
       description:
-        "Live-fetch updated PostBus tenant merchant organization details (name, phone, website, email, GSTIN, address) for the chatting WhatsApp number. Also returns that number's latest orders, shipments, invoices, India Post tracking IDs, timelines, and https://www.postbus.in/track links.",
+        "Live-fetch the bound support session's merchant organization. Session context is injected by PostBus, not by this tool's arguments.",
       inputSchema: {
         type: "object",
-        additionalProperties: false,
-        required: ["whatsapp"],
+        additionalProperties: true,
         properties: {
-          whatsapp,
-          merchant_id: merchantId,
+          query,
           account,
+          ...identityProperties,
         },
       },
     },
@@ -190,133 +199,127 @@ export function initializeResult() {
       title: VACHAT_ASSISTANT_NAME,
     },
     instructions:
-      "PostBus WhatsApp is +918618456029 on VaChat account post@post.com. When a customer messages that number, call search_order_details or search_merchant_organization with the customer's FROM WhatsApp, never +918618456029. Always send https://www.postbus.in/track (with ?tracking=ID when an India Post tracking ID exists). Answer only from the live tool result.",
+      "PostBus WhatsApp is +918618456029 on VaChat account post@post.com. Tools search_order_details and search_merchant_organization are executed by the PostBus webhook with a server-trusted support session. Do not pass session_id, whatsapp, order_id, merchant_id, or tracking_number as authorization. Always send https://www.postbus.in/track (with ?tracking=ID when an India Post tracking ID exists). Answer only from the live tool result.",
   };
 }
 
 export function parseSearchOrderDetailsArgs(raw: unknown): SearchOrderDetailsArgs {
   const record =
     raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  const whatsapp = String(record.whatsapp ?? record.phone ?? record.from ?? record.wa_id ?? "").trim();
-  if (!phoneDigitsForLookup(whatsapp)) {
-    throw new AppError(
-      ERROR_CODES.VALIDATION_ERROR,
-      "whatsapp is required (the customer number that is chatting)."
-    );
-  }
-  if (customerPhonesMatch(whatsapp, VACHAT_BUSINESS_WHATSAPP)) {
-    throw new AppError(
-      ERROR_CODES.VALIDATION_ERROR,
-      "Pass the customer WhatsApp FROM number, not the PostBus line +918618456029."
-    );
-  }
   const account = String(record.account ?? VACHAT_ASSISTANT_ACCOUNT).trim() || VACHAT_ASSISTANT_ACCOUNT;
   if (account.toLowerCase() !== VACHAT_ASSISTANT_ACCOUNT) {
     throw new AppError(ERROR_CODES.FORBIDDEN, `MCP search is only for ${VACHAT_ASSISTANT_ACCOUNT}.`);
   }
   return {
-    whatsapp,
     query: String(record.query ?? record.question ?? record.text ?? "").trim() || undefined,
-    merchant_id: String(record.merchant_id ?? record.merchantId ?? "").trim() || undefined,
     account: VACHAT_ASSISTANT_ACCOUNT,
   };
 }
 
-function recencyMs(order: MerchantKnowledgeOrder) {
-  const stamp = order.bookedAt || order.createdAt || order.timeline[0]?.at || "";
-  const value = Date.parse(stamp);
-  return Number.isFinite(value) ? value : 0;
+function emptyResult(answer: string): OrderDetailsSearchResult {
+  return {
+    account: VACHAT_ASSISTANT_ACCOUNT,
+    assistant: VACHAT_ASSISTANT_NAME,
+    fetched_at: new Date().toISOString(),
+    live: true,
+    tracking_page: POSTBUS_PUBLIC_TRACK_URL,
+    customer_whatsapp: null,
+    found: false,
+    answer,
+    organizations: [],
+    results: [],
+  };
 }
 
-function toHit(knowledge: MerchantKnowledge, order: MerchantKnowledgeOrder): OrderDetailsHit {
-  const trackingLink = postbusTrackingLink(order.trackingNumber);
+function toHit(order: BoundSupportOrder): OrderDetailsHit {
+  const timeline = order.last_event
+    ? [
+        {
+          at: order.last_event.at,
+          office: order.last_event.office,
+          description: order.last_event.description,
+        },
+      ]
+    : [];
   const organization = {
-    id: knowledge.merchantId,
-    name: knowledge.organization.name,
-    phone: knowledge.organization.phone,
-    website: knowledge.organization.website,
-    email: knowledge.organization.email,
-    gstin: knowledge.organization.gstin,
-    address: knowledge.organization.address,
+    id: "",
+    name: order.merchant_name,
+    phone: order.merchant_phone,
+    website: order.merchant_website,
+    email: order.merchant_email,
+    gstin: null,
+    address: null,
   };
   return {
-    merchant_id: knowledge.merchantId,
-    merchant_name: knowledge.organization.name,
-    merchant_phone: knowledge.organization.phone,
-    merchant_website: knowledge.organization.website,
-    merchant_email: knowledge.organization.email,
-    merchant_gstin: knowledge.organization.gstin,
-    merchant_address: knowledge.organization.address,
+    merchant_id: "",
+    merchant_name: order.merchant_name,
+    merchant_phone: order.merchant_phone,
+    merchant_website: order.merchant_website,
+    merchant_email: order.merchant_email,
+    merchant_gstin: null,
+    merchant_address: null,
     organization,
     order_information: {
-      order_number: order.orderNumber,
-      created_at: order.createdAt ?? null,
-      status: order.status,
-      payment_status: order.paymentStatus,
-      amount: order.amount,
+      order_number: order.order_ref,
+      created_at: order.created_at,
+      status: order.order_status,
+      payment_status: null,
+      amount: null,
       items: order.items,
-      customer_name: order.customerName,
+      customer_name: null,
     },
     shipment_information: {
-      status: order.shipmentStatus,
-      booked_at: order.bookedAt,
-      weight_grams: order.shipmentWeightGrams ?? null,
+      status: order.shipment_status,
+      booked_at: order.booked_at,
+      weight_grams: null,
     },
-    invoice: {
-      number: order.invoiceNumber,
-      date: order.invoiceDate,
-      total: order.invoiceTotal,
-    },
+    invoice: { number: null, date: null, total: null },
     tracking: {
-      india_post_tracking_id: order.trackingNumber,
-      tracking_link: trackingLink,
-      last_scan: order.lastScan,
-      last_office: order.lastOffice,
-      timeline: order.timeline,
+      india_post_tracking_id: order.tracking_number,
+      tracking_link: order.tracking_link,
+      last_scan: order.last_event?.description ?? null,
+      last_office: order.last_event?.office ?? null,
+      timeline,
     },
-    order_number: order.orderNumber,
-    created_at: order.createdAt ?? null,
-    status: order.status,
-    payment_status: order.paymentStatus,
-    amount: order.amount,
+    order_number: order.order_ref,
+    created_at: order.created_at,
+    status: order.order_status,
+    payment_status: null,
+    amount: null,
     items: order.items,
-    invoice_number: order.invoiceNumber,
-    invoice_date: order.invoiceDate,
-    invoice_total: order.invoiceTotal,
-    tracking_number: order.trackingNumber,
-    shipment_status: order.shipmentStatus,
-    booked_at: order.bookedAt,
-    last_scan: order.lastScan,
-    last_office: order.lastOffice,
-    tracking_url: trackingLink,
-    timeline: order.timeline,
+    invoice_number: null,
+    invoice_date: null,
+    invoice_total: null,
+    tracking_number: order.tracking_number,
+    shipment_status: order.shipment_status,
+    booked_at: order.booked_at,
+    last_scan: order.last_event?.description ?? null,
+    last_office: order.last_event?.office ?? null,
+    tracking_url: order.tracking_link,
+    timeline,
   };
 }
 
-function toOrganizationHit(knowledge: MerchantKnowledge): MerchantOrganizationHit {
+function toOrganizationHit(order: BoundSupportOrder): MerchantOrganizationHit {
   return {
-    merchant_id: knowledge.merchantId,
-    name: knowledge.organization.name,
-    phone: knowledge.organization.phone,
-    website: knowledge.organization.website,
-    email: knowledge.organization.email,
-    gstin: knowledge.organization.gstin,
-    address: knowledge.organization.address,
+    merchant_id: "",
+    name: order.merchant_name,
+    phone: order.merchant_phone,
+    website: order.merchant_website,
+    email: order.merchant_email,
+    gstin: null,
+    address: null,
   };
-}
-
-function sortOrders(orders: MerchantKnowledgeOrder[]) {
-  return [...orders].sort((a, b) => recencyMs(b) - recencyMs(a));
 }
 
 export function formatOrderDetailsText(result: OrderDetailsSearchResult) {
   if (!result.found) return result.answer;
   const lines = [
     `${result.assistant}. VaChat account ${result.account}. Live PostBus fetch ${result.fetched_at}.`,
-    `Customer WhatsApp ${result.customer_whatsapp}.`,
+    result.customer_whatsapp ? `Customer WhatsApp ${result.customer_whatsapp}.` : null,
     `Tracking page ${result.tracking_page}.`,
     result.answer,
-  ];
+  ].filter(Boolean) as string[];
   for (const org of result.organizations) {
     lines.push(
       [
@@ -366,94 +369,68 @@ export function formatOrderDetailsText(result: OrderDetailsSearchResult) {
 
 export async function searchOrderDetails(
   supabase: SupabaseClient,
-  args: SearchOrderDetailsArgs
+  args: SearchOrderDetailsArgs,
+  trusted?: PlatformSupportMcpContext | null
 ): Promise<OrderDetailsSearchResult> {
-  const empty: OrderDetailsSearchResult = {
-    account: VACHAT_ASSISTANT_ACCOUNT,
-    assistant: VACHAT_ASSISTANT_NAME,
-    fetched_at: new Date().toISOString(),
-    live: true,
-    tracking_page: POSTBUS_PUBLIC_TRACK_URL,
-    customer_whatsapp: phoneDigitsForLookup(args.whatsapp),
-    found: false,
-    answer: CUSTOMER_PHONE_ONLY_REPLY,
-    organizations: [],
-    results: [],
-  };
-
-  const hinted = args.merchant_id?.trim() || "";
-  const orgIds = hinted ? [hinted] : await findOrganizationsForCustomerPhone(supabase, args.whatsapp);
-  const bundles: MerchantKnowledge[] = [];
-  for (const organizationId of orgIds) {
-    const knowledge = await loadMerchantKnowledge(supabase, organizationId, {
-      customerPhone: args.whatsapp,
+  void args.query;
+  const sessionId = resolveTrustedSupportSessionId(trusted);
+  if (!sessionId) {
+    logInfo("vachat.mcp.denied", {
+      tool: args.tool ?? SEARCH_ORDER_DETAILS_TOOL,
+      mode: "untrusted_remote",
+      reason: "missing_trusted_context",
+      requestId: args.requestId ?? trusted?.requestId ?? null,
     });
-    if (knowledge) bundles.push(knowledge);
+    return emptyResult(MCP_UNAUTHORIZED);
   }
-  if (!bundles.length) return empty;
-
-  const query = args.query?.trim() || "order details";
-  const hits: OrderDetailsHit[] = [];
-  let focused: { knowledge: MerchantKnowledge; order: MerchantKnowledgeOrder } | null = null;
-
-  for (const knowledge of bundles) {
-    const ranked = sortOrders(knowledge.orders);
-    const picked = ranked.length
-      ? pickOrder({ ...knowledge, orders: ranked }, query) ?? ranked[0] ?? null
-      : null;
-    for (const order of ranked) hits.push(toHit(knowledge, order));
-    if (picked && (!focused || recencyMs(picked) > recencyMs(focused.order))) {
-      focused = { knowledge: { ...knowledge, orders: ranked }, order: picked };
-    }
+  const bound = await getBoundSupportOrder(supabase, { sessionId, now: args.now });
+  if (!bound.ok) {
+    logInfo("vachat.mcp.denied", {
+      tool: args.tool ?? SEARCH_ORDER_DETAILS_TOOL,
+      mode: "platform_support",
+      reason: bound.code,
+      requestId: args.requestId ?? trusted?.requestId ?? null,
+    });
+    const answer =
+      bound.code === "REJECTED" ? MCP_ORDER_UNAVAILABLE : bound.message;
+    return emptyResult(answer);
   }
 
-  hits.sort((a, b) => {
-    const left = Date.parse(a.booked_at || a.created_at || a.timeline[0]?.at || "") || 0;
-    const right = Date.parse(b.booked_at || b.created_at || b.timeline[0]?.at || "") || 0;
-    return right - left;
-  });
-
-  const organizations = bundles.map(toOrganizationHit);
-  const answer = focused
-    ? answerFromKnowledge(focused.knowledge, query)
-    : [
-        `${organizations[0]?.name ?? "This merchant"} is the merchant on this number.`,
-        organizations[0]?.phone ? `Phone ${organizations[0].phone}.` : null,
-        organizations[0]?.website ? `Website ${organizations[0].website}.` : null,
-        "No order is on file yet for this WhatsApp number.",
-      ]
-        .filter(Boolean)
-        .join(" ");
-
+  const hit = toHit(bound.order);
   return {
     account: VACHAT_ASSISTANT_ACCOUNT,
     assistant: VACHAT_ASSISTANT_NAME,
     fetched_at: new Date().toISOString(),
     live: true,
     tracking_page: POSTBUS_PUBLIC_TRACK_URL,
-    customer_whatsapp: empty.customer_whatsapp,
+    customer_whatsapp: null,
     found: true,
-    answer,
-    organizations,
-    results: hits.slice(0, 20),
+    answer: formatBoundSupportOrderReply(bound.order),
+    organizations: [toOrganizationHit(bound.order)],
+    results: [hit],
   };
 }
 
 export async function searchMerchantOrganization(
   supabase: SupabaseClient,
-  args: SearchOrderDetailsArgs
+  args: SearchOrderDetailsArgs,
+  trusted?: PlatformSupportMcpContext | null
 ) {
-  return searchOrderDetails(supabase, {
-    ...args,
-    query: args.query?.trim() || "merchant phone number website email gstin address",
-  });
+  return searchOrderDetails(
+    supabase,
+    {
+      ...args,
+      tool: args.tool ?? SEARCH_MERCHANT_ORGANIZATION_TOOL,
+    },
+    trusted
+  );
 }
 
 export function mcpToolCallResult(result: OrderDetailsSearchResult) {
   return {
     content: [{ type: "text", text: formatOrderDetailsText(result) }],
     structuredContent: result,
-    isError: false,
+    isError: !result.found,
   };
 }
 
@@ -477,12 +454,13 @@ export function isJsonRpcPayload(raw: unknown) {
 
 export async function handleMcpRpc(
   raw: unknown,
-  search: (args: SearchOrderDetailsArgs) => Promise<OrderDetailsSearchResult>
+  search: (args: SearchOrderDetailsArgs) => Promise<OrderDetailsSearchResult>,
+  meta?: { requestId?: string }
 ): Promise<{ status: number; body: unknown | null }> {
   if (Array.isArray(raw)) {
     const bodies = [];
     for (const item of raw) {
-      const handled = await handleMcpRpc(item, search);
+      const handled = await handleMcpRpc(item, search, meta);
       if (handled.body != null) bodies.push(handled.body);
     }
     return { status: 200, body: bodies };
@@ -512,16 +490,14 @@ export async function handleMcpRpc(
     }
     try {
       const args = parseSearchOrderDetailsArgs(params.arguments ?? params);
-      const result =
-        name === SEARCH_MERCHANT_ORGANIZATION_TOOL
-          ? await search({
-              ...args,
-              query: args.query?.trim() || "merchant phone number website email gstin address",
-            })
-          : await search(args);
+      const result = await search({
+        ...args,
+        requestId: meta?.requestId,
+        tool: name,
+      });
       return { status: 200, body: rpcResult(id, mcpToolCallResult(result)) };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Tool call failed.";
+      const message = error instanceof AppError ? error.message : MCP_UNAUTHORIZED;
       return { status: 200, body: rpcError(id, -32602, message) };
     }
   }
@@ -551,7 +527,6 @@ export function mcpCorsHeaders() {
     "Access-Control-Allow-Headers":
       "Authorization, Content-Type, X-Api-Key, Mcp-Session-Id, MCP-Protocol-Version",
     "Access-Control-Expose-Headers": "Mcp-Session-Id, MCP-Protocol-Version",
-    "Cross-Origin-Resource-Policy": "cross-origin",
     "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
   };
 }
