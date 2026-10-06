@@ -462,6 +462,10 @@ export type TrackingRecord = {
   tracking_number?: string | null;
   barcode?: string | null;
   status?: string;
+  bookedAt?: string | null;
+  booked_at?: string | null;
+  operationalStatus?: string | null;
+  operational_status?: string | null;
   orderNumber?: string | null;
   order_number?: string | null;
   events?: TrackingEvent[];

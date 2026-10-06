@@ -18,7 +18,7 @@ import {
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
-import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { indiaPostVisibleShipmentError, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { INDIA_POST_SERVICES, indiaPostServiceLabel, SHIPMENT_STATUSES } from "@/types/domain";
 import type { Paginated, ShipmentRecord } from "@/types/api";
 
@@ -83,7 +83,7 @@ export default function ShipmentsPage() {
       id: "error",
       header: "Last error",
       cell: (row) => {
-        const message = String(row.lastError ?? row.last_error ?? "").trim();
+        const message = indiaPostVisibleShipmentError(row);
         if (!message) return "—";
         return (
           <span className="block max-w-md whitespace-pre-wrap break-words text-error" title={message}>

@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { asList } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
@@ -104,7 +105,7 @@ function ShipmentsPanel() {
                     Order {record.orderNumber ?? record.order_number ?? "—"}
                   </p>
                 </div>
-                <StatusBadge value={record.status} />
+                <StatusBadge value={indiaPostDisplayShipmentStatus(record)} />
               </CardHeader>
               <CardContent>
                 {(record.events ?? []).length === 0 ? (

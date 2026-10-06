@@ -333,12 +333,23 @@ export class IndiaPostProvider implements ShippingProvider {
         body: JSON.stringify({ bulk }),
         signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.track),
       });
+      lastJson = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        message?: string;
+        data?: unknown[];
+        error?: { message?: string };
+      };
       if (!response.ok) {
-        const error = new Error("Tracking lookup failed.");
+        const message =
+          indiaPostJoinMessages([lastJson.error?.message, lastJson.message]) || "Tracking lookup failed.";
+        // Freshly booked articles often 400/403/404 until the first office scan.
+        if (response.status === 400 || response.status === 403 || response.status === 404) {
+          continue;
+        }
+        const error = new Error(message);
         (error as { status?: number }).status = response.status;
         throw error;
       }
-      lastJson = (await response.json()) as { success?: boolean; message?: string; data?: unknown[] };
       if (Array.isArray(lastJson.data)) data.push(...lastJson.data);
     }
     return { ...lastJson, data };

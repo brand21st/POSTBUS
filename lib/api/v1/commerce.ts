@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
+import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
@@ -416,6 +417,7 @@ export async function handleCommerceRoutes(
     return {
       items: (data ?? []).map((row) => ({
         ...row,
+        status: indiaPostDisplayShipmentStatus(row),
         orderNumber: (row.orders as { order_number?: string } | null)?.order_number,
         events: row.tracking_events ?? [],
       })),

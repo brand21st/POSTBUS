@@ -5,7 +5,11 @@ import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { resolveOrderBookingService, shipmentServiceLocked } from "@/modules/india-post/booking-service";
-import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import {
+  indiaPostDisplayShipmentStatus,
+  indiaPostVisibleShipmentError,
+  isIndiaPostAcceptedStatus,
+} from "@/modules/india-post/booking-status";
 import { resolveDefaultServiceCode, savedParcelContracts } from "@/modules/india-post/contracts";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
@@ -951,11 +955,20 @@ function mapShipment(row: Record<string, unknown>) {
   const address = nestedOne(row.addresses) as { city?: string; state?: string; pincode?: string } | null;
   const pickup = nestedOne(row.pickup_locations) as { city?: string; name?: string } | null;
   const invoice = nestedRows(row.shipping_invoices)[0];
+  const status = indiaPostDisplayShipmentStatus({
+    status: row.status as string | null | undefined,
+    operational_status: row.operational_status as string | null | undefined,
+    booked_at: row.booked_at as string | null | undefined,
+  });
+  const lastError = indiaPostVisibleShipmentError({
+    last_error: row.last_error as string | null | undefined,
+    booked_at: row.booked_at as string | null | undefined,
+  });
   return {
     ...row,
     orderId: row.order_id as string | undefined,
     order_id: row.order_id as string | undefined,
-    status: row.status as string | undefined,
+    status: status ?? undefined,
     weightGrams: row.weight_grams != null ? Number(row.weight_grams) : undefined,
     weight_grams: row.weight_grams != null ? Number(row.weight_grams) : undefined,
     lengthCm: row.length_cm != null ? Number(row.length_cm) : undefined,
@@ -973,8 +986,8 @@ function mapShipment(row: Record<string, unknown>) {
     shippingPincode: address?.pincode ?? null,
     originCity: pickup?.city ?? null,
     trackingNumber: row.tracking_number,
-    lastError: (row.last_error as string | null | undefined) ?? null,
-    last_error: (row.last_error as string | null | undefined) ?? null,
+    lastError,
+    last_error: lastError,
     serviceCode: row.service_code,
     createdAt: row.created_at,
     operationalStatus: row.operational_status,

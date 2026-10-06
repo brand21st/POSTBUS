@@ -19,6 +19,7 @@ import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
+import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { FEATURE } from "@/modules/billing/entitlements";
 import { indiaPostServiceLabel, type MemberRole } from "@/types/domain";
 import type { ShipmentRecord, TrackingEvent } from "@/types/api";
@@ -161,6 +162,10 @@ export default function ShipmentDetailPage() {
     return classification.startsWith("RTO") || /rto|return/i.test(label);
   });
   const article = record.trackingNumber ?? record.tracking_number ?? record.barcode;
+  const bookedAt = record.bookedAt ?? record.booked_at;
+  const providerError = record.lastError ?? record.last_error;
+  const trackingLookupFailed = /tracking lookup failed/i.test(providerError ?? "");
+  const statusValue = indiaPostDisplayShipmentStatus(record);
 
   return (
     <div className="space-y-6">
@@ -198,12 +203,16 @@ export default function ShipmentDetailPage() {
             <CardTitle>Status</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <StatusBadge value={operational === "RTO_IN_TRANSIT" || operational === "RTO_DELIVERED" ? operational : record.status} />
+            <StatusBadge value={statusValue} />
             <p className="text-muted">
               Last synced {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
             </p>
-            {record.lastError || record.last_error ? (
-              <p className="whitespace-pre-wrap break-words text-error">{record.lastError ?? record.last_error}</p>
+            {bookedAt && trackingLookupFailed ? (
+              <p className="text-muted">
+                Article is booked. India Post tracking often stays empty until the first post-office scan.
+              </p>
+            ) : providerError ? (
+              <p className="whitespace-pre-wrap break-words text-error">{providerError}</p>
             ) : (
               <p className="text-muted">No provider error recorded.</p>
             )}
@@ -265,7 +274,7 @@ export default function ShipmentDetailPage() {
             <p>Pincode: {record.shippingPincode || "—"}</p>
             <div className="flex items-center gap-2">
               Current status:
-              <StatusBadge value={operational === "RTO_IN_TRANSIT" || operational === "RTO_DELIVERED" ? operational : record.status} />
+              <StatusBadge value={statusValue} />
             </div>
           </CardContent>
         </Card>
@@ -283,7 +292,7 @@ export default function ShipmentDetailPage() {
             <p>Last scan location: {record.lastScanOffice ?? record.last_scan_office ?? "—"}</p>
             <p>Customer: {[customer?.name, customer?.phone].filter(Boolean).join(" · ") || "—"}</p>
             <p>Tracking ID: {article ?? "—"}</p>
-            <p>Current status: {record.status ?? "—"}</p>
+            <p>Current status: {statusValue ?? "—"}</p>
             <p>
               India Post does not expose a reattempt or address-update API on this connection. The next scan updates this
               shipment.

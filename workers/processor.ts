@@ -153,6 +153,7 @@ export async function processJob(queue: string, payload: JobPayload) {
     if (
       queue !== "invoice-generation" &&
       queue !== "label-generation" &&
+      queue !== "tracking-sync" &&
       queue !== "wati-notify" &&
       queue !== "vachat-notify" &&
       payload.entityType === "shipment" &&

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  indiaPostDisplayShipmentStatus,
+  indiaPostVisibleShipmentError,
   isIndiaPostAcceptedStatus,
   isIndiaPostBookingInFlight,
 } from "@/modules/india-post/booking-status";
@@ -19,5 +21,20 @@ describe("India Post booking statuses", () => {
     expect(isIndiaPostBookingInFlight("LABEL_PENDING")).toBe(true);
     expect(isIndiaPostBookingInFlight("LABEL_READY")).toBe(false);
     expect(isIndiaPostBookingInFlight("BOOKED")).toBe(false);
+  });
+
+  it("hides leftover tracking lookup errors after the article is booked", () => {
+    expect(
+      indiaPostVisibleShipmentError({
+        last_error: "Tracking lookup failed.",
+        booked_at: "2026-10-06T08:00:00.000Z",
+      })
+    ).toBeNull();
+    expect(
+      indiaPostVisibleShipmentError({
+        last_error: "Tracking lookup failed.",
+        booked_at: null,
+      })
+    ).toBe("Tracking lookup failed.");
   });
 });
