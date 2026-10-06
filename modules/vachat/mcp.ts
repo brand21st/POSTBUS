@@ -263,8 +263,8 @@ function toHit(order: BoundSupportOrder): OrderDetailsHit {
       order_number: order.order_ref,
       created_at: order.created_at,
       status: order.order_status,
-      payment_status: null,
-      amount: null,
+      payment_status: order.payment_status,
+      amount: order.amount,
       items: order.items,
       customer_name: null,
     },
@@ -273,7 +273,7 @@ function toHit(order: BoundSupportOrder): OrderDetailsHit {
       booked_at: order.booked_at,
       weight_grams: null,
     },
-    invoice: { number: null, date: null, total: null },
+    invoice: { number: order.invoice_number, date: null, total: order.invoice_total },
     tracking: {
       india_post_tracking_id: order.tracking_number,
       tracking_link: order.tracking_link,
@@ -284,12 +284,12 @@ function toHit(order: BoundSupportOrder): OrderDetailsHit {
     order_number: order.order_ref,
     created_at: order.created_at,
     status: order.order_status,
-    payment_status: null,
-    amount: null,
+    payment_status: order.payment_status,
+    amount: order.amount,
     items: order.items,
-    invoice_number: null,
+    invoice_number: order.invoice_number,
     invoice_date: null,
-    invoice_total: null,
+    invoice_total: order.invoice_total,
     tracking_number: order.tracking_number,
     shipment_status: order.shipment_status,
     booked_at: order.booked_at,
@@ -372,7 +372,6 @@ export async function searchOrderDetails(
   args: SearchOrderDetailsArgs,
   trusted?: PlatformSupportMcpContext | null
 ): Promise<OrderDetailsSearchResult> {
-  void args.query;
   const sessionId = resolveTrustedSupportSessionId(trusted);
   if (!sessionId) {
     logInfo("vachat.mcp.denied", {
@@ -405,7 +404,7 @@ export async function searchOrderDetails(
     tracking_page: POSTBUS_PUBLIC_TRACK_URL,
     customer_whatsapp: null,
     found: true,
-    answer: formatBoundSupportOrderReply(bound.order),
+    answer: formatBoundSupportOrderReply(bound.order, args.query ?? ""),
     organizations: [toOrganizationHit(bound.order)],
     results: [hit],
   };

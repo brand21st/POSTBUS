@@ -6,6 +6,7 @@ import {
   VACHAT_BUSINESS_WHATSAPP,
 } from "@/modules/vachat/knowledge";
 import { isWhatsAppSupportEligible } from "@/modules/vachat/support-eligibility";
+import { composeRetrievedReply } from "@/modules/vachat/retrieve";
 import {
   findSupportSessionById,
   isSupportSessionExpired,
@@ -36,6 +37,10 @@ export type BoundSupportOrder = {
   last_event: BoundSupportLastEvent | null;
   items: string[];
   tracking_link: string;
+  amount: string | null;
+  payment_status: string | null;
+  invoice_number: string | null;
+  invoice_total: string | null;
 };
 
 export type GetBoundSupportOrderInput = {
@@ -93,21 +98,53 @@ function safeMerchantPhone(raw?: string | null) {
   return phone;
 }
 
-export function formatBoundSupportOrderReply(order: BoundSupportOrder) {
-  const lines = [
-    `${order.merchant_name} order ${order.order_ref} is ${order.order_status.replace(/_/g, " ").toLowerCase()}.`,
-    order.items.length ? `Items: ${order.items.join(", ")}.` : null,
-    order.shipment_status
-      ? `Shipment ${order.shipment_status.replace(/_/g, " ").toLowerCase()}.`
-      : null,
-    order.tracking_number ? `India Post tracking ID ${order.tracking_number}.` : "Tracking is not assigned yet.",
-    order.last_event?.description
-      ? `Latest scan: ${order.last_event.description}${order.last_event.office ? ` at ${order.last_event.office}` : ""}.`
-      : null,
-    order.tracking_number ? `Track: ${order.tracking_link}` : null,
-    order.merchant_phone ? `Store phone ${order.merchant_phone}.` : null,
-  ].filter(Boolean) as string[];
-  return lines.join(" ");
+function money(value: unknown) {
+  if (value == null || value === "") return null;
+  const amount = typeof value === "number" ? value : Number(String(value).replace(/,/g, ""));
+  if (!Number.isFinite(amount)) return null;
+  return amount.toFixed(2).endsWith(".00") ? String(Math.trunc(amount)) : amount.toFixed(2);
+}
+
+export function formatBoundSupportOrderReply(order: BoundSupportOrder, query = "") {
+  return composeRetrievedReply(query, [
+    {
+      kind: "order",
+      text: [
+        `${order.merchant_name} order ${order.order_ref} is ${order.order_status.replace(/_/g, " ").toLowerCase()}.`,
+        order.items.length ? `Items: ${order.items.join(", ")}.` : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    },
+    {
+      kind: "invoice",
+      text: [
+        order.invoice_number ? `Invoice ${order.invoice_number}.` : null,
+        order.amount ? `Amount ${order.amount}.` : null,
+        order.invoice_total && order.invoice_total !== order.amount ? `Invoice total ${order.invoice_total}.` : null,
+        order.payment_status ? `Payment ${order.payment_status.replace(/_/g, " ").toLowerCase()}.` : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    },
+    {
+      kind: "tracking",
+      text: [
+        order.shipment_status ? `Shipment ${order.shipment_status.replace(/_/g, " ").toLowerCase()}.` : null,
+        order.tracking_number ? `India Post tracking ID ${order.tracking_number}.` : "Tracking is not assigned yet.",
+        order.last_event?.description
+          ? `Latest scan: ${order.last_event.description}${order.last_event.office ? ` at ${order.last_event.office}` : ""}.`
+          : null,
+        order.tracking_number ? `Track: ${order.tracking_link}` : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    },
+    {
+      kind: "merchant",
+      text: order.merchant_phone ? `Store phone ${order.merchant_phone}.` : "",
+    },
+  ]);
 }
 
 export async function getBoundSupportOrder(
@@ -137,7 +174,7 @@ export async function getBoundSupportOrder(
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .select(
-      "id, order_number, status, created_at, organization_id, customer_id, shipping_address_id, customers(phone), addresses:shipping_address_id(phone)"
+      "id, order_number, status, payment_status, total_amount, created_at, organization_id, customer_id, shipping_address_id, customers(phone), addresses:shipping_address_id(phone)"
     )
     .eq("id", session.selected_order_id)
     .eq("organization_id", session.selected_organization_id)
@@ -158,6 +195,7 @@ export async function getBoundSupportOrder(
     { data: invoice },
     { data: items },
     { data: shipments, error: shipmentError },
+    { data: shippingInvoices },
   ] = await Promise.all([
     supabase.from("organizations").select("id, name, phone").eq("id", session.selected_organization_id).maybeSingle(),
     supabase
@@ -177,6 +215,13 @@ export async function getBoundSupportOrder(
       .eq("organization_id", session.selected_organization_id)
       .eq("order_id", session.selected_order_id)
       .order("updated_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("shipping_invoices")
+      .select("invoice_number, total_amount, order_id")
+      .eq("organization_id", session.selected_organization_id)
+      .eq("order_id", session.selected_order_id)
+      .order("invoice_date", { ascending: false })
       .limit(1),
   ]);
   if (shipmentError) return SAFE_REJECT;
@@ -220,6 +265,7 @@ export async function getBoundSupportOrder(
   const trackingNumber = shipment
     ? String(shipment.tracking_number || shipment.barcode || "") || null
     : null;
+  const shippingInvoice = asList(shippingInvoices as Array<Record<string, unknown>> | null)[0] ?? null;
 
   return {
     ok: true,
@@ -239,6 +285,10 @@ export async function getBoundSupportOrder(
         .map((item) => [item.quantity ? `${item.quantity}x` : null, item.title].filter(Boolean).join(" "))
         .filter(Boolean),
       tracking_link: postbusTrackingLink(trackingNumber),
+      amount: money(order.total_amount),
+      payment_status: order.payment_status ? String(order.payment_status) : null,
+      invoice_number: shippingInvoice?.invoice_number ? String(shippingInvoice.invoice_number) : null,
+      invoice_total: money(shippingInvoice?.total_amount) ?? money(order.total_amount),
     },
   };
 }

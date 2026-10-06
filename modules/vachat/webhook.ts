@@ -137,11 +137,22 @@ export async function acceptVachatWebhook(
       throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Vachat webhook signature.");
     }
     const body = parseEnvelope(input.rawBody);
-    const { isInboundAssistantEvent, parseInboundMessage, handleVachatAssistantMessage } = await import(
+    const { isInboundAssistantEvent, resolveInboundSender, handleVachatAssistantMessage } = await import(
       "@/modules/vachat/assistant"
     );
-    if (isInboundAssistantEvent(body.event ?? "", body.data as Record<string, unknown> | undefined)) {
-      const inbound = parseInboundMessage(body.data as Record<string, unknown> | undefined);
+    const envelope = body as unknown as Record<string, unknown>;
+    const payload = {
+      ...(typeof envelope === "object" ? envelope : {}),
+      ...((body.data as Record<string, unknown> | undefined) ?? {}),
+    };
+    if (isInboundAssistantEvent(body.event ?? "", payload)) {
+      const inbound = await resolveInboundSender(payload, envelope);
+      logInfo("vachat.webhook.inbound", {
+        event: body.event ?? "",
+        hasFrom: Boolean(inbound.from),
+        hasText: Boolean(inbound.text),
+        hasContact: Boolean(inbound.contactId),
+      });
       const result = await handleVachatAssistantMessage(supabase, {
         from: inbound.from,
         text: inbound.text,

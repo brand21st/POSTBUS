@@ -24,6 +24,11 @@ import {
   type WhatsappSupportSession,
 } from "@/modules/vachat/support-session";
 import {
+  isInboundAssistantEvent,
+  parseInboundMessage,
+  resolveInboundSender,
+} from "@/modules/vachat/inbound";
+import {
   formatPolicyWhatsAppReply,
   loadOrganizationPolicies,
   loadPolicyReplyContext,
@@ -31,6 +36,8 @@ import {
   POLICY_PICK_MERCHANT_REPLY,
   policyExtrasMap,
 } from "@/modules/vachat/policies";
+
+export { isInboundAssistantEvent, parseInboundMessage, resolveInboundSender };
 
 export type AssistantIntent =
   | "merchant"
@@ -177,41 +184,6 @@ export function answerFromKnowledge(knowledge: MerchantKnowledge, text: string) 
   return orderLines(order).join(" ");
 }
 
-export function parseInboundMessage(data: Record<string, unknown> | undefined) {
-  const record = data ?? {};
-  const nested =
-    record.message && typeof record.message === "object" ? (record.message as Record<string, unknown>) : record;
-  const contact =
-    record.contact && typeof record.contact === "object" ? (record.contact as Record<string, unknown>) : {};
-  const from = String(
-    record.from ??
-      record.wa_id ??
-      record.phone ??
-      nested.from ??
-      contact.phone ??
-      contact.wa_id ??
-      ""
-  ).trim();
-  const text = String(
-    record.text ??
-      record.content_text ??
-      record.body ??
-      nested.text ??
-      nested.content_text ??
-      nested.body ??
-      (typeof record.message === "string" ? record.message : "")
-  ).trim();
-  return { from, text };
-}
-
-export function isInboundAssistantEvent(event: string, data?: Record<string, unknown>) {
-  const key = event.toLowerCase();
-  if (key.includes("status")) return false;
-  if (key.includes("inbound") || key.includes("received") || key.includes("conversation")) return true;
-  if (key.includes("message") && parseInboundMessage(data).text) return true;
-  return false;
-}
-
 export const NO_ELIGIBLE_ORDERS_REPLY =
   "We couldn't find any active orders linked to this WhatsApp number. Please contact the merchant if you believe this is incorrect.";
 
@@ -248,6 +220,21 @@ function isBusinessLineError(error: unknown) {
   return error instanceof AppError && /PostBus WhatsApp line/i.test(error.message);
 }
 
+async function liveBoundTurn(
+  supabase: SupabaseClient,
+  session: WhatsappSupportSession,
+  query: string,
+  now: Date
+) {
+  const trusted = platformSupportMcpContext(session.id);
+  const bound = await searchOrderDetails(supabase, { query, now }, trusted);
+  return {
+    reply: bound.answer,
+    session,
+    organizationId: bound.found ? session.selected_organization_id : null,
+  };
+}
+
 export async function handlePlatformSupportTurn(
   supabase: SupabaseClient,
   input: { from: string; text: string; now?: Date }
@@ -256,16 +243,7 @@ export async function handlePlatformSupportTurn(
   const session = await getOrCreateSupportSession(supabase, input.from, now);
 
   if (session.state === "ORDER_BOUND" && session.selected_order_id && session.selected_organization_id) {
-    const trusted = platformSupportMcpContext(session.id);
-    const bound = await searchOrderDetails(supabase, { query: input.text, now }, trusted);
-    if (!bound.found) {
-      return { reply: bound.answer, session, organizationId: null as string | null };
-    }
-    return {
-      reply: bound.answer,
-      session,
-      organizationId: session.selected_organization_id,
-    };
+    return liveBoundTurn(supabase, session, input.text, now);
   }
 
   const listed = await listEligibleOrders(supabase, { session, now });
@@ -276,24 +254,7 @@ export async function handlePlatformSupportTurn(
     return { reply: NO_ELIGIBLE_ORDERS_REPLY, session, organizationId: null as string | null };
   }
 
-  if (choices.length === 1) {
-    const selected = await selectSupportOrder(supabase, {
-      sessionId: session.id,
-      choiceRef: choices[0].ref,
-      now,
-    });
-    if (!selected.ok) {
-      return { reply: selected.message, session, organizationId: null as string | null };
-    }
-    return {
-      reply: `I've selected ${choices[0].merchant_name} order ${choices[0].order_ref}. How can I help?`,
-      session: selected.session,
-      organizationId: selected.organization_id,
-    };
-  }
-
-  const awaiting = session.state === "AWAIT_SELECTION";
-  const picked = awaiting ? matchPickerSelection(input.text, choices) : null;
+  const picked = choices.length === 1 ? choices[0] : matchPickerSelection(input.text, choices);
   if (picked) {
     const selected = await selectSupportOrder(supabase, {
       sessionId: session.id,
@@ -303,11 +264,7 @@ export async function handlePlatformSupportTurn(
     if (!selected.ok) {
       return { reply: selected.message, session, organizationId: null as string | null };
     }
-    return {
-      reply: `I've selected ${picked.merchant_name} order ${picked.order_ref}. How can I help?`,
-      session: selected.session,
-      organizationId: selected.organization_id,
-    };
+    return liveBoundTurn(supabase, selected.session, input.text, now);
   }
 
   const waiting = await setSupportSessionState(supabase, session.id, "AWAIT_SELECTION", now);

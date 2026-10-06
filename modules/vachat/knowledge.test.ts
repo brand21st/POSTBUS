@@ -84,7 +84,7 @@ describe("VaChat knowledge phone scope", () => {
     expect(document).not.toContain("Customer WhatsApp");
     expect(document).not.toContain("CL123456789IN");
     expect(document).not.toContain("1001");
-    expect(document).toMatch(/Do not answer customer-specific/i);
+    expect(document).toMatch(/PostBus is pulling your live order details now/i);
   });
 
   it("includes merchant policy sections in the synced knowledge document", () => {

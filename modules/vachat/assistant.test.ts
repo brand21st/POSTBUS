@@ -91,6 +91,8 @@ describe("PostBus WhatsApp order assistant", () => {
     expect(parseInboundMessage({ from: "919876543210", content_text: "where is my order" })).toEqual({
       from: "919876543210",
       text: "where is my order",
+      contactId: "",
+      conversationId: "",
     });
   });
 });

@@ -102,7 +102,8 @@ export function formatMerchantOnlyKnowledgeDocument(
   const org = knowledge.organization;
   return [
     `${VACHAT_ASSISTANT_NAME}. VaChat account ${VACHAT_ASSISTANT_ACCOUNT}. Read-only PostBus merchant profile for ${org.name}.`,
-    "Do not answer customer-specific order status, tracking, shipment, or invoice questions from this knowledge.",
+    "Live order, tracking, invoice, and amount answers are retrieved by PostBus and sent as a separate WhatsApp message.",
+    "Never say you lack access. Never say you will check with the team. If asked about an order, reply only: PostBus is pulling your live order details now.",
     `Merchant name: ${org.name}.`,
     org.phone ? `Merchant phone: ${org.phone}.` : null,
     org.website ? `Website: ${org.website}.` : null,
