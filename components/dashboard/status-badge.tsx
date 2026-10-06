@@ -15,6 +15,8 @@ const SUCCESS = new Set([
   "GENERATED",
   "PUBLISHED",
   "PRINTED",
+  "SUBMITTED",
+  "CONFIRMED",
 ]);
 
 const WARNING = new Set([
@@ -33,6 +35,8 @@ const WARNING = new Set([
   "WAITING",
   "PRINTING",
   "HOLD",
+  "CREATED",
+  "OPENED",
 ]);
 
 const ERROR = new Set([
@@ -48,6 +52,7 @@ const ERROR = new Set([
   "DISABLED",
   "SUSPENDED",
   "BLOCKED",
+  "EXPIRED",
 ]);
 
 const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY"]);

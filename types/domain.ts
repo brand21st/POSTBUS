@@ -10,6 +10,25 @@ export type MemberRole = (typeof MEMBER_ROLES)[number];
 export const ORDER_SOURCES = ["SHOPIFY", "MANUAL", "API", "WOOCOMMERCE"] as const;
 export type OrderSource = (typeof ORDER_SOURCES)[number];
 
+export const CUSTOMER_ORDER_LINK_STATUSES = [
+  "CREATED",
+  "OPENED",
+  "SUBMITTED",
+  "CONFIRMED",
+  "EXPIRED",
+  "DISABLED",
+] as const;
+export type CustomerOrderLinkStatus = (typeof CUSTOMER_ORDER_LINK_STATUSES)[number];
+
+export const CUSTOMER_ORDER_LINK_STATUS_LABELS: Record<CustomerOrderLinkStatus, string> = {
+  CREATED: "Waiting",
+  OPENED: "Opened",
+  SUBMITTED: "Submitted",
+  CONFIRMED: "Confirmed",
+  EXPIRED: "Expired",
+  DISABLED: "Disabled",
+};
+
 export const PAYMENT_STATUSES = [
   "PENDING",
   "PAID",

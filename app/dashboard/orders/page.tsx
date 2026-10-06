@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Columns3,
   Download,
+  Link2,
   MoreHorizontal,
   Plus,
   ShoppingBag,
@@ -722,6 +723,10 @@ export default function OrdersPage() {
                 />
               </>
             ) : null}
+            <Link href="/dashboard/orders/customer-links" className={buttonVariants({ variant: "secondary", size: "xs" })}>
+              <Link2 className="size-4" />
+              Customer link
+            </Link>
             <Link href="/dashboard/orders/new" className={buttonVariants({ size: "xs" })}>
               <Plus className="size-4" />
               Add order

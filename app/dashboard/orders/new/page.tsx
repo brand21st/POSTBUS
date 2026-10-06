@@ -6,11 +6,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Loader2, Lock, MapPin, Minus, Plus, Trash2 } from "lucide-react";
+import { Lock, Minus, Plus, Trash2 } from "lucide-react";
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { WhatsAppPasteParser } from "@/components/orders/whatsapp-paste-parser";
+import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -224,6 +226,44 @@ export default function NewOrderPage() {
 
       <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_17rem] xl:items-start xl:gap-6">
       <div className="space-y-4">
+
+      <Card>
+        <CardHeader className="p-4">
+          <CardTitle>Paste from WhatsApp</CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 pt-0">
+          <WhatsAppPasteParser
+            getCurrent={() => ({
+              name: form.getValues("customerName"),
+              phone: form.getValues("customerPhone"),
+              line1: form.getValues("shippingAddress.line1"),
+              line2: form.getValues("shippingAddress.line2"),
+              city: form.getValues("shippingAddress.city"),
+              state: form.getValues("shippingAddress.state"),
+              pincode: form.getValues("shippingAddress.pincode"),
+            })}
+            onApply={(fields) => {
+              if (fields.name) {
+                form.setValue("customerName", fields.name, { shouldDirty: true });
+                if (!form.getValues("shippingAddress.name")) {
+                  form.setValue("shippingAddress.name", fields.name, { shouldDirty: true });
+                }
+              }
+              if (fields.phone) {
+                form.setValue("customerPhone", fields.phone, { shouldDirty: true });
+                if (!form.getValues("shippingAddress.phone")) {
+                  form.setValue("shippingAddress.phone", fields.phone, { shouldDirty: true });
+                }
+              }
+              if (fields.line1) form.setValue("shippingAddress.line1", fields.line1, { shouldDirty: true });
+              if (fields.line2) form.setValue("shippingAddress.line2", fields.line2, { shouldDirty: true });
+              if (fields.city) form.setValue("shippingAddress.city", fields.city, { shouldDirty: true });
+              if (fields.state) form.setValue("shippingAddress.state", fields.state, { shouldDirty: true });
+              if (fields.pincode) form.setValue("shippingAddress.pincode", fields.pincode, { shouldDirty: true });
+            }}
+          />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="p-4">
@@ -637,51 +677,18 @@ function PincodeLookup({
 
   if (!ready) return null;
 
-  if (lookup.isPending) {
-    return (
-      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted" aria-live="polite">
-        <Loader2 className="size-3.5 animate-spin" />
-        Finding post office…
-      </p>
-    );
-  }
-
-  if (lookup.isError) {
-    return (
-      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted" aria-live="polite">
-        <AlertCircle className="size-3.5 shrink-0" />
-        {lookup.error instanceof Error ? lookup.error.message : "Could not look up this pincode."}
-      </p>
-    );
-  }
-
-  const offices = lookup.data?.offices ?? [];
-  if (!offices.length) {
-    return (
-      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-warning" aria-live="polite">
-        <AlertCircle className="size-3.5 shrink-0" />
-        No post office found for this pincode.
-      </p>
-    );
-  }
-
-  const [office, ...others] = offices;
-  const location = [office.city, office.state].filter(Boolean).join(", ");
   return (
-    <div
-      className="mt-1.5 flex items-start gap-2 rounded-lg border border-success/20 bg-success/5 px-2.5 py-1.5 text-xs"
-      aria-live="polite"
-      title={offices.map((item) => item.name).join("\n")}
-    >
-      <MapPin className="mt-0.5 size-3.5 shrink-0 text-success" />
-      <div className="min-w-0">
-        <p className="truncate font-medium text-ink">
-          {office.name}
-          {others.length ? <span className="font-normal text-muted"> +{others.length} more</span> : null}
-        </p>
-        {location ? <p className="truncate text-muted">{location}</p> : null}
-      </div>
-    </div>
+    <PincodeLocationHint
+      loading={lookup.isPending}
+      error={
+        lookup.isError
+          ? lookup.error instanceof Error
+            ? lookup.error.message
+            : "Could not look up this pincode."
+          : null
+      }
+      offices={lookup.data?.offices}
+    />
   );
 }
 

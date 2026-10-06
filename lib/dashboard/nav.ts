@@ -87,7 +87,12 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
       continue;
     }
     crumbs.push({
-      label: segment === "new" ? "New" : segment.replace(/-/g, " "),
+      label:
+        segment === "new"
+          ? "New"
+          : segment === "customer-links"
+            ? "Customer links"
+            : segment.replace(/-/g, " "),
       href,
     });
   }

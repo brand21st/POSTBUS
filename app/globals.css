@@ -347,6 +347,98 @@ body {
   }
 }
 
+@keyframes order-verified-card {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes order-verified-badge {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes order-verified-ring {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.72);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+}
+
+@keyframes order-verified-circle {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes order-verified-check {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes order-verified-copy {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.order-verified-card {
+  animation: order-verified-card 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.order-verified-badge {
+  animation: order-verified-badge 0.62s cubic-bezier(0.22, 1.4, 0.36, 1) both;
+}
+
+.order-verified-ring {
+  animation: order-verified-ring 1.15s 0.12s ease-out both;
+}
+
+.order-verified-ring-delay {
+  animation-delay: 0.32s;
+}
+
+.order-verified-circle {
+  stroke-dasharray: 176;
+  stroke-dashoffset: 176;
+  animation: order-verified-circle 0.55s 0.08s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.order-verified-check {
+  stroke-dasharray: 36;
+  stroke-dashoffset: 36;
+  animation: order-verified-check 0.38s 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.order-verified-copy {
+  animation: order-verified-copy 0.45s 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
