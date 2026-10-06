@@ -160,7 +160,7 @@ export function applyWhatsAppCustomerFields<T extends WhatsAppCustomerFields>(
     if (!incoming) return;
     const existing = String(current[key] ?? "").trim();
     if (existing) return;
-    next[key] = incoming as T[keyof T];
+    (next as WhatsAppCustomerFields)[key] = incoming;
   });
   return next;
 }

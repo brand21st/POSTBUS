@@ -23,7 +23,7 @@ type PublicLinkRow = {
   expires_at: string;
 };
 
-function invalidLink() {
+function invalidLink(): never {
   throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "This link is not valid.");
 }
 
