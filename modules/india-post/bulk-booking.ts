@@ -362,8 +362,8 @@ export async function queueValidatedOrders(
       .eq("organization_id", ctx.organizationId)
       .in("id", batch);
   }
-  const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
-  await runQueuedJobsNow(bookingJobs.map(claimedJobFromRow));
+  const { claimedJobFromRow, startQueuedBookingJobs } = await import("@/lib/jobs/drain");
+  await startQueuedBookingJobs(bookingJobs.map(claimedJobFromRow));
   return { ...validation, queued: shipmentIds.length };
 }
 
@@ -647,7 +647,7 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
       })
     );
   }
-  const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
-  await runQueuedJobsNow(bookingJobs.map(claimedJobFromRow));
+  const { claimedJobFromRow, startQueuedBookingJobs } = await import("@/lib/jobs/drain");
+  await startQueuedBookingJobs(bookingJobs.map(claimedJobFromRow));
   return { ...validation, queued: createdIds.length };
 }

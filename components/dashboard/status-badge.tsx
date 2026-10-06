@@ -99,8 +99,10 @@ export function StatusBadge({ value }: { value?: string | null }) {
       variant={variant}
       className={
         key === "BOOKED"
-          ? "border-amber-200 bg-amber-200/80 font-semibold text-amber-900"
-          : undefined
+          ? "border-amber-200 bg-amber-200/80 font-semibold text-black dark:text-black"
+          : key === "IN_TRANSIT"
+            ? "text-black dark:text-black"
+            : undefined
       }
     >
       {key === "WAITING"

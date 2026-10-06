@@ -282,8 +282,8 @@ export async function createShipmentsForOrders(
   }
 
   if (runBookingNow && bookingJobs.length) {
-    const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
-    await runQueuedJobsNow(bookingJobs.map(claimedJobFromRow));
+    const { claimedJobFromRow, startQueuedBookingJobs } = await import("@/lib/jobs/drain");
+    await startQueuedBookingJobs(bookingJobs.map(claimedJobFromRow));
   }
 
   if (!created.length && skipped.length) {

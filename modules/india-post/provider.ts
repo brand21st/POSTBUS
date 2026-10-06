@@ -236,6 +236,10 @@ export class IndiaPostProvider implements ShippingProvider {
       : Array.isArray(input.payload)
         ? input.payload
         : [input.payload ?? input];
+    const timeoutMs =
+      !Array.isArray(input) && Number(input.timeoutMs) > 0
+        ? Number(input.timeoutMs)
+        : INDIA_POST_TIMEOUT_MS.label;
     const response = await fetch(this.sessionUrl("/label/create/domestic"), {
       method: "POST",
       headers: {
@@ -243,7 +247,7 @@ export class IndiaPostProvider implements ShippingProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(articles),
-      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.label),
+      signal: indiaPostTimeoutSignal(timeoutMs),
     });
     const buffer = await response.arrayBuffer();
     const bytes = new Uint8Array(buffer);

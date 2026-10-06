@@ -21,6 +21,7 @@ import { persistPackingSlip } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
 import { findReadyIndiaPostLabel } from "@/modules/labels/ready";
 import { runPool } from "@/lib/async/pool";
+import { inlineLabelTimeoutMs } from "@/modules/india-post/http";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { JobPayload } from "@/lib/queue/queues";
 import type { AutomationSettings } from "@/types/api";
@@ -184,6 +185,7 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
     throw Object.assign(new Error(message), { code: "VALIDATION_ERROR" });
   }
 
+  const bookingStarted = Date.now();
   const outcome = await runIndiaPostBooking(supabase, {
     organizationId: payload.organizationId,
     shipmentIds,
@@ -238,26 +240,40 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         // In-app alerts are optional; booking should still succeed.
       }
     }
-    try {
-      await generateLabel(supabase, {
-        organizationId: payload.organizationId,
-        jobId: payload.jobId,
-        entityType: "shipment",
-        entityId: shipment.id,
-        userId: payload.userId,
-      });
-    } catch (error) {
-      logError("LABEL_INLINE_FAILED", {
-        organizationId: payload.organizationId,
-        shipmentId: shipment.id,
-        message: error instanceof Error ? error.message : "unknown",
-      });
+    const labelMs = inlineLabelTimeoutMs(bookingStarted);
+    if (!labelMs) {
       await createBackgroundJob(supabase, {
         organizationId: payload.organizationId,
         jobType: "label-generation",
         entityType: "shipment",
         entityId: shipment.id,
       });
+    } else {
+      try {
+        await generateLabel(
+          supabase,
+          {
+            organizationId: payload.organizationId,
+            jobId: payload.jobId,
+            entityType: "shipment",
+            entityId: shipment.id,
+            userId: payload.userId,
+          },
+          labelMs
+        );
+      } catch (error) {
+        logError("LABEL_INLINE_FAILED", {
+          organizationId: payload.organizationId,
+          shipmentId: shipment.id,
+          message: error instanceof Error ? error.message : "unknown",
+        });
+        await createBackgroundJob(supabase, {
+          organizationId: payload.organizationId,
+          jobType: "label-generation",
+          entityType: "shipment",
+          entityId: shipment.id,
+        });
+      }
     }
     try {
       await createBackgroundJob(supabase, {
@@ -349,7 +365,11 @@ async function generateInvoice(supabase: ReturnType<typeof createAdminClient>, p
   await generateShippingInvoice(supabase, payload.organizationId, payload.entityId);
 }
 
-async function generateLabel(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+async function generateLabel(
+  supabase: ReturnType<typeof createAdminClient>,
+  payload: JobPayload,
+  timeoutMs?: number
+) {
   if (!payload.entityId) {
     throw Object.assign(new Error("Shipment is missing."), { code: "VALIDATION_ERROR" });
   }
@@ -369,7 +389,12 @@ async function generateLabel(supabase: ReturnType<typeof createAdminClient>, pay
     return;
   }
 
-  const officialPdf = await fetchOfficialIndiaPostLabelPdf(supabase, payload.organizationId, payload.entityId);
+  const officialPdf = await fetchOfficialIndiaPostLabelPdf(
+    supabase,
+    payload.organizationId,
+    payload.entityId,
+    timeoutMs ? { timeoutMs } : undefined
+  );
   const official = await persistLabelPdf(supabase, {
     organizationId: payload.organizationId,
     shipmentId: officialPdf.shipmentId,

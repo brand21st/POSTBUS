@@ -21,7 +21,8 @@ export function preserveOfficialIndiaPostPdf(pdf: ArrayBuffer | Uint8Array) {
 export async function fetchOfficialIndiaPostLabelPdf(
   supabase: SupabaseClient,
   organizationId: string,
-  shipmentId: string
+  shipmentId: string,
+  options?: { timeoutMs?: number }
 ) {
   const { data: shipment } = await supabase
     .from("shipments")
@@ -98,6 +99,7 @@ export async function fetchOfficialIndiaPostLabelPdf(
   const senderMobile = indiaPostMobile(sender.phone) || receiverMobile;
 
   const pdf = await provider.generateLabel({
+    timeoutMs: options?.timeoutMs,
     payload: [
       indiaPostDomesticLabelPayload({
         customerId: String(connection.bulk_customer_id ?? ""),
