@@ -50,6 +50,20 @@ describe("parseWhatsAppCustomerMessage", () => {
     expect(parsed.fields.name).toBeUndefined();
   });
 
+  it("maps Full Name, Town, and Postal Code", () => {
+    const parsed = parseWhatsAppCustomerMessage(`
+      Full Name: Meera
+      Phone Number: 9876543210
+      Full Address: 8 Lake View
+      Town: Thrissur
+      Postal Code: 680001
+    `);
+    expect(parsed.fields.name).toBe("Meera");
+    expect(parsed.fields.line1).toBe("8 Lake View");
+    expect(parsed.fields.city).toBe("Thrissur");
+    expect(parsed.fields.pincode).toBe("680001");
+  });
+
   it("does not overwrite filled fields", () => {
     const parsed = parseWhatsAppCustomerMessage(SAMPLE);
     const applied = applyWhatsAppCustomerFields(

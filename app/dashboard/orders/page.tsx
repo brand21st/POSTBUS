@@ -79,7 +79,7 @@ import {
 } from "@/modules/india-post/booking-service";
 import { parcelServiceToggleOptions, savedParcelContracts } from "@/modules/india-post/contracts";
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
-import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
+import { ORDER_SOURCE_LABELS, ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { BulkOrderStatusResult, DashboardKpis, IndiaPostConfig, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
 
 const COLUMN_STORAGE = "postbus.orders.columns";
@@ -630,7 +630,7 @@ export default function OrdersPage() {
         <SelectContent>
           <SelectItem value="all">All sources</SelectItem>
           {ORDER_SOURCES.map((item) => (
-            <SelectItem key={item} value={item}>{item}</SelectItem>
+            <SelectItem key={item} value={item}>{ORDER_SOURCE_LABELS[item]}</SelectItem>
           ))}
         </SelectContent>
       </Select>
@@ -725,7 +725,7 @@ export default function OrdersPage() {
             ) : null}
             <Link href="/dashboard/orders/customer-links" className={buttonVariants({ variant: "secondary", size: "xs" })}>
               <Link2 className="size-4" />
-              Customer link
+              Customer order link
             </Link>
             <Link href="/dashboard/orders/new" className={buttonVariants({ size: "xs" })}>
               <Plus className="size-4" />

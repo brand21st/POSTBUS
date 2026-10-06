@@ -7,8 +7,16 @@ export const MEMBER_ROLES = [
 ] as const;
 export type MemberRole = (typeof MEMBER_ROLES)[number];
 
-export const ORDER_SOURCES = ["SHOPIFY", "MANUAL", "API", "WOOCOMMERCE"] as const;
+export const ORDER_SOURCES = ["SHOPIFY", "MANUAL", "API", "WOOCOMMERCE", "WHATSAPP"] as const;
 export type OrderSource = (typeof ORDER_SOURCES)[number];
+
+export const ORDER_SOURCE_LABELS: Record<OrderSource, string> = {
+  SHOPIFY: "Shopify",
+  MANUAL: "Manual",
+  API: "API",
+  WOOCOMMERCE: "WooCommerce",
+  WHATSAPP: "WhatsApp Order",
+};
 
 export const CUSTOMER_ORDER_LINK_STATUSES = [
   "CREATED",
@@ -17,6 +25,7 @@ export const CUSTOMER_ORDER_LINK_STATUSES = [
   "CONFIRMED",
   "EXPIRED",
   "DISABLED",
+  "ACTIVE",
 ] as const;
 export type CustomerOrderLinkStatus = (typeof CUSTOMER_ORDER_LINK_STATUSES)[number];
 
@@ -27,6 +36,7 @@ export const CUSTOMER_ORDER_LINK_STATUS_LABELS: Record<CustomerOrderLinkStatus, 
   CONFIRMED: "Confirmed",
   EXPIRED: "Expired",
   DISABLED: "Disabled",
+  ACTIVE: "Active",
 };
 
 export const PAYMENT_STATUSES = [

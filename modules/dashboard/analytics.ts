@@ -42,6 +42,7 @@ const SOURCE_LABELS: Record<string, string> = {
   MANUAL: "Manual",
   API: "API",
   WOOCOMMERCE: "WooCommerce",
+  WHATSAPP: "WhatsApp Order",
 };
 
 export function asAmount(value: number | string | null | undefined) {

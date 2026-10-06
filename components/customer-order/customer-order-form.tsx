@@ -142,21 +142,24 @@ export function CustomerOrderForm({
 
   if (done) {
     return (
-      <StatusScreen
-        verified
-        title="Your details have been submitted successfully."
-        body="You can close this page."
-      />
-    );
-  }
-
-  if (link.data.status === "SUBMITTED") {
-    return (
-      <StatusScreen
-        verified
-        title="Your details have already been submitted."
-        body="This link has already been used. You can close this page."
-      />
+      <div className="space-y-3">
+        <StatusScreen
+          verified
+          title="Your order details have been submitted successfully."
+          body="You can close this page, or submit another order with the same link."
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          className="h-12 w-full text-base"
+          onClick={() => {
+            form.reset();
+            setDone(false);
+          }}
+        >
+          Submit another order
+        </Button>
+      </div>
     );
   }
 

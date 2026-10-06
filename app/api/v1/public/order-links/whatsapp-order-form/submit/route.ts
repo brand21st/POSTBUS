@@ -13,10 +13,10 @@ export const POST = apiRouteWithContext(async (request: NextRequest, _context) =
   const ip = request.headers.get("x-forwarded-for") ?? "local";
   const parsed = publicOrderLinkPathQuery.parse({
     workspace: request.nextUrl.searchParams.get("workspace") ?? "",
-    code: request.nextUrl.searchParams.get("code") ?? "",
+    code: request.nextUrl.searchParams.get("code") || undefined,
   });
-  const ipLimited = rateLimit(`public-order-submit:${ip}`, 20, 60_000);
-  const pathLimited = rateLimit(`public-order-submit-path:${parsed.workspace}:${parsed.code}`, 5, 60_000);
+  const ipLimited = rateLimit(`public-order-submit:${ip}`, 40, 60_000);
+  const pathLimited = rateLimit(`public-order-submit-path:${parsed.workspace}`, 60, 60_000);
   if (!ipLimited.ok || !pathLimited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
   }

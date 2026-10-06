@@ -12,9 +12,11 @@ import {
 export function WhatsAppPasteParser({
   getCurrent,
   onApply,
+  overwrite = false,
 }: {
   getCurrent: () => WhatsAppCustomerFields;
   onApply: (fields: WhatsAppCustomerFields) => void;
+  overwrite?: boolean;
 }) {
   const [text, setText] = useState("");
   const [hint, setHint] = useState<string | null>(null);
@@ -26,14 +28,18 @@ export function WhatsAppPasteParser({
       setHint("Could not read name, phone, or address from that message. Fill the fields manually.");
       return;
     }
-    onApply(applyWhatsAppCustomerFields(getCurrent(), parsed.fields));
-    setHint(`Filled ${filled} field${filled === 1 ? "" : "s"} from the message. Empty fields only — review before saving.`);
+    onApply(applyWhatsAppCustomerFields(getCurrent(), parsed.fields, { overwrite }));
+    setHint(
+      overwrite
+        ? `Updated ${filled} field${filled === 1 ? "" : "s"} from the message. Review before saving.`
+        : `Filled ${filled} field${filled === 1 ? "" : "s"} from the message. Empty fields only — review before saving.`
+    );
   }
 
   return (
     <div className="space-y-2">
       <label className="text-sm font-medium" htmlFor="whatsapp-paste">
-        Paste customer WhatsApp message
+        Paste WhatsApp customer details
       </label>
       <Textarea
         id="whatsapp-paste"

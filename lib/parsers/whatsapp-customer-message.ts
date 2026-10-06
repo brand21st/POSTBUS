@@ -20,17 +20,20 @@ const LABEL_ALIASES: Record<string, keyof WhatsAppCustomerFields> = {
   name: "name",
   "customer name": "name",
   "cust name": "name",
+  "full name": "name",
   phone: "phone",
   mobile: "phone",
   "mobile number": "phone",
   "phone number": "phone",
-  "contact": "phone",
+  contact: "phone",
   address: "line1",
-  "addr": "line1",
+  addr: "line1",
+  "full address": "line1",
   area: "line2",
   locality: "line2",
   "area / locality": "line2",
   city: "city",
+  town: "city",
   district: "city",
   state: "state",
   pin: "pincode",
@@ -38,6 +41,7 @@ const LABEL_ALIASES: Record<string, keyof WhatsAppCustomerFields> = {
   pincode: "pincode",
   "pin code": "pincode",
   "pin-code": "pincode",
+  "postal code": "pincode",
 };
 
 const LABEL_LINE = /^[\s*•\-–]*([A-Za-z][A-Za-z /_-]{1,40})\s*[:\-–]\s*(.*)$/;
@@ -152,14 +156,15 @@ export function parseWhatsAppCustomerMessage(text: string): WhatsAppCustomerPars
 
 export function applyWhatsAppCustomerFields<T extends WhatsAppCustomerFields>(
   current: T,
-  parsed: WhatsAppCustomerFields
+  parsed: WhatsAppCustomerFields,
+  options?: { overwrite?: boolean }
 ): T {
   const next = { ...current };
   (Object.keys(parsed) as Array<keyof WhatsAppCustomerFields>).forEach((key) => {
     const incoming = parsed[key];
     if (!incoming) return;
     const existing = String(current[key] ?? "").trim();
-    if (existing) return;
+    if (existing && !options?.overwrite) return;
     (next as WhatsAppCustomerFields)[key] = incoming;
   });
   return next;

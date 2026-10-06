@@ -32,13 +32,19 @@ export function customerOrderLinkPublicId(id: string) {
   return id.replace(/-/g, "").slice(0, 4).toLowerCase();
 }
 
-export function customerOrderLinkPath(workspace: string, publicId: string) {
-  return `/order/${workspace}/${publicId}/${WHATSAPP_ORDER_FORM_SLUG}`;
+export function customerOrderLinkPath(workspace: string, _publicId?: string) {
+  return `/order/${workspace}`;
 }
 
 export function parseCustomerOrderLinkParts(parts: string[]) {
   const segments = parts.map((part) => decodeURIComponent(part).trim()).filter(Boolean);
-  if (segments.length === 1) return { token: segments[0] };
+  if (segments.length === 1) {
+    const value = segments[0];
+    if (CUSTOMER_ORDER_LINK_TOKEN.test(normalizeCustomerOrderLinkToken(value))) {
+      return { token: value };
+    }
+    return { workspace: value.toLowerCase() };
+  }
   if (segments.length === 2) {
     return { workspace: segments[0].toLowerCase(), token: segments[1] };
   }
@@ -62,11 +68,11 @@ export function publicOrderLinkApiPath(
   action?: "submit" | "pincode"
 ) {
   const suffix = action ? `/${action}` : "";
-  if (ref.workspace && ref.publicId) {
-    if (!CUSTOMER_ORDER_WORKSPACE.test(ref.workspace) || !CUSTOMER_ORDER_PUBLIC_ID.test(ref.publicId)) {
-      return null;
+  if (ref.workspace && CUSTOMER_ORDER_WORKSPACE.test(ref.workspace)) {
+    const query = new URLSearchParams({ workspace: ref.workspace });
+    if (ref.publicId && CUSTOMER_ORDER_PUBLIC_ID.test(ref.publicId)) {
+      query.set("code", ref.publicId);
     }
-    const query = new URLSearchParams({ workspace: ref.workspace, code: ref.publicId });
     return `/api/v1/public/order-links/${WHATSAPP_ORDER_FORM_SLUG}${suffix}?${query.toString()}`;
   }
   if (ref.token && CUSTOMER_ORDER_LINK_TOKEN.test(normalizeCustomerOrderLinkToken(ref.token))) {
@@ -80,18 +86,19 @@ export const customerOrderLinkTokenSchema = z
   .transform(normalizeCustomerOrderLinkToken)
   .refine((value) => CUSTOMER_ORDER_LINK_TOKEN.test(value), "This link is not valid.");
 
-export const publicOrderLinkPathQuery = z.object({
-  workspace: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .regex(CUSTOMER_ORDER_WORKSPACE, "This link is not valid."),
-  code: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .regex(CUSTOMER_ORDER_PUBLIC_ID, "This link is not valid."),
-});
+export const publicOrderLinkPathQuery = z
+  .object({
+    workspace: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(CUSTOMER_ORDER_WORKSPACE, "This link is not valid."),
+    code: z.string().trim().toLowerCase().optional(),
+  })
+  .transform((value) => ({
+    workspace: value.workspace,
+    code: value.code && CUSTOMER_ORDER_PUBLIC_ID.test(value.code) ? value.code : undefined,
+  }));
 
 export const customerOrderLinkListQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),

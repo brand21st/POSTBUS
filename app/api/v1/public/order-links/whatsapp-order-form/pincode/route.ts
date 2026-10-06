@@ -10,9 +10,9 @@ export const GET = apiRouteWithContext(async (request: NextRequest, _context) =>
   const ip = request.headers.get("x-forwarded-for") ?? "local";
   const parsed = publicOrderLinkPathQuery.parse({
     workspace: request.nextUrl.searchParams.get("workspace") ?? "",
-    code: request.nextUrl.searchParams.get("code") ?? "",
+    code: request.nextUrl.searchParams.get("code") || undefined,
   });
-  const limited = rateLimit(`public-order-pincode:${ip}:${parsed.workspace}:${parsed.code}`, 30, 60_000);
+  const limited = rateLimit(`public-order-pincode:${ip}:${parsed.workspace}`, 60, 60_000);
   if (!limited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
   }

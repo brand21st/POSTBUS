@@ -12,13 +12,13 @@ import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
 import { bulkOrderStatusSchema, createOrderSchema, orderListQuery, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import {
   confirmCustomerOrderLinkSchema,
-  customerOrderLinkListQuery,
 } from "@/modules/customer-order-links/schema";
 import {
-  confirmCustomerOrderLink,
-  createCustomerOrderLink,
-  disableCustomerOrderLink,
-  listCustomerOrderLinks,
+  confirmLegacyCustomerOrderLink,
+  confirmWhatsAppCollectionOrder,
+  getMerchantCollectionLink,
+  listLegacySubmissions,
+  listWhatsAppPendingOrders,
 } from "@/modules/customer-order-links/service";
 import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
@@ -114,21 +114,26 @@ export async function handleCommerceRoutes(
   }
 
   if (key === "GET orders/customer-links") {
-    const parsed = customerOrderLinkListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
-    return listCustomerOrderLinks(supabase, ctx, parsed);
+    const [link, pending, legacy] = await Promise.all([
+      getMerchantCollectionLink(supabase, ctx),
+      listWhatsAppPendingOrders(supabase, ctx),
+      listLegacySubmissions(supabase, ctx),
+    ]);
+    return { link, pending, legacy };
   }
 
   if (key === "POST orders/customer-links") {
-    return createCustomerOrderLink(supabase, ctx);
-  }
-
-  if (method === "POST" && slugs[0] === "orders" && slugs[1] === "customer-links" && slugs[2] && slugs[3] === "disable") {
-    return disableCustomerOrderLink(supabase, ctx, slugs[2]);
+    return getMerchantCollectionLink(supabase, ctx);
   }
 
   if (method === "POST" && slugs[0] === "orders" && slugs[1] === "customer-links" && slugs[2] && slugs[3] === "confirm") {
     const body = confirmCustomerOrderLinkSchema.parse(await request.json());
-    return confirmCustomerOrderLink(supabase, ctx, slugs[2], body);
+    return confirmLegacyCustomerOrderLink(supabase, ctx, slugs[2], body);
+  }
+
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "whatsapp-confirm") {
+    const body = confirmCustomerOrderLinkSchema.parse(await request.json());
+    return confirmWhatsAppCollectionOrder(supabase, ctx, slugs[1], body);
   }
 
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "service") {

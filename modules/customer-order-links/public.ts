@@ -14,13 +14,16 @@ import {
   indiaPostOfficesForSelection,
 } from "@/modules/india-post/endpoints";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
-import type { CustomerOrderLinkStatus } from "@/types/domain";
+import { createOrderSchema } from "@/modules/orders/schema";
+import { createManualOrder } from "@/modules/orders/service";
 
 type PublicLinkRow = {
   id: string;
   organization_id: string;
-  status: CustomerOrderLinkStatus;
-  expires_at: string;
+  status: string;
+  expires_at: string | null;
+  public_workspace: string | null;
+  public_code: string | null;
 };
 
 function invalidLink(): never {
@@ -29,45 +32,69 @@ function invalidLink(): never {
 
 export type PublicLinkRef =
   | { kind: "token"; token: string }
-  | { kind: "path"; workspace: string; publicId: string };
+  | { kind: "path"; workspace: string; publicId?: string };
 
 function assertToken(token: string) {
   if (!CUSTOMER_ORDER_LINK_TOKEN.test(normalizeCustomerOrderLinkToken(token))) invalidLink();
 }
 
-function assertPath(workspace: string, publicId: string) {
-  if (!CUSTOMER_ORDER_WORKSPACE.test(workspace) || !CUSTOMER_ORDER_PUBLIC_ID.test(publicId)) invalidLink();
+function assertPath(workspace: string, publicId?: string) {
+  if (!CUSTOMER_ORDER_WORKSPACE.test(workspace)) invalidLink();
+  if (publicId && !CUSTOMER_ORDER_PUBLIC_ID.test(publicId)) invalidLink();
+}
+
+const LINK_COLS = "id, organization_id, status, expires_at, public_workspace, public_code";
+
+async function activeForOrg(supabase: SupabaseClient, organizationId: string) {
+  const { data, error } = await supabase
+    .from("customer_order_links")
+    .select(LINK_COLS)
+    .eq("organization_id", organizationId)
+    .eq("status", "ACTIVE")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return (data as PublicLinkRow | null) ?? null;
 }
 
 async function findByToken(supabase: SupabaseClient, token: string) {
   assertToken(token);
   const { data, error } = await supabase
     .from("customer_order_links")
-    .select("id, organization_id, status, expires_at")
+    .select(LINK_COLS)
     .eq("token_hash", hashSecret(normalizeCustomerOrderLinkToken(token)))
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-  return (data as PublicLinkRow | null) ?? null;
+  const row = (data as PublicLinkRow | null) ?? null;
+  if (!row) return null;
+  if (row.status === "ACTIVE") return row;
+  return activeForOrg(supabase, row.organization_id);
 }
 
-async function findByPath(supabase: SupabaseClient, workspace: string, publicId: string) {
+async function findByPath(supabase: SupabaseClient, workspace: string, publicId?: string) {
   assertPath(workspace, publicId);
   const { data, error } = await supabase
     .from("customer_order_links")
-    .select("id, organization_id, status, expires_at")
+    .select(LINK_COLS)
     .eq("public_workspace", workspace)
-    .eq("public_code", publicId)
+    .eq("status", "ACTIVE")
+    .limit(1)
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-  return (data as PublicLinkRow | null) ?? null;
+  if (data) return data as PublicLinkRow;
+
+  let builder = supabase.from("customer_order_links").select(LINK_COLS).eq("public_workspace", workspace);
+  if (publicId) builder = builder.eq("public_code", publicId);
+  const { data: legacy, error: legacyError } = await builder.order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (legacyError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, legacyError.message);
+  const row = (legacy as PublicLinkRow | null) ?? null;
+  if (!row) return null;
+  return activeForOrg(supabase, row.organization_id);
 }
 
 async function findLink(supabase: SupabaseClient, ref: PublicLinkRef) {
   return ref.kind === "path" ? findByPath(supabase, ref.workspace, ref.publicId) : findByToken(supabase, ref.token);
-}
-
-function expired(row: PublicLinkRow) {
-  return new Date(row.expires_at).getTime() <= Date.now();
 }
 
 export type PublicLinkView = {
@@ -86,19 +113,7 @@ export async function getPublicCustomerOrderLink(
 ): Promise<PublicLinkView> {
   const row = await findLink(supabase, ref);
   if (!row) invalidLink();
-
-  if (row.status === "DISABLED") return { status: "DISABLED" };
-  if (row.status === "SUBMITTED" || row.status === "CONFIRMED") return { status: "SUBMITTED" };
-  if (expired(row) || row.status === "EXPIRED") return { status: "EXPIRED" };
-
-  if (row.status === "CREATED") {
-    await supabase
-      .from("customer_order_links")
-      .update({ status: "OPENED", opened_at: new Date().toISOString() })
-      .eq("id", row.id)
-      .eq("status", "CREATED");
-  }
-
+  if (row.status !== "ACTIVE") return { status: "DISABLED" };
   return {
     status: "OPEN",
     merchantName: await merchantName(supabase, row.organization_id),
@@ -127,16 +142,7 @@ export async function lookupPublicOrderLinkPincode(
   }
 
   const row = await findLink(supabase, ref);
-  if (!row) invalidLink();
-  if (row.status === "DISABLED") {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This link is no longer available.");
-  }
-  if (row.status === "SUBMITTED" || row.status === "CONFIRMED") {
-    throw new AppError(ERROR_CODES.CONFLICT, "Your details have already been submitted.");
-  }
-  if (expired(row) || row.status === "EXPIRED") {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This link has expired.");
-  }
+  if (!row || row.status !== "ACTIVE") invalidLink();
 
   const { data } = await supabase
     .from("india_post_connections")
@@ -173,53 +179,44 @@ export async function submitPublicCustomerOrderLink(
   input: SubmitCustomerOrderLinkInput
 ) {
   const row = await findLink(supabase, ref);
-  if (!row) invalidLink();
-  if (row.status === "DISABLED") {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This link is no longer available.");
-  }
-  if (row.status === "SUBMITTED" || row.status === "CONFIRMED") {
-    throw new AppError(ERROR_CODES.CONFLICT, "Your details have already been submitted.");
-  }
-  if (expired(row) || row.status === "EXPIRED") {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This link has expired.");
-  }
+  if (!row || row.status !== "ACTIVE") invalidLink();
 
   const phone = extractIndiaMobileDigits(input.phone);
   if (!phone) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a valid 10-digit Indian mobile number.");
   }
 
-  const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("customer_order_links")
-    .update({
-      status: "SUBMITTED",
-      customer_name: input.customerName.trim(),
+  const orderInput = createOrderSchema.parse({
+    source: "WHATSAPP",
+    paymentStatus: "PENDING",
+    customer: { name: input.customerName.trim(), phone },
+    shippingAddress: {
+      name: input.customerName.trim(),
       phone,
       line1: input.line1.trim(),
-      line2: input.line2?.trim() || null,
+      line2: input.line2?.trim() || undefined,
       city: input.city.trim(),
       state: input.state.trim(),
       pincode: input.pincode.trim(),
-      submitted_at: now,
-    })
-    .eq("id", row.id)
-    .in("status", ["CREATED", "OPENED"])
-    .gt("expires_at", now)
-    .select("id")
-    .maybeSingle();
+      country: "IN",
+    },
+    billingSameAsShipping: true,
+    lineItems: [{ title: "WhatsApp order", quantity: 1, unitPrice: 0 }],
+  });
 
-  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-  if (!data) {
-    throw new AppError(ERROR_CODES.CONFLICT, "Your details have already been submitted.");
-  }
+  const order = await createManualOrder(
+    supabase,
+    { organizationId: row.organization_id, userId: null },
+    { ...orderInput, status: "IMPORTED" }
+  );
 
   await supabase.from("audit_logs").insert({
     organization_id: row.organization_id,
     actor_id: null,
     action: "customer_order_link.submitted",
-    entity_type: "customer_order_link",
-    entity_id: row.id,
+    entity_type: "order",
+    entity_id: order.id,
+    after: { collectionLinkId: row.id },
   });
 
   return { status: "SUBMITTED" as const };

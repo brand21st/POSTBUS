@@ -55,7 +55,7 @@ const ERROR = new Set([
   "EXPIRED",
 ]);
 
-const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY"]);
+const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY", "WHATSAPP"]);
 
 /** Soft full-row tint for order status in tables. BOOKED is light yellow. */
 export function orderStatusRowClass(status?: string | null) {
@@ -116,7 +116,9 @@ export function StatusBadge({ value }: { value?: string | null }) {
           ? "Printed"
           : key === "LABEL_PENDING"
             ? "Generating label"
-            : titleCase(value)}
+            : key === "WHATSAPP"
+              ? "WhatsApp Order"
+              : titleCase(value)}
     </Badge>
   );
 }

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Link2, Share2 } from "lucide-react";
+import { Check, Copy, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -14,12 +14,29 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
-import { CUSTOMER_ORDER_LINK_STATUS_LABELS, type CustomerOrderLinkStatus } from "@/types/domain";
 
-type LinkRecord = {
+type MerchantLink = {
   id: string;
-  status: CustomerOrderLinkStatus;
-  expiresAt: string;
+  slug: string;
+  url: string;
+  status: "ACTIVE";
+};
+
+type PendingOrder = {
+  id: string;
+  orderNumber: string;
+  customerName: string | null;
+  phone: string | null;
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  createdAt: string;
+};
+
+type LegacySubmission = {
+  id: string;
   customerName: string | null;
   phone: string | null;
   line1: string | null;
@@ -28,19 +45,13 @@ type LinkRecord = {
   state: string | null;
   pincode: string | null;
   submittedAt: string | null;
-  createdAt: string;
-  orderId: string | null;
-  orderNumber: string | null;
 };
 
-type ListResponse = {
-  items: LinkRecord[];
-  page: number;
-  pageSize: number;
-  total: number;
+type CollectionResponse = {
+  link: MerchantLink;
+  pending: PendingOrder[];
+  legacy: LegacySubmission[];
 };
-
-type CreatedLink = { id: string; url: string; expiresAt: string };
 
 function shareableUrl(url: string) {
   try {
@@ -51,43 +62,22 @@ function shareableUrl(url: string) {
   }
 }
 
-const FILTERS: Array<{ id: string; label: string; status?: CustomerOrderLinkStatus }> = [
-  { id: "submitted", label: "Submitted", status: "SUBMITTED" },
-  { id: "waiting", label: "Waiting", status: "CREATED" },
-  { id: "confirmed", label: "Confirmed", status: "CONFIRMED" },
-  { id: "all", label: "All" },
-];
-
 export default function CustomerOrderLinksPage() {
   const queryClient = useQueryClient();
-  const [filter, setFilter] = useState("submitted");
-  const [created, setCreated] = useState<CreatedLink | null>(null);
   const [copied, setCopied] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const status = FILTERS.find((item) => item.id === filter)?.status;
-  const list = useQuery({
-    queryKey: ["customer-order-links", filter],
-    queryFn: () =>
-      api<ListResponse>(
-        `/api/v1/orders/customer-links?pageSize=50${status ? `&status=${status}` : ""}`
-      ),
+  const collection = useQuery({
+    queryKey: ["customer-order-links"],
+    queryFn: () => api<CollectionResponse>("/api/v1/orders/customer-links"),
   });
 
-  const generate = useMutation({
-    mutationFn: () => api<CreatedLink>("/api/v1/orders/customer-links", { method: "POST" }),
-    onSuccess: (data) => {
-      setCreated({ ...data, url: shareableUrl(data.url) });
-      setCopied(false);
-      queryClient.invalidateQueries({ queryKey: ["customer-order-links"] });
-      toast.success("Customer link created.");
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Could not create the link."),
-  });
+  const linkUrl = collection.data?.link ? shareableUrl(collection.data.link.url) : "";
 
-  async function copyUrl(url: string) {
+  async function copyUrl() {
+    if (!linkUrl) return;
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(linkUrl);
       setCopied(true);
       toast.success("Link copied.");
     } catch {
@@ -95,83 +85,96 @@ export default function CustomerOrderLinksPage() {
     }
   }
 
-  async function shareUrl(url: string) {
+  async function shareUrl() {
+    if (!linkUrl) return;
     if (navigator.share) {
       try {
-        await navigator.share({ title: "PostBus order details", url, text: "Please fill in your delivery details:" });
+        await navigator.share({
+          title: "PostBus order details",
+          url: linkUrl,
+          text: "Please fill in your delivery details:",
+        });
         return;
       } catch {
         // Fall through to copy when the share sheet is cancelled or unavailable.
       }
     }
-    await copyUrl(url);
+    await copyUrl();
   }
 
-  const items = list.data?.items ?? [];
+  const pending = collection.data?.pending ?? [];
+  const legacy = collection.data?.legacy ?? [];
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Customer collection links"
-        description="Share a one-time form. After the customer submits, choose Prepaid or COD and save as a manual order."
-        actions={
-          <Button size="sm" onClick={() => generate.mutate()} disabled={generate.isPending}>
-            <Link2 className="size-4" />
-            {generate.isPending ? "Creating…" : "Generate link"}
-          </Button>
-        }
+        title="Customer order link"
+        description="Share one permanent WhatsApp link. Every customer who submits creates a separate WhatsApp order for you to confirm as Prepaid or COD."
       />
 
-      {created ? (
-        <Card>
-          <CardHeader className="p-4">
-            <CardTitle>Share this link</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2 p-4 pt-0 sm:flex-row sm:items-center">
-            <Input readOnly value={created.url} className="h-9 font-mono text-xs" />
-            <div className="flex gap-2">
-              <Button type="button" variant="secondary" size="sm" onClick={() => copyUrl(created.url)}>
-                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-                Copy
-              </Button>
-              <Button type="button" size="sm" onClick={() => shareUrl(created.url)}>
-                <Share2 className="size-4" />
-                Share
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
+      <Card>
+        <CardHeader className="p-4">
+          <CardTitle>Your WhatsApp customer order link</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 p-4 pt-0 sm:flex-row sm:items-center">
+          {collection.isLoading ? (
+            <p className="text-sm text-muted">Loading your link…</p>
+          ) : collection.isError ? (
+            <p className="text-sm text-error">
+              {collection.error instanceof Error ? collection.error.message : "Could not load the link."}
+            </p>
+          ) : (
+            <>
+              <Input readOnly value={linkUrl} className="h-9 font-mono text-xs" />
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" size="sm" onClick={copyUrl}>
+                  {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+                  Copy link
+                </Button>
+                <Button type="button" size="sm" onClick={shareUrl}>
+                  <Share2 className="size-4" />
+                  Share
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
-      <div className="flex flex-wrap gap-1.5">
-        {FILTERS.map((item) => (
-          <Button
-            key={item.id}
-            type="button"
-            size="xs"
-            variant={filter === item.id ? "primary" : "secondary"}
-            onClick={() => setFilter(item.id)}
-          >
-            {item.label}
-          </Button>
-        ))}
+      <div>
+        <h2 className="text-sm font-semibold text-ink">WhatsApp orders</h2>
+        <p className="mt-1 text-xs text-muted">Pending review — choose Prepaid or COD, then confirm.</p>
       </div>
 
-      {list.isLoading ? <p className="text-sm text-muted">Loading links…</p> : null}
-      {list.isError ? (
-        <p className="text-sm text-error">{list.error instanceof Error ? list.error.message : "Could not load links."}</p>
-      ) : null}
-      {!list.isLoading && items.length === 0 ? (
-        <p className="text-sm text-muted">No customer links in this view yet. Generate a link and send it on WhatsApp.</p>
+      {collection.isLoading ? <p className="text-sm text-muted">Loading orders…</p> : null}
+      {!collection.isLoading && pending.length === 0 && legacy.length === 0 ? (
+        <p className="text-sm text-muted">No WhatsApp orders yet. Share your link with customers.</p>
       ) : null}
 
       <div className="space-y-2">
-        {items.map((item) => (
-          <SubmissionCard
+        {pending.map((item) => (
+          <ReviewCard
             key={item.id}
+            title={item.customerName || "WhatsApp order"}
+            subtitle={`${item.phone || "—"} · ${item.orderNumber}`}
+            meta={`Submitted ${formatDate(item.createdAt, true)}`}
             item={item}
             open={openId === item.id}
             onToggle={() => setOpenId((current) => (current === item.id ? null : item.id))}
+            confirmPath={`/api/v1/orders/${item.id}/whatsapp-confirm`}
+            onConfirmed={() => queryClient.invalidateQueries({ queryKey: ["customer-order-links"] })}
+          />
+        ))}
+        {legacy.map((item) => (
+          <ReviewCard
+            key={item.id}
+            title={item.customerName || "Submitted details"}
+            subtitle={item.phone || "—"}
+            meta={item.submittedAt ? `Submitted ${formatDate(item.submittedAt, true)}` : "Awaiting confirmation"}
+            item={item}
+            open={openId === `legacy-${item.id}`}
+            onToggle={() => setOpenId((current) => (current === `legacy-${item.id}` ? null : `legacy-${item.id}`))}
+            confirmPath={`/api/v1/orders/customer-links/${item.id}/confirm`}
             onConfirmed={() => queryClient.invalidateQueries({ queryKey: ["customer-order-links"] })}
           />
         ))}
@@ -180,33 +183,44 @@ export default function CustomerOrderLinksPage() {
   );
 }
 
-function SubmissionCard({
+function ReviewCard({
+  title,
+  subtitle,
+  meta,
   item,
   open,
   onToggle,
+  confirmPath,
   onConfirmed,
 }: {
-  item: LinkRecord;
+  title: string;
+  subtitle: string;
+  meta: string;
+  item: {
+    id: string;
+    customerName: string | null;
+    phone: string | null;
+    line1: string | null;
+    line2: string | null;
+    city: string | null;
+    state: string | null;
+    pincode: string | null;
+    orderNumber?: string;
+  };
   open: boolean;
   onToggle: () => void;
+  confirmPath: string;
   onConfirmed: () => void;
 }) {
-  const canConfirm = item.status === "SUBMITTED";
   return (
     <Card>
       <button type="button" className="flex w-full items-start justify-between gap-3 p-4 text-left" onClick={onToggle}>
         <div className="min-w-0">
-          <p className="truncate font-medium text-ink">{item.customerName || "Waiting for customer"}</p>
-          <p className="mt-0.5 truncate text-xs text-muted">
-            {item.phone || "—"}
-            {item.city ? ` · ${item.city}` : ""}
-            {item.pincode ? ` · ${item.pincode}` : ""}
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            {item.submittedAt ? `Submitted ${formatDate(item.submittedAt, true)}` : `Created ${formatDate(item.createdAt, true)}`}
-          </p>
+          <p className="truncate font-medium text-ink">{title}</p>
+          <p className="mt-0.5 truncate text-xs text-muted">{subtitle}</p>
+          <p className="mt-1 text-xs text-muted">{meta}</p>
         </div>
-        <StatusBadge value={CUSTOMER_ORDER_LINK_STATUS_LABELS[item.status] ? item.status : item.status} />
+        <StatusBadge value="WHATSAPP" />
       </button>
       {open ? (
         <CardContent className="space-y-3 border-t border-border p-4">
@@ -227,43 +241,41 @@ function SubmissionCard({
               {[item.city, item.state, item.pincode].filter(Boolean).join(", ")}
             </p>
           ) : (
-            <p className="text-sm text-muted">The customer has not submitted details yet.</p>
+            <p className="text-sm text-muted">Customer details are incomplete.</p>
           )}
-          {item.orderId ? (
-            <Link href={`/dashboard/orders/${item.orderId}`} className="text-sm font-medium text-brand">
-              Open order {item.orderNumber || ""}
+          {item.orderNumber ? (
+            <Link href={`/dashboard/orders/${item.id}`} className="text-sm font-medium text-brand">
+              Open order {item.orderNumber}
             </Link>
           ) : null}
-          {item.status !== "CONFIRMED" && item.status !== "DISABLED" && item.status !== "EXPIRED" ? (
-            <DisableLinkButton id={item.id} onDone={onConfirmed} />
-          ) : null}
-          {canConfirm ? <ConfirmPanel item={item} onConfirmed={onConfirmed} /> : null}
+          <ConfirmPanel item={item} confirmPath={confirmPath} onConfirmed={onConfirmed} />
         </CardContent>
       ) : null}
     </Card>
   );
 }
 
-function DisableLinkButton({ id, onDone }: { id: string; onDone: () => void }) {
-  const disable = useMutation({
-    mutationFn: () => api(`/api/v1/orders/customer-links/${id}/disable`, { method: "POST" }),
-    onSuccess: () => {
-      toast.success("Link disabled.");
-      onDone();
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Could not disable the link."),
-  });
-  return (
-    <Button type="button" variant="ghost" size="xs" disabled={disable.isPending} onClick={() => disable.mutate()}>
-      Disable link
-    </Button>
-  );
-}
-
-function ConfirmPanel({ item, onConfirmed }: { item: LinkRecord; onConfirmed: () => void }) {
+function ConfirmPanel({
+  item,
+  confirmPath,
+  onConfirmed,
+}: {
+  item: {
+    id: string;
+    customerName: string | null;
+    phone: string | null;
+    line1: string | null;
+    line2: string | null;
+    city: string | null;
+    state: string | null;
+    pincode: string | null;
+  };
+  confirmPath: string;
+  onConfirmed: () => void;
+}) {
   const [paymentType, setPaymentType] = useState<"PREPAID" | "COD">("COD");
   const [amount, setAmount] = useState("");
-  const [title, setTitle] = useState("Manual order");
+  const [title, setTitle] = useState("WhatsApp order");
   const [customerName, setCustomerName] = useState(item.customerName ?? "");
   const [phone, setPhone] = useState(item.phone ?? "");
   const [line1, setLine1] = useState(item.line1 ?? "");
@@ -279,7 +291,7 @@ function ConfirmPanel({ item, onConfirmed }: { item: LinkRecord; onConfirmed: ()
 
   const confirm = useMutation({
     mutationFn: () =>
-      api(`/api/v1/orders/customer-links/${item.id}/confirm`, {
+      api(confirmPath, {
         method: "POST",
         body: JSON.stringify({
           paymentType,
@@ -291,11 +303,11 @@ function ConfirmPanel({ item, onConfirmed }: { item: LinkRecord; onConfirmed: ()
           city,
           state,
           pincode,
-          lineItems: [{ title: title.trim() || "Manual order", quantity: 1, unitPrice: Number(amount) }],
+          lineItems: [{ title: title.trim() || "WhatsApp order", quantity: 1, unitPrice: Number(amount) }],
         }),
       }),
     onSuccess: () => {
-      toast.success("Manual order created.");
+      toast.success("WhatsApp order confirmed.");
       onConfirmed();
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not confirm the order."),
@@ -304,6 +316,7 @@ function ConfirmPanel({ item, onConfirmed }: { item: LinkRecord; onConfirmed: ()
   return (
     <div className="space-y-3 rounded-xl bg-surface-soft p-3">
       <WhatsAppPasteParser
+        overwrite
         getCurrent={() => addressFields}
         onApply={(fields) => {
           if (fields.name) setCustomerName(fields.name);
@@ -315,9 +328,7 @@ function ConfirmPanel({ item, onConfirmed }: { item: LinkRecord; onConfirmed: ()
           if (fields.pincode) setPincode(fields.pincode);
         }}
       />
-      <p className="text-xs text-muted">
-        Address was collected from the customer. Payment type and amount are set here before the order is created.
-      </p>
+      <p className="text-xs text-muted">Payment type is selected here. The customer does not choose Prepaid or COD.</p>
       <div className="flex gap-2">
         <Button
           type="button"

@@ -7,24 +7,23 @@ import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { hashSecret } from "@/lib/security/crypto";
 import { createCustomerOrderLinkToken } from "@/modules/customer-order-links/token";
 import { createOrderSchema } from "@/modules/orders/schema";
-import { createManualOrder } from "@/modules/orders/service";
+import { confirmWhatsAppOrder, createManualOrder } from "@/modules/orders/service";
 import {
   customerOrderLinkPath,
-  customerOrderLinkPublicId,
   customerOrderWorkspaceSlug,
   type ConfirmCustomerOrderLinkInput,
-  type CustomerOrderLinkListQuery,
 } from "@/modules/customer-order-links/schema";
-import type { CustomerOrderLinkStatus } from "@/types/domain";
 
 const LINK_SELECT =
-  "id, organization_id, status, expires_at, customer_name, phone, line1, line2, city, state, pincode, opened_at, submitted_at, confirmed_at, disabled_at, order_id, created_at, updated_at, orders(order_number)";
+  "id, organization_id, status, expires_at, public_workspace, public_code, customer_name, phone, line1, line2, city, state, pincode, opened_at, submitted_at, confirmed_at, disabled_at, order_id, created_at, updated_at";
 
 type LinkRow = {
   id: string;
   organization_id: string;
-  status: CustomerOrderLinkStatus;
-  expires_at: string;
+  status: string;
+  expires_at: string | null;
+  public_workspace: string | null;
+  public_code: string | null;
   customer_name: string | null;
   phone: string | null;
   line1: string | null;
@@ -39,64 +38,80 @@ type LinkRow = {
   order_id: string | null;
   created_at: string;
   updated_at: string;
-  orders?: { order_number?: string | null } | { order_number?: string | null }[] | null;
 };
 
-function publicLinkUrl(workspace: string, publicId: string) {
-  return `${env.appUrl.replace(/\/$/, "")}${customerOrderLinkPath(workspace, publicId)}`;
+function publicLinkUrl(workspace: string) {
+  return `${env.appUrl.replace(/\/$/, "")}${customerOrderLinkPath(workspace)}`;
 }
 
-function displayStatus(row: Pick<LinkRow, "status" | "expires_at">): CustomerOrderLinkStatus {
-  if (row.status === "DISABLED" || row.status === "CONFIRMED" || row.status === "SUBMITTED") {
-    return row.status;
+async function uniqueWorkspace(
+  supabase: SupabaseClient,
+  organizationId: string,
+  preferred: string
+) {
+  let candidate = preferred;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const { data } = await supabase
+      .from("customer_order_links")
+      .select("id, organization_id")
+      .eq("status", "ACTIVE")
+      .eq("public_workspace", candidate)
+      .limit(1)
+      .maybeSingle();
+    if (!data || data.organization_id === organizationId) return candidate;
+    candidate = `${preferred.slice(0, 40)}-${Math.random().toString(36).slice(2, 6)}`;
   }
-  if (new Date(row.expires_at).getTime() <= Date.now()) return "EXPIRED";
-  return row.status;
+  return `${preferred}-${randomUUID().replace(/-/g, "").slice(0, 4)}`;
 }
 
-function orderNumberFrom(row: LinkRow) {
-  const related = row.orders;
-  if (Array.isArray(related)) return related[0]?.order_number ?? null;
-  return related?.order_number ?? null;
-}
+export async function getMerchantCollectionLink(supabase: SupabaseClient, ctx: TenantContext) {
+  const { data: existing } = await supabase
+    .from("customer_order_links")
+    .select(LINK_SELECT)
+    .eq("organization_id", ctx.organizationId)
+    .eq("status", "ACTIVE")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-export function mapCustomerOrderLink(row: LinkRow) {
-  return {
-    id: row.id,
-    status: displayStatus(row),
-    expiresAt: row.expires_at,
-    customerName: row.customer_name,
-    phone: row.phone,
-    line1: row.line1,
-    line2: row.line2,
-    city: row.city,
-    state: row.state,
-    pincode: row.pincode,
-    openedAt: row.opened_at,
-    submittedAt: row.submitted_at,
-    confirmedAt: row.confirmed_at,
-    disabledAt: row.disabled_at,
-    orderId: row.order_id,
-    orderNumber: orderNumberFrom(row),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
+  if (existing?.public_workspace) {
+    return {
+      id: existing.id as string,
+      slug: existing.public_workspace as string,
+      url: publicLinkUrl(existing.public_workspace as string),
+      status: "ACTIVE" as const,
+    };
+  }
 
-export async function createCustomerOrderLink(supabase: SupabaseClient, ctx: TenantContext) {
   const { data: organization } = await supabase
     .from("organizations")
     .select("slug, name")
     .eq("id", ctx.organizationId)
     .maybeSingle();
 
-  const workspace = customerOrderWorkspaceSlug(
-    (organization?.name as string | undefined) || ctx.organizationName,
-    organization?.slug as string | null | undefined
+  const workspace = await uniqueWorkspace(
+    supabase,
+    ctx.organizationId,
+    customerOrderWorkspaceSlug(
+      (organization?.name as string | undefined) || ctx.organizationName,
+      organization?.slug as string | null | undefined
+    )
   );
 
+  if (existing) {
+    await supabase
+      .from("customer_order_links")
+      .update({
+        status: "ACTIVE",
+        public_workspace: workspace,
+        expires_at: null,
+        disabled_at: null,
+      })
+      .eq("id", existing.id);
+    return { id: existing.id as string, slug: workspace, url: publicLinkUrl(workspace), status: "ACTIVE" as const };
+  }
+
   const id = randomUUID();
-  const publicId = customerOrderLinkPublicId(id);
   const token = createCustomerOrderLinkToken();
   const { data, error } = await supabase
     .from("customer_order_links")
@@ -106,10 +121,11 @@ export async function createCustomerOrderLink(supabase: SupabaseClient, ctx: Ten
       created_by: ctx.userId,
       token_hash: hashSecret(token.toLowerCase()),
       public_workspace: workspace,
-      public_code: publicId,
-      status: "CREATED",
+      public_code: id.replace(/-/g, "").slice(0, 4).toLowerCase(),
+      status: "ACTIVE",
+      expires_at: null,
     })
-    .select("id, expires_at")
+    .select("id")
     .single();
 
   if (error || !data) {
@@ -124,175 +140,141 @@ export async function createCustomerOrderLink(supabase: SupabaseClient, ctx: Ten
     entity_id: data.id,
   });
 
-  return {
-    id: data.id as string,
-    url: publicLinkUrl(workspace, publicId),
-    expiresAt: data.expires_at as string,
-  };
+  return { id: data.id as string, slug: workspace, url: publicLinkUrl(workspace), status: "ACTIVE" as const };
 }
 
-export async function listCustomerOrderLinks(
-  supabase: SupabaseClient,
-  ctx: TenantContext,
-  query: CustomerOrderLinkListQuery
-) {
-  const from = (query.page - 1) * query.pageSize;
-  const to = from + query.pageSize - 1;
-  let builder = supabase
-    .from("customer_order_links")
-    .select(LINK_SELECT, { count: "exact" })
+export async function listWhatsAppPendingOrders(supabase: SupabaseClient, ctx: TenantContext) {
+  const { data, error } = await supabase
+    .from("orders")
+    .select(
+      "id, order_number, source, status, payment_status, total_amount, created_at, customers(name, phone), addresses:shipping_address_id(line1, line2, city, state, pincode)"
+    )
     .eq("organization_id", ctx.organizationId)
+    .eq("source", "WHATSAPP")
+    .eq("status", "IMPORTED")
+    .eq("payment_status", "PENDING")
     .order("created_at", { ascending: false })
-    .range(from, to);
-
-  if (query.status) builder = builder.eq("status", query.status);
-
-  const { data, error, count } = await builder;
+    .limit(50);
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
-  return {
-    items: ((data ?? []) as LinkRow[]).map(mapCustomerOrderLink),
-    page: query.page,
-    pageSize: query.pageSize,
-    total: count ?? 0,
-  };
+  return (data ?? []).map((row) => {
+    const customer = Array.isArray(row.customers) ? row.customers[0] : row.customers;
+    const address = Array.isArray(row.addresses) ? row.addresses[0] : row.addresses;
+    return {
+      id: row.id as string,
+      orderNumber: row.order_number as string,
+      customerName: (customer as { name?: string } | null)?.name ?? null,
+      phone: (customer as { phone?: string } | null)?.phone ?? null,
+      line1: (address as { line1?: string } | null)?.line1 ?? null,
+      line2: (address as { line2?: string } | null)?.line2 ?? null,
+      city: (address as { city?: string } | null)?.city ?? null,
+      state: (address as { state?: string } | null)?.state ?? null,
+      pincode: (address as { pincode?: string } | null)?.pincode ?? null,
+      createdAt: row.created_at as string,
+    };
+  });
 }
 
-async function getOrgLink(supabase: SupabaseClient, ctx: TenantContext, id: string) {
+export async function confirmWhatsAppCollectionOrder(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  input: ConfirmCustomerOrderLinkInput
+) {
+  const phone = input.phone ? extractIndiaMobileDigits(input.phone) ?? input.phone : input.phone;
+  return confirmWhatsAppOrder(supabase, ctx, orderId, {
+    ...input,
+    phone: phone ?? undefined,
+    lineItems:
+      input.lineItems && input.lineItems.length > 0
+        ? input.lineItems
+        : [{ title: "WhatsApp order", quantity: 1, unitPrice: input.amount }],
+  });
+}
+
+/** Legacy one-time submissions that were never confirmed. */
+export async function listLegacySubmissions(supabase: SupabaseClient, ctx: TenantContext) {
   const { data, error } = await supabase
+    .from("customer_order_links")
+    .select(LINK_SELECT)
+    .eq("organization_id", ctx.organizationId)
+    .eq("status", "SUBMITTED")
+    .order("submitted_at", { ascending: false })
+    .limit(50);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return ((data ?? []) as LinkRow[]).map((row) => ({
+    id: row.id,
+    customerName: row.customer_name,
+    phone: row.phone,
+    line1: row.line1,
+    line2: row.line2,
+    city: row.city,
+    state: row.state,
+    pincode: row.pincode,
+    submittedAt: row.submitted_at,
+  }));
+}
+
+export async function confirmLegacyCustomerOrderLink(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  id: string,
+  input: ConfirmCustomerOrderLinkInput
+) {
+  const { data: link, error } = await supabase
     .from("customer_order_links")
     .select(LINK_SELECT)
     .eq("organization_id", ctx.organizationId)
     .eq("id", id)
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-  if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Customer link not found.");
-  return data as LinkRow;
-}
-
-export async function disableCustomerOrderLink(supabase: SupabaseClient, ctx: TenantContext, id: string) {
-  const existing = await getOrgLink(supabase, ctx, id);
-  const current = displayStatus(existing);
-  if (current === "CONFIRMED") {
-    throw new AppError(ERROR_CODES.CONFLICT, "This submission has already been confirmed as an order.");
-  }
-  if (current === "DISABLED") {
-    return mapCustomerOrderLink({ ...existing, status: "DISABLED" });
+  if (!link) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Submission not found.");
+  const row = link as LinkRow;
+  if (row.status !== "SUBMITTED") {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This submission is no longer waiting for confirmation.");
   }
 
-  const { data, error } = await supabase
-    .from("customer_order_links")
-    .update({
-      status: "DISABLED",
-      disabled_at: new Date().toISOString(),
-    })
-    .eq("organization_id", ctx.organizationId)
-    .eq("id", id)
-    .select(LINK_SELECT)
-    .single();
-
-  if (error || !data) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not disable the link.");
-  }
-
-  await supabase.from("audit_logs").insert({
-    organization_id: ctx.organizationId,
-    actor_id: ctx.userId,
-    action: "customer_order_link.disabled",
-    entity_type: "customer_order_link",
-    entity_id: id,
-  });
-
-  return mapCustomerOrderLink(data as LinkRow);
-}
-
-export async function confirmCustomerOrderLink(
-  supabase: SupabaseClient,
-  ctx: TenantContext,
-  id: string,
-  input: ConfirmCustomerOrderLinkInput
-) {
-  const link = await getOrgLink(supabase, ctx, id);
-  if (displayStatus(link) === "EXPIRED") {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This link has expired.");
-  }
-  if (link.status === "DISABLED") {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This link is disabled.");
-  }
-  if (link.status === "CONFIRMED" && link.order_id) {
-    throw new AppError(ERROR_CODES.CONFLICT, "This submission has already been confirmed as an order.");
-  }
-  if (link.status !== "SUBMITTED") {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "The customer has not submitted details yet.");
-  }
-
-  const phone = extractIndiaMobileDigits(input.phone ?? link.phone ?? "") ?? input.phone ?? link.phone;
-  const customerName = (input.customerName ?? link.customer_name)?.trim() || null;
-  const line1 = (input.line1 ?? link.line1)?.trim() || null;
-  const line2 = (input.line2 ?? link.line2)?.trim() || null;
-  const city = (input.city ?? link.city)?.trim() || null;
-  const state = (input.state ?? link.state)?.trim() || null;
-  const pincode = (input.pincode ?? link.pincode)?.trim() || null;
+  const phone = extractIndiaMobileDigits(input.phone ?? row.phone ?? "") ?? input.phone ?? row.phone;
+  const customerName = (input.customerName ?? row.customer_name)?.trim() || null;
+  const line1 = (input.line1 ?? row.line1)?.trim() || null;
+  const city = (input.city ?? row.city)?.trim() || null;
+  const state = (input.state ?? row.state)?.trim() || null;
+  const pincode = (input.pincode ?? row.pincode)?.trim() || null;
   if (!customerName || !phone || !line1 || !city || !state || !pincode) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Customer details are incomplete.");
   }
 
-  const lineItems =
-    input.lineItems && input.lineItems.length > 0
-      ? input.lineItems
-      : [{ title: "Manual order", quantity: 1, unitPrice: input.amount }];
-
-  const paymentStatus = input.paymentType === "COD" ? "COD" : "PAID";
-
   const orderInput = createOrderSchema.parse({
-    source: "MANUAL",
-    paymentStatus,
+    source: "WHATSAPP",
+    paymentStatus: input.paymentType === "COD" ? "COD" : "PAID",
     customer: { name: customerName, phone },
     shippingAddress: {
       name: customerName,
       phone,
       line1,
-      line2: line2 || undefined,
+      line2: (input.line2 ?? row.line2)?.trim() || undefined,
       city,
       state,
       pincode,
       country: "IN",
     },
     billingSameAsShipping: true,
-    lineItems,
+    lineItems:
+      input.lineItems && input.lineItems.length > 0
+        ? input.lineItems
+        : [{ title: "WhatsApp order", quantity: 1, unitPrice: input.amount }],
   });
-  const order = await createManualOrder(supabase, ctx, orderInput);
+  const order = await createManualOrder(supabase, ctx, { ...orderInput, status: "READY" });
 
-  const { data: updated, error } = await supabase
+  await supabase
     .from("customer_order_links")
     .update({
       status: "CONFIRMED",
       confirmed_at: new Date().toISOString(),
       order_id: order.id,
     })
-    .eq("organization_id", ctx.organizationId)
     .eq("id", id)
-    .eq("status", "SUBMITTED")
-    .select(LINK_SELECT)
-    .maybeSingle();
+    .eq("organization_id", ctx.organizationId);
 
-  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-
-  await supabase.from("audit_logs").insert({
-    organization_id: ctx.organizationId,
-    actor_id: ctx.userId,
-    action: "customer_order_link.confirmed",
-    entity_type: "customer_order_link",
-    entity_id: id,
-    after: {
-      orderId: order.id,
-      paymentType: input.paymentType,
-      amount: input.amount,
-    },
-  });
-
-  return {
-    link: mapCustomerOrderLink((updated as LinkRow | null) ?? { ...link, status: "CONFIRMED", order_id: order.id }),
-    order,
-  };
+  return { order };
 }

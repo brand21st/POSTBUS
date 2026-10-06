@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
+import type { OrderStatus } from "@/types/domain";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
 import type { createOrderSchema, orderListQuery, updateOrderWeightsSchema } from "@/modules/orders/schema";
@@ -13,7 +14,8 @@ import {
   enrichShopifyLineItemImagesInOrders,
 } from "@/modules/shopify/orders";
 
-type CreateInput = z.infer<typeof createOrderSchema>;
+type CreateInput = z.infer<typeof createOrderSchema> & { status?: OrderStatus };
+type OrderActor = Pick<TenantContext, "organizationId"> & { userId?: string | null };
 type OrderListQuery = z.infer<typeof orderListQuery>;
 
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
@@ -142,7 +144,7 @@ export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id:
 
 export async function createManualOrder(
   supabase: SupabaseClient,
-  ctx: TenantContext,
+  ctx: OrderActor,
   input: CreateInput
 ) {
   const { data: customer, error: customerError } = await supabase
@@ -188,7 +190,7 @@ export async function createManualOrder(
       amount_paid: payment.amountPaid,
       cod_amount: payment.codAmount,
       fulfillment_status: "UNFULFILLED",
-      status: "READY",
+      status: input.status ?? "READY",
     })
     .select()
     .single();
@@ -212,13 +214,13 @@ export async function createManualOrder(
 
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organizationId,
-    actor_id: ctx.userId,
+    actor_id: ctx.userId || null,
     action: "order.created",
     entity_type: "order",
     entity_id: order.id,
     after: {
       orderNumber,
-      source: "MANUAL",
+      source: input.source ?? "MANUAL",
       paymentStatus: payment.paymentStatus,
       amountPaid: payment.amountPaid,
       codAmount: payment.codAmount,
@@ -481,4 +483,117 @@ export async function exportOrdersCsv(
       .join(",");
   });
   return [header, ...lines].join("\n");
+}
+
+export async function confirmWhatsAppOrder(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  input: {
+    paymentType: "PREPAID" | "COD";
+    amount: number;
+    customerName?: string;
+    phone?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+    lineItems?: Array<{ title: string; sku?: string; quantity: number; unitPrice: number; weightGrams?: number }>;
+  }
+) {
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, source, status, payment_status, customer_id, shipping_address_id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+  if (order.source !== "WHATSAPP") {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This is not a WhatsApp order.");
+  }
+  if (order.status !== "IMPORTED" || order.payment_status !== "PENDING") {
+    throw new AppError(ERROR_CODES.CONFLICT, "This WhatsApp order has already been confirmed.");
+  }
+
+  const lineItems =
+    input.lineItems && input.lineItems.length > 0
+      ? input.lineItems
+      : [{ title: "WhatsApp order", quantity: 1, unitPrice: input.amount }];
+  const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const payment = settleOrderPayment({
+    paymentStatus: input.paymentType === "COD" ? "COD" : "PAID",
+    totalAmount: subtotal,
+  });
+
+  const { data: updated, error: updateError } = await supabase
+    .from("orders")
+    .update({
+      subtotal,
+      total_amount: subtotal,
+      payment_status: payment.paymentStatus,
+      amount_paid: payment.amountPaid,
+      cod_amount: payment.codAmount,
+      status: "READY",
+    })
+    .eq("id", orderId)
+    .eq("organization_id", ctx.organizationId)
+    .eq("status", "IMPORTED")
+    .eq("payment_status", "PENDING")
+    .select()
+    .maybeSingle();
+  if (updateError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError.message);
+  if (!updated) throw new AppError(ERROR_CODES.CONFLICT, "This WhatsApp order has already been confirmed.");
+
+  await supabase.from("order_line_items").delete().eq("order_id", orderId).eq("organization_id", ctx.organizationId);
+  const { error: itemsError } = await supabase.from("order_line_items").insert(
+    lineItems.map((item) => ({
+      organization_id: ctx.organizationId,
+      order_id: orderId,
+      title: item.title,
+      sku: item.sku || null,
+      quantity: item.quantity,
+      unit_price: item.unitPrice,
+      weight_grams: item.weightGrams ?? null,
+    }))
+  );
+  if (itemsError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, itemsError.message);
+
+  if (order.customer_id && (input.customerName || input.phone)) {
+    await supabase
+      .from("customers")
+      .update({
+        ...(input.customerName ? { name: input.customerName.trim() } : {}),
+        ...(input.phone ? { phone: input.phone } : {}),
+      })
+      .eq("id", order.customer_id)
+      .eq("organization_id", ctx.organizationId);
+  }
+  if (order.shipping_address_id && (input.line1 || input.city || input.state || input.pincode)) {
+    await supabase
+      .from("addresses")
+      .update({
+        ...(input.customerName ? { name: input.customerName.trim() } : {}),
+        ...(input.phone ? { phone: input.phone } : {}),
+        ...(input.line1 ? { line1: input.line1.trim() } : {}),
+        ...(input.line2 !== undefined ? { line2: input.line2?.trim() || null } : {}),
+        ...(input.city ? { city: input.city.trim() } : {}),
+        ...(input.state ? { state: input.state.trim() } : {}),
+        ...(input.pincode ? { pincode: input.pincode.trim() } : {}),
+      })
+      .eq("id", order.shipping_address_id)
+      .eq("organization_id", ctx.organizationId);
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId,
+    action: "order.whatsapp_confirmed",
+    entity_type: "order",
+    entity_id: orderId,
+    after: { paymentType: input.paymentType, amount: input.amount },
+  });
+
+  return updated;
 }

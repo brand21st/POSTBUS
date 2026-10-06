@@ -91,7 +91,7 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
         segment === "new"
           ? "New"
           : segment === "customer-links"
-            ? "Customer links"
+            ? "Customer order link"
             : segment.replace(/-/g, " "),
       href,
     });
