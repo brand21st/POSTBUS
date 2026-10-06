@@ -238,12 +238,27 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         // In-app alerts are optional; booking should still succeed.
       }
     }
-    await createBackgroundJob(supabase, {
-      organizationId: payload.organizationId,
-      jobType: "label-generation",
-      entityType: "shipment",
-      entityId: shipment.id,
-    });
+    try {
+      await generateLabel(supabase, {
+        organizationId: payload.organizationId,
+        jobId: payload.jobId,
+        entityType: "shipment",
+        entityId: shipment.id,
+        userId: payload.userId,
+      });
+    } catch (error) {
+      logError("LABEL_INLINE_FAILED", {
+        organizationId: payload.organizationId,
+        shipmentId: shipment.id,
+        message: error instanceof Error ? error.message : "unknown",
+      });
+      await createBackgroundJob(supabase, {
+        organizationId: payload.organizationId,
+        jobType: "label-generation",
+        entityType: "shipment",
+        entityId: shipment.id,
+      });
+    }
     try {
       await createBackgroundJob(supabase, {
         organizationId: payload.organizationId,

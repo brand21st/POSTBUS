@@ -11,6 +11,8 @@ describe("official India Post label generation", () => {
     expect(source).not.toContain("stampOrgLogoOnLabel");
     expect(source).toContain("findReadyIndiaPostLabel");
     expect(source).toContain("fetchOfficialIndiaPostLabelPdf");
+    expect(source).toContain("await generateLabel(");
+    expect(source).toContain("LABEL_INLINE_FAILED");
     expect(source).not.toContain("overlayMerchantOnOfficialPdf");
     expect(source).not.toContain("persistMerchantPackingLabel");
     expect(fetchSource).not.toContain("overlayIndiaPostPartyBox");

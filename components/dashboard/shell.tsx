@@ -100,7 +100,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           id="main-content"
           className={
             pathname === "/dashboard/orders"
-              ? "min-w-0 flex-1 px-3 py-4 sm:px-4 sm:py-6 lg:px-6 lg:py-8 xl:px-8"
+              ? "min-w-0 flex-1 px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:py-4 xl:px-6"
               : "flex-1 px-4 py-6 lg:px-8 lg:py-8"
           }
         >

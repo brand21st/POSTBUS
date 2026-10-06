@@ -102,7 +102,7 @@ export function OrderKpiStrip({
   onSelect: (status: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+    <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:grid sm:grid-cols-3 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-6 [&::-webkit-scrollbar]:hidden">
       {ORDER_KPI_FILTERS.map((card) => {
         const value = kpiValue(data, card.kpi, [...card.fallback]);
         const change = kpiChange(data, card.kpi);
@@ -113,41 +113,43 @@ export function OrderKpiStrip({
             type="button"
             onClick={() => onSelect(card.status)}
             className={cn(
-              "rounded-2xl border px-3 py-2.5 text-left transition-all duration-150 hover:-translate-y-px hover:shadow-sm",
+              "min-w-[8.75rem] shrink-0 rounded-xl border px-2.5 py-2 text-left transition-colors hover:shadow-sm sm:min-w-0",
               card.className,
               active && "ring-2 ring-brand/30"
             )}
           >
-            <div className="flex items-start justify-between gap-2">
-              <p className="text-[11px] font-medium text-muted">{card.label}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate text-[11px] font-medium text-muted">{card.label}</p>
               <span
                 className={cn(
-                  "flex size-7 items-center justify-center rounded-lg",
+                  "flex size-6 shrink-0 items-center justify-center rounded-md",
                   card.iconClass
                 )}
               >
                 <card.icon className="size-3.5" />
               </span>
             </div>
-            <p className="mt-1 text-xl font-semibold tabular-nums tracking-tight text-ink">
-              {loading ? "…" : error ? "—" : formatNumber(value)}
-            </p>
-            {change === null ? null : (
-              <p
-                className={cn(
-                  "mt-0.5 flex items-center gap-0.5 text-[11px] font-medium",
-                  change >= 0 ? "text-emerald-600" : "text-red-600"
-                )}
-              >
-                {change >= 0 ? (
-                  <ArrowUpRight className="size-3" />
-                ) : (
-                  <ArrowDownRight className="size-3" />
-                )}
-                {change >= 0 ? "+" : ""}
-                {Math.round(change)}%
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <p className="text-lg font-semibold tabular-nums tracking-tight text-ink">
+                {loading ? "…" : error ? "—" : formatNumber(value)}
               </p>
-            )}
+              {change === null ? null : (
+                <p
+                  className={cn(
+                    "hidden items-center gap-0.5 text-[10px] font-medium sm:flex",
+                    change >= 0 ? "text-emerald-600" : "text-red-600"
+                  )}
+                >
+                  {change >= 0 ? (
+                    <ArrowUpRight className="size-3" />
+                  ) : (
+                    <ArrowDownRight className="size-3" />
+                  )}
+                  {change >= 0 ? "+" : ""}
+                  {Math.round(change)}%
+                </p>
+              )}
+            </div>
           </button>
         );
       })}

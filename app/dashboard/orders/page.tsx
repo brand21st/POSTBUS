@@ -106,7 +106,7 @@ const COLUMN_LABELS: Record<OptionalColumn, string> = {
   service: "Service",
 };
 
-const FILTER_SELECT_CLASS = "h-9 shadow-none";
+const FILTER_SELECT_CLASS = "h-8 shadow-none";
 
 function CreatedCell({ value }: { value?: string | null }) {
   if (!value) return <span className="text-muted">—</span>;
@@ -452,7 +452,7 @@ export default function OrdersPage() {
     {
       id: "order",
       header: "# Order",
-      className: "w-[7.5rem] whitespace-nowrap",
+      className: "w-[4.75rem] whitespace-nowrap",
       cell: (row) => (
         <Link href={`/dashboard/orders/${row.id}`} className="font-medium hover:text-brand">
           {orderNumber(row)}
@@ -478,6 +478,7 @@ export default function OrdersPage() {
           {
             id: "items",
             header: "Items",
+            className: "min-w-0",
             cell: (row: OrderRecord) => {
               const summary = itemSummary(row);
               if (summary === "—") return "—";
@@ -485,8 +486,8 @@ export default function OrdersPage() {
               const preview = itemNamesPreview(row);
               const thumbTitle = lineItems(row)[0]?.title ?? preview;
               return (
-                <div className="flex min-w-0 max-w-full items-center gap-2 xl:max-w-[22rem]" title={summary}>
-                  <LineItemThumb title={thumbTitle} imageUrl={firstLineItemImage(row)} />
+                <div className="flex min-w-0 max-w-full items-center gap-1.5" title={summary}>
+                  <LineItemThumb className="size-7" title={thumbTitle} imageUrl={firstLineItemImage(row)} />
                   <div className="min-w-0">
                     <p className="font-medium text-ink">{count === 1 ? "1 item" : `${count} items`}</p>
                     <p className="truncate text-[11px] text-muted">{preview}</p>
@@ -502,13 +503,19 @@ export default function OrdersPage() {
           {
             id: "source",
             header: "Source",
-            cell: (row: OrderRecord) => <StatusBadge value={row.source} />,
+            className: "w-16 px-1.5 text-center tracking-normal",
+            cell: (row: OrderRecord) => (
+              <div className="flex justify-center">
+                <StatusBadge value={row.source} />
+              </div>
+            ),
           } satisfies DataTableColumn<OrderRecord>,
         ]
       : []),
     {
       id: "status",
       header: "Status",
+      className: "w-[5.75rem] whitespace-nowrap",
       cell: (row) => <StatusBadge value={row.status} />,
     },
     ...(visibleColumns.dimensions
@@ -516,7 +523,7 @@ export default function OrdersPage() {
           {
             id: "dimensions",
             header: "Parcel",
-            className: "whitespace-nowrap",
+            className: "w-[7.5rem] px-2 whitespace-nowrap",
             cell: (row: OrderRecord) => <OrderDimensionBadge order={row} />,
           } satisfies DataTableColumn<OrderRecord>,
         ]
@@ -526,6 +533,7 @@ export default function OrdersPage() {
           {
             id: "payment",
             header: "Payment",
+            className: "w-[4.25rem] whitespace-nowrap",
             cell: (row: OrderRecord) => <StatusBadge value={row.paymentStatus ?? row.payment_status} />,
           } satisfies DataTableColumn<OrderRecord>,
         ]
@@ -533,6 +541,7 @@ export default function OrdersPage() {
     {
       id: "total",
       header: "Total",
+      className: "w-[4.75rem] whitespace-nowrap",
       cell: (row) => (
         <span className="whitespace-nowrap font-medium tabular-nums">
           {formatCurrency(row.totalAmount ?? row.total_amount, row.currency)}
@@ -544,6 +553,7 @@ export default function OrdersPage() {
           {
             id: "created",
             header: "Created",
+            className: "w-[5.5rem] whitespace-nowrap",
             cell: (row: OrderRecord) => <CreatedCell value={row.createdAt ?? row.created_at} />,
           } satisfies DataTableColumn<OrderRecord>,
         ]
@@ -551,7 +561,7 @@ export default function OrdersPage() {
     {
       id: "actions",
       header: "Actions",
-      className: "w-[10.5rem] overflow-visible whitespace-nowrap",
+      className: "w-[8.25rem] overflow-visible whitespace-nowrap",
       cell: (row) => rowActions(row),
     },
   ];
@@ -601,15 +611,15 @@ export default function OrdersPage() {
     : "Filter, export, and ship orders.";
 
   return (
-    <div className="min-w-0 space-y-4">
+    <div className="min-w-0 space-y-3">
       <PageHeader
         title="Orders"
         description={description}
         className="min-w-0"
         actionsClassName="w-full justify-start sm:w-auto sm:justify-end"
         icon={
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-brand">
-            <ShoppingBag className="size-5" />
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-brand sm:size-9 sm:rounded-xl">
+            <ShoppingBag className="size-4 sm:size-5" />
           </span>
         }
         actions={
@@ -684,7 +694,7 @@ export default function OrdersPage() {
         }}
       />
 
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+      <div className="min-w-0 space-y-2 rounded-xl border border-border bg-card p-2 sm:p-2.5">
         <OrderDateFilter
           value={dateFilter}
           counts={{
@@ -697,54 +707,53 @@ export default function OrdersPage() {
             setPage(1);
           }}
         />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="secondary" size="sm" className="self-end">
-              <Columns3 className="size-4" />
-              Columns
+        <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search order number, customer, phone…"
+            className="h-8 w-full min-w-0 shadow-none lg:max-w-xs"
+          />
+          <div className="hidden min-w-0 flex-1 grid-cols-3 gap-2 lg:grid">
+            {filterSelects}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="secondary" size="sm" className="h-8 lg:hidden">
+                  <SlidersHorizontal className="size-4" />
+                  Filters
+                  <ChevronDown className="size-3.5 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72 p-3">
+                <div className="grid gap-2">{filterSelects}</div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="secondary" size="sm" className="h-8">
+                  <Columns3 className="size-4" />
+                  <span className="hidden sm:inline">Columns</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
+                {(Object.keys(COLUMN_LABELS) as OptionalColumn[]).map((key) => (
+                  <DropdownMenuCheckboxItem
+                    key={key}
+                    checked={visibleColumns[key]}
+                    onCheckedChange={(checked) => toggleColumn(key, checked === true)}
+                  >
+                    {COLUMN_LABELS[key]}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button type="button" variant="ghost" size="sm" className="h-8" onClick={resetFilters}>
+              Reset
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
-            {(Object.keys(COLUMN_LABELS) as OptionalColumn[]).map((key) => (
-              <DropdownMenuCheckboxItem
-                key={key}
-                checked={visibleColumns[key]}
-                onCheckedChange={(checked) => toggleColumn(key, checked === true)}
-              >
-                {COLUMN_LABELS[key]}
-              </DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
-      <div className="flex min-w-0 flex-col gap-2 xl:flex-row xl:items-center">
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search order number, customer, phone…"
-          className="h-9 w-full min-w-0 shadow-none xl:max-w-sm xl:flex-1"
-        />
-        <div className="hidden min-w-0 flex-1 grid-cols-3 gap-2 xl:grid">
-          {filterSelects}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="secondary" size="sm" className="xl:hidden">
-                <SlidersHorizontal className="size-4" />
-                More filters
-                <ChevronDown className="size-3.5 opacity-70" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-72 p-3">
-              <div className="grid gap-2">{filterSelects}</div>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button type="button" variant="ghost" size="sm" onClick={resetFilters}>
-            Reset
-          </Button>
+          </div>
         </div>
       </div>
 
@@ -832,7 +841,7 @@ export default function OrdersPage() {
               return (
                 <div
                   key={row.id}
-                  className={cn("flex gap-3 px-3 py-3", orderStatusRowClass(row.status))}
+                  className={cn("flex gap-2.5 px-3 py-2.5", orderStatusRowClass(row.status))}
                   onClick={() => router.push(`/dashboard/orders/${row.id}`)}
                   onMouseEnter={() => router.prefetch(`/dashboard/orders/${row.id}`)}
                 >
@@ -847,23 +856,27 @@ export default function OrdersPage() {
                       }}
                     />
                   </div>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="font-medium text-ink">{orderNumber(row)}</p>
+                      <div className="min-w-0">
+                        <p className="font-medium text-ink">{orderNumber(row)}</p>
+                        <p className="truncate text-sm">{customerName(row)}</p>
+                        {customerPhone(row) ? (
+                          <p className="truncate text-xs text-muted">{customerPhone(row)}</p>
+                        ) : null}
+                      </div>
                       <StatusBadge value={row.status} />
                     </div>
-                    <p className="truncate text-sm">{customerName(row)}</p>
-                    {customerPhone(row) ? (
-                      <p className="truncate text-xs text-muted">{customerPhone(row)}</p>
-                    ) : null}
                     <div
-                      className="mt-2"
+                      className="flex flex-wrap items-center gap-1.5"
                       onClick={(event) => event.stopPropagation()}
                       onPointerDown={(event) => event.stopPropagation()}
                     >
+                      <StatusBadge value={row.source} />
                       <OrderDimensionBadge order={row} />
+                      <StatusBadge value={row.paymentStatus ?? row.payment_status} />
                     </div>
-                    <div className="mt-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium tabular-nums">
                         {formatCurrency(row.totalAmount ?? row.total_amount, row.currency)}
                       </span>

@@ -53,7 +53,7 @@ function ParcelPill({
   return (
     <span
       className={cn(
-        "inline-flex max-w-[11.5rem] items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4",
+        "inline-flex max-w-full items-center gap-0.5 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-4",
         tone === "ok" &&
           "border border-emerald-200/80 bg-emerald-50 text-emerald-900 shadow-2xs transition-colors hover:border-emerald-300 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300",
         tone === "action" &&
@@ -289,40 +289,34 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   if (!hasDimensions && !hasWeight) {
     triggerTitle = `Dimensions missing. Weight missing.${optionalHint}`;
     triggerContent = (
-      <span className="flex flex-col items-start gap-0.5">
-        <ParcelPill tone={missingTone}>
-          <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
-          <span>Dimensions missing</span>
-        </ParcelPill>
-        <ParcelPill tone={missingTone}>
-          <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
-          <span>Weight missing</span>
-        </ParcelPill>
-      </span>
+      <ParcelPill tone={missingTone}>
+        <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
+        <span>Size · wt</span>
+      </ParcelPill>
     );
   } else if (!hasDimensions) {
     triggerTitle = `Weight ${currentWeightGrams}g saved. Dimensions missing.${optionalHint}`;
     triggerContent = (
-      <span className="flex flex-col items-start gap-0.5">
+      <span className="flex items-center gap-1">
         {hasWeight ? (
-          <span className="px-0.5 text-[11px] font-medium tabular-nums text-muted">{currentWeightGrams}g</span>
+          <span className="text-[11px] font-medium tabular-nums text-muted">{currentWeightGrams}g</span>
         ) : null}
         <ParcelPill tone={missingTone}>
           <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
-          <span>Dimensions missing</span>
+          <span>No size</span>
         </ParcelPill>
       </span>
     );
   } else if (!hasWeight) {
     triggerTitle = `${sizeLabel} saved. Weight missing.${optionalHint}`;
     triggerContent = (
-      <span className="flex flex-col items-start gap-0.5">
-        <span className="px-0.5 text-[11px] font-medium tabular-nums text-muted">
+      <span className="flex items-center gap-1">
+        <span className="text-[11px] font-medium tabular-nums text-muted">
           {length}×{width}×{height}
         </span>
         <ParcelPill tone={missingTone}>
           <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
-          <span>Weight missing</span>
+          <span>No wt</span>
         </ParcelPill>
       </span>
     );

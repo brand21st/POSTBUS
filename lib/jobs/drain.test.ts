@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runClaimedJobs, type ClaimedJob } from "@/lib/jobs/drain";
+import { runClaimedJobs, claimedJobFromRow, type ClaimedJob } from "@/lib/jobs/drain";
 
 function job(partial: Partial<ClaimedJob> & Pick<ClaimedJob, "id" | "job_type">): ClaimedJob {
   return {
@@ -27,5 +27,27 @@ describe("runClaimedJobs", () => {
     );
     expect(order.slice(0, 2).sort()).toEqual(["book-1", "book-2"]);
     expect(order[2]).toBe("label-1");
+  });
+});
+
+describe("claimedJobFromRow", () => {
+  it("maps a queued booking row into a drain job", () => {
+    expect(
+      claimedJobFromRow({
+        id: "job-1",
+        organization_id: "org-1",
+        job_type: "shipment-booking",
+        entity_id: "s1",
+      })
+    ).toEqual({
+      id: "job-1",
+      organization_id: "org-1",
+      job_type: "shipment-booking",
+      entity_type: null,
+      entity_id: "s1",
+      created_by: null,
+      attempt_count: 0,
+      progress: null,
+    });
   });
 });

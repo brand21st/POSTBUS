@@ -332,24 +332,29 @@ export async function queueValidatedOrders(
   const created = await createShipmentsForOrders(supabase, ctx, validIds, { enqueueBooking: false });
   const shipmentIds = created.shipments.map((row: { id: string }) => row.id);
   const batches = chunkIds(shipmentIds, indiaPostBookingBatchSize());
+  const bookingJobs = [];
   for (const batch of batches) {
     if (batch.length === 1) {
-      await createBackgroundJob(supabase, {
-        organizationId: ctx.organizationId,
-        jobType: "shipment-booking",
-        entityType: "shipment",
-        entityId: batch[0],
-        userId: ctx.userId,
-      });
+      bookingJobs.push(
+        await createBackgroundJob(supabase, {
+          organizationId: ctx.organizationId,
+          jobType: "shipment-booking",
+          entityType: "shipment",
+          entityId: batch[0],
+          userId: ctx.userId,
+        })
+      );
     } else {
-      await createBackgroundJob(supabase, {
-        organizationId: ctx.organizationId,
-        jobType: "shipment-booking",
-        entityType: "shipment",
-        entityId: batch[0],
-        shipmentIds: batch,
-        userId: ctx.userId,
-      });
+      bookingJobs.push(
+        await createBackgroundJob(supabase, {
+          organizationId: ctx.organizationId,
+          jobType: "shipment-booking",
+          entityType: "shipment",
+          entityId: batch[0],
+          shipmentIds: batch,
+          userId: ctx.userId,
+        })
+      );
     }
     await supabase
       .from("shipments")
@@ -357,6 +362,8 @@ export async function queueValidatedOrders(
       .eq("organization_id", ctx.organizationId)
       .in("id", batch);
   }
+  const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
+  await runQueuedJobsNow(bookingJobs.map(claimedJobFromRow));
   return { ...validation, queued: shipmentIds.length };
 }
 
@@ -627,15 +634,20 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
   }
 
   const batches = chunkIds(createdIds, indiaPostBookingBatchSize());
+  const bookingJobs = [];
   for (const batch of batches) {
-    await createBackgroundJob(supabase, {
-      organizationId: ctx.organizationId,
-      jobType: "shipment-booking",
-      entityType: "shipment",
-      entityId: batch[0],
-      shipmentIds: batch.length > 1 ? batch : undefined,
-      userId: ctx.userId,
-    });
+    bookingJobs.push(
+      await createBackgroundJob(supabase, {
+        organizationId: ctx.organizationId,
+        jobType: "shipment-booking",
+        entityType: "shipment",
+        entityId: batch[0],
+        shipmentIds: batch.length > 1 ? batch : undefined,
+        userId: ctx.userId,
+      })
+    );
   }
+  const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
+  await runQueuedJobsNow(bookingJobs.map(claimedJobFromRow));
   return { ...validation, queued: createdIds.length };
 }

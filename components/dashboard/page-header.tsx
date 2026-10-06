@@ -17,14 +17,14 @@ export function PageHeader({
   actionsClassName?: string;
 }) {
   return (
-    <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between", className)}>
+    <div className={cn("flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3", className)}>
       <div className="flex min-w-0 items-center gap-3">
         {icon}
         <div className="min-w-0">
-          <h1 className="flex min-h-8 items-center overflow-visible text-2xl font-semibold leading-none tracking-tight text-ink">
+          <h1 className="flex min-h-7 items-center overflow-visible text-xl font-semibold leading-none tracking-tight text-ink sm:min-h-8 sm:text-2xl">
             {title}
           </h1>
-          {description ? <p className="mt-1 line-clamp-1 text-sm text-muted">{description}</p> : null}
+          {description ? <p className="mt-0.5 line-clamp-1 text-xs text-muted sm:text-sm">{description}</p> : null}
         </div>
       </div>
       {actions ? (

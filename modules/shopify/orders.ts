@@ -1702,7 +1702,7 @@ export async function upsertShopifyOrder(
           permissions: [],
         },
         [order.id],
-        { enqueueBooking: input.enqueueBooking !== false }
+        { enqueueBooking: input.enqueueBooking !== false, runBookingNow: false }
       );
     } catch {
       // Order import should still succeed if shipment automation fails.

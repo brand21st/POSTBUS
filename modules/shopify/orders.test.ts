@@ -297,7 +297,7 @@ describe("shopify automation flags", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false }
+      { enqueueBooking: false, runBookingNow: false }
     );
   });
 
@@ -316,7 +316,7 @@ describe("shopify automation flags", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false }
+      { enqueueBooking: false, runBookingNow: false }
     );
   });
 });

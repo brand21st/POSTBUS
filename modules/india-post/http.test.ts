@@ -10,8 +10,8 @@ describe("India Post booking limits", () => {
   });
 
   it("sets finite CEPT timeouts", () => {
-    expect(INDIA_POST_TIMEOUT_MS.book).toBe(45_000);
-    expect(INDIA_POST_TIMEOUT_MS.label).toBe(90_000);
+    expect(INDIA_POST_TIMEOUT_MS.book).toBe(10_000);
+    expect(INDIA_POST_TIMEOUT_MS.label).toBe(20_000);
   });
 
   it("never puts more than 500 barcodes in one tracking request", () => {
@@ -30,7 +30,7 @@ describe("India Post booking limits", () => {
   });
 
   it("sets finite CEPT timeouts", () => {
-    expect(INDIA_POST_TIMEOUT_MS.book).toBe(45_000);
-    expect(INDIA_POST_TIMEOUT_MS.label).toBe(90_000);
+    expect(INDIA_POST_TIMEOUT_MS.book).toBe(10_000);
+    expect(INDIA_POST_TIMEOUT_MS.label).toBe(20_000);
   });
 });

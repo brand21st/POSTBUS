@@ -6,6 +6,8 @@ const dispatch = apiRouteWithContext<{ slug: string[] }>(async (request, context
   return handleV1(request, slug ?? []);
 });
 
+export const maxDuration = 120;
+
 export const GET = dispatch;
 export const POST = dispatch;
 export const PATCH = dispatch;

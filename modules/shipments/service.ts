@@ -80,6 +80,7 @@ export async function createShipmentsForOrders(
     heightCm?: number;
     serviceCode?: string;
     enqueueBooking?: boolean;
+    runBookingNow?: boolean;
     action?: "processing" | "fulfill" | "in_transit" | "delivered";
   }
 ) {
@@ -93,6 +94,17 @@ export async function createShipmentsForOrders(
 
   const action = extras?.action === "processing" ? "processing" : extras?.action === "fulfill" ? "fulfill" : null;
   const enqueueBooking = action === "processing" ? false : extras?.enqueueBooking !== false;
+  const runBookingNow = extras?.runBookingNow !== false;
+  const bookingJobs: Array<{
+    id: string;
+    organization_id: string;
+    job_type: string;
+    entity_type?: string | null;
+    entity_id?: string | null;
+    created_by?: string | null;
+    attempt_count?: number | null;
+    progress?: { shipmentIds?: string[] } | null;
+  }> = [];
   if (enqueueBooking) {
     const { checkQuota } = await import("@/modules/billing/usage");
     await checkQuota(supabase, ctx.organizationId, orderIds.length);
@@ -207,6 +219,7 @@ export async function createShipmentsForOrders(
         entityId: current.id,
         userId: ctx.userId,
       });
+      bookingJobs.push(job);
       created.push({ ...current, jobId: job.id });
       continue;
     }
@@ -264,8 +277,13 @@ export async function createShipmentsForOrders(
       entityId: shipment.id,
       userId: ctx.userId,
     });
-
+    bookingJobs.push(job);
     created.push({ ...shipment, jobId: job.id });
+  }
+
+  if (runBookingNow && bookingJobs.length) {
+    const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
+    await runQueuedJobsNow(bookingJobs.map(claimedJobFromRow));
   }
 
   if (!created.length && skipped.length) {
@@ -406,6 +424,8 @@ export async function retryShipment(
     entityId: id,
     userId: ctx.userId,
   });
+  const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
+  await runQueuedJobsNow([claimedJobFromRow(job)]);
   return { shipmentId: id, jobId: job.id, message: "Retry queued." };
 }
 

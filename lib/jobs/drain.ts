@@ -1,7 +1,9 @@
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
+import { usesDatabaseJobRunner } from "@/lib/env";
 import { runPool } from "@/lib/async/pool";
 import { indiaPostBookingConcurrency } from "@/modules/india-post/booking-batch";
 import { logError, logInfo } from "@/lib/logger";
+import type { JobPayload } from "@/lib/queue/queues";
 import { processJob } from "@/workers/processor";
 
 export const DEFAULT_DRAIN_LIMIT = 5;
@@ -16,6 +18,39 @@ export type ClaimedJob = {
   attempt_count: number;
   progress?: { shipmentIds?: string[] } | null;
 };
+
+export function claimedJobFromRow(row: {
+  id: string;
+  organization_id: string;
+  job_type: string;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  created_by?: string | null;
+  attempt_count?: number | null;
+  progress?: { shipmentIds?: string[] } | null;
+}): ClaimedJob {
+  return {
+    id: row.id,
+    organization_id: row.organization_id,
+    job_type: row.job_type,
+    entity_type: row.entity_type ?? null,
+    entity_id: row.entity_id ?? null,
+    created_by: row.created_by ?? null,
+    attempt_count: row.attempt_count ?? 0,
+    progress: row.progress ?? null,
+  };
+}
+
+export function jobPayloadFromClaimed(job: ClaimedJob): JobPayload {
+  return {
+    organizationId: job.organization_id,
+    jobId: job.id,
+    entityType: job.entity_type ?? undefined,
+    entityId: job.entity_id ?? undefined,
+    shipmentIds: job.progress?.shipmentIds,
+    userId: job.created_by ?? undefined,
+  };
+}
 
 export type DrainResult = {
   claimed: number;
@@ -73,15 +108,44 @@ export async function drainDueJobs(limit = DEFAULT_DRAIN_LIMIT): Promise<DrainRe
 
   const jobs = (data ?? []) as ClaimedJob[];
   const processed = await runClaimedJobs(jobs, async (job) => {
-    await processJob(job.job_type, {
-      organizationId: job.organization_id,
-      jobId: job.id,
-      entityType: job.entity_type ?? undefined,
-      entityId: job.entity_id ?? undefined,
-      shipmentIds: job.progress?.shipmentIds,
-      userId: job.created_by ?? undefined,
-    });
+    await processJob(job.job_type, jobPayloadFromClaimed(job));
   });
 
   return { claimed: jobs.length, ...processed };
+}
+
+async function claimQueuedJob(job: ClaimedJob): Promise<ClaimedJob | null> {
+  if (!hasAdminClient()) return null;
+  const supabase = createAdminClient();
+  const lockedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("background_jobs")
+    .update({
+      status: "RUNNING",
+      locked_at: lockedAt,
+      started_at: lockedAt,
+    })
+    .eq("id", job.id)
+    .in("status", ["PENDING", "QUEUED"])
+    .select("id, organization_id, job_type, entity_type, entity_id, created_by, attempt_count, progress")
+    .maybeSingle();
+  if (error || !data) return null;
+  return claimedJobFromRow(data);
+}
+
+/** Run just-queued jobs in this request so booking/labels do not wait for the minute cron. */
+export async function runQueuedJobsNow(jobs: ClaimedJob[]): Promise<DrainResult> {
+  const unique = [...new Map(jobs.map((job) => [job.id, job])).values()];
+  if (!unique.length || !usesDatabaseJobRunner() || !hasAdminClient()) {
+    return { claimed: 0, succeeded: 0, failed: 0 };
+  }
+  const claimed: ClaimedJob[] = [];
+  for (const job of unique) {
+    const row = await claimQueuedJob(job);
+    if (row) claimed.push(row);
+  }
+  const processed = await runClaimedJobs(claimed, async (job) => {
+    await processJob(job.job_type, jobPayloadFromClaimed(job));
+  });
+  return { claimed: claimed.length, ...processed };
 }

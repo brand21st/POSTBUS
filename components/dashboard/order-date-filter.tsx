@@ -123,7 +123,7 @@ export function OrderDateFilter({ value, counts, onChange }: Props) {
   return (
     <>
       <div
-        className="flex flex-wrap gap-2 pb-1"
+        className="flex min-w-0 flex-wrap gap-1.5"
         role="group"
         aria-label="Filter orders by date"
       >

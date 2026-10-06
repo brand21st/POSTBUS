@@ -116,7 +116,7 @@ export function DataTable<TData extends Record<string, unknown>>({
   getRowClassName,
 }: DataTableProps<TData>) {
   const compact = density === "compact";
-  const cellPad = compact ? "px-3 py-2" : "px-4 py-3";
+          const cellPad = compact ? "px-2.5 py-1.5" : "px-4 py-3";
   const stacked = stackDisplay(stackBelow);
   const columnById = useMemo(
     () => new Map(columns.map((column) => [column.id, column])),
@@ -241,7 +241,7 @@ export function DataTable<TData extends Record<string, unknown>>({
     <div
       className={cn(
         "flex flex-col gap-3 border-t border-border sm:flex-row sm:items-center sm:justify-between",
-        compact ? "px-3 py-2.5" : "px-4 py-3"
+        compact ? "px-3 py-2" : "px-4 py-3"
       )}
     >
       <p className="text-xs text-muted sm:text-sm">
@@ -379,10 +379,11 @@ export function DataTable<TData extends Record<string, unknown>>({
                       <th
                         key={header.id}
                         className={cn(
-                          "text-xs font-semibold uppercase tracking-wide text-muted",
+                          "text-xs font-semibold uppercase text-muted",
+                          compact ? "tracking-normal" : "tracking-wide",
                           cellPad,
-                          index === 0 && "pl-6",
-                          index === group.headers.length - 1 && "pr-6",
+                          index === 0 && (compact ? "pl-3" : "pl-6"),
+                          index === group.headers.length - 1 && (compact ? "pr-3" : "pr-6"),
                           fitContainer && "overflow-hidden",
                           header.id === "_select" && "w-10",
                           columnById.get(header.id)?.className
@@ -415,8 +416,8 @@ export function DataTable<TData extends Record<string, unknown>>({
                           className={cn(
                             "align-middle text-foreground",
                             cellPad,
-                            index === 0 && "pl-6",
-                            index === cells.length - 1 && "pr-6",
+                            index === 0 && (compact ? "pl-3" : "pl-6"),
+                            index === cells.length - 1 && (compact ? "pr-3" : "pr-6"),
                             fitContainer && "overflow-hidden",
                             columnById.get(cell.column.id)?.className
                           )}
