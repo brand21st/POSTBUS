@@ -37,6 +37,11 @@ export type DataTableColumn<TData extends Record<string, unknown>> = {
   resizable?: boolean;
   minWidth?: number;
   maxWidth?: number;
+  /** Remaining table-fixed width lands here. A saved width is treated as a minimum. */
+  fill?: boolean;
+  /** Shrink to this pixel width instead of absorbing leftover table width. */
+  hug?: boolean;
+  width?: number;
 };
 
 export type DataTableProps<TData extends Record<string, unknown>> = {
@@ -92,9 +97,19 @@ function stackDisplay(until: "md" | "lg" | "xl") {
   return { cards: "md:hidden", table: "hidden md:block" };
 }
 
-function columnBoxStyle(width?: number): CSSProperties | undefined {
-  if (!width) return undefined;
-  return { width, minWidth: width, maxWidth: width };
+function columnBoxStyle(
+  savedWidth?: number,
+  mode?: "fill" | "hug",
+  hugWidth = 136,
+): CSSProperties | undefined {
+  if (mode === "hug") {
+    return { width: hugWidth, minWidth: hugWidth, maxWidth: hugWidth };
+  }
+  if (mode === "fill") {
+    return savedWidth ? { minWidth: savedWidth } : { width: "auto" };
+  }
+  if (!savedWidth) return undefined;
+  return { width: savedWidth, minWidth: savedWidth, maxWidth: savedWidth };
 }
 
 function applyColumnWidth(table: HTMLTableElement | null, columnId: string, width: number) {
@@ -510,6 +525,7 @@ export function DataTable<TData extends Record<string, unknown>>({
                   <tr key={group.id}>
                     {group.headers.map((header, index) => {
                       const column = columnById.get(header.id);
+                      const boxMode = column?.hug ? "hug" : column?.fill ? "fill" : undefined;
                       return (
                       <th
                         key={header.id}
@@ -520,12 +536,12 @@ export function DataTable<TData extends Record<string, unknown>>({
                           cellPad,
                           index === 0 && (compact ? "pl-3" : "pl-6"),
                           index === group.headers.length - 1 && (compact ? "pr-3" : "pr-6"),
-                          fitContainer && "overflow-hidden",
+                          fitContainer && !column?.hug && "overflow-hidden",
                           header.id === "_select" && "w-10",
                           column?.resizable && "relative",
                           column?.className
                         )}
-                        style={columnBoxStyle(widths[header.id])}
+                        style={columnBoxStyle(widths[header.id], boxMode, column?.width)}
                       >
                         {header.isPlaceholder ? null : <table.FlexRender header={header} />}
                         {column?.resizable ? (
@@ -559,7 +575,10 @@ export function DataTable<TData extends Record<string, unknown>>({
                       onClick={() => onRowClick?.(row.original)}
                       onMouseEnter={() => onRowHover?.(row.original)}
                     >
-                      {cells.map((cell, index) => (
+                      {cells.map((cell, index) => {
+                        const column = columnById.get(cell.column.id);
+                        const boxMode = column?.hug ? "hug" : column?.fill ? "fill" : undefined;
+                        return (
                         <td
                           key={cell.id}
                           data-col-id={cell.column.id}
@@ -568,14 +587,15 @@ export function DataTable<TData extends Record<string, unknown>>({
                             cellPad,
                             index === 0 && (compact ? "pl-3" : "pl-6"),
                             index === cells.length - 1 && (compact ? "pr-3" : "pr-6"),
-                            fitContainer && "overflow-hidden",
-                            columnById.get(cell.column.id)?.className
+                            fitContainer && !column?.hug && "overflow-hidden",
+                            column?.className
                           )}
-                          style={columnBoxStyle(widths[cell.column.id])}
+                          style={columnBoxStyle(widths[cell.column.id], boxMode, column?.width)}
                         >
                           <table.FlexRender cell={cell} />
                         </td>
-                      ))}
+                        );
+                      })}
                     </tr>
                   );
                 })}

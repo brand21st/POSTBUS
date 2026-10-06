@@ -437,7 +437,7 @@ export default function OrdersPage() {
     const menu = orderStageMenu(row.status);
     const next = menu.next;
     return (
-      <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+      <div className="inline-flex w-full items-center justify-center gap-1" onClick={(event) => event.stopPropagation()}>
         {visibleColumns.service ? rowServiceToggle(row) : null}
         {menu.hideActions || !next ? null : (
           <>
@@ -501,8 +501,9 @@ export default function OrdersPage() {
     {
       id: "customer",
       header: "Customer",
-      className: "w-[11rem]",
+      className: visibleColumns.items ? "w-[11rem]" : "min-w-0",
       resizable: true,
+      fill: !visibleColumns.items,
       minWidth: 96,
       maxWidth: 420,
       cell: (row) => {
@@ -520,8 +521,9 @@ export default function OrdersPage() {
           {
             id: "items",
             header: "Items",
-            className: "min-w-0 whitespace-normal",
+            className: "min-w-0 w-full whitespace-normal",
             resizable: true,
+            fill: true,
             minWidth: 120,
             maxWidth: 560,
             cell: (row: OrderRecord) => {
@@ -604,7 +606,9 @@ export default function OrdersPage() {
     {
       id: "actions",
       header: "Actions",
-      className: "w-[8.25rem] overflow-visible whitespace-nowrap",
+      hug: true,
+      width: 140,
+      className: "overflow-visible whitespace-nowrap px-1.5 text-center",
       cell: (row) => rowActions(row),
     },
   ];
