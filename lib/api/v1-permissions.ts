@@ -14,6 +14,15 @@ export function permissionForTenantRoute(
     return method === "GET" ? "shipments.read" : "shipments.write";
   }
 
+  if (root === "products") {
+    if (method === "GET") return "products.read";
+    return "products.write";
+  }
+
+  if (root === "inventory") {
+    return method === "GET" ? "products.read" : "products.write";
+  }
+
   if (root === "orders") {
     if (method === "POST" && slugs[1] === "bulk" && slugs[2] === "status") return "shipments.write";
     if (method === "PATCH" && slugs[2] === "service") return "orders.write";

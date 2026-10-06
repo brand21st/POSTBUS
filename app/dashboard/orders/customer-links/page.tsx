@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatDate } from "@/lib/format";
+import { formatCurrency, formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 
 type MerchantLink = {
@@ -34,6 +34,10 @@ type PendingOrder = {
   state: string | null;
   pincode: string | null;
   createdAt: string;
+  totalAmount?: number;
+  paymentPreference?: string | null;
+  expectedAdvance?: number;
+  amountOnDelivery?: number;
 };
 
 type LegacySubmission = {
@@ -207,6 +211,10 @@ function ReviewCard({
     state: string | null;
     pincode: string | null;
     orderNumber?: string;
+    totalAmount?: number;
+    paymentPreference?: string | null;
+    expectedAdvance?: number;
+    amountOnDelivery?: number;
   };
   open: boolean;
   onToggle: () => void;
@@ -270,12 +278,21 @@ function ConfirmPanel({
     city: string | null;
     state: string | null;
     pincode: string | null;
+    totalAmount?: number;
+    paymentPreference?: string | null;
+    expectedAdvance?: number;
+    amountOnDelivery?: number;
   };
   confirmPath: string;
   onConfirmed: () => void;
 }) {
-  const [paymentType, setPaymentType] = useState<"PREPAID" | "COD">("COD");
-  const [amount, setAmount] = useState("");
+  const catalogOrder = (item.totalAmount ?? 0) > 0;
+  const [paymentType, setPaymentType] = useState<"PREPAID" | "COD">(
+    item.paymentPreference === "PREPAID" ? "PREPAID" : "COD"
+  );
+  const [amount, setAmount] = useState(
+    catalogOrder ? String(item.expectedAdvance ?? 0) : ""
+  );
   const [title, setTitle] = useState("WhatsApp order");
   const [customerName, setCustomerName] = useState(item.customerName ?? "");
   const [phone, setPhone] = useState(item.phone ?? "");
@@ -304,7 +321,9 @@ function ConfirmPanel({
           city,
           state,
           pincode,
-          lineItems: [{ title: title.trim() || "WhatsApp order", quantity: 1, unitPrice: Number(amount) }],
+          lineItems: catalogOrder
+            ? undefined
+            : [{ title: title.trim() || "WhatsApp order", quantity: 1, unitPrice: Number(amount) }],
         }),
       }),
     onSuccess: () => {
@@ -329,7 +348,14 @@ function ConfirmPanel({
           if (fields.pincode) setPincode(fields.pincode);
         }}
       />
-      <p className="text-xs text-muted">Payment type is selected here. The customer does not choose Prepaid or COD.</p>
+      {catalogOrder ? (
+        <div className="rounded-xl border border-border bg-card p-3 text-sm">
+          <p>Order total {formatCurrency(item.totalAmount ?? 0)}</p>
+          {item.expectedAdvance ? <p>Expected advance {formatCurrency(item.expectedAdvance)}</p> : null}
+          {item.amountOnDelivery ? <p>COD balance {formatCurrency(item.amountOnDelivery)}</p> : null}
+        </div>
+      ) : null}
+      <p className="text-xs text-muted">Record the amount actually received. Catalog prices stay on the order lines.</p>
       <div className="flex gap-2">
         <Button
           type="button"
@@ -350,18 +376,25 @@ function ConfirmPanel({
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <Label>{paymentType === "COD" ? "COD collection amount" : "Order amount"}</Label>
-          <Input className="mt-1.5 h-9" type="number" min={0.01} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
+          <Label>{paymentType === "COD" ? "Amount received now" : "Amount received"}</Label>
+          <Input className="mt-1.5 h-9" type="number" min={0} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
         </div>
+        {catalogOrder ? null : (
         <div>
           <Label>Item title</Label>
           <Input className="mt-1.5 h-9" value={title} onChange={(event) => setTitle(event.target.value)} />
         </div>
+        )}
       </div>
       <Button
         type="button"
         size="sm"
-        disabled={confirm.isPending || !amount || Number(amount) <= 0}
+        disabled={
+          confirm.isPending ||
+          amount === "" ||
+          Number(amount) < 0 ||
+          (paymentType === "PREPAID" && Number(amount) <= 0)
+        }
         onClick={() => confirm.mutate()}
       >
         {confirm.isPending ? "Saving…" : "Confirm and save"}

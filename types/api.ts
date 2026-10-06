@@ -154,8 +154,93 @@ export type AddressSummary = {
   country?: string | null;
 };
 
+export type ProductRecord = {
+  id: string;
+  organizationId?: string;
+  name: string;
+  sku: string;
+  publicSlug?: string | null;
+  price: number;
+  weightGrams: number;
+  active: boolean;
+  prepaidEnabled: boolean;
+  codEnabled: boolean;
+  codAdvancePercent: number;
+  compareAtPrice?: number | null;
+  description?: string | null;
+  storeVisible?: boolean;
+  featured?: boolean;
+  lowStockThreshold?: number;
+  categoryIds?: string[];
+  upsellProductIds?: string[];
+  crossSellProductIds?: string[];
+  imageUrls?: string[];
+  imagePaths?: string[];
+  onHand: number;
+  reserved: number;
+  orderCount?: number;
+  unitsSold?: number;
+  revenue?: number;
+  salesRank?: number | null;
+  bestSeller?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  movementId?: string | null;
+};
+
+export type InventoryMovementRecord = {
+  id: string;
+  productId: string;
+  productName?: string | null;
+  productSku?: string | null;
+  quantityDelta: number;
+  reason: string;
+  orderId?: string | null;
+  orderLineItemId?: string | null;
+  note?: string | null;
+  createdBy?: string | null;
+  balanceAfter: number;
+  createdAt: string;
+};
+
+export type InventoryAnalytics = {
+  range: "today" | "7d" | "30d" | "custom";
+  from: string;
+  to: string;
+  totalProducts: number;
+  activeProducts: number;
+  totalStock: number;
+  lowStock: number;
+  outOfStock: number;
+  totalProductValue: number;
+  orderCount: number;
+  totalUnitsSold: number;
+  totalSales: number;
+  amountReceived: number;
+  pendingAmount: number;
+  codOutstanding: number;
+  topProducts: Array<{
+    productId: string;
+    name: string;
+    sku: string;
+    orderCount: number;
+    unitsSold: number;
+    revenue: number;
+    onHand: number;
+  }>;
+  lowStockProducts: Array<{
+    productId: string;
+    name: string;
+    sku: string;
+    onHand: number;
+    lowStockThreshold: number;
+  }>;
+};
+
 export type LineItem = {
   id?: string;
+  productId?: string | null;
+  product_id?: string | null;
   title: string;
   sku?: string | null;
   quantity: number;
@@ -885,14 +970,17 @@ export type OrganizationPoliciesSettings = {
   contactBody: string;
   returnsBody: string;
   termsBody: string;
+  privacyPolicyBody: string;
   shippingPolicyKeywords: string[];
   contactKeywords: string[];
   returnsKeywords: string[];
   termsKeywords: string[];
+  privacyPolicyKeywords: string[];
   shippingPolicyEnabled: boolean;
   contactEnabled: boolean;
   returnsEnabled: boolean;
   termsEnabled: boolean;
+  privacyPolicyEnabled: boolean;
 };
 
 export type TrackingPageStatus = "DRAFT" | "PUBLISHED" | "DISABLED";

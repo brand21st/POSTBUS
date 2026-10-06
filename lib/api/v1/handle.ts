@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { requireTenant } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { handleCommerceRoutes } from "@/lib/api/v1/commerce";
+import { handleInventoryRoutes } from "@/lib/api/v1/inventory";
 import { handleInboundWebhook, isInboundWebhookPath } from "@/lib/api/v1/inbound-webhooks";
 import { handleIntegrationRoutes } from "@/lib/api/v1/integrations";
 import { handleInvoiceRoutes } from "@/lib/api/v1/invoices";
@@ -68,6 +69,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
     (await handlePrintStationRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleLabelTemplateRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleInvoiceRoutes(request, supabase, ctx, key, method, slugs)) ??
+    (await handleInventoryRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleCommerceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleIntegrationRoutes(request, supabase, ctx, key)) ??
     (await handleMerchantTutorials(request, supabase, slugs, method)) ??

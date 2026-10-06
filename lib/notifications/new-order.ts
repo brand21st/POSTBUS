@@ -1,11 +1,13 @@
 import { LABELS_READY_NOTIFICATION } from "@/lib/notifications/labels-ready";
 import { TRACKING_HOST_LIVE_NOTIFICATION } from "@/lib/notifications/tracking-host";
 
+export const WHATSAPP_ORDER_NOTIFICATION = "whatsapp.order_created";
 export const SHOPIFY_ORDER_NOTIFICATION = "shopify.order_imported";
 export { LABELS_READY_NOTIFICATION, TRACKING_HOST_LIVE_NOTIFICATION };
 
 export const DASHBOARD_ALERT_TYPES = new Set([
   SHOPIFY_ORDER_NOTIFICATION,
+  WHATSAPP_ORDER_NOTIFICATION,
   "order.processing",
   "shipment.booked",
   "shipment.in_transit",

@@ -59,10 +59,17 @@ const SECTIONS: Array<{
   },
   {
     kind: "terms",
-    description: "Terms and conditions and privacy notes for the WhatsApp assistant.",
+    description: "Terms and conditions for the WhatsApp assistant and the public storefront.",
     bodyKey: "termsBody",
     keywordsKey: "termsKeywords",
     enabledKey: "termsEnabled",
+  },
+  {
+    kind: "privacy",
+    description: "Privacy policy shown on the public storefront and answered on WhatsApp.",
+    bodyKey: "privacyPolicyBody",
+    keywordsKey: "privacyPolicyKeywords",
+    enabledKey: "privacyPolicyEnabled",
   },
 ];
 
@@ -83,6 +90,7 @@ export function PoliciesSettings() {
     contact: { body: "", keywords: "", enabled: true },
     returns: { body: "", keywords: "", enabled: true },
     terms: { body: "", keywords: "", enabled: true },
+    privacy: { body: "", keywords: "", enabled: true },
   });
 
   useEffect(() => {
@@ -108,6 +116,11 @@ export function PoliciesSettings() {
         body: data.termsBody ?? "",
         keywords: keywordsToInput(data.termsKeywords),
         enabled: data.termsEnabled !== false,
+      },
+      privacy: {
+        body: data.privacyPolicyBody ?? "",
+        keywords: keywordsToInput(data.privacyPolicyKeywords),
+        enabled: data.privacyPolicyEnabled !== false,
       },
     });
   }, [query.data]);

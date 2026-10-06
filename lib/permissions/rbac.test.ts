@@ -7,7 +7,11 @@ describe("rbac", () => {
     expect(hasPermission("ADMIN", "org.billing")).toBe(false);
     expect(hasPermission("VIEWER", "orders.write")).toBe(false);
     expect(hasPermission("OPERATOR", "orders.write")).toBe(true);
-    expect(hasPermission("MANAGER", "automation.manage")).toBe(true);
+    expect(hasPermission("OPERATOR", "products.write")).toBe(false);
+    expect(hasPermission("OPERATOR", "products.read")).toBe(true);
+    expect(hasPermission("MANAGER", "products.write")).toBe(true);
+    expect(hasPermission("VIEWER", "products.write")).toBe(false);
+    expect(hasPermission("VIEWER", "products.read")).toBe(true);
   });
 
   it("lists permissions for a role", () => {

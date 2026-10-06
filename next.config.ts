@@ -8,6 +8,17 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["bullmq", "ioredis"],
   images: {
     formats: ["image/avif", "image/webp"],
+    qualities: [75],
+    minimumCacheTTL: 86_400,
+    maximumResponseBody: 6_291_456,
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "**.supabase.co",
+        pathname: "/storage/v1/object/public/**",
+        search: "",
+      },
+    ],
   },
   experimental: {
     optimizePackageImports: [

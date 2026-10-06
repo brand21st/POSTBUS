@@ -16,6 +16,8 @@ import {
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { createOrderSchema } from "@/modules/orders/schema";
 import { createManualOrder } from "@/modules/orders/service";
+import { loadCatalogProducts } from "@/modules/products/service";
+import { quoteCatalogPayment } from "@/modules/storefront/quote";
 
 type PublicLinkRow = {
   id: string;
@@ -97,8 +99,12 @@ async function findByPath(supabase: SupabaseClient, workspace: string, publicId?
   return activeForOrg(supabase, row.organization_id);
 }
 
-async function findLink(supabase: SupabaseClient, ref: PublicLinkRef) {
+export async function findPublicCollectionLink(supabase: SupabaseClient, ref: PublicLinkRef) {
   return ref.kind === "path" ? findByPath(supabase, ref.workspace, ref.publicId) : findByToken(supabase, ref.token);
+}
+
+async function findLink(supabase: SupabaseClient, ref: PublicLinkRef) {
+  return findPublicCollectionLink(supabase, ref);
 }
 
 export type PublicLinkView = {
@@ -177,6 +183,16 @@ export async function lookupPublicOrderLinkPincode(
   }
 }
 
+function catalogOnHand(row: { inventory_balances?: unknown }) {
+  const value = row.inventory_balances;
+  if (!value) return 0;
+  if (Array.isArray(value)) return Number(value[0]?.on_hand ?? 0);
+  if (typeof value === "object" && value && "on_hand" in value) {
+    return Number((value as { on_hand?: number }).on_hand ?? 0);
+  }
+  return 0;
+}
+
 export async function submitPublicCustomerOrderLink(
   supabase: SupabaseClient,
   ref: PublicLinkRef,
@@ -190,9 +206,113 @@ export async function submitPublicCustomerOrderLink(
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a valid 10-digit Indian mobile number.");
   }
 
+  const idempotencyKey = input.clientRequestId
+    ? `storefront-order:${input.clientRequestId}`
+    : null;
+  if (idempotencyKey) {
+    const { data: existing, error: existingError } = await supabase
+      .from("idempotency_keys")
+      .select("request_hash, response")
+      .eq("organization_id", row.organization_id)
+      .eq("key", idempotencyKey)
+      .maybeSingle();
+    if (existingError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingError.message);
+    if (existing?.response) {
+      return existing.response as { status: "SUBMITTED"; orderNumber: string | null };
+    }
+    if (existing) {
+      throw new AppError(ERROR_CODES.CONFLICT, "This order is already being submitted.");
+    }
+    const requestHash = hashSecret(
+      JSON.stringify({
+        customerName: input.customerName.trim(),
+        phone,
+        line1: input.line1.trim(),
+        line2: input.line2?.trim() || null,
+        city: input.city.trim(),
+        state: input.state.trim(),
+        pincode: input.pincode.trim(),
+        paymentPreference: input.paymentPreference ?? null,
+        items: input.items ?? [],
+      })
+    );
+    const { error: reservationError } = await supabase.from("idempotency_keys").insert({
+      organization_id: row.organization_id,
+      key: idempotencyKey,
+      request_hash: requestHash,
+    });
+    if (reservationError) {
+      if (reservationError.code === "23505") {
+        throw new AppError(ERROR_CODES.CONFLICT, "This order is already being submitted.");
+      }
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, reservationError.message);
+    }
+  }
+
+  const cart = input.items ?? [];
+  const lineItems = cart.length
+    ? cart.map((item) => ({ productId: item.productId, quantity: item.quantity }))
+    : [{ title: "WhatsApp order", quantity: 1, unitPrice: 0 }];
+
+  let quote: ReturnType<typeof quoteCatalogPayment> | null = null;
+  if (cart.length) {
+    const catalog = await loadCatalogProducts(
+      supabase,
+      row.organization_id,
+      cart.map((item) => item.productId)
+    );
+    const byId = new Map(catalog.map((product) => [String(product.id), product]));
+    const lines = cart.map((item) => {
+      const product = byId.get(item.productId) as
+        | {
+            id: string;
+            name: string;
+            price?: number | string;
+            active: boolean;
+            store_visible?: boolean;
+            prepaid_enabled?: boolean;
+            cod_enabled?: boolean;
+            cod_advance_percent?: number | string | null;
+            inventory_balances?: unknown;
+          }
+        | undefined;
+      if (!product || !product.active || product.store_visible === false) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, "A product in your cart is no longer available.");
+      }
+      if (catalogOnHand(product) < item.quantity) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${product.name} is out of stock.`);
+      }
+      return {
+        unitPrice: Number(product.price ?? 0),
+        quantity: item.quantity,
+        prepaidEnabled: product.prepaid_enabled !== false,
+        codEnabled: product.cod_enabled !== false,
+        codAdvancePercent: product.cod_advance_percent ?? 0,
+      };
+    });
+    if (input.paymentPreference === "PREPAID") {
+      const blocked = catalog.find((product) => (product as { prepaid_enabled?: boolean }).prepaid_enabled === false);
+      if (blocked) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${(blocked as { name: string }).name} does not support prepaid.`);
+      }
+    }
+    if (input.paymentPreference === "COD") {
+      const blocked = catalog.find((product) => (product as { cod_enabled?: boolean }).cod_enabled === false);
+      if (blocked) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${(blocked as { name: string }).name} does not support COD.`);
+      }
+    }
+    quote = quoteCatalogPayment({
+      preference: input.paymentPreference === "COD" ? "COD" : "PREPAID",
+      lines,
+    });
+  }
+
+  const paymentStatus = "PENDING";
+
   const orderInput = createOrderSchema.parse({
     source: "WHATSAPP",
-    paymentStatus: "PENDING",
+    paymentStatus,
     customer: { name: input.customerName.trim(), phone },
     shippingAddress: {
       name: input.customerName.trim(),
@@ -205,14 +325,36 @@ export async function submitPublicCustomerOrderLink(
       country: "IN",
     },
     billingSameAsShipping: true,
-    lineItems: [{ title: "WhatsApp order", quantity: 1, unitPrice: 0 }],
+    lineItems,
+    metadata: quote
+      ? {
+          storefront: {
+            paymentPreference: quote.preference,
+            expectedAdvance: quote.expectedAdvance,
+            amountOnDelivery: quote.amountOnDelivery,
+            total: quote.total,
+          },
+        }
+      : undefined,
   });
 
-  const order = await createManualOrder(
-    supabase,
-    { organizationId: row.organization_id, userId: null },
-    { ...orderInput, status: "IMPORTED" }
-  );
+  let order: Awaited<ReturnType<typeof createManualOrder>>;
+  try {
+    order = await createManualOrder(
+      supabase,
+      { organizationId: row.organization_id, userId: null },
+      { ...orderInput, status: "IMPORTED" }
+    );
+  } catch (error) {
+    if (idempotencyKey) {
+      await supabase
+        .from("idempotency_keys")
+        .delete()
+        .eq("organization_id", row.organization_id)
+        .eq("key", idempotencyKey);
+    }
+    throw error;
+  }
 
   await supabase.from("audit_logs").insert({
     organization_id: row.organization_id,
@@ -220,8 +362,35 @@ export async function submitPublicCustomerOrderLink(
     action: "customer_order_link.submitted",
     entity_type: "order",
     entity_id: order.id,
-    after: { collectionLinkId: row.id },
+    after: { collectionLinkId: row.id, itemCount: cart.length },
   });
 
-  return { status: "SUBMITTED" as const };
+  const total = Number(order.totalAmount ?? order.total_amount ?? 0);
+  try {
+    await supabase.from("notifications").insert({
+      organization_id: row.organization_id,
+      type: "whatsapp.order_created",
+      title: "New WhatsApp Order",
+      body: `${order.orderNumber ?? order.order_number ?? "Order"} · ${input.customerName.trim()}${
+        total > 0 ? ` · ₹${total}` : ""
+      }`,
+      entity_type: "order",
+      entity_id: order.id,
+    });
+  } catch {
+    // In-app alerts are optional; the WhatsApp order should still succeed.
+  }
+
+  const result = {
+    status: "SUBMITTED" as const,
+    orderNumber: (order.orderNumber ?? order.order_number ?? null) as string | null,
+  };
+  if (idempotencyKey) {
+    await supabase
+      .from("idempotency_keys")
+      .update({ response: result })
+      .eq("organization_id", row.organization_id)
+      .eq("key", idempotencyKey);
+  }
+  return result;
 }

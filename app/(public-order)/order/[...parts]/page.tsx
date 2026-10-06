@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { parseCustomerOrderLinkParts } from "@/modules/customer-order-links/schema";
-import { CustomerOrderForm } from "@/components/customer-order/customer-order-form";
+import { StoreApp } from "@/components/storefront/store-app";
+import type { StorePayload } from "@/components/storefront/store-types";
 import { noIndexMetadata } from "@/lib/seo/metadata";
+import { loadPublicStorefront, publicStoreClient } from "@/modules/storefront/public";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Share your delivery details",
-  description: "Submit your name, mobile number, and address for this PostBus order.",
+  title: "Shop",
+  description: "Browse products and place your order.",
   ...noIndexMetadata,
 };
 
@@ -19,8 +21,24 @@ export default async function CustomerOrderPage({
 }) {
   const { parts } = await params;
   const parsed = parseCustomerOrderLinkParts(parts);
-  if (!parsed) notFound();
+  if (!parsed?.workspace && !parsed?.token) notFound();
+  let initialStore: StorePayload | null = null;
+  try {
+    initialStore = (await loadPublicStorefront(
+      publicStoreClient(),
+      parsed.token
+        ? { kind: "token", token: parsed.token }
+        : { kind: "path", workspace: parsed.workspace ?? "", publicId: parsed.publicId }
+    )) as StorePayload;
+  } catch {
+    // Client retry handles a missing or unpublished store.
+  }
   return (
-    <CustomerOrderForm token={parsed.token} workspace={parsed.workspace} publicId={parsed.publicId} />
+    <StoreApp
+      workspace={parsed.workspace}
+      publicId={parsed.publicId}
+      token={parsed.token}
+      initialStore={initialStore}
+    />
   );
 }

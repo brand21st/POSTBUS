@@ -9,14 +9,14 @@ import {
   submitCustomerOrderLinkSchema,
 } from "@/modules/customer-order-links/schema";
 
-export const POST = apiRouteWithContext(async (request: NextRequest, _context) => {
+export const POST = apiRouteWithContext(async (request: NextRequest) => {
   const ip = request.headers.get("x-forwarded-for") ?? "local";
   const parsed = publicOrderLinkPathQuery.parse({
     workspace: request.nextUrl.searchParams.get("workspace") ?? "",
     code: request.nextUrl.searchParams.get("code") || undefined,
   });
-  const ipLimited = rateLimit(`public-order-submit:${ip}`, 40, 60_000);
-  const pathLimited = rateLimit(`public-order-submit-path:${parsed.workspace}`, 60, 60_000);
+  const ipLimited = rateLimit(`public-order-submit:${ip}`, 15, 60_000);
+  const pathLimited = rateLimit(`public-order-submit-path:${parsed.workspace}`, 30, 60_000);
   if (!ipLimited.ok || !pathLimited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
   }

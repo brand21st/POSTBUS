@@ -7,6 +7,14 @@ import type { z } from "zod";
 import type { createOrderSchema, orderListQuery, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { settleOrderPayment } from "@/modules/orders/payment";
+import {
+  mapCatalogRows,
+  resolveLineFromCatalog,
+  resolveManualLine,
+  settleResolvedOrderPayment,
+  type ResolvedOrderLine,
+} from "@/modules/products/order-lines";
+import { loadCatalogProducts } from "@/modules/products/service";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { syncOpenShipmentsService } from "@/modules/shipments/service";
 import {
@@ -167,10 +175,33 @@ export async function createManualOrder(
       ? shipping
       : await insertAddress(supabase, ctx.organizationId, customer.id, input.billingAddress);
 
-  const subtotal = input.lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const payment = settleOrderPayment({
+  const productIds = input.lineItems.map((item) => item.productId).filter((id): id is string => Boolean(id));
+  const catalog = mapCatalogRows(
+    (await loadCatalogProducts(supabase, ctx.organizationId, productIds)) as Array<{
+      id: string;
+      name: string;
+      sku: string;
+      price: number | string;
+      weight_grams: number;
+      active: boolean;
+      prepaid_enabled: boolean;
+      cod_enabled: boolean;
+      cod_advance_percent: number | string | null;
+      image_urls?: unknown;
+    }>
+  );
+  const resolvedLines: ResolvedOrderLine[] = input.lineItems.map((item) => {
+    if (!item.productId) return resolveManualLine(item);
+    const product = catalog.get(item.productId);
+    if (!product) {
+      throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Product not found.");
+    }
+    return resolveLineFromCatalog(product, item.quantity);
+  });
+  const subtotal = resolvedLines.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const payment = settleResolvedOrderPayment({
+    lines: resolvedLines,
     paymentStatus: input.paymentStatus,
-    totalAmount: subtotal,
     amountPaid: input.amountPaid,
   });
   const orderNumber = input.orderNumber?.trim() || (await nextOrderNumber(supabase, ctx.organizationId));
@@ -191,6 +222,7 @@ export async function createManualOrder(
       cod_amount: payment.codAmount,
       fulfillment_status: "UNFULFILLED",
       status: input.status ?? "READY",
+      metadata: input.metadata ?? {},
     })
     .select()
     .single();
@@ -200,14 +232,16 @@ export async function createManualOrder(
   }
 
   const { error: itemsError } = await supabase.from("order_line_items").insert(
-    input.lineItems.map((item) => ({
+    resolvedLines.map((item) => ({
       organization_id: ctx.organizationId,
       order_id: order.id,
+      product_id: item.productId,
       title: item.title,
       sku: item.sku || null,
       quantity: item.quantity,
       unit_price: item.unitPrice,
       weight_grams: item.weightGrams ?? null,
+      image_url: item.imageUrl ?? null,
     }))
   );
   if (itemsError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, itemsError.message);
@@ -504,7 +538,7 @@ export async function confirmWhatsAppOrder(
 ) {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, source, status, payment_status, customer_id, shipping_address_id")
+    .select("id, source, status, payment_status, customer_id, shipping_address_id, metadata, total_amount")
     .eq("organization_id", ctx.organizationId)
     .eq("id", orderId)
     .maybeSingle();
@@ -517,15 +551,40 @@ export async function confirmWhatsAppOrder(
     throw new AppError(ERROR_CODES.CONFLICT, "This WhatsApp order has already been confirmed.");
   }
 
+  const { data: existingLines } = await supabase
+    .from("order_line_items")
+    .select("id, product_id, title, sku, quantity, unit_price, weight_grams, image_url")
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId);
+  const catalogLines = (existingLines ?? []).filter((line) => line.product_id);
+  const keepCatalog = catalogLines.length > 0;
+
   const lineItems =
-    input.lineItems && input.lineItems.length > 0
-      ? input.lineItems
-      : [{ title: "WhatsApp order", quantity: 1, unitPrice: input.amount }];
-  const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const payment = settleOrderPayment({
-    paymentStatus: input.paymentType === "COD" ? "COD" : "PAID",
-    totalAmount: subtotal,
-  });
+    keepCatalog
+      ? catalogLines.map((line) => ({
+          productId: String(line.product_id),
+          title: String(line.title),
+          sku: (line.sku as string | null) ?? undefined,
+          quantity: Number(line.quantity),
+          unitPrice: Number(line.unit_price),
+          weightGrams: line.weight_grams == null ? undefined : Number(line.weight_grams),
+        }))
+      : input.lineItems && input.lineItems.length > 0
+        ? input.lineItems
+        : [{ title: "WhatsApp order", quantity: 1, unitPrice: input.amount }];
+
+  const subtotal = keepCatalog
+    ? lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
+    : lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+
+  const payment =
+    input.amount >= subtotal && subtotal > 0
+      ? settleOrderPayment({ paymentStatus: "PAID", totalAmount: subtotal })
+      : settleOrderPayment({
+          paymentStatus: input.amount > 0 ? "PARTIAL" : "COD",
+          totalAmount: subtotal,
+          amountPaid: input.amount > 0 ? input.amount : undefined,
+        });
 
   const { data: updated, error: updateError } = await supabase
     .from("orders")
@@ -546,19 +605,21 @@ export async function confirmWhatsAppOrder(
   if (updateError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError.message);
   if (!updated) throw new AppError(ERROR_CODES.CONFLICT, "This WhatsApp order has already been confirmed.");
 
-  await supabase.from("order_line_items").delete().eq("order_id", orderId).eq("organization_id", ctx.organizationId);
-  const { error: itemsError } = await supabase.from("order_line_items").insert(
-    lineItems.map((item) => ({
-      organization_id: ctx.organizationId,
-      order_id: orderId,
-      title: item.title,
-      sku: item.sku || null,
-      quantity: item.quantity,
-      unit_price: item.unitPrice,
-      weight_grams: item.weightGrams ?? null,
-    }))
-  );
-  if (itemsError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, itemsError.message);
+  if (!keepCatalog) {
+    await supabase.from("order_line_items").delete().eq("order_id", orderId).eq("organization_id", ctx.organizationId);
+    const { error: itemsError } = await supabase.from("order_line_items").insert(
+      lineItems.map((item) => ({
+        organization_id: ctx.organizationId,
+        order_id: orderId,
+        title: item.title,
+        sku: item.sku || null,
+        quantity: item.quantity,
+        unit_price: item.unitPrice,
+        weight_grams: item.weightGrams ?? null,
+      }))
+    );
+    if (itemsError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, itemsError.message);
+  }
 
   if (order.customer_id && (input.customerName || input.phone)) {
     await supabase

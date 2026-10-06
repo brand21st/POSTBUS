@@ -220,12 +220,20 @@ export default function OrderDetailPage() {
               value={formatCurrency(record.totalAmount ?? record.total_amount, record.currency)}
             />
             <Row
-              label="Already paid"
+              label="Amount received"
               value={formatCurrency(record.amountPaid ?? record.amount_paid, record.currency)}
             />
             <Row
-              label="Collect on delivery"
-              value={formatCurrency(record.codAmount ?? record.cod_amount, record.currency)}
+              label="Remaining / COD"
+              value={formatCurrency(
+                Number(record.codAmount ?? record.cod_amount) ||
+                  Math.max(
+                    0,
+                    Number(record.totalAmount ?? record.total_amount ?? 0) -
+                      Number(record.amountPaid ?? record.amount_paid ?? 0)
+                  ),
+                record.currency
+              )}
             />
           </CardContent>
         </Card>

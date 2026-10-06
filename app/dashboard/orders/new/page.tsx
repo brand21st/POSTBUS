@@ -28,13 +28,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { api } from "@/lib/hooks/use-api";
+import { api, toSearchParams } from "@/lib/hooks/use-api";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS } from "@/lib/indian-states";
 import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
-import type { IndiaPostConfig } from "@/types/api";
+import type { IndiaPostConfig, Paginated, ProductRecord } from "@/types/api";
+import { catalogCodAdvancePaid } from "@/modules/products/payment";
 
 const addressSchema = z.object({
   name: z.string().min(2, "Name is required."),
@@ -60,6 +61,7 @@ const schema = z.object({
   lineItems: z
     .array(
       z.object({
+        productId: z.string().uuid().optional(),
         title: z.string().min(1, "Item title is required."),
         sku: z.string().optional(),
         quantity: z.coerce.number().int().min(1),
@@ -108,6 +110,11 @@ export default function NewOrderPage() {
     queryKey: ["integrations", "india-post"],
     queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
   });
+  const catalog = useQuery({
+    queryKey: ["products", "order-picker"],
+    queryFn: () =>
+      api<Paginated<ProductRecord>>(`/api/v1/products?${toSearchParams({ page: 1, pageSize: 100, active: "true" })}`),
+  });
   const serviceOptions = useMemo(
     () => selectableIndiaPostServices(indiaPost.data),
     [indiaPost.data]
@@ -132,7 +139,7 @@ export default function NewOrderPage() {
         pincode: "",
         country: "IN",
       },
-      lineItems: [{ title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0 }],
+      lineItems: [{ productId: undefined, title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0 }],
       createShipment: false,
       shipment: { serviceCode: DEFAULT_INDIA_POST_SERVICE, weightGrams: 0 },
     },
@@ -147,7 +154,13 @@ export default function NewOrderPage() {
   const paymentStatus = form.watch("paymentStatus");
   const amountPaid = Number(form.watch("amountPaid") || 0);
   const lineItemValues = form.watch("lineItems");
-  const selectedService = form.watch("shipment.serviceCode");  const orderTotal = (lineItemValues ?? []).reduce(
+  const selectedService = form.watch("shipment.serviceCode");
+  const catalogItems = catalog.data?.items ?? [];
+  const catalogById = useMemo(
+    () => new Map(catalogItems.map((item) => [item.id, item])),
+    [catalogItems]
+  );
+  const orderTotal = (lineItemValues ?? []).reduce(
     (sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0),
     0
   );
@@ -164,14 +177,47 @@ export default function NewOrderPage() {
 
   function addLineItem() {
     items.append(
-      { title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0 },
+      { title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0, productId: undefined },
       { shouldFocus: true, focusName: `lineItems.${items.fields.length}.title` }
     );
   }
 
+  function applyCatalogProduct(index: number, productId: string) {
+    if (!productId) {
+      form.setValue(`lineItems.${index}.productId`, undefined, { shouldDirty: true });
+      return;
+    }
+    const product = catalogById.get(productId);
+    if (!product) return;
+    form.setValue(`lineItems.${index}.productId`, product.id, { shouldDirty: true });
+    form.setValue(`lineItems.${index}.title`, product.name, { shouldDirty: true });
+    form.setValue(`lineItems.${index}.sku`, product.sku, { shouldDirty: true });
+    form.setValue(`lineItems.${index}.unitPrice`, product.price, { shouldDirty: true });
+    form.setValue(`lineItems.${index}.weightGrams`, product.weightGrams, { shouldDirty: true });
+  }
+
+  const catalogCodPreview = catalogCodAdvancePaid(
+    (lineItemValues ?? []).map((item) => {
+      const product = item.productId ? catalogById.get(item.productId) : null;
+      return {
+        unitPrice: Number(item.unitPrice || 0),
+        quantity: Number(item.quantity || 0),
+        product: product
+          ? {
+              prepaidEnabled: product.prepaidEnabled,
+              codEnabled: product.codEnabled,
+              codAdvancePercent: product.codAdvancePercent,
+            }
+          : null,
+      };
+    })
+  );
+  const allCatalogLines = (lineItemValues ?? []).every((item) => Boolean(item.productId));
   const collectOnDelivery =
     paymentStatus === "COD"
-      ? orderTotal
+      ? allCatalogLines && catalogCodPreview > 0
+        ? Math.max(0, orderTotal - catalogCodPreview)
+        : orderTotal
       : paymentStatus === "PARTIAL"
         ? Math.max(0, orderTotal - amountPaid)
         : 0;
@@ -199,8 +245,21 @@ export default function NewOrderPage() {
           billingSameAsShipping: values.billingSameAsShipping,
           billingAddress: values.billingSameAsShipping ? undefined : values.billingAddress,
           paymentStatus: values.paymentStatus,
-          amountPaid: values.paymentStatus === "PARTIAL" ? Number(values.amountPaid || 0) : undefined,
-          lineItems: values.lineItems,
+          amountPaid:
+            values.paymentStatus === "PARTIAL"
+              ? Number(values.amountPaid || 0)
+              : undefined,
+          lineItems: values.lineItems.map((item) =>
+            item.productId
+              ? { productId: item.productId, quantity: item.quantity }
+              : {
+                  title: item.title,
+                  sku: item.sku,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice,
+                  weightGrams: item.weightGrams,
+                }
+          ),
           createShipment: values.createShipment,
           shipment: values.createShipment ? values.shipment : undefined,
         }),
@@ -396,11 +455,28 @@ export default function NewOrderPage() {
                 >
                   <div className="col-span-2 sm:col-span-4 lg:col-span-1">
                     <LineLabel htmlFor={`item-${field.id}-title`}>Product</LineLabel>
+                    {catalogItems.length ? (
+                      <Combobox
+                        className="mb-1.5 h-9"
+                        placeholder="Inventory product (optional)"
+                        emptyText="No matching products"
+                        options={[
+                          { value: "", label: "Custom item" },
+                          ...catalogItems.map((product) => ({
+                            value: product.id,
+                            label: `${product.name} · ${product.sku}`,
+                          })),
+                        ]}
+                        value={row?.productId ?? ""}
+                        onChange={(value) => applyCatalogProduct(index, value)}
+                      />
+                    ) : null}
                     <Input
                       id={`item-${field.id}-title`}
                       className="h-9"
                       placeholder="e.g. Cotton saree"
                       aria-invalid={Boolean(titleError)}
+                      disabled={Boolean(row?.productId)}
                       {...form.register(`lineItems.${index}.title`)}
                     />
                     {titleError ? <p className="mt-1 text-xs text-error">{titleError}</p> : null}
@@ -412,6 +488,7 @@ export default function NewOrderPage() {
                       id={`item-${field.id}-sku`}
                       className="h-9"
                       placeholder="Optional"
+                      disabled={Boolean(row?.productId)}
                       {...form.register(`lineItems.${index}.sku`)}
                     />
                   </div>
@@ -463,6 +540,7 @@ export default function NewOrderPage() {
                         step="0.01"
                         placeholder="0.00"
                         onFocus={(event) => event.currentTarget.select()}
+                        disabled={Boolean(row?.productId)}
                         {...form.register(`lineItems.${index}.unitPrice`)}
                       />
                     </div>
@@ -479,6 +557,7 @@ export default function NewOrderPage() {
                         min={0}
                         placeholder="0"
                         onFocus={(event) => event.currentTarget.select()}
+                        disabled={Boolean(row?.productId)}
                         {...form.register(`lineItems.${index}.weightGrams`)}
                       />
                       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted">g</span>

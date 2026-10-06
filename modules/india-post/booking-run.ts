@@ -109,6 +109,17 @@ async function persistBookedShipment(
   }
   if (input.orderId) {
     await supabase.from("orders").update({ status: "BOOKED" }).eq("id", input.orderId);
+    try {
+      // Stock commits only after a successful BOOKED persist. CANCEL / RTO / RETURN
+      // must not auto-restock until a dedicated reversal is added (ORDER_RELEASE / RTO_RETURN).
+      await supabase.rpc("commit_order_inventory", { p_order_id: input.orderId });
+    } catch (error) {
+      logInfo("booking.inventory_commit_skipped", {
+        organizationId: input.organizationId,
+        orderId: input.orderId,
+        message: error instanceof Error ? error.message : "commit_order_inventory failed",
+      });
+    }
   }
   logInfo("booking.persistence_success", {
     organizationId: input.organizationId,

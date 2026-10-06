@@ -88,4 +88,14 @@ describe("shipmentCollectFromOrder", () => {
       })
     ).toEqual({ payment_mode: "PREPAID", cod_amount: 0 });
   });
+
+  it("collects the remaining COD after merchant records an advance", () => {
+    const settled = settleOrderPayment({ paymentStatus: "PARTIAL", totalAmount: 999, amountPaid: 299.7 });
+    expect(settled).toEqual({
+      paymentStatus: "PARTIAL",
+      amountPaid: 299.7,
+      codAmount: 699.3,
+    });
+    expect(shipmentCollectFromOrder(settled)).toEqual({ payment_mode: "COD", cod_amount: 699.3 });
+  });
 });

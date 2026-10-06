@@ -20,14 +20,19 @@ import {
 } from "@/modules/customer-order-links/service";
 import { confirmWhatsAppOrder, createManualOrder } from "@/modules/orders/service";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
+import { loadCatalogProducts } from "@/modules/products/service";
 
 vi.mock("@/modules/orders/service", () => ({
-  createManualOrder: vi.fn(async () => ({ id: "order-1", order_number: "PB-10001" })),
+  createManualOrder: vi.fn(async () => ({ id: "order-1", order_number: "PB-10001", totalAmount: 1499 })),
   confirmWhatsAppOrder: vi.fn(async () => ({ id: "order-1", status: "READY" })),
 }));
 
 vi.mock("@/modules/india-post/provider", () => ({
   indiaPostFromRow: vi.fn(),
+}));
+
+vi.mock("@/modules/products/service", () => ({
+  loadCatalogProducts: vi.fn(async () => []),
 }));
 
 const ctx: TenantContext = {
@@ -227,12 +232,14 @@ describe("submitPublicCustomerOrderLink", () => {
       from: (table: string) => {
         if (table === "customer_order_links") return thenable({ data: activeLink, error: null });
         if (table === "audit_logs") return thenable({ data: { id: "a1" }, error: null });
+        if (table === "notifications") return thenable({ data: { id: "n1" }, error: null });
         throw new Error(table);
       },
     };
 
     await expect(submitPublicCustomerOrderLink(client as never, PATH_REF, payload)).resolves.toEqual({
       status: "SUBMITTED",
+      orderNumber: "PB-10001",
     });
     expect(createManualOrder).toHaveBeenCalledWith(
       client,
@@ -251,6 +258,7 @@ describe("submitPublicCustomerOrderLink", () => {
       from: (table: string) => {
         if (table === "customer_order_links") return thenable({ data: activeLink, error: null });
         if (table === "audit_logs") return thenable({ data: { id: "a1" }, error: null });
+        if (table === "notifications") return thenable({ data: { id: "n1" }, error: null });
         throw new Error(table);
       },
     };
@@ -261,6 +269,104 @@ describe("submitPublicCustomerOrderLink", () => {
       phone: "8848772371",
     });
     expect(createManualOrder).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the first result when a storefront submission is retried with the same request id", async () => {
+    let storedResponse: Record<string, unknown> | null = null;
+    const client = {
+      from: (table: string) => {
+        if (table === "customer_order_links") return thenable({ data: activeLink, error: null });
+        if (table === "audit_logs") return thenable({ data: { id: "a1" }, error: null });
+        if (table === "notifications") return thenable({ data: { id: "n1" }, error: null });
+        if (table === "idempotency_keys") {
+          const query = thenable({ data: null, error: null });
+          query.maybeSingle = () =>
+            Promise.resolve({
+              data: storedResponse ? { request_hash: "hash", response: storedResponse } : null,
+              error: null,
+            });
+          query.update = (patch: { response?: Record<string, unknown> }) => {
+            if (patch.response) storedResponse = patch.response;
+            return query;
+          };
+          return query;
+        }
+        throw new Error(table);
+      },
+    };
+    const input = {
+      ...payload,
+      clientRequestId: "11111111-1111-4111-8111-111111111111",
+    };
+    const first = await submitPublicCustomerOrderLink(client as never, PATH_REF, input);
+    const retried = await submitPublicCustomerOrderLink(client as never, PATH_REF, input);
+    expect(retried).toEqual(first);
+    expect(createManualOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a catalog WhatsApp order without trusting client prices", async () => {
+    vi.mocked(loadCatalogProducts).mockResolvedValueOnce([
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Premium T-Shirt",
+        active: true,
+        store_visible: true,
+        prepaid_enabled: true,
+        cod_enabled: true,
+        inventory_balances: { on_hand: 5 },
+      },
+    ] as never);
+    const client = {
+      from: (table: string) => {
+        if (table === "customer_order_links") return thenable({ data: activeLink, error: null });
+        if (table === "audit_logs") return thenable({ data: { id: "a1" }, error: null });
+        if (table === "notifications") return thenable({ data: { id: "n1" }, error: null });
+        throw new Error(table);
+      },
+    };
+    const productId = "11111111-1111-4111-8111-111111111111";
+    await submitPublicCustomerOrderLink(client as never, PATH_REF, {
+      ...payload,
+      paymentPreference: "COD",
+      items: [{ productId, quantity: 2 }],
+    });
+    expect(createManualOrder).toHaveBeenCalledWith(
+      client,
+      { organizationId: "org-1", userId: null },
+      expect.objectContaining({
+        source: "WHATSAPP",
+        paymentStatus: "PENDING",
+        lineItems: [{ productId, quantity: 2 }],
+        metadata: expect.objectContaining({
+          storefront: expect.objectContaining({ paymentPreference: "COD" }),
+        }),
+      })
+    );
+  });
+
+  it("rejects unpublished catalog products", async () => {
+    vi.mocked(loadCatalogProducts).mockResolvedValueOnce([
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        name: "Hidden Tee",
+        active: true,
+        store_visible: false,
+        inventory_balances: { on_hand: 5 },
+      },
+    ] as never);
+    const client = {
+      from: (table: string) => {
+        if (table === "customer_order_links") return thenable({ data: activeLink, error: null });
+        throw new Error(table);
+      },
+    };
+    await expect(
+      submitPublicCustomerOrderLink(client as never, PATH_REF, {
+        ...payload,
+        items: [{ productId: "11111111-1111-4111-8111-111111111111", quantity: 1 }],
+      })
+    ).rejects.toBeInstanceOf(AppError);
+    expect(createManualOrder).not.toHaveBeenCalled();
   });
 });
 

@@ -5,7 +5,7 @@ export const WHATSAPP_POLICY_REPLY_MAX = 3500;
 export const POLICY_KEYWORD_MAX = 40;
 export const POLICY_KEYWORD_LIMIT = 20;
 
-export const POLICY_KINDS = ["shipping_policy", "contact", "returns", "terms"] as const;
+export const POLICY_KINDS = ["shipping_policy", "contact", "returns", "terms", "privacy"] as const;
 export type PolicyKind = (typeof POLICY_KINDS)[number];
 
 export const DEFAULT_POLICY_KEYWORDS: Record<PolicyKind, string[]> = {
@@ -28,7 +28,8 @@ export const DEFAULT_POLICY_KEYWORDS: Record<PolicyKind, string[]> = {
     "dispatch time",
   ],
   returns: ["return policy", "return window", "exchange", "refund", "replacement"],
-  terms: ["terms and conditions", "t&c", "t and c", "terms of service", "privacy policy"],
+  terms: ["terms and conditions", "t&c", "t and c", "terms of service"],
+  privacy: ["privacy policy", "privacy", "personal data", "data protection"],
 };
 
 export const POLICY_TITLES: Record<PolicyKind, string> = {
@@ -36,6 +37,7 @@ export const POLICY_TITLES: Record<PolicyKind, string> = {
   contact: "Contact information",
   returns: "Return / exchange",
   terms: "Terms & conditions",
+  privacy: "Privacy policy",
 };
 
 export const POLICY_UNPUBLISHED_REPLY = "This store has not published that policy yet.";
@@ -47,14 +49,17 @@ export type OrganizationPolicies = {
   contactBody: string;
   returnsBody: string;
   termsBody: string;
+  privacyPolicyBody: string;
   shippingPolicyKeywords: string[];
   contactKeywords: string[];
   returnsKeywords: string[];
   termsKeywords: string[];
+  privacyPolicyKeywords: string[];
   shippingPolicyEnabled: boolean;
   contactEnabled: boolean;
   returnsEnabled: boolean;
   termsEnabled: boolean;
+  privacyPolicyEnabled: boolean;
 };
 
 export type OrganizationPoliciesRow = {
@@ -62,14 +67,17 @@ export type OrganizationPoliciesRow = {
   contact_body?: string | null;
   returns_body?: string | null;
   terms_body?: string | null;
+  privacy_policy_body?: string | null;
   shipping_policy_keywords?: string[] | null;
   contact_keywords?: string[] | null;
   returns_keywords?: string[] | null;
   terms_keywords?: string[] | null;
+  privacy_policy_keywords?: string[] | null;
   shipping_policy_enabled?: boolean | null;
   contact_enabled?: boolean | null;
   returns_enabled?: boolean | null;
   terms_enabled?: boolean | null;
+  privacy_policy_enabled?: boolean | null;
 };
 
 export function emptyOrganizationPolicies(): OrganizationPolicies {
@@ -78,14 +86,17 @@ export function emptyOrganizationPolicies(): OrganizationPolicies {
     contactBody: "",
     returnsBody: "",
     termsBody: "",
+    privacyPolicyBody: "",
     shippingPolicyKeywords: [],
     contactKeywords: [],
     returnsKeywords: [],
     termsKeywords: [],
+    privacyPolicyKeywords: [],
     shippingPolicyEnabled: true,
     contactEnabled: true,
     returnsEnabled: true,
     termsEnabled: true,
+    privacyPolicyEnabled: true,
   };
 }
 
@@ -118,14 +129,17 @@ export function mapOrganizationPolicies(row?: OrganizationPoliciesRow | null): O
     contactBody: String(row.contact_body ?? ""),
     returnsBody: String(row.returns_body ?? ""),
     termsBody: String(row.terms_body ?? ""),
+    privacyPolicyBody: String(row.privacy_policy_body ?? ""),
     shippingPolicyKeywords: normalizePolicyKeywords(row.shipping_policy_keywords),
     contactKeywords: normalizePolicyKeywords(row.contact_keywords),
     returnsKeywords: normalizePolicyKeywords(row.returns_keywords),
     termsKeywords: normalizePolicyKeywords(row.terms_keywords),
+    privacyPolicyKeywords: normalizePolicyKeywords(row.privacy_policy_keywords),
     shippingPolicyEnabled: row.shipping_policy_enabled !== false,
     contactEnabled: row.contact_enabled !== false,
     returnsEnabled: row.returns_enabled !== false,
     termsEnabled: row.terms_enabled !== false,
+    privacyPolicyEnabled: row.privacy_policy_enabled !== false,
   };
 }
 
@@ -175,6 +189,7 @@ function bodyForKind(policies: OrganizationPolicies, kind: PolicyKind) {
   if (kind === "shipping_policy") return policies.shippingPolicyBody;
   if (kind === "contact") return policies.contactBody;
   if (kind === "returns") return policies.returnsBody;
+  if (kind === "privacy") return policies.privacyPolicyBody;
   return policies.termsBody;
 }
 
@@ -182,6 +197,7 @@ function enabledForKind(policies: OrganizationPolicies, kind: PolicyKind) {
   if (kind === "shipping_policy") return policies.shippingPolicyEnabled;
   if (kind === "contact") return policies.contactEnabled;
   if (kind === "returns") return policies.returnsEnabled;
+  if (kind === "privacy") return policies.privacyPolicyEnabled;
   return policies.termsEnabled;
 }
 
@@ -189,6 +205,7 @@ function extrasForKind(policies: OrganizationPolicies, kind: PolicyKind) {
   if (kind === "shipping_policy") return policies.shippingPolicyKeywords;
   if (kind === "contact") return policies.contactKeywords;
   if (kind === "returns") return policies.returnsKeywords;
+  if (kind === "privacy") return policies.privacyPolicyKeywords;
   return policies.termsKeywords;
 }
 
@@ -198,6 +215,7 @@ export function policyExtrasMap(policies: OrganizationPolicies): Record<PolicyKi
     contact: policies.contactKeywords,
     returns: policies.returnsKeywords,
     terms: policies.termsKeywords,
+    privacy: policies.privacyPolicyKeywords,
   };
 }
 

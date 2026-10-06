@@ -5,6 +5,7 @@ import {
   isDashboardAlertNotification,
   isShopifyOrderNotification,
   SHOPIFY_ORDER_NOTIFICATION,
+  WHATSAPP_ORDER_NOTIFICATION,
   LABELS_READY_NOTIFICATION,
   NEW_ORDER_SOUND_SRC,
   usesCompletionSound,
@@ -51,6 +52,7 @@ describe("order stage dashboard alerts", () => {
     expect(isDashboardAlertNotification("shipment.delivered")).toBe(true);
     expect(isDashboardAlertNotification("labels.barcode_and_packing_ready")).toBe(true);
     expect(isDashboardAlertNotification("tracking.host_live")).toBe(true);
+    expect(isDashboardAlertNotification(WHATSAPP_ORDER_NOTIFICATION)).toBe(true);
     expect(isDashboardAlertNotification("shipment.failed")).toBe(false);
     expect(isDashboardAlertNotification("tracking.updated")).toBe(false);
   });

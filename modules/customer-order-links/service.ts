@@ -191,7 +191,7 @@ export async function listWhatsAppPendingOrders(supabase: SupabaseClient, ctx: T
   const { data, error } = await supabase
     .from("orders")
     .select(
-      "id, order_number, source, status, payment_status, total_amount, created_at, customers(name, phone), addresses:shipping_address_id(line1, line2, city, state, pincode)"
+      "id, order_number, source, status, payment_status, total_amount, amount_paid, cod_amount, metadata, created_at, customers(name, phone), addresses:shipping_address_id(line1, line2, city, state, pincode)"
     )
     .eq("organization_id", ctx.organizationId)
     .eq("source", "WHATSAPP")
@@ -204,6 +204,9 @@ export async function listWhatsAppPendingOrders(supabase: SupabaseClient, ctx: T
   return (data ?? []).map((row) => {
     const customer = Array.isArray(row.customers) ? row.customers[0] : row.customers;
     const address = Array.isArray(row.addresses) ? row.addresses[0] : row.addresses;
+    const metadata = (row.metadata ?? {}) as {
+      storefront?: { paymentPreference?: string; expectedAdvance?: number; amountOnDelivery?: number; total?: number };
+    };
     return {
       id: row.id as string,
       orderNumber: row.order_number as string,
@@ -215,6 +218,10 @@ export async function listWhatsAppPendingOrders(supabase: SupabaseClient, ctx: T
       state: (address as { state?: string } | null)?.state ?? null,
       pincode: (address as { pincode?: string } | null)?.pincode ?? null,
       createdAt: row.created_at as string,
+      totalAmount: Number(row.total_amount ?? 0),
+      paymentPreference: metadata.storefront?.paymentPreference ?? null,
+      expectedAdvance: metadata.storefront?.expectedAdvance ?? 0,
+      amountOnDelivery: metadata.storefront?.amountOnDelivery ?? 0,
     };
   });
 }

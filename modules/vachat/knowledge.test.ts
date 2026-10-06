@@ -10,6 +10,7 @@ import {
   type MerchantKnowledge,
 } from "@/modules/vachat/knowledge";
 import { answerFromKnowledge, looksLikeOrderOrTrackingQuery, pickOrder } from "@/modules/vachat/assistant";
+import { emptyOrganizationPolicies } from "@/modules/vachat/policies";
 
 const knowledge: MerchantKnowledge = {
   merchantId: "org-1",
@@ -91,18 +92,9 @@ describe("VaChat knowledge phone scope", () => {
     const document = formatMerchantOnlyKnowledgeDocument({
       ...knowledge,
       policies: {
+        ...emptyOrganizationPolicies(),
         shippingPolicyBody: "Free shipping over 499.",
-        contactBody: "",
         returnsBody: "7 day returns.",
-        termsBody: "",
-        shippingPolicyKeywords: [],
-        contactKeywords: [],
-        returnsKeywords: [],
-        termsKeywords: [],
-        shippingPolicyEnabled: true,
-        contactEnabled: true,
-        returnsEnabled: true,
-        termsEnabled: true,
       },
     });
     expect(document).toContain("Shipping policy. Keywords:");

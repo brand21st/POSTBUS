@@ -28,7 +28,7 @@ describe("policy keyword matcher", () => {
     expect(matchPolicyIntent("what is the return policy")).toBe("returns");
     expect(matchPolicyIntent("exchange or refund")).toBe("returns");
     expect(matchPolicyIntent("show t&c")).toBe("terms");
-    expect(matchPolicyIntent("privacy policy please")).toBe("terms");
+    expect(matchPolicyIntent("privacy policy please")).toBe("privacy");
   });
 
   it("does not steal order tracking or shipped questions", () => {

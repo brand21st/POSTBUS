@@ -220,12 +220,24 @@ export const JOB_TYPES = [
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
+export const INVENTORY_MOVEMENT_REASONS = [
+  "OPENING",
+  "ADJUSTMENT",
+  "ORDER_RESERVE",
+  "ORDER_COMMIT",
+  "ORDER_RELEASE",
+  "RTO_RETURN",
+] as const;
+export type InventoryMovementReason = (typeof INVENTORY_MOVEMENT_REASONS)[number];
+
 export type Permission =
   | "org.manage"
   | "org.billing"
   | "members.manage"
   | "orders.read"
   | "orders.write"
+  | "products.read"
+  | "products.write"
   | "shipments.read"
   | "shipments.write"
   | "labels.read"

@@ -125,12 +125,23 @@ export const submitCustomerOrderLinkSchema = z.object({
   city: z.string().trim().min(2, "City is required."),
   state: z.string().trim().min(2, "State is required."),
   pincode: z.string().trim().regex(/^\d{6}$/, "Enter a 6-digit PIN code."),
+  paymentPreference: z.enum(["PREPAID", "COD"]).optional(),
+  clientRequestId: z.string().uuid().optional(),
+  items: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        quantity: z.coerce.number().int().min(1).max(99),
+      })
+    )
+    .max(50)
+    .optional(),
 });
 
 export const confirmCustomerOrderLinkSchema = z
   .object({
     paymentType: z.enum(["PREPAID", "COD"]),
-    amount: z.coerce.number().positive("Enter the order amount."),
+    amount: z.coerce.number().min(0, "Enter the amount received."),
     customerName: z.string().trim().min(2).optional(),
     phone: z
       .string()
@@ -155,11 +166,11 @@ export const confirmCustomerOrderLinkSchema = z
       .optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.paymentType === "COD" && !(value.amount > 0)) {
+    if (value.paymentType === "PREPAID" && !(value.amount > 0)) {
       ctx.addIssue({
         code: "custom",
         path: ["amount"],
-        message: "Enter the COD collection amount.",
+        message: "Enter the amount received.",
       });
     }
   });

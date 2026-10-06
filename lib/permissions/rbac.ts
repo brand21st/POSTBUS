@@ -6,6 +6,8 @@ const ALL: Permission[] = [
   "members.manage",
   "orders.read",
   "orders.write",
+  "products.read",
+  "products.write",
   "shipments.read",
   "shipments.write",
   "labels.read",
@@ -28,6 +30,8 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
   MANAGER: [
     "orders.read",
     "orders.write",
+    "products.read",
+    "products.write",
     "shipments.read",
     "shipments.write",
     "labels.read",
@@ -41,6 +45,7 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
   OPERATOR: [
     "orders.read",
     "orders.write",
+    "products.read",
     "shipments.read",
     "shipments.write",
     "labels.read",
@@ -49,6 +54,7 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
   ],
   VIEWER: [
     "orders.read",
+    "products.read",
     "shipments.read",
     "labels.read",
     "manifests.read",

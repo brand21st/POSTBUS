@@ -252,6 +252,7 @@ export async function handleWorkspaceRoutes(
       contactBody: body.contactBody !== undefined ? body.contactBody : current.contactBody,
       returnsBody: body.returnsBody !== undefined ? body.returnsBody : current.returnsBody,
       termsBody: body.termsBody !== undefined ? body.termsBody : current.termsBody,
+      privacyPolicyBody: body.privacyPolicyBody !== undefined ? body.privacyPolicyBody : current.privacyPolicyBody,
       shippingPolicyKeywords:
         body.shippingPolicyKeywords !== undefined
           ? normalizePolicyKeywords(body.shippingPolicyKeywords)
@@ -262,16 +263,22 @@ export async function handleWorkspaceRoutes(
         body.returnsKeywords !== undefined ? normalizePolicyKeywords(body.returnsKeywords) : current.returnsKeywords,
       termsKeywords:
         body.termsKeywords !== undefined ? normalizePolicyKeywords(body.termsKeywords) : current.termsKeywords,
+      privacyPolicyKeywords:
+        body.privacyPolicyKeywords !== undefined
+          ? normalizePolicyKeywords(body.privacyPolicyKeywords)
+          : current.privacyPolicyKeywords,
       shippingPolicyEnabled: body.shippingPolicyEnabled ?? current.shippingPolicyEnabled,
       contactEnabled: body.contactEnabled ?? current.contactEnabled,
       returnsEnabled: body.returnsEnabled ?? current.returnsEnabled,
       termsEnabled: body.termsEnabled ?? current.termsEnabled,
+      privacyPolicyEnabled: body.privacyPolicyEnabled ?? current.privacyPolicyEnabled,
     };
     if (
       next.shippingPolicyBody.length > POLICY_BODY_MAX ||
       next.contactBody.length > POLICY_BODY_MAX ||
       next.returnsBody.length > POLICY_BODY_MAX ||
-      next.termsBody.length > POLICY_BODY_MAX
+      next.termsBody.length > POLICY_BODY_MAX ||
+      next.privacyPolicyBody.length > POLICY_BODY_MAX
     ) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Policy text is too long.");
     }
@@ -281,14 +288,17 @@ export async function handleWorkspaceRoutes(
       contact_body: next.contactBody,
       returns_body: next.returnsBody,
       terms_body: next.termsBody,
+      privacy_policy_body: next.privacyPolicyBody,
       shipping_policy_keywords: next.shippingPolicyKeywords,
       contact_keywords: next.contactKeywords,
       returns_keywords: next.returnsKeywords,
       terms_keywords: next.termsKeywords,
+      privacy_policy_keywords: next.privacyPolicyKeywords,
       shipping_policy_enabled: next.shippingPolicyEnabled,
       contact_enabled: next.contactEnabled,
       returns_enabled: next.returnsEnabled,
       terms_enabled: next.termsEnabled,
+      privacy_policy_enabled: next.privacyPolicyEnabled,
     };
     const { data, error } = await supabase
       .from("organization_policies")

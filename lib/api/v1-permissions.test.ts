@@ -5,6 +5,20 @@ describe("permissionForTenantRoute", () => {
   it("requires write permissions for mutating commerce routes", () => {
     expect(permissionForTenantRoute("GET", "orders", ["orders"])).toBe("orders.read");
     expect(permissionForTenantRoute("POST", "orders", ["orders"])).toBe("orders.write");
+    expect(permissionForTenantRoute("GET", "products", ["products"])).toBe("products.read");
+    expect(permissionForTenantRoute("POST", "products", ["products"])).toBe("products.write");
+    expect(permissionForTenantRoute("PATCH", "products/abc", ["products", "abc"])).toBe("products.write");
+    expect(permissionForTenantRoute("POST", "products/abc/adjustments", ["products", "abc", "adjustments"])).toBe(
+      "products.write"
+    );
+    expect(permissionForTenantRoute("GET", "inventory/movements", ["inventory", "movements"])).toBe("products.read");
+    expect(permissionForTenantRoute("GET", "inventory/analytics", ["inventory", "analytics"])).toBe("products.read");
+    expect(permissionForTenantRoute("POST", "products/bulk", ["products", "bulk"])).toBe("products.write");
+    expect(permissionForTenantRoute("GET", "inventory/categories", ["inventory", "categories"])).toBe("products.read");
+    expect(permissionForTenantRoute("POST", "inventory/categories", ["inventory", "categories"])).toBe("products.write");
+    expect(permissionForTenantRoute("PATCH", "inventory/storefront", ["inventory", "storefront"])).toBe(
+      "products.write"
+    );
     expect(permissionForTenantRoute("POST", "orders/bulk/status", ["orders", "bulk", "status"])).toBe(
       "shipments.write"
     );

@@ -25,13 +25,15 @@ export const createOrderSchema = z.object({
   billingAddress: addressInput.optional(),
   paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
   amountPaid: z.coerce.number().min(0).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   lineItems: z
     .array(
       z.object({
-        title: z.string().min(1),
+        productId: z.string().uuid().optional(),
+        title: z.string().min(1).optional(),
         sku: z.string().optional(),
         quantity: z.coerce.number().int().min(1),
-        unitPrice: z.coerce.number().min(0),
+        unitPrice: z.coerce.number().min(0).optional(),
         weightGrams: z.coerce.number().int().min(0).optional(),
       })
     )
@@ -47,8 +49,18 @@ export const createOrderSchema = z.object({
     })
     .optional(),
 }).superRefine((value, ctx) => {
+  value.lineItems.forEach((item, index) => {
+    if (!item.productId && !item.title?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lineItems", index, "title"],
+        message: "Item title is required.",
+      });
+    }
+  });
   if (value.paymentStatus !== "PARTIAL") return;
-  const total = value.lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  if (value.lineItems.some((item) => item.productId)) return;
+  const total = value.lineItems.reduce((sum, item) => sum + (item.unitPrice ?? 0) * item.quantity, 0);
   const paid = value.amountPaid ?? 0;
   if (paid <= 0) {
     ctx.addIssue({

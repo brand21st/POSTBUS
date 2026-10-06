@@ -85,7 +85,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   });
 
   return (
-    <div className="flex min-h-screen bg-surface">
+    <div className="flex w-full min-h-screen min-w-0 bg-surface">
       <Sidebar
         me={me.data}
         collapsed={collapsed || tablet}
@@ -101,14 +101,14 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           className={
             pathname === "/dashboard/orders"
               ? "min-w-0 flex-1 px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:py-4 xl:px-6"
-              : "flex-1 px-4 py-6 lg:px-8 lg:py-8"
+              : "min-w-0 flex-1 px-4 py-6 lg:px-8 lg:py-8"
           }
         >
           <div
             className={
               pathname === "/dashboard/orders"
                 ? "mx-auto w-full min-w-0 max-w-full"
-                : "mx-auto w-full max-w-[1280px]"
+                : "mx-auto w-full min-w-0 max-w-[1280px]"
             }
           >
             {mountChildren ? (

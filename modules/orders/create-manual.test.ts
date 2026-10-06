@@ -189,6 +189,8 @@ describe("createManualOrder", () => {
         quantity: 2,
         unit_price: 499,
         weight_grams: 350,
+        product_id: null,
+        image_url: null,
       },
     ]);
     expect(client.inserts.audit).toMatchObject({
