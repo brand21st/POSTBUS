@@ -322,7 +322,7 @@ export class IndiaPostProvider implements ShippingProvider {
     const unique = [...new Set(barcodes.map((code) => String(code ?? "").trim()).filter(Boolean))];
     const token = await this.token();
     const data: unknown[] = [];
-    let lastJson: { success?: boolean; message?: string; data?: unknown[] } = { data: [] };
+    let lastJson: { success?: boolean; message?: string; data?: unknown[]; error?: { message?: string } } = { data: [] };
     for (const bulk of chunkIds(unique, INDIA_POST_TRACKING_BULK_LIMIT)) {
       const response = await fetch(this.sessionUrl("/tracking/bulk"), {
         method: "POST",
