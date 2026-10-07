@@ -116,6 +116,9 @@ export type ShopifyRemoteLineItem = {
     weight_unit?: string | null;
     image?: { src?: string | null; url?: string | null } | null;
   } | null;
+  length_cm?: number | null;
+  width_cm?: number | null;
+  height_cm?: number | null;
 };
 
 type ShopifyProductImage = { id?: number | string; src?: string | null };
@@ -129,8 +132,87 @@ type ShopifyProduct = {
     sku?: string | null;
     title?: string | null;
     image_id?: number | string | null;
+    grams?: number | string | null;
+    weight?: ShopifyWeightValue;
+    weight_unit?: string | null;
   }>;
 };
+
+export type ShopifyParcelDims = {
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  weightGrams: number | null;
+};
+
+type ShopifyVariantShipping = {
+  grams?: number | null;
+  weight?: { value: number; unit: string } | null;
+  lengthCm?: number | null;
+  widthCm?: number | null;
+  heightCm?: number | null;
+};
+
+const SHOPIFY_PARCEL_LENGTH_CM = { min: 14, max: 150 };
+const SHOPIFY_PARCEL_WIDTH_CM = { min: 9, max: 150 };
+const SHOPIFY_PARCEL_HEIGHT_CM = { min: 1, max: 150 };
+
+const SHOPIFY_CM_PER_UNIT: Record<string, number> = {
+  cm: 1,
+  centimeter: 1,
+  centimeters: 1,
+  mm: 0.1,
+  millimeter: 0.1,
+  millimeters: 0.1,
+  in: 2.54,
+  inch: 2.54,
+  inches: 2.54,
+  ft: 30.48,
+  foot: 30.48,
+  feet: 30.48,
+  m: 100,
+  meter: 100,
+  meters: 100,
+  metre: 100,
+  metres: 100,
+};
+
+const SHOPIFY_VARIANT_SHIPPING_QUERY = `
+  query ShopifyVariantShipping($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on ProductVariant {
+        id
+        inventoryItem {
+          measurement {
+            weight { value unit }
+          }
+        }
+        metafields(identifiers: [
+          {namespace: "custom", key: "length"},
+          {namespace: "custom", key: "width"},
+          {namespace: "custom", key: "height"},
+          {namespace: "custom", key: "length_cm"},
+          {namespace: "custom", key: "width_cm"},
+          {namespace: "custom", key: "height_cm"},
+          {namespace: "custom", key: "package_length"},
+          {namespace: "custom", key: "package_width"},
+          {namespace: "custom", key: "package_height"},
+          {namespace: "shipping", key: "length"},
+          {namespace: "shipping", key: "width"},
+          {namespace: "shipping", key: "height"},
+          {namespace: "shipping", key: "length_cm"},
+          {namespace: "shipping", key: "width_cm"},
+          {namespace: "shipping", key: "height_cm"}
+        ]) {
+          namespace
+          key
+          value
+          type
+        }
+      }
+    }
+  }
+`;
 
 export type ShopifyProductImageCatalog = {
   bySku: Map<string, string>;
@@ -636,6 +718,145 @@ export function shopifyLineItemWeightGrams(item: ShopifyRemoteLineItem) {
   return null;
 }
 
+export function shopifyVariantGid(id: number | string | null | undefined) {
+  const raw = String(id ?? "").trim();
+  if (!raw) return null;
+  if (raw.startsWith("gid://")) return raw;
+  return `gid://shopify/ProductVariant/${raw}`;
+}
+
+function clampShopifyCm(value: number, min: number, max: number) {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const rounded = Math.round(value * 10) / 10;
+  return Math.min(max, Math.max(min, rounded));
+}
+
+export function shopifyDimensionToCm(value: unknown, unit?: string | null): number | null {
+  if (value == null || value === "") return null;
+  if (typeof value === "object") {
+    const row = value as { value?: unknown; unit?: string | null };
+    return shopifyDimensionToCm(row.value, row.unit ?? unit);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return shopifyDimensionToCm(JSON.parse(trimmed) as unknown, unit);
+      } catch {
+        // Fall through to numeric + unit suffix parsing.
+      }
+    }
+    const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/);
+    if (match) {
+      return shopifyDimensionToCm(Number(match[1]), match[2] || unit);
+    }
+  }
+  const amount = shopifyNumeric(value);
+  if (amount == null || amount <= 0) return null;
+  const key = String(unit || "cm").trim().toLowerCase();
+  const factor = SHOPIFY_CM_PER_UNIT[key] ?? (key.endsWith("s") ? SHOPIFY_CM_PER_UNIT[key.slice(0, -1)] : undefined);
+  if (!factor) return amount;
+  const cm = amount * factor;
+  return cm > 0 ? cm : null;
+}
+
+function metafieldMap(
+  nodes: Array<{ namespace?: string | null; key?: string | null; value?: string | null; type?: string | null } | null> | null | undefined
+) {
+  const map = new Map<string, string>();
+  for (const node of nodes ?? []) {
+    if (!node?.key || node.value == null || node.value === "") continue;
+    map.set(`${String(node.namespace ?? "").toLowerCase()}.${String(node.key).toLowerCase()}`, node.value);
+  }
+  return map;
+}
+
+function dimsFromMetafields(fields: Map<string, string>): { lengthCm: number; widthCm: number; heightCm: number } | null {
+  const groups = [
+    ["custom.length", "custom.width", "custom.height"],
+    ["custom.length_cm", "custom.width_cm", "custom.height_cm"],
+    ["custom.package_length", "custom.package_width", "custom.package_height"],
+    ["shipping.length", "shipping.width", "shipping.height"],
+    ["shipping.length_cm", "shipping.width_cm", "shipping.height_cm"],
+  ] as const;
+  for (const [lengthKey, widthKey, heightKey] of groups) {
+    const lengthCm = shopifyDimensionToCm(fields.get(lengthKey));
+    const widthCm = shopifyDimensionToCm(fields.get(widthKey));
+    const heightCm = shopifyDimensionToCm(fields.get(heightKey));
+    if (lengthCm && widthCm && heightCm) return { lengthCm, widthCm, heightCm };
+  }
+  return null;
+}
+
+export function shopifyParcelFromLineItems(items: ShopifyRemoteLineItem[]): ShopifyParcelDims {
+  let weightGrams = 0;
+  let maxL = 0;
+  let maxW = 0;
+  let maxH = 0;
+  let hasBox = false;
+  for (const item of items) {
+    const quantity = Number(item.quantity) || 1;
+    const grams = shopifyLineItemWeightGrams(item);
+    if (grams && quantity > 0) weightGrams += grams * quantity;
+    const lengthCm = shopifyNumeric(item.length_cm);
+    const widthCm = shopifyNumeric(item.width_cm);
+    const heightCm = shopifyNumeric(item.height_cm);
+    if (lengthCm && widthCm && heightCm && lengthCm > 0 && widthCm > 0 && heightCm > 0) {
+      hasBox = true;
+      maxL = Math.max(maxL, lengthCm);
+      maxW = Math.max(maxW, widthCm);
+      maxH = Math.max(maxH, heightCm);
+    }
+  }
+  return {
+    weightGrams: weightGrams > 0 ? Math.round(weightGrams) : null,
+    lengthCm: hasBox ? clampShopifyCm(maxL, SHOPIFY_PARCEL_LENGTH_CM.min, SHOPIFY_PARCEL_LENGTH_CM.max) : null,
+    widthCm: hasBox ? clampShopifyCm(maxW, SHOPIFY_PARCEL_WIDTH_CM.min, SHOPIFY_PARCEL_WIDTH_CM.max) : null,
+    heightCm: hasBox ? clampShopifyCm(maxH, SHOPIFY_PARCEL_HEIGHT_CM.min, SHOPIFY_PARCEL_HEIGHT_CM.max) : null,
+  };
+}
+
+export function shopifyShipmentParcelExtras(lineItems: ShopifyRemoteLineItem[]) {
+  const parcel = shopifyParcelFromLineItems(lineItems);
+  if (parcel.lengthCm == null || parcel.widthCm == null || parcel.heightCm == null) return {};
+  return { lengthCm: parcel.lengthCm, widthCm: parcel.widthCm, heightCm: parcel.heightCm };
+}
+
+export function applyShopifyProductShippingToLineItem(
+  item: ShopifyRemoteLineItem,
+  product?: ShopifyProduct | null,
+  shipping?: ShopifyVariantShipping | null
+): ShopifyRemoteLineItem {
+  let next: ShopifyRemoteLineItem = { ...item };
+  const variant = product?.variants?.find((row) => String(row.id) === String(item.variant_id ?? ""));
+
+  if (!shopifyLineItemImageUrl(next) && product) {
+    const src = shopifyLineItemImageUrl(item, product);
+    if (src) next = { ...next, image: { src } };
+  }
+
+  if (shopifyLineItemWeightGrams(next) == null) {
+    const mergedVariant = {
+      ...next.variant,
+      grams: next.variant?.grams ?? variant?.grams ?? shipping?.grams ?? null,
+      weight: next.variant?.weight ?? variant?.weight ?? shipping?.weight ?? null,
+      weight_unit: next.variant?.weight_unit ?? variant?.weight_unit ?? shipping?.weight?.unit ?? null,
+    };
+    if (mergedVariant.grams != null || mergedVariant.weight != null) {
+      next = { ...next, variant: mergedVariant };
+    }
+  }
+
+  const lengthCm = next.length_cm ?? shipping?.lengthCm ?? null;
+  const widthCm = next.width_cm ?? shipping?.widthCm ?? null;
+  const heightCm = next.height_cm ?? shipping?.heightCm ?? null;
+  if (lengthCm && widthCm && heightCm) {
+    next = { ...next, length_cm: lengthCm, width_cm: widthCm, height_cm: heightCm };
+  }
+  return next;
+}
+
 function shopifyLineItemRows(organizationId: string, orderId: string, lineItems: ShopifyRemoteLineItem[]) {
   return lineItems.map((item) => ({
     organization_id: organizationId,
@@ -764,6 +985,101 @@ async function refreshShopifyLineItems(
 
   const { error: itemsError } = await supabase.from("order_line_items").insert(rows);
   if (itemsError) throw new Error(itemsError.message);
+
+  await applyShopifyParcelToShipment(supabase, {
+    organizationId: input.organizationId,
+    orderId: input.orderId,
+    orderStatus: input.orderStatus,
+    userId: undefined,
+    lineItems: input.lineItems,
+    createIfMissing: true,
+  });
+}
+
+async function applyShopifyParcelToShipment(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    orderStatus?: string | null;
+    userId?: string;
+    lineItems: ShopifyRemoteLineItem[];
+    createIfMissing?: boolean;
+    enqueueBooking?: boolean;
+  }
+) {
+  const parcel = shopifyParcelFromLineItems(input.lineItems);
+  const extras = shopifyShipmentParcelExtras(input.lineItems);
+  const orderLocked = SHOPIFY_WEIGHT_LOCKED_ORDER.has((input.orderStatus ?? "").toUpperCase());
+  if (orderLocked) return;
+
+  const { data: shipments } = await supabase
+    .from("shipments")
+    .select("id, status, length_cm, width_cm, height_cm, weight_grams")
+    .eq("organization_id", input.organizationId)
+    .eq("order_id", input.orderId);
+  const rows = Array.isArray(shipments) ? shipments : [];
+  const unlocked = rows.filter(
+    (row) => !SHOPIFY_WEIGHT_LOCKED_SHIPMENT.has(String((row as { status?: string }).status ?? "").toUpperCase())
+  );
+
+  if (!rows.length) {
+    if (!input.createIfMissing) return;
+    if (!extras.lengthCm) return;
+    try {
+      const { createShipmentsForOrders } = await import("@/modules/shipments/service");
+      await createShipmentsForOrders(
+        supabase,
+        {
+          userId: input.userId ?? "",
+          email: null,
+          fullName: null,
+          organizationId: input.organizationId,
+          organizationName: "",
+          role: "OWNER",
+          permissions: [],
+        },
+        [input.orderId],
+        { enqueueBooking: input.enqueueBooking === true, runBookingNow: false, ...extras }
+      );
+    } catch {
+      // Parcel hydrate is optional; order import/update should still succeed.
+    }
+    return;
+  }
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("parcel_weight_mode")
+    .eq("id", input.orderId)
+    .maybeSingle();
+  const autoWeight = String((order as { parcel_weight_mode?: string } | null)?.parcel_weight_mode ?? "auto").toLowerCase() !== "manual";
+
+  for (const row of unlocked as Array<{
+    id: string;
+    length_cm?: number | null;
+    width_cm?: number | null;
+    height_cm?: number | null;
+    weight_grams?: number | null;
+  }>) {
+    const hasDims =
+      Number(row.length_cm) > 0 && Number(row.width_cm) > 0 && Number(row.height_cm) > 0;
+    const patch: Record<string, number> = {};
+    if (!hasDims && extras.lengthCm != null && extras.widthCm != null && extras.heightCm != null) {
+      patch.length_cm = extras.lengthCm;
+      patch.width_cm = extras.widthCm;
+      patch.height_cm = extras.heightCm;
+    }
+    if (autoWeight && parcel.weightGrams != null && parcel.weightGrams >= 1) {
+      patch.weight_grams = parcel.weightGrams;
+    }
+    if (!Object.keys(patch).length) continue;
+    await supabase
+      .from("shipments")
+      .update(patch)
+      .eq("id", row.id)
+      .eq("organization_id", input.organizationId);
+  }
 }
 
 export function shopifyPhone(value?: string | null) {
@@ -1676,6 +1992,7 @@ export async function upsertShopifyOrder(
     // VaChat knowledge is optional; the Shopify import should still succeed.
   }
 
+  const parcelExtras = shopifyShipmentParcelExtras(lineItems);
   if (input.createShipment) {
     try {
       const { createShipmentsForOrders } = await import("@/modules/shipments/service");
@@ -1691,11 +2008,21 @@ export async function upsertShopifyOrder(
           permissions: [],
         },
         [order.id],
-        { enqueueBooking: input.enqueueBooking !== false, runBookingNow: false }
+        { enqueueBooking: input.enqueueBooking !== false, runBookingNow: false, ...parcelExtras }
       );
     } catch {
       // Order import should still succeed if shipment automation fails.
     }
+  } else {
+    await applyShopifyParcelToShipment(supabase, {
+      organizationId: input.organizationId,
+      orderId: order.id as string,
+      orderStatus,
+      userId: input.userId,
+      lineItems,
+      createIfMissing: true,
+      enqueueBooking: false,
+    });
   }
 
   return { imported: true, updated: false, skipped: false, orderId: order.id as string };
@@ -1768,10 +2095,24 @@ export async function importShopifyWebhookOrder(
   if (!automation.autoShopifySync) {
     return { imported: false, updated: false, skipped: true, orderId: null as string | null };
   }
+  let remote = input.remote;
+  try {
+    const connection = await loadShopifyConnection(supabase, input.organizationId);
+    if (connection?.shop_domain || connection?.encrypted_access_token) {
+      const token = await resolveShopifyAdminToken(connection);
+      const shop = connection.shop_domain || input.shopDomain;
+      if (token && shop) {
+        const [enriched] = await withShopifyProductShippingData(shop, token, [remote]);
+        if (enriched) remote = enriched;
+      }
+    }
+  } catch {
+    // Keep the webhook import even if product weight/size cannot be loaded.
+  }
   return upsertShopifyOrder(supabase, {
     organizationId: input.organizationId,
     shopDomain: input.shopDomain,
-    remote: input.remote,
+    remote,
     createShipment: automation.createShipment,
     enqueueBooking: automation.enqueueBooking,
   });
@@ -1797,25 +2138,15 @@ export async function fetchUnfulfilledShopifyOrders(shop: string, token: string,
   }
   const json = (await response.json()) as { orders?: ShopifyRemoteOrder[] };
   return {
-    orders: await withShopifyProductImages(shop, token, json.orders ?? []),
+    orders: await withShopifyProductShippingData(shop, token, json.orders ?? []),
     nextPage: nextPageInfo(response.headers.get("link")),
   };
 }
 
-async function withShopifyProductImages(shop: string, token: string, orders: ShopifyRemoteOrder[]) {
-  const missingIds = new Set<string>();
-  for (const order of orders) {
-    for (const item of order.line_items ?? []) {
-      if (shopifyLineItemImageUrl(item) || item.product_id == null) continue;
-      missingIds.add(String(item.product_id));
-    }
-  }
-  if (missingIds.size === 0) return orders;
-
+async function fetchShopifyProductsByIds(shop: string, token: string, productIds: string[]) {
   const products = new Map<string, ShopifyProduct>();
-  const ids = [...missingIds];
-  for (let index = 0; index < ids.length; index += 50) {
-    const chunk = ids.slice(index, index + 50);
+  for (let index = 0; index < productIds.length; index += 50) {
+    const chunk = productIds.slice(index, index + 50);
     const path = `/products.json?ids=${encodeURIComponent(chunk.join(","))}&fields=id,image,images,variants`;
     try {
       const response = await shopifyRequest(shop, token, path);
@@ -1825,17 +2156,88 @@ async function withShopifyProductImages(shop: string, token: string, orders: Sho
         if (product.id != null) products.set(String(product.id), product);
       }
     } catch {
-      // Keep the order import even if product images cannot be loaded.
+      // Keep the order import even if product data cannot be loaded.
     }
   }
+  return products;
+}
+
+function parseShopifyVariantShippingNode(node: {
+  id?: string | null;
+  inventoryItem?: { measurement?: { weight?: { value?: number | string | null; unit?: string | null } | null } | null } | null;
+  metafields?: Array<{ namespace?: string | null; key?: string | null; value?: string | null; type?: string | null } | null> | null;
+}): ShopifyVariantShipping {
+  const weight = node.inventoryItem?.measurement?.weight;
+  const weightValue = shopifyNumeric(weight?.value);
+  const dims = dimsFromMetafields(metafieldMap(node.metafields));
+  const grams =
+    weightValue != null && weight?.unit
+      ? shopifyWeightToGrams(weightValue, weight.unit)
+      : null;
+  return {
+    grams,
+    weight: weightValue != null && weight?.unit ? { value: weightValue, unit: String(weight.unit) } : null,
+    lengthCm: dims?.lengthCm ?? null,
+    widthCm: dims?.widthCm ?? null,
+    heightCm: dims?.heightCm ?? null,
+  };
+}
+
+async function fetchShopifyVariantShipping(shop: string, token: string, variantIds: string[]) {
+  const byGid = new Map<string, ShopifyVariantShipping>();
+  const gids = variantIds.map((id) => shopifyVariantGid(id)).filter((id): id is string => Boolean(id));
+  for (let index = 0; index < gids.length; index += 50) {
+    const chunk = gids.slice(index, index + 50);
+    try {
+      const result = await shopifyGraphql<{
+        nodes?: Array<{
+          id?: string | null;
+          inventoryItem?: {
+            measurement?: { weight?: { value?: number | string | null; unit?: string | null } | null } | null;
+          } | null;
+          metafields?: Array<{
+            namespace?: string | null;
+            key?: string | null;
+            value?: string | null;
+            type?: string | null;
+          } | null> | null;
+        } | null>;
+      }>(shop, token, SHOPIFY_VARIANT_SHIPPING_QUERY, { ids: chunk });
+      if (!result.ok) continue;
+      for (const node of result.json.data?.nodes ?? []) {
+        if (!node?.id) continue;
+        byGid.set(node.id, parseShopifyVariantShippingNode(node));
+      }
+    } catch {
+      // Keep the order import even if variant dimensions cannot be loaded.
+    }
+  }
+  return byGid;
+}
+
+export async function withShopifyProductShippingData(shop: string, token: string, orders: ShopifyRemoteOrder[]) {
+  const productIds = new Set<string>();
+  const variantIds = new Set<string>();
+  for (const order of orders) {
+    for (const item of order.line_items ?? []) {
+      if (item.product_id != null) productIds.add(String(item.product_id));
+      if (item.variant_id != null) variantIds.add(String(item.variant_id));
+    }
+  }
+
+  const products =
+    productIds.size > 0 ? await fetchShopifyProductsByIds(shop, token, [...productIds]) : new Map<string, ShopifyProduct>();
+  const shipping =
+    variantIds.size > 0
+      ? await fetchShopifyVariantShipping(shop, token, [...variantIds])
+      : new Map<string, ShopifyVariantShipping>();
 
   return orders.map((order) => ({
     ...order,
     line_items: (order.line_items ?? []).map((item) => {
-      if (shopifyLineItemImageUrl(item)) return item;
       const product = item.product_id != null ? products.get(String(item.product_id)) : undefined;
-      const src = shopifyLineItemImageUrl(item, product);
-      return src ? { ...item, image: { src } } : item;
+      const gid = shopifyVariantGid(item.variant_id);
+      return applyShopifyProductShippingToLineItem(item, product, gid ? shipping.get(gid) ?? null : null);
     }),
   }));
 }

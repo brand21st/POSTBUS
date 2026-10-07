@@ -18,6 +18,10 @@ import {
   shopifyOrderNumber,
   shopifyLineItemTitle,
   shopifyLineItemWeightGrams,
+  shopifyDimensionToCm,
+  shopifyParcelFromLineItems,
+  shopifyShipmentParcelExtras,
+  applyShopifyProductShippingToLineItem,
   shopifyLineItemImageUrl,
   shopifyImageLookupKey,
   applyShopifyCatalogToLineItems,
@@ -601,5 +605,316 @@ describe("shopify line item weight persistence", () => {
       }
     );
     expect(booked.deletes).not.toContain("order_line_items");
+  });
+});
+
+describe("shopify product shipping hydrate", () => {
+  it("converts Shopify dimension strings and JSON into centimetres", () => {
+    expect(shopifyDimensionToCm(20)).toBe(20);
+    expect(shopifyDimensionToCm("10 in")).toBe(25.4);
+    expect(shopifyDimensionToCm("50", "mm")).toBe(5);
+    expect(shopifyDimensionToCm({ value: 8, unit: "INCHES" })).toBe(20.32);
+    expect(shopifyDimensionToCm('{"value":12,"unit":"CENTIMETERS"}')).toBe(12);
+  });
+
+  it("uses variant product weight when order grams are zero", () => {
+    const item = applyShopifyProductShippingToLineItem(
+      { title: "Kurta", quantity: 2, grams: 0, variant_id: 22, product_id: 9 },
+      {
+        id: 9,
+        variants: [{ id: 22, grams: 0, weight: 0.5, weight_unit: "kg" }],
+      }
+    );
+    expect(shopifyLineItemWeightGrams(item)).toBe(500);
+  });
+
+  it("clamps Shopify box size to India Post parcel limits", () => {
+    expect(
+      shopifyParcelFromLineItems([
+        { title: "Kurta", quantity: 1, grams: 400, length_cm: 10, width_cm: 8, height_cm: 5 },
+      ])
+    ).toEqual({ weightGrams: 400, lengthCm: 14, widthCm: 9, heightCm: 5 });
+  });
+
+  it("takes the max box across line items and sums weight", () => {
+    expect(
+      shopifyParcelFromLineItems([
+        { title: "A", quantity: 2, grams: 200, length_cm: 20, width_cm: 10, height_cm: 8 },
+        { title: "B", quantity: 1, grams: 300, length_cm: 30, width_cm: 12, height_cm: 4 },
+      ])
+    ).toEqual({ weightGrams: 700, lengthCm: 30, widthCm: 12, heightCm: 8 });
+  });
+
+  it("keeps size empty when Shopify has weight but no dimensions", () => {
+    expect(shopifyParcelFromLineItems([{ title: "Kurta", quantity: 1, grams: 500 }])).toEqual({
+      weightGrams: 500,
+      lengthCm: null,
+      widthCm: null,
+      heightCm: null,
+    });
+    expect(shopifyShipmentParcelExtras([{ title: "Kurta", quantity: 1, grams: 500 }])).toEqual({});
+  });
+
+  it("stores converted grams when order grams are zero and the variant has weight", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const result = await upsertShopifyOrder(trackedOrderClient({ inserts, deletes: [] }) as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        line_items: [
+          {
+            title: "Kurta",
+            quantity: 2,
+            price: "499",
+            grams: 0,
+            variant: { weight: 0.5, weight_unit: "kg" },
+          },
+        ],
+      },
+    });
+    expect(result.imported).toBe(true);
+    const items = inserts.find((row) => row.table === "order_line_items");
+    expect(items?.payload).toEqual([
+      expect.objectContaining({ title: "Kurta", quantity: 2, weight_grams: 500 }),
+    ]);
+  });
+
+  it("passes clamped Shopify dimensions into shipment create", async () => {
+    createShipmentsForOrders.mockClear();
+    const result = await upsertShopifyOrder(newOrderClient() as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        line_items: [
+          {
+            title: "Kurta",
+            quantity: 1,
+            price: "499",
+            grams: 450,
+            length_cm: 10,
+            width_cm: 8,
+            height_cm: 5,
+          },
+        ],
+      },
+      createShipment: true,
+      enqueueBooking: false,
+    });
+    expect(result.imported).toBe(true);
+    expect(createShipmentsForOrders).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ organizationId: "org-1" }),
+      ["ord-1"],
+      { enqueueBooking: false, runBookingNow: false, lengthCm: 14, widthCm: 9, heightCm: 5 }
+    );
+  });
+
+  it("writes Shopify dimensions onto an unlocked draft shipment", async () => {
+    const updates: Array<{ table: string; payload: unknown }> = [];
+    const result = await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        shipments: [{ id: "shp-1", status: "DRAFT", length_cm: null, width_cm: null, height_cm: null }],
+        inserts: [],
+        deletes: [],
+        updates,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: {
+          ...remoteOrder,
+          line_items: [
+            {
+              title: "Kurta",
+              quantity: 1,
+              price: "499",
+              grams: 500,
+              length_cm: 20,
+              width_cm: 15,
+              height_cm: 10,
+            },
+          ],
+        },
+      }
+    );
+    expect(result.updated).toBe(true);
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        {
+          table: "shipments",
+          payload: { length_cm: 20, width_cm: 15, height_cm: 10, weight_grams: 500 },
+        },
+      ])
+    );
+  });
+
+  it("does not overwrite a merchant-saved box size or a queued shipment", async () => {
+    const saved: Array<{ table: string; payload: unknown }> = [];
+    await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        shipments: [{ id: "shp-1", status: "DRAFT", length_cm: 30, width_cm: 20, height_cm: 12 }],
+        inserts: [],
+        deletes: [],
+        updates: saved,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: {
+          ...remoteOrder,
+          line_items: [{ title: "Kurta", quantity: 1, price: "499", grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
+        },
+      }
+    );
+    expect(saved.filter((row) => row.table === "shipments")).toEqual([
+      { table: "shipments", payload: { weight_grams: 500 } },
+    ]);
+
+    const queued: Array<{ table: string; payload: unknown }> = [];
+    await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        shipments: [{ id: "shp-1", status: "QUEUED", length_cm: null, width_cm: null, height_cm: null }],
+        inserts: [],
+        deletes: [],
+        updates: queued,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: {
+          ...remoteOrder,
+          line_items: [{ title: "Kurta", quantity: 1, price: "499", grams: 900, length_cm: 20, width_cm: 15, height_cm: 10 }],
+        },
+      }
+    );
+    expect(queued.filter((row) => row.table === "shipments")).toEqual([]);
+  });
+
+  it("hydrates webhook line items from Shopify product weight and metafield size", async () => {
+    getAutomationSettings.mockResolvedValue({
+      autoShopifySync: true,
+      autoShipmentCreation: true,
+      autoBooking: false,
+    });
+    createShipmentsForOrders.mockClear();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const href = String(input);
+      if (href.includes("/products.json")) {
+        return new Response(
+          JSON.stringify({
+            products: [
+              {
+                id: 9,
+                variants: [{ id: 22, grams: 500, weight: 0.5, weight_unit: "kg" }],
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (href.includes("graphql.json")) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              nodes: [
+                {
+                  id: "gid://shopify/ProductVariant/22",
+                  metafields: [
+                    { namespace: "custom", key: "length", value: "20" },
+                    { namespace: "custom", key: "width", value: "15" },
+                    { namespace: "custom", key: "height", value: "10" },
+                  ],
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const tracked = trackedOrderClient({ inserts, deletes: [] });
+    const supabase = {
+      from: vi.fn((table: string) => {
+        if (table === "shopify_connections") {
+          return query({
+            shop_domain: "demo.myshopify.com",
+            encrypted_access_token: encryptSecret("shpat_test"),
+          });
+        }
+        return tracked.from(table);
+      }),
+    };
+
+    try {
+      const result = await importShopifyWebhookOrder(supabase as never, {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        topic: "orders/create",
+        remote: {
+          ...remoteOrder,
+          line_items: [
+            {
+              title: "Kurta",
+              quantity: 1,
+              price: "499",
+              grams: 0,
+              product_id: 9,
+              variant_id: 22,
+            },
+          ],
+        },
+      });
+      expect(result.imported).toBe(true);
+      const items = inserts.find((row) => row.table === "order_line_items");
+      expect(items?.payload).toEqual([expect.objectContaining({ weight_grams: 500 })]);
+      expect(createShipmentsForOrders).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ organizationId: "org-1" }),
+        ["ord-1"],
+        { enqueueBooking: false, runBookingNow: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("creates a draft shipment from Shopify dimensions when auto-create is off", async () => {
+    createShipmentsForOrders.mockClear();
+    const result = await upsertShopifyOrder(newOrderClient() as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        line_items: [
+          {
+            title: "Kurta",
+            quantity: 1,
+            price: "499",
+            grams: 500,
+            length_cm: 20,
+            width_cm: 15,
+            height_cm: 10,
+          },
+        ],
+      },
+      createShipment: false,
+    });
+    expect(result.imported).toBe(true);
+    expect(createShipmentsForOrders).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ organizationId: "org-1" }),
+      ["ord-1"],
+      { enqueueBooking: false, runBookingNow: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
+    );
   });
 });
