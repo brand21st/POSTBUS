@@ -23,6 +23,8 @@ describe("extractIndiaMobileDigits", () => {
     expect(extractIndiaMobileDigits("987654321")).toBeNull();
     expect(extractIndiaMobileDigits("98765432101")).toBeNull();
     expect(extractIndiaMobileDigits("abcdefghij")).toBeNull();
+    expect(extractIndiaMobileDigits("")).toBeNull();
+    expect(extractIndiaMobileDigits(null)).toBeNull();
   });
 });
 

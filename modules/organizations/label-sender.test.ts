@@ -54,7 +54,7 @@ describe("updateOrganizationSchema", () => {
       pincode: "682311",
       line1: "NH 85",
     });
-    expect(parsed.phone).toBe("+91 9876543210");
+    expect(parsed.phone).toBe("9876543210");
     expect(parsed.pincode).toBe("682311");
   });
 

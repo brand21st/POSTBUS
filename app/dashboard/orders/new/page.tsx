@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Combobox } from "@/components/ui/combobox";
+import { IndiaWhatsappField } from "@/components/auth/india-whatsapp-field";
 import { IndiaFlag } from "@/components/ui/india-flag";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +33,7 @@ import { api, toSearchParams } from "@/lib/hooks/use-api";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS } from "@/lib/indian-states";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { IndiaPostConfig, Paginated, ProductRecord } from "@/types/api";
@@ -39,7 +41,9 @@ import { catalogCodAdvancePaid } from "@/modules/products/payment";
 
 const addressSchema = z.object({
   name: z.string().min(2, "Name is required."),
-  phone: z.string().min(8, "Phone is required."),
+  phone: z
+    .string()
+    .refine((value) => extractIndiaMobileDigits(value) !== null, "Enter a 10-digit Indian mobile number."),
   line1: z.string().min(3, "Address line 1 is required."),
   line2: z.string().optional(),
   city: z.string().min(2, "City is required."),
@@ -51,7 +55,9 @@ const addressSchema = z.object({
 const schema = z.object({
   orderNumber: z.string().optional(),
   customerName: z.string().min(2, "Customer name is required."),
-  customerPhone: z.string().min(8, "Phone is required."),
+  customerPhone: z
+    .string()
+    .refine((value) => extractIndiaMobileDigits(value) !== null, "Enter a 10-digit Indian mobile number."),
   customerEmail: z.union([z.email(), z.literal("")]).optional(),
   paymentStatus: z.enum(PAYMENT_STATUSES),
   amountPaid: z.coerce.number().min(0).optional(),
@@ -238,12 +244,23 @@ export default function NewOrderPage() {
           orderNumber: values.orderNumber || undefined,
           customer: {
             name: values.customerName,
-            phone: values.customerPhone,
+            phone: extractIndiaMobileDigits(values.customerPhone) ?? values.customerPhone,
             email: values.customerEmail || undefined,
           },
-          shippingAddress: values.shippingAddress,
+          shippingAddress: {
+            ...values.shippingAddress,
+            phone: extractIndiaMobileDigits(values.shippingAddress.phone) ?? values.shippingAddress.phone,
+          },
           billingSameAsShipping: values.billingSameAsShipping,
-          billingAddress: values.billingSameAsShipping ? undefined : values.billingAddress,
+          billingAddress: values.billingSameAsShipping
+            ? undefined
+            : values.billingAddress
+              ? {
+                  ...values.billingAddress,
+                  phone:
+                    extractIndiaMobileDigits(values.billingAddress.phone) ?? values.billingAddress.phone,
+                }
+              : undefined,
           paymentStatus: values.paymentStatus,
           amountPaid:
             values.paymentStatus === "PARTIAL"
@@ -379,7 +396,16 @@ export default function NewOrderPage() {
             <Input className="h-9" {...form.register("customerName")} />
           </Field>
           <Field label="Phone" error={form.formState.errors.customerPhone?.message}>
-            <Input className="h-9" {...form.register("customerPhone")} />
+            <IndiaWhatsappField
+              control={form.control}
+              name="customerPhone"
+              id="customerPhone"
+              size="sm"
+              hideLabel
+              hideError
+              error={form.formState.errors.customerPhone?.message}
+              placeholder="10-digit mobile number"
+            />
           </Field>
           <Field label="Email">
             <Input className="h-9" type="email" {...form.register("customerEmail")} />
@@ -392,7 +418,10 @@ export default function NewOrderPage() {
           <CardTitle>Shipping address</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
-          <AddressFields prefix="shippingAddress" form={{ register: form.register, control: form.control }} />
+          <AddressFields
+            prefix="shippingAddress"
+            form={{ register: form.register, control: form.control, formState: form.formState }}
+          />
           <label className="col-span-full flex items-center gap-2 text-sm">
             <Checkbox
               checked={billingSame}
@@ -409,7 +438,10 @@ export default function NewOrderPage() {
             <CardTitle>Billing address</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
-            <AddressFields prefix="billingAddress" form={{ register: form.register, control: form.control }} />
+            <AddressFields
+              prefix="billingAddress"
+              form={{ register: form.register, control: form.control, formState: form.formState }}
+            />
           </CardContent>
         </Card>
       ) : null}
@@ -807,15 +839,25 @@ function AddressFields({
   form,
 }: {
   prefix: "shippingAddress" | "billingAddress";
-  form: Pick<ReturnType<typeof useForm<FormValues>>, "register" | "control">;
+  form: Pick<ReturnType<typeof useForm<FormValues>>, "register" | "control" | "formState">;
 }) {
+  const phoneError = form.formState.errors[prefix]?.phone?.message;
   return (
     <>
       <Field label="Recipient">
         <Input className="h-9" {...form.register(`${prefix}.name`)} />
       </Field>
-      <Field label="Phone">
-        <Input className="h-9" {...form.register(`${prefix}.phone`)} />
+      <Field label="Phone" error={phoneError}>
+        <IndiaWhatsappField
+          control={form.control}
+          name={`${prefix}.phone`}
+          id={`${prefix}-phone`}
+          size="sm"
+          hideLabel
+          hideError
+          error={phoneError}
+          placeholder="10-digit mobile number"
+        />
       </Field>
       <Field label="Line 1" className="md:col-span-2">
         <Input className="h-9" {...form.register(`${prefix}.line1`)} />

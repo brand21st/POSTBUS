@@ -103,11 +103,14 @@ describe("article type and shape", () => {
 describe("indiaPostMobile", () => {
   it("accepts a 10 digit Indian mobile", () => {
     expect(indiaPostMobile("+91 98765 43210")).toBe("9876543210");
+    expect(indiaPostMobile("919876543210")).toBe("9876543210");
+    expect(indiaPostMobile("09876543210")).toBe("9876543210");
   });
 
   it("rejects numbers that do not start with 6-9", () => {
     expect(indiaPostMobile("0000000000")).toBeNull();
     expect(indiaPostMobile("")).toBeNull();
+    expect(indiaPostMobile(null)).toBeNull();
   });
 });
 

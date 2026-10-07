@@ -5,7 +5,8 @@ export function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
 }
 
-export function extractIndiaMobileDigits(value: string): string | null {
+export function extractIndiaMobileDigits(value?: string | null): string | null {
+  if (value == null) return null;
   const digits = digitsOnly(value);
   let national = digits;
 
@@ -20,6 +21,12 @@ export function extractIndiaMobileDigits(value: string): string | null {
   }
 
   return national;
+}
+
+/** 10-digit national number for DB and India Post, or null when empty/invalid. */
+export function normalizeIndiaMobile(value?: string | null): string | null {
+  if (value == null || !String(value).trim()) return null;
+  return extractIndiaMobileDigits(value);
 }
 
 export function toIndiaWhatsappE164(value: string): string {

@@ -1,9 +1,19 @@
 import { z } from "zod";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES } from "@/types/domain";
+
+const indiaMobile = z
+  .string()
+  .trim()
+  .transform((value) => extractIndiaMobileDigits(value) ?? value.replace(/\D/g, ""))
+  .refine((value) => extractIndiaMobileDigits(value) !== null, {
+    message: "Enter a 10-digit Indian mobile number starting with 6, 7, 8 or 9.",
+  })
+  .transform((value) => extractIndiaMobileDigits(value)!);
 
 export const addressInput = z.object({
   name: z.string().min(2).optional(),
-  phone: z.string().min(8).optional(),
+  phone: indiaMobile.optional(),
   line1: z.string().min(3),
   line2: z.string().optional(),
   city: z.string().min(2),
@@ -17,7 +27,7 @@ export const createOrderSchema = z.object({
   source: z.enum(ORDER_SOURCES).optional(),
   customer: z.object({
     name: z.string().min(2),
-    phone: z.string().min(8),
+    phone: indiaMobile,
     email: z.string().email().optional().or(z.literal("")),
   }),
   shippingAddress: addressInput,

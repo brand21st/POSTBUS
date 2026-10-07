@@ -1,4 +1,5 @@
 import { indiaPostBaseUrl } from "@/lib/env";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { indiaPostServiceForBarcodePrefix } from "@/modules/india-post/barcode";
 import { INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G } from "@/modules/india-post/spec";
 import type { ProviderEnvironment } from "@/types/domain";
@@ -105,9 +106,7 @@ export function indiaPostShapeOfArticle(serviceCode: string, weightGrams: number
 }
 
 export function indiaPostMobile(phone?: string | null) {
-  const digits = (phone ?? "").replace(/\D/g, "");
-  const lastTen = digits.length > 10 ? digits.slice(-10) : digits;
-  return /^[6-9]\d{9}$/.test(lastTen) ? lastTen : null;
+  return extractIndiaMobileDigits(phone);
 }
 
 export type IndiaPostOffice = {

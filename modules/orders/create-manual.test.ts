@@ -120,6 +120,22 @@ describe("createOrderSchema", () => {
     expect(parsed.lineItems[0]?.unitPrice).toBe(499);
   });
 
+  it("stores customer and shipping phones as 10-digit Indian numbers", () => {
+    const parsed = createOrderSchema.parse({
+      ...payload,
+      customer: { ...payload.customer, phone: "+91 98765 43210" },
+      shippingAddress: { ...payload.shippingAddress, phone: "919876543210" },
+    });
+    expect(parsed.customer.phone).toBe("9876543210");
+    expect(parsed.shippingAddress.phone).toBe("9876543210");
+    expect(() =>
+      createOrderSchema.parse({
+        ...payload,
+        customer: { ...payload.customer, phone: "12345" },
+      })
+    ).toThrow(/10-digit Indian mobile/);
+  });
+
   it("requires an advance for partial payment", () => {
     expect(() =>
       createOrderSchema.parse({

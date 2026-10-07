@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 
 const optionalText = (max: number) =>
   z
@@ -15,12 +16,15 @@ export const updateOrganizationSchema = z.object({
     .trim()
     .max(20)
     .optional()
-    .transform((value) => (value === undefined ? undefined : value === "" ? null : value))
     .refine(
-      (value) =>
-        value == null || /^(\+91[\s-]?)?[6-9]\d{9}$/.test(value.replace(/\s/g, "")),
-      { message: "Enter a 10-digit Indian mobile number." }
-    ),
+      (value) => value === undefined || value === "" || extractIndiaMobileDigits(value) !== null,
+      { message: "Enter a 10-digit Indian mobile number starting with 6, 7, 8 or 9." }
+    )
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      if (value === "") return null;
+      return extractIndiaMobileDigits(value);
+    }),
   line1: optionalText(160),
   line2: optionalText(160),
   city: optionalText(80),

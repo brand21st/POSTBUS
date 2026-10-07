@@ -2,6 +2,7 @@ import { CEPT_BOOKING_FIELD_NAMES } from "@/modules/india-post/article-fields";
 import type { ValidatedArticle } from "@/modules/india-post/article-types";
 import {
   indiaPostBookingArticleType,
+  indiaPostMobile,
   indiaPostRequiredText,
   indiaPostShapeOfArticle,
 } from "@/modules/india-post/endpoints";
@@ -74,8 +75,8 @@ export function serializeIndiaPostBookingArticle(article: ValidatedArticle) {
     alt_address_flag: alt ? "TRUE" : "FALSE",
     pickup_address_flag: pickup ? "TRUE" : "FALSE",
     drop_off_pincode: pickup ? "" : article.originPin,
-    sender_mobile_no: article.sender.mobile,
-    receiver_mobile_no: article.receiver.mobile,
+    sender_mobile_no: indiaPostMobile(article.sender.mobile) || "",
+    receiver_mobile_no: indiaPostMobile(article.receiver.mobile) || "",
     prepayment_code: article.prepaymentCode || "",
     value_of_prepayment: article.prepaymentCode ? Number(article.prepaymentValue) || 0 : 0,
     codr_cod: article.paymentMode === "COD" ? article.codKind || "COD" : "",

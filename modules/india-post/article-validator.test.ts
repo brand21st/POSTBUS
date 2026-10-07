@@ -44,6 +44,21 @@ describe("India Post article validation", () => {
     expect(validateIndiaPostArticle(baseDraft())).toEqual([]);
   });
 
+  it("maps sender_mobile_no from the organization phone, not the customer phone", () => {
+    const issues = validateIndiaPostArticle(baseDraft({ senderMobile: "" }));
+    expect(issues.some((issue) => issue.field === "sender_mobile_no")).toBe(true);
+    expect(issues.find((issue) => issue.field === "sender_mobile_no")?.error).toMatch(/Settings → Organization/);
+  });
+
+  it("accepts +91 sender and receiver numbers as 10-digit CEPT mobiles", () => {
+    const issues = validateIndiaPostArticle(
+      baseDraft({ senderMobile: "+91 98765 43210", receiverMobile: "919944388249" })
+    );
+    expect(issues.filter((issue) => /mobile/.test(issue.field))).toEqual([]);
+    const payload = serializeIndiaPostBookingArticle(assertValidatedArticle(baseDraft({ senderMobile: "+91 98765 43210" })));
+    expect(payload.sender_mobile_no).toBe("9876543210");
+  });
+
   it("rejects a non-digit receiver pincode before queueing", () => {
     const issues = validateIndiaPostArticle(baseDraft({ receiverPin: "673121A" }));
     expect(issues.some((issue) => issue.field === "receiver_pincode")).toBe(true);

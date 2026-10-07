@@ -11,6 +11,7 @@ import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { IndiaMobileInput } from "@/components/auth/india-whatsapp-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -23,6 +24,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { asList } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
+import { indiaMobileInputDigits } from "@/lib/phone/india-whatsapp";
 import { useMe } from "@/lib/hooks/use-me";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { MEMBER_ROLES, type MemberRole } from "@/types/domain";
@@ -106,7 +108,7 @@ function OrganizationSection() {
   useEffect(() => {
     if (!query.data) return;
     setName(query.data.name ?? me.data?.organization?.name ?? "");
-    setPhone(query.data.phone ?? "");
+    setPhone(indiaMobileInputDigits(query.data.phone ?? ""));
     setLine1(query.data.line1 ?? "");
     setLine2(query.data.line2 ?? "");
     setCity(query.data.city ?? "");
@@ -156,13 +158,16 @@ function OrganizationSection() {
           <Input disabled={!canManage} value={name} onChange={(event) => setName(event.target.value)} />
         </Field>
         <Field label="Phone number">
-          <Input
+          <IndiaMobileInput
+            id="organization-phone"
             disabled={!canManage}
-            inputMode="tel"
-            placeholder="9876543210"
+            placeholder="10-digit mobile number"
             value={phone}
-            onChange={(event) => setPhone(event.target.value)}
+            onChange={setPhone}
           />
+          <p className="mt-1 text-xs text-muted">
+            India Post sender_mobile_no. 10 digits starting with 6, 7, 8 or 9. This is not the customer phone.
+          </p>
         </Field>
         <Field label="Address line 1">
           <Input disabled={!canManage} value={line1} onChange={(event) => setLine1(event.target.value)} />

@@ -125,13 +125,13 @@ function checkMobile(
   issues: ValidationIssue[]
 ) {
   const mobile = indiaPostMobile(value);
-  if (!mobile) {
-    if (required || trimText(value)) {
-      issues.push(
-        issue(draft, field, value, `${field} must be a 10-digit Indian number starting with 6, 7, 8 or 9.`, category)
-      );
-    }
-  }
+  if (mobile) return;
+  if (!required && !trimText(value)) return;
+  const message =
+    field === "sender_mobile_no" && !trimText(value)
+      ? "sender_mobile_no is missing. Save a 10-digit mobile in Settings → Organization. That number is the India Post sender, not the customer phone."
+      : `${field} must be a 10-digit Indian number starting with 6, 7, 8 or 9.`;
+  issues.push(issue(draft, field, value, message, category));
 }
 
 export function isValidIndiaPostBarcode(barcode: string) {
