@@ -7,7 +7,20 @@ const nextConfig: NextConfig = {
   compress: true,
   serverExternalPackages: ["bullmq", "ioredis", "@napi-rs/canvas"],
   outputFileTracingIncludes: {
-    "*": ["./assets/fonts/noto/**/*"],
+    "*": ["./assets/fonts/noto/**/*", "./node_modules/@napi-rs/canvas/**/*"],
+  },
+  webpack: (config, { isServer }) => {
+    config.externals = config.externals ?? [];
+    if (Array.isArray(config.externals)) {
+      config.externals.push({ "@napi-rs/canvas": "commonjs @napi-rs/canvas" });
+    }
+    if (!isServer) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        "@napi-rs/canvas": false,
+      };
+    }
+    return config;
   },
   images: {
     formats: ["image/avif", "image/webp"],

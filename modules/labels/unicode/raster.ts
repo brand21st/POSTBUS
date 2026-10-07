@@ -1,5 +1,5 @@
-import { createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
 import { logError } from "@/lib/logger";
+import { loadCanvas, type SKRSContext2D } from "@/modules/labels/unicode/canvas-native";
 import { cssFont, registerPaintFonts } from "@/modules/labels/unicode/fonts";
 import { graphemes, sanitizeLabelText, segmentScriptRuns, type PaintScript } from "@/modules/labels/unicode/text";
 
@@ -14,12 +14,14 @@ type ShapedRun = {
   width: number;
 };
 
-const measureCanvas = createCanvas(4, 4);
 let measureCtx: SKRSContext2D | null = null;
 
 function context() {
   registerPaintFonts();
-  if (!measureCtx) measureCtx = measureCanvas.getContext("2d");
+  if (!measureCtx) {
+    const { createCanvas } = loadCanvas();
+    measureCtx = createCanvas(4, 4).getContext("2d");
+  }
   return measureCtx;
 }
 
@@ -117,6 +119,7 @@ export function rasterizeShapedLine(input: {
     return { ...run, width };
   });
   const heightPx = Math.ceil(PAD_PX * 2 + ascent + descent);
+  const { createCanvas } = loadCanvas();
   const canvas = createCanvas(Math.max(1, Math.ceil(widthPx)), Math.max(1, heightPx));
   const paint = canvas.getContext("2d");
   paint.clearRect(0, 0, canvas.width, canvas.height);

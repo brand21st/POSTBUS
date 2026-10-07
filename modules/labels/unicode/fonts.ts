@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { GlobalFonts } from "@napi-rs/canvas";
 import { logError } from "@/lib/logger";
+import { loadCanvas } from "@/modules/labels/unicode/canvas-native";
 import type { PaintScript } from "@/modules/labels/unicode/text";
 
 export type PaintFamily = Exclude<PaintScript, "common">;
@@ -59,6 +59,7 @@ export function notoFontDirectory() {
 export function registerPaintFonts() {
   if (registered) return;
   const dir = notoFontDirectory();
+  const { GlobalFonts } = loadCanvas();
   for (const spec of Object.values(FILES)) {
     const regular = path.join(dir, spec.regular);
     const bold = path.join(dir, spec.bold);
