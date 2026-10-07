@@ -7,9 +7,7 @@ import {
   shopifyWebhookUrl,
   type ShopifyCredentialRow,
 } from "@/modules/shopify/oauth";
-import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
-import { customerTrackingLink } from "@/modules/tracking-pages/host";
-import { getTrackingPage } from "@/modules/tracking-pages/service";
+import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { settleOrderPayment } from "@/modules/orders/payment";
@@ -882,7 +880,7 @@ export async function markShopifyConnected(
     .eq("id", connection.id);
 }
 
-export const INDIA_POST_CARRIER = "India Post";
+export const POSTBUS_TRACKING_COMPANY = "PostBus";
 
 export type ShopifyFulfillmentOrder = {
   id: number | string;
@@ -905,18 +903,17 @@ function asRecord<T extends object>(value: T | T[] | null | undefined): T | null
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
-export function shopifyTrackingInfo(articleId: string, trackingUrl?: string | null) {
+export function shopifyTrackingInfo(articleId: string) {
   return {
-    company: INDIA_POST_CARRIER,
+    company: POSTBUS_TRACKING_COMPANY,
     number: articleId,
-    url: trackingUrl?.trim() || indiaPostPublicTrackingUrl(articleId),
+    url: postbusTrackingLink(articleId),
   };
 }
 
 export function shopifyFulfillmentPayload(input: {
   fulfillmentOrders: ShopifyFulfillmentOrder[];
   trackingNumber: string;
-  trackingUrl?: string | null;
   notifyCustomer?: boolean;
 }) {
   const lineItemsByFulfillmentOrder = input.fulfillmentOrders
@@ -930,7 +927,7 @@ export function shopifyFulfillmentPayload(input: {
   return {
     fulfillment: {
       line_items_by_fulfillment_order: lineItemsByFulfillmentOrder,
-      tracking_info: shopifyTrackingInfo(input.trackingNumber, input.trackingUrl),
+      tracking_info: shopifyTrackingInfo(input.trackingNumber),
       notify_customer: input.notifyCustomer !== false,
     },
   };
@@ -940,8 +937,7 @@ async function updateExistingShopifyTracking(
   shop: string,
   token: string,
   sourceOrderId: string,
-  articleId: string,
-  trackingUrl?: string | null
+  articleId: string
 ) {
   const listRes = await shopifyRequest(
     shop,
@@ -960,7 +956,7 @@ async function updateExistingShopifyTracking(
     body: JSON.stringify({
       fulfillment: {
         notify_customer: true,
-        tracking_info: shopifyTrackingInfo(articleId, trackingUrl),
+        tracking_info: shopifyTrackingInfo(articleId),
       },
     }),
   });
@@ -1361,12 +1357,6 @@ export async function fulfillShopifyShipment(
   }
   if (!sourceOrderId) return { skipped: true, reason: "no_shopify_order_id" };
 
-  const trackingPage = await getTrackingPage(supabase, input.organizationId).catch(() => null);
-  const trackingUrl =
-    trackingPage?.status === "PUBLISHED"
-      ? customerTrackingLink(trackingPage.publicUrl, tracking)
-      : null;
-
   const connection = await loadShopifyConnection(supabase, input.organizationId);
   const shop = connection?.shop_domain;
   const token = await resolveShopifyAdminToken(connection);
@@ -1393,11 +1383,10 @@ export async function fulfillShopifyShipment(
   const payload = shopifyFulfillmentPayload({
     fulfillmentOrders: fulfillmentOrdersJson.fulfillment_orders ?? [],
     trackingNumber: tracking,
-    trackingUrl,
   });
 
   if (!payload.fulfillment.line_items_by_fulfillment_order.length) {
-    const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking, trackingUrl);
+    const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
     await markOrderFulfilled(supabase, order.id);
     await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
     return updated
@@ -1412,7 +1401,7 @@ export async function fulfillShopifyShipment(
   if (!createRes.ok) {
     const body = await createRes.text();
     if (createRes.status === 422 && /already fulfilled|closed|no remaining/i.test(body)) {
-      const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking, trackingUrl);
+      const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
       await markOrderFulfilled(supabase, order.id);
       await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
       return updated

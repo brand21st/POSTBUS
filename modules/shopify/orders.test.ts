@@ -228,24 +228,23 @@ describe("shopify order mapping", () => {
       { fulfillment_order_id: 13 },
     ]);
     expect(payload.fulfillment.tracking_info).toEqual({
-      company: "India Post",
+      company: "PostBus",
       number: "CL556974704IN",
-      url: "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=CL556974704IN",
+      url: "https://www.postbus.in/track?tracking=CL556974704IN",
     });
     expect(payload.fulfillment.notify_customer).toBe(true);
   });
 
-  it("sends the customer tracking page with the tracking id", () => {
+  it("always sends the public PostBus tracking page with the article id", () => {
     const payload = shopifyFulfillmentPayload({
       fulfillmentOrders: [{ id: 11, status: "open" }],
       trackingNumber: "CL556974704IN",
-      trackingUrl: "https://priya.postbus.in/?tracking=CL556974704IN",
     });
-    expect(payload.fulfillment.tracking_info).toEqual({
-      company: "India Post",
-      number: "CL556974704IN",
-      url: "https://priya.postbus.in/?tracking=CL556974704IN",
-    });
+    expect(payload.fulfillment.tracking_info.company).toBe("PostBus");
+    expect(payload.fulfillment.tracking_info.url).toBe(
+      "https://www.postbus.in/track?tracking=CL556974704IN"
+    );
+    expect(payload.fulfillment.tracking_info.url).not.toContain("indiapost.gov.in");
   });
 
   it("is ready to sync when shop domain and app credentials exist", () => {
