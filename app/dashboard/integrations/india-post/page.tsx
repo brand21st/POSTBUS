@@ -20,7 +20,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatDate, formatNumber } from "@/lib/format";
-import { barcodeStockForService, barcodesLeft } from "@/modules/india-post/barcode";
+import {
+  BARCODE_ARTICLE_LENGTH,
+  barcodeStockForService,
+  barcodesLeft,
+  normalizeIndiaPostArticleId,
+  sanitizeBarcodeAllotmentField,
+} from "@/modules/india-post/barcode";
 import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { cn } from "@/lib/utils";
@@ -457,16 +463,19 @@ export default function IndiaPostPage() {
               isDefault: snapshot.defaultServiceCode === service.code,
             };
           }),
-          barcodeRange: snapshot.prefix.trim()
-            ? {
-                prefix: snapshot.prefix.trim(),
-                suffix: snapshot.suffix.trim() || "IN",
-                startNumber: Number(snapshot.startNumber),
-                endNumber: Number(snapshot.endNumber),
-                serviceCode:
-                  snapshot.rangeServiceCode === ANY_SERVICE ? null : snapshot.rangeServiceCode,
-              }
-            : undefined,
+          barcodeRange: (() => {
+            const startArticle = normalizeIndiaPostArticleId(snapshot.startNumber);
+            const prefix = snapshot.prefix.trim() || startArticle.slice(0, 2);
+            if (!prefix) return undefined;
+            return {
+              prefix,
+              suffix: snapshot.suffix.trim() || startArticle.slice(11) || "IN",
+              startNumber: snapshot.startNumber.trim(),
+              endNumber: snapshot.endNumber.trim(),
+              serviceCode:
+                snapshot.rangeServiceCode === ANY_SERVICE ? null : snapshot.rangeServiceCode,
+            };
+          })(),
         }),
       });
     },
@@ -650,6 +659,18 @@ export default function IndiaPostPage() {
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function applyAllotmentField(field: "startNumber" | "endNumber", value: string) {
+    const next = sanitizeBarcodeAllotmentField(value);
+    const article = normalizeIndiaPostArticleId(next);
+    setForm((current) => ({
+      ...current,
+      [field]: next,
+      ...(article && !current.prefix.trim()
+        ? { prefix: article.slice(0, 2), suffix: article.slice(11) || current.suffix }
+        : {}),
+    }));
   }
 
   function setContract(serviceCode: string, contractId: string) {
@@ -989,7 +1010,7 @@ export default function IndiaPostPage() {
           <CardHeader className="pb-4">
             <CardTitle>Barcode range</CardTitle>
             <CardDescription className="mt-1">
-              The article number series from your India Post allotment. Paste the 9-digit number — the last digit is the check digit, and we verify it — or the 8-digit serial. For example 556973995 is CL556973995IN.
+              The article number series from your India Post allotment. Paste the 13-character article (CL556973995IN), the 9-digit number with check digit, or the 8-digit serial. Maximum 13 characters.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -1022,14 +1043,16 @@ export default function IndiaPostPage() {
             <Field
               label="Start number"
               value={form.startNumber}
-              placeholder="556973995"
-              onChange={(value) => set("startNumber", value.replace(/\D/g, "").slice(0, 9))}
+              placeholder="CL556973995IN"
+              maxLength={BARCODE_ARTICLE_LENGTH}
+              onChange={(value) => applyAllotmentField("startNumber", value)}
             />
             <Field
               label="End number"
               value={form.endNumber}
-              placeholder="556979998"
-              onChange={(value) => set("endNumber", value.replace(/\D/g, "").slice(0, 9))}
+              placeholder="CL556979998IN"
+              maxLength={BARCODE_ARTICLE_LENGTH}
+              onChange={(value) => applyAllotmentField("endNumber", value)}
             />
           </CardContent>
         </Card>
@@ -1174,6 +1197,7 @@ function Field({
   autoComplete,
   placeholder,
   hint,
+  maxLength,
 }: {
   label: string;
   value: string;
@@ -1183,6 +1207,7 @@ function Field({
   autoComplete?: string;
   placeholder?: string;
   hint?: string;
+  maxLength?: number;
 }) {
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = type === "password";
@@ -1196,6 +1221,7 @@ function Field({
           value={value}
           placeholder={placeholder}
           autoComplete={autoComplete}
+          maxLength={maxLength}
           className={isPassword ? "pr-11" : undefined}
           onChange={(event) => onChange(event.target.value)}
           onBlur={onBlur ? (event) => onBlur(event.target.value) : undefined}

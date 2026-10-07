@@ -339,6 +339,39 @@ describe("POST integrations/india-post connect:false", () => {
     expect(db.barcodeInserts).toEqual([]);
   });
 
+  it("stores the 8-digit serial when the range is pasted as 13-character articles", async () => {
+    const db = saveDb([], null);
+    const request = new NextRequest("http://localhost/api/v1/integrations/india-post", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        connect: false,
+        environment: "PRODUCTION",
+        bulkCustomerId: "1788590988",
+        barcodeRange: {
+          prefix: "CL",
+          suffix: "IN",
+          startNumber: "CL556973995IN",
+          endNumber: "CL556979998IN",
+          serviceCode: null,
+        },
+      }),
+    });
+    await handleIntegrationRoutes(
+      request,
+      db.client as never,
+      ctx,
+      "POST integrations/india-post"
+    );
+    expect(db.barcodeInserts[0]).toMatchObject({
+      prefix: "CL",
+      suffix: "IN",
+      start_number: 55697399,
+      end_number: 55697999,
+      next_number: 55697399,
+    });
+  });
+
   it("keeps next_number when the end of the same series is extended", async () => {
     const db = saveDb([]);
     const request = new NextRequest("http://localhost/api/v1/integrations/india-post", {

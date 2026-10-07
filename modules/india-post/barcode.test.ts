@@ -103,6 +103,28 @@ describe("parseBarcodeRange", () => {
     ).toMatchObject({ startNumber: 55697399, endNumber: 55697999 });
   });
 
+  it("accepts a 13-character article number and stores the 8-digit serial", () => {
+    expect(
+      parseBarcodeRange({
+        prefix: "CL",
+        suffix: "IN",
+        startNumber: "cl556973995in",
+        endNumber: "CL556979998IN",
+      })
+    ).toMatchObject({ startNumber: 55697399, endNumber: 55697999 });
+  });
+
+  it("rejects a 13-character article whose prefix does not match the series", () => {
+    expect(() =>
+      parseBarcodeRange({
+        prefix: "CL",
+        suffix: "IN",
+        startNumber: "ET556973995IN",
+        endNumber: 55697999,
+      })
+    ).toThrow(/must match the series prefix CL/);
+  });
+
   it("rejects a 9-digit number whose check digit is wrong", () => {
     expect(() => parseBarcodeRange({ ...valid, endNumber: 556973996 })).toThrow(/check digit/);
     expect(() => parseBarcodeRange({ ...valid, endNumber: 556973996 })).toThrow(/should be 5/);

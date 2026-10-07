@@ -829,8 +829,8 @@ export type IndiaPostContract = {
 export type IndiaPostBarcodeRange = {
   prefix?: string;
   suffix?: string;
-  startNumber?: number;
-  endNumber?: number;
+  startNumber?: number | string;
+  endNumber?: number | string;
   nextNumber?: number;
   serviceCode?: string | null;
 };
