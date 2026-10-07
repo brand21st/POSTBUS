@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildPostBusTrackingUrl,
   classifySubdomain,
   customerTrackingLink,
   parseTrackingSubdomain,
@@ -72,10 +73,18 @@ describe("customerTrackingLink", () => {
 describe("postbusTrackingLink", () => {
   it("builds the public PostBus tracking page with the article id", () => {
     expect(POSTBUS_PUBLIC_TRACK_URL).toBe("https://www.postbus.in/track");
-    expect(postbusTrackingLink("CL556974704IN")).toBe(
+    expect(buildPostBusTrackingUrl("CL556974704IN")).toBe(
       "https://www.postbus.in/track?tracking=CL556974704IN"
     );
+    expect(postbusTrackingLink("CL556974704IN")).toBe(buildPostBusTrackingUrl("CL556974704IN"));
+    expect(buildPostBusTrackingUrl(" EM123456789IN ")).toBe(
+      "https://www.postbus.in/track?tracking=EM123456789IN"
+    );
+    expect(buildPostBusTrackingUrl("EM123456789IN")).toBe(buildPostBusTrackingUrl("EM123456789IN"));
+    expect(buildPostBusTrackingUrl("")).toBe("https://www.postbus.in/track");
     expect(postbusTrackingLink(null)).toBe("https://www.postbus.in/track");
+    expect(buildPostBusTrackingUrl("CL556974704IN")).not.toContain("localhost");
+    expect(buildPostBusTrackingUrl("CL556974704IN")).not.toContain("indiapost.gov.in");
   });
 });
 

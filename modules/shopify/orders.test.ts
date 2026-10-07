@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { encryptSecret } from "@/lib/security/crypto";
 import {
   canReportShopifyFulfillmentProgress,
+  fulfillShopifyShipment,
   importShopifyWebhookOrder,
   isUnfulfilledShopifyOrder,
   mapShopifyCollectable,
@@ -11,9 +12,12 @@ import {
   parseShopifyProgressReported,
   shopifyCustomerName,
   shopifyFulfillmentEventStatus,
+  shopifyFulfillmentGid,
   shopifyFulfillmentOrderGid,
   shopifyFulfillmentPayload,
+  shopifyNumericId,
   shopifyOrderGid,
+  shopifyTrackingInfo,
   nextShopifyStageTags,
   shopifyOrderNumber,
   shopifyLineItemTitle,
@@ -188,6 +192,8 @@ describe("shopify order mapping", () => {
     expect(canReportShopifyFulfillmentProgress("in_progress")).toBe(true);
     expect(canReportShopifyFulfillmentProgress("closed")).toBe(false);
     expect(shopifyFulfillmentOrderGid(5014440902678)).toBe("gid://shopify/FulfillmentOrder/5014440902678");
+    expect(shopifyFulfillmentGid(3286469410838)).toBe("gid://shopify/Fulfillment/3286469410838");
+    expect(shopifyNumericId("gid://shopify/FulfillmentOrder/11")).toBe(11);
     expect(shopifyOrderGid(18799791538429)).toBe("gid://shopify/Order/18799791538429");
     expect(shopifyOrderGid("gid://shopify/Order/1")).toBe("gid://shopify/Order/1");
     expect(nextShopifyStageTags(["vip", "postbus-booked"], "processing")).toEqual([
@@ -229,16 +235,16 @@ describe("shopify order mapping", () => {
       ],
       trackingNumber: "CL556974704IN",
     });
-    expect(payload.fulfillment.line_items_by_fulfillment_order).toEqual([
-      { fulfillment_order_id: 11 },
-      { fulfillment_order_id: 13 },
+    expect(payload.fulfillment.lineItemsByFulfillmentOrder).toEqual([
+      { fulfillmentOrderId: "gid://shopify/FulfillmentOrder/11" },
+      { fulfillmentOrderId: "gid://shopify/FulfillmentOrder/13" },
     ]);
-    expect(payload.fulfillment.tracking_info).toEqual({
+    expect(payload.fulfillment.trackingInfo).toEqual({
       company: "PostBus",
       number: "CL556974704IN",
       url: "https://www.postbus.in/track?tracking=CL556974704IN",
     });
-    expect(payload.fulfillment.notify_customer).toBe(true);
+    expect(payload.fulfillment.notifyCustomer).toBe(true);
   });
 
   it("always sends the public PostBus tracking page with the article id", () => {
@@ -246,11 +252,32 @@ describe("shopify order mapping", () => {
       fulfillmentOrders: [{ id: 11, status: "open" }],
       trackingNumber: "CL556974704IN",
     });
-    expect(payload.fulfillment.tracking_info.company).toBe("PostBus");
-    expect(payload.fulfillment.tracking_info.url).toBe(
+    expect(payload.fulfillment.trackingInfo?.company).toBe("PostBus");
+    expect(payload.fulfillment.trackingInfo?.number).toBe("CL556974704IN");
+    expect(payload.fulfillment.trackingInfo?.url).toBe(
       "https://www.postbus.in/track?tracking=CL556974704IN"
     );
-    expect(payload.fulfillment.tracking_info.url).not.toContain("indiapost.gov.in");
+    expect(payload.fulfillment.trackingInfo?.url).not.toContain("indiapost.gov.in");
+    expect(payload.fulfillment.trackingInfo?.url).not.toContain("localhost");
+  });
+
+  it("does not invent Shopify tracking info when the AWB is empty", () => {
+    expect(shopifyTrackingInfo("")).toBeNull();
+    expect(shopifyTrackingInfo("   ")).toBeNull();
+    expect(
+      shopifyFulfillmentPayload({
+        fulfillmentOrders: [{ id: 11, status: "open" }],
+        trackingNumber: "",
+      }).fulfillment.trackingInfo
+    ).toBeNull();
+  });
+
+  it("gives each shipment AWB its own PostBus tracking URL", () => {
+    const first = shopifyTrackingInfo("EM123456789IN");
+    const second = shopifyTrackingInfo("CL556974704IN");
+    expect(first?.url).toBe("https://www.postbus.in/track?tracking=EM123456789IN");
+    expect(second?.url).toBe("https://www.postbus.in/track?tracking=CL556974704IN");
+    expect(first?.url).not.toBe(second?.url);
   });
 
   it("is ready to sync when shop domain and app credentials exist", () => {
@@ -1052,5 +1079,192 @@ describe("shopify product shipping hydrate", () => {
       ["ord-1"],
       { enqueueBooking: false, runBookingNow: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
     );
+  });
+});
+
+describe("fulfillShopifyShipment tracking", () => {
+  const postbusUrl = "https://www.postbus.in/track?tracking=EM123456789IN";
+
+  function shipmentClient(tracking: { barcode?: string | null; tracking_number?: string | null }) {
+    return {
+      from: vi.fn((table: string) => {
+        if (table === "shipments") {
+          return query({
+            id: "shp-1",
+            barcode: tracking.barcode ?? null,
+            tracking_number: tracking.tracking_number ?? null,
+            order_id: "ord-1",
+            orders: {
+              id: "ord-1",
+              source: "SHOPIFY",
+              source_order_id: "1042",
+              fulfillment_status: "UNFULFILLED",
+            },
+          });
+        }
+        if (table === "shopify_connections") {
+          return query({
+            shop_domain: "demo.myshopify.com",
+            encrypted_access_token: encryptSecret("shpat_test"),
+          });
+        }
+        if (table === "external_order_references") return query(null);
+        return query({});
+      }),
+    };
+  }
+
+  function graphqlResponse(query: string, variables: Record<string, unknown>, mode: "create" | "retry" | "update") {
+    if (query.includes("ShopifyOrderFulfillmentOrders")) {
+      const status = mode === "update" ? "CLOSED" : "OPEN";
+      return {
+        data: {
+          order: {
+            tags: ["vip"],
+            displayFulfillmentStatus: mode === "create" ? "UNFULFILLED" : "FULFILLED",
+            fulfillmentOrders: { nodes: [{ id: "gid://shopify/FulfillmentOrder/11", status }] },
+          },
+        },
+      };
+    }
+    if (query.includes("fulfillmentCreate")) {
+      if (mode === "retry") {
+        return {
+          data: {
+            fulfillmentCreate: {
+              fulfillment: null,
+              userErrors: [{ field: ["fulfillment"], message: "The fulfillment order is already closed." }],
+            },
+          },
+        };
+      }
+      expect(variables.fulfillment.trackingInfo).toEqual({
+        company: "PostBus",
+        number: "EM123456789IN",
+        url: postbusUrl,
+      });
+      expect(JSON.stringify(variables)).not.toContain("indiapost.gov.in");
+      return {
+        data: {
+          fulfillmentCreate: {
+            fulfillment: {
+              id: "gid://shopify/Fulfillment/99",
+              status: "SUCCESS",
+              trackingInfo: [{ company: "PostBus", number: "EM123456789IN", url: postbusUrl }],
+            },
+            userErrors: [],
+          },
+        },
+      };
+    }
+    if (query.includes("ShopifyOrderFulfillments")) {
+      return { data: { order: { id: "gid://shopify/Order/1042", fulfillments: [{ id: "gid://shopify/Fulfillment/99", createdAt: "2026-10-08T00:00:00Z" }] } } };
+    }
+    if (query.includes("fulfillmentTrackingInfoUpdate")) {
+      expect(variables.trackingInfoInput).toEqual({
+        company: "PostBus",
+        number: "EM123456789IN",
+        url: postbusUrl,
+      });
+      expect(JSON.stringify(variables)).not.toContain("indiapost.gov.in");
+      return {
+        data: {
+          fulfillmentTrackingInfoUpdate: {
+            fulfillment: {
+              id: "gid://shopify/Fulfillment/99",
+              status: "SUCCESS",
+              trackingInfo: [{ company: "PostBus", number: "EM123456789IN", url: postbusUrl }],
+            },
+            userErrors: [],
+          },
+        },
+      };
+    }
+    if (query.includes("orderUpdate")) {
+      return { data: { orderUpdate: { order: { id: "gid://shopify/Order/1042", tags: ["vip", "postbus-booked"] }, userErrors: [] } } };
+    }
+    return { data: {} };
+  }
+
+  it("creates a Shopify fulfillment with the India Post AWB and PostBus URL", async () => {
+    const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: Record<string, unknown> };
+      calls.push({ query: body.query ?? "", variables: body.variables ?? {} });
+      return new Response(JSON.stringify(graphqlResponse(body.query ?? "", body.variables ?? {}, "create")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    try {
+      const result = await fulfillShopifyShipment(shipmentClient({ barcode: "EM123456789IN" }) as never, {
+        organizationId: "org-1",
+        shipmentId: "shp-1",
+      });
+      expect(result).toEqual({ skipped: false, fulfilled: true });
+      expect(calls.some((call) => call.query.includes("fulfillmentCreate"))).toBe(true);
+      expect(calls.every((call) => !JSON.stringify(call.variables).includes("indiapost.gov.in"))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("skips Shopify fulfillment when the AWB is missing", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("Shopify should not be called without an AWB");
+    });
+    try {
+      const result = await fulfillShopifyShipment(shipmentClient({ barcode: null, tracking_number: "  " }) as never, {
+        organizationId: "org-1",
+        shipmentId: "shp-1",
+      });
+      expect(result).toEqual({ skipped: true, reason: "no_barcode" });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("updates existing tracking instead of creating a duplicate fulfillment", async () => {
+    const created: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: Record<string, unknown> };
+      if (body.query?.includes("fulfillmentCreate")) created.push("create");
+      if (body.query?.includes("fulfillmentTrackingInfoUpdate")) created.push("update");
+      return new Response(JSON.stringify(graphqlResponse(body.query ?? "", body.variables ?? {}, "retry")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    try {
+      const result = await fulfillShopifyShipment(shipmentClient({ barcode: "EM123456789IN" }) as never, {
+        organizationId: "org-1",
+        shipmentId: "shp-1",
+      });
+      expect(result.fulfilled).toBe(true);
+      expect(created.filter((item) => item === "create")).toHaveLength(1);
+      expect(created.filter((item) => item === "update")).toHaveLength(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("keeps the PostBus tracking URL when updating an existing fulfillment", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: Record<string, unknown> };
+      return new Response(JSON.stringify(graphqlResponse(body.query ?? "", body.variables ?? {}, "update")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    try {
+      const result = await fulfillShopifyShipment(shipmentClient({ tracking_number: "EM123456789IN" }) as never, {
+        organizationId: "org-1",
+        shipmentId: "shp-1",
+      });
+      expect(result.fulfilled).toBe(true);
+      expect(result.skipped).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

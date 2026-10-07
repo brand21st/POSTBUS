@@ -8,7 +8,7 @@ import {
   shopifyWebhookUrl,
   type ShopifyCredentialRow,
 } from "@/modules/shopify/oauth";
-import { postbusTrackingLink } from "@/modules/tracking-pages/host";
+import { buildPostBusTrackingUrl } from "@/modules/tracking-pages/host";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { settleOrderPayment } from "@/modules/orders/payment";
@@ -48,6 +48,49 @@ export const SHOPIFY_ORDER_UPDATE = `
     orderUpdate(input: $input) {
       order { id tags displayFulfillmentStatus }
       userErrors { field message }
+    }
+  }
+`;
+export const SHOPIFY_FULFILLMENT_CREATE = `
+  mutation ShopifyFulfillmentCreate($fulfillment: FulfillmentInput!) {
+    fulfillmentCreate(fulfillment: $fulfillment) {
+      fulfillment {
+        id
+        status
+        trackingInfo { company number url }
+      }
+      userErrors { field message }
+    }
+  }
+`;
+export const SHOPIFY_FULFILLMENT_TRACKING_INFO_UPDATE = `
+  mutation ShopifyFulfillmentTrackingInfoUpdate(
+    $fulfillmentId: ID!
+    $trackingInfoInput: FulfillmentTrackingInput!
+    $notifyCustomer: Boolean
+  ) {
+    fulfillmentTrackingInfoUpdate(
+      fulfillmentId: $fulfillmentId
+      trackingInfoInput: $trackingInfoInput
+      notifyCustomer: $notifyCustomer
+    ) {
+      fulfillment {
+        id
+        status
+        trackingInfo { company number url }
+      }
+      userErrors { field message }
+    }
+  }
+`;
+export const SHOPIFY_ORDER_FULFILLMENTS = `
+  query ShopifyOrderFulfillments($id: ID!) {
+    order(id: $id) {
+      id
+      fulfillments(first: 50) {
+        id
+        createdAt
+      }
     }
   }
 `;
@@ -528,6 +571,18 @@ export function nextShopifyOrderStatus(input: {
 export function shopifyFulfillmentOrderGid(id: number | string) {
   const raw = String(id);
   return raw.startsWith("gid://") ? raw : `gid://shopify/FulfillmentOrder/${raw}`;
+}
+
+export function shopifyFulfillmentGid(id: number | string) {
+  const raw = String(id);
+  return raw.startsWith("gid://") ? raw : `gid://shopify/Fulfillment/${raw}`;
+}
+
+export function shopifyNumericId(id: number | string) {
+  const raw = String(id).trim();
+  const fromGid = raw.match(/\/(\d+)\s*$/);
+  const value = fromGid ? Number(fromGid[1]) : Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 export function shopifyOrderGid(id: number | string) {
@@ -1270,11 +1325,27 @@ function asRecord<T extends object>(value: T | T[] | null | undefined): T | null
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
-export function shopifyTrackingInfo(articleId: string) {
+export type ShopifyTrackingInfo = {
+  company: string;
+  number: string;
+  url: string;
+};
+
+function isAlreadyFulfilledShopifyMessage(message: string) {
+  return /already fulfilled|already closed|closed|no remaining|fulfillment order.*closed/i.test(message);
+}
+
+export function shopifyTrackingInfo(articleId: string): ShopifyTrackingInfo | null {
+  const number = articleId.trim();
+  if (!number) return null;
+  const url = buildPostBusTrackingUrl(number);
+  if (!url.startsWith("https://www.postbus.in/track") || url.includes("indiapost.gov.in")) {
+    return null;
+  }
   return {
     company: POSTBUS_TRACKING_COMPANY,
-    number: articleId,
-    url: postbusTrackingLink(articleId),
+    number,
+    url,
   };
 }
 
@@ -1283,21 +1354,59 @@ export function shopifyFulfillmentPayload(input: {
   trackingNumber: string;
   notifyCustomer?: boolean;
 }) {
+  const trackingInfo = shopifyTrackingInfo(input.trackingNumber);
   const lineItemsByFulfillmentOrder = input.fulfillmentOrders
     .filter((order) => {
       const status = (order.status || "open").toLowerCase();
       return status === "open" || status === "in_progress";
     })
-    .map((order) => ({ fulfillment_order_id: Number(order.id) }))
-    .filter((row) => Number.isFinite(row.fulfillment_order_id) && row.fulfillment_order_id > 0);
+    .map((order) => ({ fulfillmentOrderId: shopifyFulfillmentOrderGid(order.id) }))
+    .filter((row) => Boolean(shopifyNumericId(row.fulfillmentOrderId)));
 
   return {
     fulfillment: {
-      line_items_by_fulfillment_order: lineItemsByFulfillmentOrder,
-      tracking_info: shopifyTrackingInfo(input.trackingNumber),
-      notify_customer: input.notifyCustomer !== false,
+      lineItemsByFulfillmentOrder,
+      trackingInfo,
+      notifyCustomer: input.notifyCustomer !== false,
     },
   };
+}
+
+function restShopifyFulfillmentBody(payload: ReturnType<typeof shopifyFulfillmentPayload>) {
+  return {
+    fulfillment: {
+      line_items_by_fulfillment_order: payload.fulfillment.lineItemsByFulfillmentOrder
+        .map((row) => ({ fulfillment_order_id: shopifyNumericId(row.fulfillmentOrderId) }))
+        .filter((row): row is { fulfillment_order_id: number } => row.fulfillment_order_id != null),
+      tracking_info: payload.fulfillment.trackingInfo,
+      notify_customer: payload.fulfillment.notifyCustomer,
+    },
+  };
+}
+
+async function latestShopifyFulfillmentGid(shop: string, token: string, sourceOrderId: string) {
+  const result = await shopifyGraphql<{
+    order?: { fulfillments?: Array<{ id?: string | null; createdAt?: string | null }> | null };
+  }>(shop, token, SHOPIFY_ORDER_FULFILLMENTS, { id: shopifyOrderGid(sourceOrderId) });
+  if (result.ok) {
+    const latest = [...(result.json.data?.order?.fulfillments ?? [])]
+      .filter((row): row is { id: string; createdAt?: string | null } => Boolean(row?.id))
+      .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))[0];
+    if (latest?.id) return latest.id;
+  }
+
+  const listRes = await shopifyRequest(
+    shop,
+    token,
+    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillments.json`
+  );
+  if (!listRes.ok) return null;
+  const json = (await listRes.json()) as { fulfillments?: Array<{ id?: number | string }> };
+  const latestNumeric = [...(json.fulfillments ?? [])]
+    .map((row) => shopifyNumericId(row.id ?? ""))
+    .filter((id): id is number => id != null)
+    .sort((a, b) => b - a)[0];
+  return latestNumeric ? shopifyFulfillmentGid(latestNumeric) : null;
 }
 
 async function updateExistingShopifyTracking(
@@ -1306,24 +1415,34 @@ async function updateExistingShopifyTracking(
   sourceOrderId: string,
   articleId: string
 ) {
-  const listRes = await shopifyRequest(
-    shop,
-    token,
-    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillments.json`
-  );
-  if (!listRes.ok) return false;
-  const json = (await listRes.json()) as { fulfillments?: Array<{ id?: number | string }> };
-  const latest = [...(json.fulfillments ?? [])]
-    .map((row) => Number(row.id))
-    .filter((id) => Number.isFinite(id) && id > 0)
-    .sort((a, b) => b - a)[0];
-  if (!latest) return false;
-  const updateRes = await shopifyRequest(shop, token, `/fulfillments/${latest}/update_tracking.json`, {
+  const trackingInfo = shopifyTrackingInfo(articleId);
+  if (!trackingInfo) return false;
+  const fulfillmentId = await latestShopifyFulfillmentGid(shop, token, sourceOrderId);
+  if (!fulfillmentId) return false;
+
+  const result = await shopifyGraphql<{
+    fulfillmentTrackingInfoUpdate?: {
+      fulfillment?: { id?: string | null } | null;
+      userErrors?: Array<{ message?: string }>;
+    };
+  }>(shop, token, SHOPIFY_FULFILLMENT_TRACKING_INFO_UPDATE, {
+    fulfillmentId,
+    trackingInfoInput: trackingInfo,
+    notifyCustomer: true,
+  });
+  const payload = result.json.data?.fulfillmentTrackingInfoUpdate;
+  if (result.ok && payload?.fulfillment?.id && !payload.userErrors?.length) {
+    return true;
+  }
+
+  const numericId = shopifyNumericId(fulfillmentId);
+  if (!numericId) return false;
+  const updateRes = await shopifyRequest(shop, token, `/fulfillments/${numericId}/update_tracking.json`, {
     method: "POST",
     body: JSON.stringify({
       fulfillment: {
         notify_customer: true,
-        tracking_info: shopifyTrackingInfo(articleId),
+        tracking_info: trackingInfo,
       },
     }),
   });
@@ -1729,60 +1848,90 @@ export async function fulfillShopifyShipment(
   const token = await resolveShopifyAdminToken(connection);
   if (!shop || !token) return { skipped: true, reason: "shopify_not_connected" };
 
-  const fulfillmentOrdersRes = await shopifyRequest(
-    shop,
-    token,
-    `/orders/${encodeURIComponent(sourceOrderId)}/fulfillment_orders.json`
-  );
-  if (fulfillmentOrdersRes.status === 404) {
-    return { skipped: true, reason: "shopify_order_missing" };
-  }
-  if (!fulfillmentOrdersRes.ok) {
-    throw Object.assign(
-      new Error(`Shopify fulfillment orders failed (${fulfillmentOrdersRes.status}).`),
-      { code: "PROVIDER_ERROR" }
-    );
-  }
+  const trackingInfo = shopifyTrackingInfo(tracking);
+  if (!trackingInfo) return { skipped: true, reason: "no_barcode" };
 
-  const fulfillmentOrdersJson = (await fulfillmentOrdersRes.json()) as {
-    fulfillment_orders?: ShopifyFulfillmentOrder[];
-  };
-  const payload = shopifyFulfillmentPayload({
-    fulfillmentOrders: fulfillmentOrdersJson.fulfillment_orders ?? [],
-    trackingNumber: tracking,
-  });
-
-  if (!payload.fulfillment.line_items_by_fulfillment_order.length) {
-    const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
-    await markOrderFulfilled(supabase, order.id);
-    await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
-    return updated
-      ? { skipped: false, fulfilled: true }
-      : { skipped: true, reason: "no_open_fulfillment_orders", fulfilled: true };
-  }
-
-  const createRes = await shopifyRequest(shop, token, "/fulfillments.json", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  if (!createRes.ok) {
-    const body = await createRes.text();
-    if (createRes.status === 422 && /already fulfilled|closed|no remaining/i.test(body)) {
-      const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
-      await markOrderFulfilled(supabase, order.id);
-      await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
-      return updated
-        ? { skipped: false, fulfilled: true }
-        : { skipped: true, reason: "already_fulfilled_remote", fulfilled: true };
+  const context = await loadShopifyOrderFulfillmentContext(shop, token, sourceOrderId);
+  if (!context.fulfillmentOrders.length && "reason" in context && context.reason) {
+    if (String(context.reason).includes("404")) {
+      return { skipped: true, reason: "shopify_order_missing" };
     }
-    throw Object.assign(new Error(`Shopify fulfillment failed (${createRes.status}).`), {
+    throw Object.assign(new Error(`Shopify fulfillment orders failed (${context.reason}).`), {
       code: "PROVIDER_ERROR",
     });
   }
 
-  await markOrderFulfilled(supabase, order.id);
-  await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
-  return { skipped: false, fulfilled: true };
+  const payload = shopifyFulfillmentPayload({
+    fulfillmentOrders: context.fulfillmentOrders,
+    trackingNumber: tracking,
+  });
+  if (!payload.fulfillment.trackingInfo) return { skipped: true, reason: "no_barcode" };
+
+  async function finishShopifyFulfillment(updated: boolean, reason?: string) {
+    await markOrderFulfilled(supabase, order.id);
+    await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
+    return updated
+      ? { skipped: false, fulfilled: true }
+      : { skipped: true, reason: reason ?? "already_fulfilled_remote", fulfilled: true };
+  }
+
+  if (!payload.fulfillment.lineItemsByFulfillmentOrder.length) {
+    const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
+    return finishShopifyFulfillment(updated, "no_open_fulfillment_orders");
+  }
+
+  const createResult = await shopifyGraphql<{
+    fulfillmentCreate?: {
+      fulfillment?: {
+        id?: string | null;
+        trackingInfo?: Array<{ number?: string | null; url?: string | null; company?: string | null }>;
+      } | null;
+      userErrors?: Array<{ message?: string }>;
+    };
+  }>(shop, token, SHOPIFY_FULFILLMENT_CREATE, { fulfillment: payload.fulfillment });
+  const created = createResult.json.data?.fulfillmentCreate;
+  const userErrors = created?.userErrors ?? [];
+  const userErrorMessage = userErrors.map((error) => error.message ?? "").join(" ");
+
+  if (createResult.ok && created?.fulfillment?.id && !userErrors.length) {
+    await markOrderFulfilled(supabase, order.id);
+    await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
+    return { skipped: false, fulfilled: true };
+  }
+
+  if (userErrors.length && userErrors.every((error) => isAlreadyFulfilledShopifyMessage(error.message ?? ""))) {
+    const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
+    return finishShopifyFulfillment(updated, "already_fulfilled_remote");
+  }
+
+  if (!createResult.ok || userErrors.length) {
+    const restBody = restShopifyFulfillmentBody(payload);
+    if (restBody.fulfillment.line_items_by_fulfillment_order.length && restBody.fulfillment.tracking_info) {
+      const createRes = await shopifyRequest(shop, token, "/fulfillments.json", {
+        method: "POST",
+        body: JSON.stringify(restBody),
+      });
+      if (createRes.ok) {
+        await markOrderFulfilled(supabase, order.id);
+        await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
+        return { skipped: false, fulfilled: true };
+      }
+      const body = await createRes.text();
+      if (createRes.status === 422 && isAlreadyFulfilledShopifyMessage(body)) {
+        const updated = await updateExistingShopifyTracking(shop, token, sourceOrderId, tracking);
+        return finishShopifyFulfillment(updated, "already_fulfilled_remote");
+      }
+    }
+    const message =
+      userErrorMessage ||
+      createResult.json.errors?.[0]?.message ||
+      "Shopify fulfillmentCreate failed.";
+    throw Object.assign(new Error(message), { code: "PROVIDER_ERROR" });
+  }
+
+  throw Object.assign(new Error("Shopify fulfillmentCreate returned no fulfillment."), {
+    code: "PROVIDER_ERROR",
+  });
 }
 
 export async function registerShopifyOrderWebhooks(shop: string, token: string) {

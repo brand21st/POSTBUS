@@ -105,10 +105,14 @@ export function customerTrackingLink(publicUrl: string, trackingId: string) {
   return url.toString();
 }
 
-export function postbusTrackingLink(trackingNumber?: string | null) {
+export function buildPostBusTrackingUrl(trackingNumber?: string | null) {
   const id = trackingNumber?.trim();
   if (!id) return POSTBUS_PUBLIC_TRACK_URL;
   return customerTrackingLink(POSTBUS_PUBLIC_TRACK_URL, id);
+}
+
+export function postbusTrackingLink(trackingNumber?: string | null) {
+  return buildPostBusTrackingUrl(trackingNumber);
 }
 
 export function trackingPagePublicUrl(subdomain: string) {
