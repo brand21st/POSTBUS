@@ -339,7 +339,7 @@ describe("POST integrations/india-post connect:false", () => {
     expect(db.barcodeInserts).toEqual([]);
   });
 
-  it("stores the 8-digit serial when the range is pasted as 13-character articles", async () => {
+  it("stores the 8-digit serial when the range is pasted as 9-digit allotment numbers", async () => {
     const db = saveDb([], null);
     const request = new NextRequest("http://localhost/api/v1/integrations/india-post", {
       method: "POST",
@@ -351,8 +351,8 @@ describe("POST integrations/india-post connect:false", () => {
         barcodeRange: {
           prefix: "CL",
           suffix: "IN",
-          startNumber: "CL556973995IN",
-          endNumber: "CL556979998IN",
+          startNumber: "556973995",
+          endNumber: "556979998",
           serviceCode: null,
         },
       }),

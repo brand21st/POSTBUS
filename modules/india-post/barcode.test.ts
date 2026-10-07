@@ -6,8 +6,10 @@ import {
   indiaPostAcceptedArticleId,
   indiaPostPublicTrackingUrl,
   isCeptUatTestSeries,
+  formatAllotmentNumber,
   nextSerialForSavedRange,
   parseBarcodeRange,
+  sanitizeBarcodeAllotmentField,
   isValidIndiaPostS10,
 } from "@/modules/india-post/barcode";
 
@@ -102,28 +104,21 @@ describe("parseBarcodeRange", () => {
         endNumber: "556979998",
       })
     ).toMatchObject({ startNumber: 55697399, endNumber: 55697999 });
+    expect(formatAllotmentNumber(55697399)).toBe("556973995");
+    expect(formatAllotmentNumber(55697999)).toBe("556979998");
   });
 
-  it("accepts a 13-character article number and stores the 8-digit serial", () => {
-    expect(
-      parseBarcodeRange({
-        prefix: "CL",
-        suffix: "IN",
-        startNumber: "cl556973995in",
-        endNumber: "CL556979998IN",
-      })
-    ).toMatchObject({ startNumber: 55697399, endNumber: 55697999 });
-  });
-
-  it("rejects a 13-character article whose prefix does not match the series", () => {
+  it("rejects letters and numbers longer than nine digits", () => {
     expect(() =>
       parseBarcodeRange({
         prefix: "CL",
         suffix: "IN",
-        startNumber: "ET556973995IN",
-        endNumber: 55697999,
+        startNumber: "CL556973995IN",
+        endNumber: "556979998",
       })
-    ).toThrow(/must match the series prefix CL/);
+    ).toThrow(/whole number/);
+    expect(sanitizeBarcodeAllotmentField("5330360100000")).toBe("533036010");
+    expect(sanitizeBarcodeAllotmentField("CL533036015IN")).toBe("533036015");
   });
 
   it("rejects a 9-digit number whose check digit is wrong", () => {

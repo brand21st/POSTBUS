@@ -22,6 +22,7 @@ export type BarcodeRange = {
  * CEPT writes allotted ranges as ET21433001XIN — the X is this check digit.
  */
 export const BARCODE_SERIAL_DIGITS = 8;
+export const BARCODE_ALLOTMENT_DIGITS = 9;
 export const BARCODE_ARTICLE_LENGTH = 13;
 const PREFIX_PATTERN = /^[A-Z]{2}$/;
 const SUFFIX_PATTERN = /^[A-Z]{2}$/;
@@ -29,9 +30,9 @@ const S10_ARTICLE = /^[A-Z]{2}[0-9]{9}[A-Z]{2}$/;
 const MAX_NUMBER = 10 ** BARCODE_SERIAL_DIGITS - 1;
 const S10_WEIGHTS = [8, 6, 4, 2, 3, 5, 9, 7];
 
-/** Start/end fields accept an 8-digit serial, 9-digit allotment, or 13-character S10 article. */
+/** Start/end fields accept digits only: 8-digit serial or 9-digit allotment (serial + check digit). */
 export function sanitizeBarcodeAllotmentField(value: string) {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, BARCODE_ARTICLE_LENGTH);
+  return value.replace(/\D/g, "").slice(0, BARCODE_ALLOTMENT_DIGITS);
 }
 
 export function indiaPostS10CheckDigit(serialEightDigits: string) {
@@ -52,47 +53,35 @@ export function formatBarcode(prefix: string, serialNumber: number, suffix: stri
   return `${prefix}${serial}${indiaPostS10CheckDigit(serial)}${suffix}`;
 }
 
+/** Nine-digit allotment India Post prints: 8-digit serial plus check digit. */
+export function formatAllotmentNumber(serialNumber: number) {
+  const serial = String(serialNumber).padStart(BARCODE_SERIAL_DIGITS, "0");
+  return `${serial}${indiaPostS10CheckDigit(serial)}`;
+}
+
 /**
- * An allotment may be the 8-digit serial, the 9-digit number India Post prints
- * (serial plus check digit), or the full 13-character article (CL556973995IN).
- * Either way the stored value is the 8-digit serial.
+ * An allotment is the 8-digit serial or the 9-digit number India Post prints
+ * (serial plus check digit). The stored value is always the 8-digit serial.
  */
-function serialFromAllotment(name: string, raw: number | string, prefix: string, suffix: string) {
+function serialFromAllotment(name: string, raw: number | string) {
   const text = String(raw ?? "")
     .trim()
-    .toUpperCase()
     .replace(/\s+/g, "");
   if (!text) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${name} must be a whole number above zero.`);
   }
 
-  if (S10_ARTICLE.test(text)) {
-    if (text.slice(0, 2) !== prefix) {
-      throw new AppError(
-        ERROR_CODES.VALIDATION_ERROR,
-        `${name} article prefix ${text.slice(0, 2)} must match the series prefix ${prefix}.`
-      );
-    }
-    if (text.slice(11) !== suffix) {
-      throw new AppError(
-        ERROR_CODES.VALIDATION_ERROR,
-        `${name} article suffix must be ${suffix}.`
-      );
-    }
-    return serialFromNineDigitAllotment(name, text.slice(2, 11));
-  }
-
   if (!/^\d+$/.test(text)) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${name} must be a whole number above zero.`);
   }
-  if (text.length > BARCODE_SERIAL_DIGITS + 1) {
+  if (text.length > BARCODE_ALLOTMENT_DIGITS) {
     throw new AppError(
       ERROR_CODES.VALIDATION_ERROR,
-      `${name} cannot be longer than ${BARCODE_SERIAL_DIGITS + 1} digits.`
+      `${name} cannot be longer than ${BARCODE_ALLOTMENT_DIGITS} digits.`
     );
   }
 
-  if (text.length === BARCODE_SERIAL_DIGITS + 1) {
+  if (text.length === BARCODE_ALLOTMENT_DIGITS) {
     return serialFromNineDigitAllotment(name, text);
   }
 
@@ -136,8 +125,8 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
     );
   }
 
-  const startNumber = serialFromAllotment("Start number", input.startNumber, prefix, suffix);
-  const endNumber = serialFromAllotment("End number", input.endNumber, prefix, suffix);
+  const startNumber = serialFromAllotment("Start number", input.startNumber);
+  const endNumber = serialFromAllotment("End number", input.endNumber);
 
   if (endNumber < startNumber) {
     throw new AppError(

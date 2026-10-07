@@ -21,10 +21,10 @@ import {
 } from "@/components/ui/select";
 import { formatDate, formatNumber } from "@/lib/format";
 import {
-  BARCODE_ARTICLE_LENGTH,
+  BARCODE_ALLOTMENT_DIGITS,
   barcodeStockForService,
   barcodesLeft,
-  normalizeIndiaPostArticleId,
+  formatAllotmentNumber,
   sanitizeBarcodeAllotmentField,
 } from "@/modules/india-post/barcode";
 import { api } from "@/lib/hooks/use-api";
@@ -150,8 +150,14 @@ export default function IndiaPostPage() {
         savedRange === ANY_SERVICE || knownService.has(savedRange) ? savedRange : ANY_SERVICE,
       prefix: String(config.barcodeRange?.prefix ?? ""),
       suffix: String(config.barcodeRange?.suffix ?? "IN"),
-      startNumber: config.barcodeRange?.startNumber != null ? String(config.barcodeRange.startNumber) : "",
-      endNumber: config.barcodeRange?.endNumber != null ? String(config.barcodeRange.endNumber) : "",
+      startNumber:
+        config.barcodeRange?.startNumber != null
+          ? formatAllotmentNumber(Number(config.barcodeRange.startNumber))
+          : "",
+      endNumber:
+        config.barcodeRange?.endNumber != null
+          ? formatAllotmentNumber(Number(config.barcodeRange.endNumber))
+          : "",
     }));
   }, [config]);
 
@@ -181,8 +187,14 @@ export default function IndiaPostPage() {
     const savedRange = config.barcodeRange?.serviceCode ?? ANY_SERVICE;
     const savedPrefix = String(config.barcodeRange?.prefix ?? "");
     const savedSuffix = String(config.barcodeRange?.suffix ?? "IN");
-    const savedStart = config.barcodeRange?.startNumber != null ? String(config.barcodeRange.startNumber) : "";
-    const savedEnd = config.barcodeRange?.endNumber != null ? String(config.barcodeRange.endNumber) : "";
+    const savedStart =
+      config.barcodeRange?.startNumber != null
+        ? formatAllotmentNumber(Number(config.barcodeRange.startNumber))
+        : "";
+    const savedEnd =
+      config.barcodeRange?.endNumber != null
+        ? formatAllotmentNumber(Number(config.barcodeRange.endNumber))
+        : "";
     const savedDefault = config.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
     if (form.environment !== (config.environment ?? DEFAULT_PROVIDER_ENVIRONMENT)) return true;
     if (form.customerId !== savedCustomer) return true;
@@ -463,19 +475,16 @@ export default function IndiaPostPage() {
               isDefault: snapshot.defaultServiceCode === service.code,
             };
           }),
-          barcodeRange: (() => {
-            const startArticle = normalizeIndiaPostArticleId(snapshot.startNumber);
-            const prefix = snapshot.prefix.trim() || startArticle.slice(0, 2);
-            if (!prefix) return undefined;
-            return {
-              prefix,
-              suffix: snapshot.suffix.trim() || startArticle.slice(11) || "IN",
-              startNumber: snapshot.startNumber.trim(),
-              endNumber: snapshot.endNumber.trim(),
-              serviceCode:
-                snapshot.rangeServiceCode === ANY_SERVICE ? null : snapshot.rangeServiceCode,
-            };
-          })(),
+          barcodeRange: snapshot.prefix.trim()
+            ? {
+                prefix: snapshot.prefix.trim(),
+                suffix: snapshot.suffix.trim() || "IN",
+                startNumber: snapshot.startNumber.trim(),
+                endNumber: snapshot.endNumber.trim(),
+                serviceCode:
+                  snapshot.rangeServiceCode === ANY_SERVICE ? null : snapshot.rangeServiceCode,
+              }
+            : undefined,
         }),
       });
     },
@@ -662,15 +671,7 @@ export default function IndiaPostPage() {
   }
 
   function applyAllotmentField(field: "startNumber" | "endNumber", value: string) {
-    const next = sanitizeBarcodeAllotmentField(value);
-    const article = normalizeIndiaPostArticleId(next);
-    setForm((current) => ({
-      ...current,
-      [field]: next,
-      ...(article && !current.prefix.trim()
-        ? { prefix: article.slice(0, 2), suffix: article.slice(11) || current.suffix }
-        : {}),
-    }));
+    setForm((current) => ({ ...current, [field]: sanitizeBarcodeAllotmentField(value) }));
   }
 
   function setContract(serviceCode: string, contractId: string) {
@@ -1043,15 +1044,17 @@ export default function IndiaPostPage() {
             <Field
               label="Start number"
               value={form.startNumber}
-              placeholder="CL556973995IN"
-              maxLength={BARCODE_ARTICLE_LENGTH}
+              placeholder="556973995"
+              maxLength={BARCODE_ALLOTMENT_DIGITS}
+              inputMode="numeric"
               onChange={(value) => applyAllotmentField("startNumber", value)}
             />
             <Field
               label="End number"
               value={form.endNumber}
-              placeholder="CL556979998IN"
-              maxLength={BARCODE_ARTICLE_LENGTH}
+              placeholder="556979998"
+              maxLength={BARCODE_ALLOTMENT_DIGITS}
+              inputMode="numeric"
               onChange={(value) => applyAllotmentField("endNumber", value)}
             />
           </CardContent>
@@ -1198,6 +1201,7 @@ function Field({
   placeholder,
   hint,
   maxLength,
+  inputMode,
 }: {
   label: string;
   value: string;
@@ -1208,6 +1212,7 @@ function Field({
   placeholder?: string;
   hint?: string;
   maxLength?: number;
+  inputMode?: "numeric" | "text" | "tel";
 }) {
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = type === "password";
@@ -1222,6 +1227,7 @@ function Field({
           placeholder={placeholder}
           autoComplete={autoComplete}
           maxLength={maxLength}
+          inputMode={inputMode}
           className={isPassword ? "pr-11" : undefined}
           onChange={(event) => onChange(event.target.value)}
           onBlur={onBlur ? (event) => onBlur(event.target.value) : undefined}
