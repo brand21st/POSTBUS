@@ -3,6 +3,7 @@ import {
   collectDashboardAlerts,
   collectNewShopifyOrderAlerts,
   isDashboardAlertNotification,
+  isNewOrderCreatedNotification,
   isShopifyOrderNotification,
   SHOPIFY_ORDER_NOTIFICATION,
   WHATSAPP_ORDER_NOTIFICATION,
@@ -17,6 +18,14 @@ describe("shopify order notifications", () => {
     expect(isShopifyOrderNotification(SHOPIFY_ORDER_NOTIFICATION)).toBe(true);
     expect(isShopifyOrderNotification("shipment.failed")).toBe(false);
     expect(isShopifyOrderNotification(null)).toBe(false);
+  });
+
+  it("recognizes new-order created notifications", () => {
+    expect(isNewOrderCreatedNotification(SHOPIFY_ORDER_NOTIFICATION)).toBe(true);
+    expect(isNewOrderCreatedNotification(WHATSAPP_ORDER_NOTIFICATION)).toBe(true);
+    expect(isNewOrderCreatedNotification("order.processing")).toBe(false);
+    expect(isNewOrderCreatedNotification(LABELS_READY_NOTIFICATION)).toBe(false);
+    expect(isNewOrderCreatedNotification(null)).toBe(false);
   });
 
   it("alerts only on unseen Shopify orders created after the listener started", () => {

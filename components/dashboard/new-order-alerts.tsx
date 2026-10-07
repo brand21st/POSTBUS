@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { BellRing, CircleCheck, X } from "lucide-react";
 import { useNotifications } from "@/lib/hooks/use-notifications";
 import {
   playDashboardAlertSound,
   unlockNewOrderSound,
   collectDashboardAlerts,
+  isNewOrderCreatedNotification,
   LABELS_READY_NOTIFICATION,
   TRACKING_HOST_LIVE_NOTIFICATION,
 } from "@/lib/notifications/new-order";
@@ -29,8 +31,15 @@ function actionLabel(item: NotificationRecord) {
   return item.type === LABELS_READY_NOTIFICATION ? "View labels" : "View order";
 }
 
+function refreshOrdersIfCreated(queryClient: QueryClient, types: Array<string | null | undefined>) {
+  if (!types.some((type) => isNewOrderCreatedNotification(type))) return;
+  void queryClient.invalidateQueries({ queryKey: ["orders"] });
+  void queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+}
+
 export function NewOrderAlerts() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const notifications = useNotifications();
   const seen = useRef(new Set<string>());
   const primed = useRef(false);
@@ -42,10 +51,14 @@ export function NewOrderAlerts() {
       if (!Array.isArray(detail) || !detail.length) return;
       setAlerts(detail);
       void playDashboardAlertSound(detail.map((item) => item.type));
+      refreshOrdersIfCreated(
+        queryClient,
+        detail.map((item) => item.type)
+      );
     }
     window.addEventListener("postbus:new-shopify-orders", onIncoming);
     return () => window.removeEventListener("postbus:new-shopify-orders", onIncoming);
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     function unlock() {
@@ -70,6 +83,10 @@ export function NewOrderAlerts() {
     if (!incoming.length) return;
     setAlerts(incoming);
     void playDashboardAlertSound(incoming.map((item) => item.type));
+    refreshOrdersIfCreated(
+      queryClient,
+      incoming.map((item) => item.type)
+    );
     if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
       const first = incoming[0];
       new Notification(
@@ -83,7 +100,7 @@ export function NewOrderAlerts() {
         }
       );
     }
-  }, [notifications.items, notifications.isFetched]);
+  }, [notifications.items, notifications.isFetched, queryClient]);
 
   useEffect(() => {
     if (!alerts.length) return;

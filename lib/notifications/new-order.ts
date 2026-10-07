@@ -20,6 +20,10 @@ export function isShopifyOrderNotification(type?: string | null) {
   return type === SHOPIFY_ORDER_NOTIFICATION;
 }
 
+export function isNewOrderCreatedNotification(type?: string | null) {
+  return type === SHOPIFY_ORDER_NOTIFICATION || type === WHATSAPP_ORDER_NOTIFICATION;
+}
+
 export function isDashboardAlertNotification(type?: string | null) {
   return Boolean(type && DASHBOARD_ALERT_TYPES.has(type));
 }
