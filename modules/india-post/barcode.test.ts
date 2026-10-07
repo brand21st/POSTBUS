@@ -6,6 +6,7 @@ import {
   indiaPostAcceptedArticleId,
   indiaPostPublicTrackingUrl,
   isCeptUatTestSeries,
+  nextSerialForSavedRange,
   parseBarcodeRange,
   isValidIndiaPostS10,
 } from "@/modules/india-post/barcode";
@@ -138,6 +139,26 @@ describe("parseBarcodeRange", () => {
     expect(() => parseBarcodeRange({ ...valid, startNumber: 500, endNumber: 400 })).toThrow(
       /same as or above/
     );
+  });
+});
+
+describe("nextSerialForSavedRange", () => {
+  it("starts a new lower allotment at the new start instead of inheriting the old next", () => {
+    expect(
+      nextSerialForSavedRange(
+        { prefix: "CL", suffix: "IN", startNumber: 53303601, endNumber: 53303636 },
+        { prefix: "CL", suffix: "IN", next_number: 58129683 }
+      )
+    ).toBe(53303601);
+  });
+
+  it("keeps next_number when the same series is extended", () => {
+    expect(
+      nextSerialForSavedRange(
+        { prefix: "CL", suffix: "IN", startNumber: 55697399, endNumber: 55698999 },
+        { prefix: "CL", suffix: "IN", next_number: 55697500 }
+      )
+    ).toBe(55697500);
   });
 });
 

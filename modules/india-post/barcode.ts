@@ -155,6 +155,34 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
   };
 }
 
+/**
+ * Keep next_number only when the saved series is the same allotment (or an extension).
+ * A new CL block with lower serials must start at the new start, not inherit the old next.
+ */
+export function nextSerialForSavedRange(
+  parsed: Pick<BarcodeRange, "prefix" | "suffix" | "startNumber" | "endNumber">,
+  current: {
+    prefix?: string | null;
+    suffix?: string | null;
+    next_number?: number | null;
+  } | null,
+  requestedNext?: number
+) {
+  let nextNumber = Number.isInteger(requestedNext) ? Number(requestedNext) : parsed.startNumber;
+  const previousNext = Number(current?.next_number);
+  if (
+    current &&
+    current.prefix === parsed.prefix &&
+    current.suffix === parsed.suffix &&
+    Number.isInteger(previousNext) &&
+    previousNext >= parsed.startNumber &&
+    previousNext <= parsed.endNumber + 1
+  ) {
+    nextNumber = Math.min(Math.max(previousNext, parsed.startNumber), parsed.endNumber + 1);
+  }
+  return nextNumber;
+}
+
 export type BarcodeStock = {
   prefix?: string | null;
   suffix?: string | null;

@@ -372,6 +372,44 @@ describe("POST integrations/india-post connect:false", () => {
     });
   });
 
+  it("starts a new CL allotment at the new start when the previous next is outside it", async () => {
+    const db = saveDb([], {
+      next_number: 58129683,
+      prefix: "CL",
+      suffix: "IN",
+      start_number: 58129682,
+      end_number: 58129696,
+      service_code: null,
+    });
+    const request = new NextRequest("http://localhost/api/v1/integrations/india-post", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        connect: false,
+        environment: "PRODUCTION",
+        bulkCustomerId: "1788590988",
+        barcodeRange: {
+          prefix: "CL",
+          suffix: "IN",
+          startNumber: "533036015",
+          endNumber: "533036369",
+          serviceCode: null,
+        },
+      }),
+    });
+    await handleIntegrationRoutes(
+      request,
+      db.client as never,
+      ctx,
+      "POST integrations/india-post"
+    );
+    expect(db.barcodeInserts[0]).toMatchObject({
+      start_number: 53303601,
+      end_number: 53303636,
+      next_number: 53303601,
+    });
+  });
+
   it("keeps next_number when the end of the same series is extended", async () => {
     const db = saveDb([]);
     const request = new NextRequest("http://localhost/api/v1/integrations/india-post", {

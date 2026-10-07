@@ -9,7 +9,7 @@ import type { IndiaPostOffice } from "@/modules/india-post/endpoints";
 import { indiaPostOfficeToApiRow, indiaPostOfficesForSelection } from "@/modules/india-post/endpoints";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
-import { isCeptUatTestSeries, parseBarcodeRange } from "@/modules/india-post/barcode";
+import { isCeptUatTestSeries, nextSerialForSavedRange, parseBarcodeRange } from "@/modules/india-post/barcode";
 import { parcelServiceCode, resolveOrderBookingService } from "@/modules/india-post/booking-service";
 import {
   parcelDefaultsApiPayload,
@@ -935,18 +935,13 @@ export async function handleIntegrationRoutes(
         (currentRange.service_code ?? null) === parsed.serviceCode;
 
       if (!sameSeries) {
-        let nextNumber = Number(body.barcodeRange.nextNumber ?? parsed.startNumber);
-        if (
-          currentRange &&
-          currentRange.prefix === parsed.prefix &&
-          currentRange.suffix === parsed.suffix &&
-          Number.isInteger(Number(currentRange.next_number))
-        ) {
-          nextNumber = Math.min(
-            Math.max(Number(currentRange.next_number), parsed.startNumber),
-            parsed.endNumber + 1
-          );
-        }
+        const nextNumber = nextSerialForSavedRange(
+          parsed,
+          currentRange,
+          Number.isInteger(Number(body.barcodeRange.nextNumber))
+            ? Number(body.barcodeRange.nextNumber)
+            : undefined
+        );
 
         // Saving twice used to add a second active row, and the booking worker's
         // single-row lookup then failed. Retire the current series for this service
