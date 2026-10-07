@@ -53,8 +53,9 @@ export function indiaPostBookingFileUrl(environment: ProviderEnvironment, custom
  * codes. A short "SP" books Inland Speed Post, so parcel bookings must send
  * the product code even when the article is under 500 g.
  *
- * Label `service_type` stays the short SP / BP values. See
- * `indiaPostLabelServiceType`.
+ * Label `service_type` is SP for Speed Post and BUSINESS_PARCEL for
+ * India Post Parcel Contractual. The short "BP" code prints REGISTERED BOOK POST
+ * on CEPT's PDF. See `indiaPostLabelServiceType`.
  */
 export function indiaPostBookingServiceCode(serviceCode: string, barcode?: string) {
   const fromPrefix = indiaPostServiceForBarcodePrefix(String(barcode ?? "").slice(0, 2));
@@ -72,10 +73,10 @@ export function indiaPostBookingArticleType(serviceCode: string, barcode?: strin
   return "SP_INLAND_PARCEL";
 }
 
-/** Domestic label API `service_type`: Speed Post or Business Parcel. */
+/** Domestic label API `service_type`. CEPT prints INDIAPOST PARCEL CONTRACTUAL only for BUSINESS_PARCEL. */
 export function indiaPostLabelServiceType(serviceCode: string, barcode?: string) {
   const type = indiaPostBookingArticleType(serviceCode, barcode);
-  if (type === "BP" || type === "BUSINESS_PARCEL") return "BP";
+  if (type === "BP" || type === "BUSINESS_PARCEL") return "BUSINESS_PARCEL";
   if (type.startsWith("24_") || type.startsWith("48_")) return type;
   return "SP";
 }
@@ -84,7 +85,7 @@ export function indiaPostLabelServiceType(serviceCode: string, barcode?: string)
 export const INDIA_POST_PARCEL_CONTRACTUAL_CAPTION = "INDIAPOST PARCEL CONTRACTUAL";
 
 export function indiaPostLabelProductCaption(serviceCode: string, barcode?: string) {
-  if (indiaPostLabelServiceType(serviceCode, barcode) === "BP") {
+  if (indiaPostLabelServiceType(serviceCode, barcode) === "BUSINESS_PARCEL") {
     return INDIA_POST_PARCEL_CONTRACTUAL_CAPTION;
   }
   return indiaPostServiceLabel(indiaPostBookingServiceCode(serviceCode, barcode) || serviceCode);

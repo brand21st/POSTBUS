@@ -85,7 +85,7 @@ describe("article type and shape", () => {
     expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BUSINESS_PARCEL");
     expect(indiaPostBookingArticleType("BP")).toBe("BUSINESS_PARCEL");
     expect(indiaPostBookingArticleType("SP_INLAND_PARCEL", "CX075250510IN")).toBe("BUSINESS_PARCEL");
-    expect(indiaPostLabelServiceType("SP_INLAND_PARCEL", "CX075250554IN")).toBe("BP");
+    expect(indiaPostLabelServiceType("SP_INLAND_PARCEL", "CX075250554IN")).toBe("BUSINESS_PARCEL");
     expect(indiaPostTransmissionMode("SP_INLAND_PARCEL", "CX075250554IN")).toBe("S");
     expect(indiaPostLabelProductCaption("SP_INLAND_PARCEL", "CX075250554IN")).toBe(
       "INDIAPOST PARCEL CONTRACTUAL"
@@ -160,7 +160,7 @@ describe("indiaPost domestic label payload", () => {
     expect(payload.recipient_addressl2).toBe("Ph:9944388249");
     expect(payload.recipient_addressl3).toBe("Prepaid");
     expect(payload.sender_addressl3).toBe("");
-    expect(payload.service_type).toBe("BP");
+    expect(payload.service_type).toBe("BUSINESS_PARCEL");
     expect(payload.transmission_mode).toBe("S");
     expect(payload.volumetric_weight).toBe(480);
     expect(payload.charged_weight).toBe(500);
@@ -197,7 +197,7 @@ describe("indiaPost domestic label payload", () => {
       bookingOfficeName: "Pulikkal SO",
       bookingOfficePin: "673637",
     });
-    expect(payload.service_type).toBe("BP");
+    expect(payload.service_type).toBe("BUSINESS_PARCEL");
     expect(payload.transmission_mode).toBe("S");
     expect(indiaPostLabelProductCaption("SP_INLAND_PARCEL", "CX075250554IN")).toBe(
       "INDIAPOST PARCEL CONTRACTUAL"
