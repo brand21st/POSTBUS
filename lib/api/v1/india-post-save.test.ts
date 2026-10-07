@@ -372,6 +372,40 @@ describe("POST integrations/india-post connect:false", () => {
     });
   });
 
+  it("saves a CX series as Business Parcel (India Post Parcel Contractual)", async () => {
+    const db = saveDb([], null);
+    const request = new NextRequest("http://localhost/api/v1/integrations/india-post", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        connect: false,
+        environment: "PRODUCTION",
+        bulkCustomerId: "1788590988",
+        barcodeRange: {
+          prefix: "CX",
+          suffix: "IN",
+          startNumber: "075250510",
+          endNumber: "075260503",
+          serviceCode: null,
+        },
+      }),
+    });
+    await handleIntegrationRoutes(
+      request,
+      db.client as never,
+      ctx,
+      "POST integrations/india-post"
+    );
+    expect(db.barcodeInserts[0]).toMatchObject({
+      prefix: "CX",
+      suffix: "IN",
+      start_number: 7525051,
+      end_number: 7526050,
+      next_number: 7525051,
+      service_code: "BUSINESS_PARCEL",
+    });
+  });
+
   it("starts a new CL allotment at the new start when the previous next is outside it", async () => {
     const db = saveDb([], {
       next_number: 58129683,

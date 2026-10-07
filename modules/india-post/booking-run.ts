@@ -6,7 +6,7 @@ import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/mo
 import { indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
 import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
 import { splitIndiaPostBookingResult, type IndiaPostBookingResponse } from "@/modules/india-post/booking-apply";
-import { indiaPostMobile } from "@/modules/india-post/endpoints";
+import { indiaPostBookingServiceCode, indiaPostMobile } from "@/modules/india-post/endpoints";
 import {
   BOOKING_CLAIMABLE_STATUSES,
   barcodeLogRef,
@@ -290,15 +290,15 @@ export async function runIndiaPostBooking(
   }> = [];
 
   for (const shipment of pending) {
-    const serviceCode = (shipment.service_code as string) || DEFAULT_INDIA_POST_SERVICE;
+    const requestedService = (shipment.service_code as string) || DEFAULT_INDIA_POST_SERVICE;
+    let barcode = shipmentBarcode(shipment.barcode);
+    const serviceCode = indiaPostBookingServiceCode(requestedService, barcode);
     const contractId = contractByService.get(serviceCode) || connection.contract_id;
     if (!contractId) {
       const message = `No India Post contract is set for ${serviceCode}. Add it on the India Post integration page.`;
       await markShipmentBookingFailed(supabase, shipment.id, message, "INVALID_CONTRACT", input.organizationId);
       throw Object.assign(new Error(message), { code: "INVALID_CONTRACT" });
     }
-
-    let barcode = shipmentBarcode(shipment.barcode);
     if (!barcode) {
       barcode = await allocateNextBarcode(supabase, {
         organizationId: input.organizationId,

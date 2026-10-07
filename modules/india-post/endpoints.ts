@@ -1,4 +1,5 @@
 import { indiaPostBaseUrl } from "@/lib/env";
+import { indiaPostServiceForBarcodePrefix } from "@/modules/india-post/barcode";
 import { INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G } from "@/modules/india-post/spec";
 import type { ProviderEnvironment } from "@/types/domain";
 
@@ -54,8 +55,16 @@ export function indiaPostBookingFileUrl(environment: ProviderEnvironment, custom
  * Label `service_type` stays the short SP / BP values. See
  * `indiaPostLabelServiceType`.
  */
-export function indiaPostBookingArticleType(serviceCode: string) {
+export function indiaPostBookingServiceCode(serviceCode: string, barcode?: string) {
+  const fromPrefix = indiaPostServiceForBarcodePrefix(String(barcode ?? "").slice(0, 2));
+  if (fromPrefix) return fromPrefix;
   const code = serviceCode.trim().toUpperCase();
+  if (code === "BP") return "BUSINESS_PARCEL";
+  return code;
+}
+
+export function indiaPostBookingArticleType(serviceCode: string, barcode?: string) {
+  const code = indiaPostBookingServiceCode(serviceCode, barcode);
   if (code === "BP" || code === "BUSINESS_PARCEL") return "BUSINESS_PARCEL";
   if (code === "SP_INLAND_DOC") return "SP_INLAND_DOC";
   if (code.startsWith("24_") || code.startsWith("48_")) return code;
@@ -63,8 +72,8 @@ export function indiaPostBookingArticleType(serviceCode: string) {
 }
 
 /** Domestic label API `service_type`: Speed Post or Business Parcel. */
-export function indiaPostLabelServiceType(serviceCode: string) {
-  const type = indiaPostBookingArticleType(serviceCode);
+export function indiaPostLabelServiceType(serviceCode: string, barcode?: string) {
+  const type = indiaPostBookingArticleType(serviceCode, barcode);
   if (type === "BP" || type === "BUSINESS_PARCEL") return "BP";
   if (type.startsWith("24_") || type.startsWith("48_")) return type;
   return "SP";
@@ -74,8 +83,8 @@ export function indiaPostLabelServiceType(serviceCode: string) {
  * Selected parcel products stay parcels at any legal weight (1 g–35 kg).
  * Weight is only a fallback when the caller sent a bare "SP" with no product.
  */
-export function indiaPostSpeedPostKind(serviceCode: string, weightGrams: number): "PARCEL" | "DOC" {
-  const code = serviceCode.trim().toUpperCase();
+export function indiaPostSpeedPostKind(serviceCode: string, weightGrams: number, barcode?: string): "PARCEL" | "DOC" {
+  const code = indiaPostBookingServiceCode(serviceCode, barcode);
   if (code === "SP_INLAND_PARCEL" || code === "BUSINESS_PARCEL" || code === "BP" || code === "24_SPP_PARSPL") {
     return "PARCEL";
   }
@@ -83,8 +92,8 @@ export function indiaPostSpeedPostKind(serviceCode: string, weightGrams: number)
   return weightGrams >= INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G ? "PARCEL" : "DOC";
 }
 
-export function indiaPostShapeOfArticle(serviceCode: string, weightGrams: number) {
-  const bookingType = indiaPostBookingArticleType(serviceCode);
+export function indiaPostShapeOfArticle(serviceCode: string, weightGrams: number, barcode?: string) {
+  const bookingType = indiaPostBookingArticleType(serviceCode, barcode);
   if (bookingType === "BP" || bookingType === "BUSINESS_PARCEL" || bookingType === "24_SPP_PARSPL" || bookingType === "SP_INLAND_PARCEL") {
     return "NROL";
   }
@@ -328,7 +337,7 @@ export function indiaPostDomesticLabelPayload(input: {
     user_type: "R",
     user_id: customerId,
     barcode_no: input.barcode,
-    service_type: indiaPostLabelServiceType(input.serviceCode),
+    service_type: indiaPostLabelServiceType(input.serviceCode, input.barcode),
     booking_type: "COMMERCIAL",
     article_length: String(Math.max(0, Number(input.lengthCm) || 0)),
     article_breadth: String(Math.max(0, Number(input.widthCm) || 0)),

@@ -1011,7 +1011,7 @@ export default function IndiaPostPage() {
           <CardHeader className="pb-4">
             <CardTitle>Barcode range</CardTitle>
             <CardDescription className="mt-1">
-              The article number series from your India Post allotment. Paste the 13-character article (CL556973995IN), the 9-digit number with check digit, or the 8-digit serial. Maximum 13 characters.
+              The article number series from your India Post allotment. Paste the 9-digit number with check digit, or the 8-digit serial. CX books India Post Parcel Contractual (Business Parcel) only.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -1038,7 +1038,15 @@ export default function IndiaPostPage() {
               label="Prefix"
               value={form.prefix}
               placeholder="CL"
-              onChange={(value) => set("prefix", value)}
+              maxLength={2}
+              onChange={(value) => {
+                const prefix = value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+                setForm((current) => ({
+                  ...current,
+                  prefix,
+                  ...(prefix === "CX" ? { rangeServiceCode: "BUSINESS_PARCEL" } : {}),
+                }));
+              }}
             />
             <Field label="Suffix" value={form.suffix} onChange={(value) => set("suffix", value)} />
             <Field

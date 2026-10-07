@@ -82,6 +82,7 @@ describe("article type and shape", () => {
     expect(indiaPostBookingArticleType("SP_INLAND_DOC")).toBe("SP_INLAND_DOC");
     expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BUSINESS_PARCEL");
     expect(indiaPostBookingArticleType("BP")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostBookingArticleType("SP_INLAND_PARCEL", "CX075250510IN")).toBe("BUSINESS_PARCEL");
   });
 
   it("follows the selected Speed Post product and falls back to weight for bare SP", () => {

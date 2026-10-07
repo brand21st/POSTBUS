@@ -1,4 +1,21 @@
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import type { IndiaPostServiceCode } from "@/types/domain";
+
+/** CX articles are India Post Parcel Contractual (CEPT BUSINESS_PARCEL / BP). */
+const PREFIX_SERVICE: Record<string, IndiaPostServiceCode> = {
+  CX: "BUSINESS_PARCEL",
+};
+
+export function indiaPostServiceForBarcodePrefix(prefix: string): IndiaPostServiceCode | null {
+  return PREFIX_SERVICE[prefix.trim().toUpperCase().slice(0, 2)] ?? null;
+}
+
+export function barcodePrefixAllowedForService(prefix: string, serviceCode: string) {
+  const mapped = indiaPostServiceForBarcodePrefix(prefix);
+  if (!mapped) return true;
+  const code = serviceCode.trim().toUpperCase();
+  return mapped === (code === "BP" ? "BUSINESS_PARCEL" : code);
+}
 
 export type BarcodeRangeInput = {
   prefix: string;
@@ -140,7 +157,7 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
     suffix,
     startNumber,
     endNumber,
-    serviceCode: input.serviceCode?.trim() || null,
+    serviceCode: indiaPostServiceForBarcodePrefix(prefix) ?? (input.serviceCode?.trim() || null),
   };
 }
 

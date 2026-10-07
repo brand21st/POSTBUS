@@ -158,7 +158,7 @@ export const INDIA_POST_SERVICES = [
   {
     code: "BUSINESS_PARCEL",
     label: "Business Parcel",
-    description: "Business Parcel",
+    description: "India Post Parcel Contractual (CX)",
   },
 ] as const;
 

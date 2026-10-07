@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { formatBarcode, isCeptUatTestSeries } from "@/modules/india-post/barcode";
+import { barcodePrefixAllowedForService, formatBarcode, isCeptUatTestSeries } from "@/modules/india-post/barcode";
 import { indiaPostServiceLabel } from "@/types/domain";
 
 export async function allocateNextBarcode(
@@ -19,9 +19,12 @@ export async function allocateNextBarcode(
   if (error) {
     throw Object.assign(new Error(error.message), { code: "INVALID_BARCODE" });
   }
+  const usable = (ranges ?? []).filter((item) =>
+    barcodePrefixAllowedForService(String(item.prefix ?? ""), input.serviceCode)
+  );
   const range =
-    (ranges ?? []).find((item) => item.service_code === input.serviceCode) ??
-    (ranges ?? []).find((item) => item.service_code === null);
+    usable.find((item) => item.service_code === input.serviceCode) ??
+    usable.find((item) => item.service_code === null);
   if (!range) {
     throw Object.assign(
       new Error(

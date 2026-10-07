@@ -133,6 +133,18 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     expect(payload.shape_of_article).toBe("NROL");
   });
 
+  it("books CX articles as India Post Parcel Contractual even if the shipment was Speed Post", () => {
+    const draft = mockOrderArticle({
+      serviceCode: "SP_INLAND_PARCEL",
+      barcode: "CX075250510IN",
+      contractId: "41500846",
+    });
+    const payload = serializeIndiaPostBookingArticle(assertValidatedArticle(draft));
+    expect(payload.article_type).toBe("BUSINESS_PARCEL");
+    expect(payload.barcode_no).toBe("CX075250510IN");
+    expect(payload.contract_id).toBe("41500846");
+  });
+
   it("Manual order without dimensions fails validation before calling India Post", () => {
     const draft = mockOrderArticle({
       orderNumber: "PB-10006",

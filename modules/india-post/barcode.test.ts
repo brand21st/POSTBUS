@@ -7,6 +7,8 @@ import {
   indiaPostPublicTrackingUrl,
   isCeptUatTestSeries,
   formatAllotmentNumber,
+  barcodePrefixAllowedForService,
+  indiaPostServiceForBarcodePrefix,
   nextSerialForSavedRange,
   parseBarcodeRange,
   sanitizeBarcodeAllotmentField,
@@ -106,6 +108,28 @@ describe("parseBarcodeRange", () => {
     ).toMatchObject({ startNumber: 55697399, endNumber: 55697999 });
     expect(formatAllotmentNumber(55697399)).toBe("556973995");
     expect(formatAllotmentNumber(55697999)).toBe("556979998");
+  });
+
+  it("binds CX allotments to Business Parcel (India Post Parcel Contractual)", () => {
+    expect(indiaPostServiceForBarcodePrefix("cx")).toBe("BUSINESS_PARCEL");
+    expect(barcodePrefixAllowedForService("CX", "SP_INLAND_PARCEL")).toBe(false);
+    expect(barcodePrefixAllowedForService("CX", "BUSINESS_PARCEL")).toBe(true);
+    expect(
+      parseBarcodeRange({
+        prefix: "CX",
+        suffix: "IN",
+        startNumber: "075250510",
+        endNumber: "075260503",
+        serviceCode: null,
+      })
+    ).toMatchObject({
+      prefix: "CX",
+      startNumber: 7525051,
+      endNumber: 7526050,
+      serviceCode: "BUSINESS_PARCEL",
+    });
+    expect(formatBarcode("CX", 7525051, "IN")).toBe("CX075250510IN");
+    expect(formatAllotmentNumber(7525051)).toBe("075250510");
   });
 
   it("rejects letters and numbers longer than nine digits", () => {
