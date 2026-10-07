@@ -47,10 +47,15 @@ describe("official India Post label generation", () => {
     const commerce = readFileSync(path.join(process.cwd(), "lib/api/v1/commerce.ts"), "utf8");
     expect(commerce).toContain("generateAndStoreOfficialIndiaPostLabelPdf");
     expect(commerce).toContain('X-Label-Source", "india-post"');
+    expect(commerce).toContain('slugs[2] === "india-post-label"');
+    expect(commerce).toContain('slugs[2] === "india-post"');
     expect(commerce).not.toContain('X-Label-Source", "stored"');
     const fetchSource = readFileSync(path.join(process.cwd(), "modules/labels/official-fetch.ts"), "utf8");
     expect(fetchSource).toContain("indiaPostDomesticLabelPayload");
     expect(fetchSource).toContain("persistLabelPdf");
     expect(fetchSource).toContain("generateLabel");
+    const labelsPage = readFileSync(path.join(process.cwd(), "app/dashboard/labels/page.tsx"), "utf8");
+    expect(labelsPage).toContain("/india-post-label");
+    expect(labelsPage).toContain("method: \"POST\"");
   });
 });

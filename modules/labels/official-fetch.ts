@@ -28,6 +28,7 @@ export async function fetchOfficialIndiaPostLabelPdf(
   const { data: shipment } = await supabase
     .from("shipments")
     .select("*, orders(order_number), customers(name, phone), addresses:shipping_address_id(*)")
+    .eq("organization_id", organizationId)
     .eq("id", shipmentId)
     .single();
   if (!shipment?.barcode || !shipment.booked_at) {

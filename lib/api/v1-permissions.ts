@@ -56,7 +56,9 @@ export function permissionForTenantRoute(
   }
 
   if (root === "labels") {
-    if (method === "POST" && (slugs[2] === "print" || slugs[2] === "regenerate")) return "labels.write";
+    if (method === "POST" && (slugs[2] === "print" || slugs[2] === "regenerate" || slugs[2] === "india-post")) {
+      return "labels.write";
+    }
     return "labels.read";
   }
 

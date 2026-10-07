@@ -79,8 +79,11 @@ async function downloadLabelsZip(ids: string[]) {
   throw new ApiError(message, response.status);
 }
 
-async function fetchLabelPdf(id: string, source: "latest" | "shipping-slip") {
-  const response = await fetch(`/api/v1/labels/${id}/${source}`, { credentials: "same-origin" });
+function shipmentIdOf(row: LabelRecord) {
+  return row.shipmentId ?? row.shipment_id ?? null;
+}
+
+async function readPdfResponse(response: Response, fallbackName: string) {
   if (!response.ok) {
     let message = "Could not load the file.";
     try {
@@ -100,9 +103,47 @@ async function fetchLabelPdf(id: string, source: "latest" | "shipping-slip") {
   const match = disposition?.match(/filename="?([^"]+)"?/i);
   return {
     blob,
-    filename: match?.[1] || (source === "shipping-slip" ? "shipping-slip.pdf" : "india-post-label.pdf"),
+    filename: match?.[1] || fallbackName,
     sourceHeader: response.headers.get("X-Label-Source"),
   };
+}
+
+async function fetchLabelPdf(id: string, source: "latest" | "shipping-slip") {
+  const response = await fetch(`/api/v1/labels/${id}/${source}`, {
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { Accept: "application/pdf" },
+  });
+  return readPdfResponse(response, source === "shipping-slip" ? "shipping-slip.pdf" : "india-post-label.pdf");
+}
+
+async function fetchOfficialIndiaPostLabelPdf(input: { shipmentId?: string | null; labelId?: string | null }) {
+  const shipmentId = input.shipmentId?.trim();
+  const labelId = input.labelId?.trim();
+  const response = shipmentId
+    ? await fetch(`/api/v1/shipments/${shipmentId}/india-post-label`, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/pdf" },
+      })
+    : await fetch(`/api/v1/labels/${labelId}/india-post`, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/pdf" },
+      });
+  return readPdfResponse(response, "india-post-label.pdf");
+}
+
+async function previewPdfBlob(blob: Blob, tab: Window | null) {
+  const href = URL.createObjectURL(blob);
+  if (tab && !tab.closed) {
+    tab.location.replace(href);
+  } else {
+    window.open(href, "_blank", "noopener,noreferrer");
+  }
+  window.setTimeout(() => URL.revokeObjectURL(href), 60_000);
 }
 
 async function previewLabelPdf(
@@ -112,13 +153,21 @@ async function previewLabelPdf(
 ) {
   try {
     const { blob, sourceHeader } = await fetchLabelPdf(id, source);
-    const href = URL.createObjectURL(blob);
-    if (tab && !tab.closed) {
-      tab.location.replace(href);
-    } else {
-      window.open(href, "_blank", "noopener,noreferrer");
-    }
-    window.setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    await previewPdfBlob(blob, tab);
+    return sourceHeader;
+  } catch (error) {
+    tab?.close();
+    throw error;
+  }
+}
+
+async function previewOfficialIndiaPostLabel(
+  input: { shipmentId?: string | null; labelId?: string | null },
+  tab: Window | null
+) {
+  try {
+    const { blob, sourceHeader } = await fetchOfficialIndiaPostLabelPdf(input);
+    await previewPdfBlob(blob, tab);
     return sourceHeader;
   } catch (error) {
     tab?.close();
@@ -130,8 +179,7 @@ function openPreviewTab() {
   return window.open("about:blank", "_blank");
 }
 
-async function downloadLabelPdf(id: string, source: "latest" | "shipping-slip") {
-  const { blob, filename, sourceHeader } = await fetchLabelPdf(id, source);
+async function downloadPdfBlob(blob: Blob, filename: string) {
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = href;
@@ -140,6 +188,17 @@ async function downloadLabelPdf(id: string, source: "latest" | "shipping-slip") 
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
+}
+
+async function downloadLabelPdf(id: string, source: "latest" | "shipping-slip") {
+  const { blob, filename, sourceHeader } = await fetchLabelPdf(id, source);
+  await downloadPdfBlob(blob, filename);
+  return sourceHeader;
+}
+
+async function downloadOfficialIndiaPostLabel(input: { shipmentId?: string | null; labelId?: string | null }) {
+  const { blob, filename, sourceHeader } = await fetchOfficialIndiaPostLabelPdf(input);
+  await downloadPdfBlob(blob, filename);
   return sourceHeader;
 }
 
@@ -179,9 +238,10 @@ export default function LabelsPage() {
   });
 
   const previewLatestLabel = useMutation({
-    mutationFn: (input: { id: string; tab: Window | null }) => previewLabelPdf(input.id, "latest", input.tab),
+    mutationFn: (input: { shipmentId?: string | null; labelId?: string | null; tab: Window | null }) =>
+      previewOfficialIndiaPostLabel({ shipmentId: input.shipmentId, labelId: input.labelId }, input.tab),
     onSuccess: () => {
-      toast.success("India Post label opened.");
+      toast.success("India Post label generated.");
       void queryClient.invalidateQueries({ queryKey: ["labels"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -195,7 +255,8 @@ export default function LabelsPage() {
   });
 
   const downloadLatestLabel = useMutation({
-    mutationFn: (id: string) => downloadLabelPdf(id, "latest"),
+    mutationFn: (input: { shipmentId?: string | null; labelId?: string | null }) =>
+      downloadOfficialIndiaPostLabel(input),
     onSuccess: () => {
       toast.success("India Post label downloaded.");
       void queryClient.invalidateQueries({ queryKey: ["labels"] });
@@ -234,9 +295,17 @@ export default function LabelsPage() {
         const indiaId = barcodeId(row);
         const packId = packingId(row);
         const labelId = indiaId ?? packId;
-        const labelPreviewBusy = previewLatestLabel.isPending && previewLatestLabel.variables?.id === labelId;
+        const shipmentId = shipmentIdOf(row);
+        const canGenerateOfficial = Boolean(shipmentId || labelId);
+        const labelPreviewBusy =
+          previewLatestLabel.isPending &&
+          (previewLatestLabel.variables?.shipmentId ?? previewLatestLabel.variables?.labelId) ===
+            (shipmentId || labelId);
         const slipPreviewBusy = previewShippingSlip.isPending && previewShippingSlip.variables?.id === labelId;
-        const labelDownloadBusy = downloadLatestLabel.isPending && downloadLatestLabel.variables === labelId;
+        const labelDownloadBusy =
+          downloadLatestLabel.isPending &&
+          (downloadLatestLabel.variables?.shipmentId ?? downloadLatestLabel.variables?.labelId) ===
+            (shipmentId || labelId);
         const slipDownloadBusy = downloadShippingSlip.isPending && downloadShippingSlip.variables === labelId;
         const labelBusy = labelPreviewBusy || labelDownloadBusy;
         const slipBusy = slipPreviewBusy || slipDownloadBusy;
@@ -249,21 +318,24 @@ export default function LabelsPage() {
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!labelId || labelBusy}
-              onClick={() => labelId && previewLatestLabel.mutate({ id: labelId, tab: openPreviewTab() })}
+              disabled={!canGenerateOfficial || labelBusy}
+              onClick={() =>
+                canGenerateOfficial &&
+                previewLatestLabel.mutate({ shipmentId, labelId, tab: openPreviewTab() })
+              }
             >
               {indiaId ? <Check className="size-4 text-emerald-600" /> : <QrCode className="size-4" />}
-              {labelPreviewBusy ? "Opening…" : "India Post Label"}
+              {labelPreviewBusy ? "Generating…" : "India Post Label"}
             </Button>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!labelId || labelBusy}
-              onClick={() => labelId && downloadLatestLabel.mutate(labelId)}
+              disabled={!canGenerateOfficial || labelBusy}
+              onClick={() => canGenerateOfficial && downloadLatestLabel.mutate({ shipmentId, labelId })}
             >
               <Download className="size-4" />
-              {labelDownloadBusy ? "Downloading…" : "Download Label PDF"}
+              {labelDownloadBusy ? "Generating…" : "Download Label PDF"}
             </Button>
             <Button
               type="button"

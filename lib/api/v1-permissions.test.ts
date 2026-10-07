@@ -132,6 +132,12 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "labels/abc/regenerate", ["labels", "abc", "regenerate"])).toBe(
       "labels.write"
     );
+    expect(permissionForTenantRoute("POST", "labels/abc/india-post", ["labels", "abc", "india-post"])).toBe(
+      "labels.write"
+    );
+    expect(
+      permissionForTenantRoute("POST", "shipments/abc/india-post-label", ["shipments", "abc", "india-post-label"])
+    ).toBe("shipments.write");
     expect(permissionForTenantRoute("GET", "label-template", ["label-template"])).toBe("labels.read");
     expect(permissionForTenantRoute("PUT", "label-template", ["label-template"])).toBe("labels.write");
     expect(permissionForTenantRoute("GET", "invoices", ["invoices"])).toBe("orders.read");

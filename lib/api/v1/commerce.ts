@@ -74,6 +74,31 @@ function dateRange(request: NextRequest) {
   return { from, to };
 }
 
+async function officialIndiaPostLabelPdfResponse(
+  supabase: SupabaseClient,
+  organizationId: string,
+  shipmentId: string
+) {
+  const filename = `india-post-label-${shipmentId}.pdf`;
+  try {
+    const official = await generateAndStoreOfficialIndiaPostLabelPdf(
+      supabase,
+      organizationId,
+      shipmentId
+    );
+    const response = labelPdfFileResponse(official.pdf, filename);
+    response.headers.set("X-Label-Source", "india-post");
+    return response;
+  } catch (error) {
+    logError("LABEL_LATEST_FETCH_FAILED", {
+      organizationId,
+      shipmentId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+    throw indiaPostLabelRequestError(error);
+  }
+}
+
 export async function handleCommerceRoutes(
   request: NextRequest,
   supabase: SupabaseClient,
@@ -158,6 +183,9 @@ export async function handleCommerceRoutes(
 
   if (key === "POST orders") {
     const body = createOrderSchema.parse(await request.json());
+    if ((body.source ?? "MANUAL") === "WHATSAPP") {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "WhatsApp orders must be created from the storefront.");
+    }
     const order = await createManualOrder(supabase, ctx, body);
     if (body.createShipment) {
       await createShipmentsForOrders(supabase, ctx, [order.id], body.shipment);
@@ -240,6 +268,17 @@ export async function handleCommerceRoutes(
     return retryShipment(supabase, ctx, slugs[1], body);
   }
 
+  if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "india-post-label") {
+    const { data: shipment } = await supabase
+      .from("shipments")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", slugs[1])
+      .maybeSingle();
+    if (!shipment?.id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipment not found.");
+    return officialIndiaPostLabelPdfResponse(supabase, ctx.organizationId, String(shipment.id));
+  }
+
   if (method === "PATCH" && slugs[0] === "shipments" && slugs[1] && !slugs[2]) {
     const body = updateShipmentDimensionsSchema.parse(await request.json());
     return updateShipmentDimensions(supabase, ctx, slugs[1], body);
@@ -289,25 +328,18 @@ export async function handleCommerceRoutes(
       .eq("id", slugs[1])
       .maybeSingle();
     if (!row?.shipment_id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label not found.");
-    const shipmentId = String(row.shipment_id);
-    const filename = `india-post-label-${shipmentId}.pdf`;
-    try {
-      const official = await generateAndStoreOfficialIndiaPostLabelPdf(
-        supabase,
-        ctx.organizationId,
-        shipmentId
-      );
-      const response = labelPdfFileResponse(official.pdf, filename);
-      response.headers.set("X-Label-Source", "india-post");
-      return response;
-    } catch (error) {
-      logError("LABEL_LATEST_FETCH_FAILED", {
-        organizationId: ctx.organizationId,
-        shipmentId,
-        message: error instanceof Error ? error.message : "unknown",
-      });
-      throw indiaPostLabelRequestError(error);
-    }
+    return officialIndiaPostLabelPdfResponse(supabase, ctx.organizationId, String(row.shipment_id));
+  }
+
+  if (method === "POST" && slugs[0] === "labels" && slugs[1] && slugs[2] === "india-post") {
+    const { data: row } = await supabase
+      .from("labels")
+      .select("id, shipment_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", slugs[1])
+      .maybeSingle();
+    if (!row?.shipment_id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Label not found.");
+    return officialIndiaPostLabelPdfResponse(supabase, ctx.organizationId, String(row.shipment_id));
   }
 
   if (method === "GET" && slugs[0] === "labels" && slugs[1] && slugs[2] === "shipping-slip") {
