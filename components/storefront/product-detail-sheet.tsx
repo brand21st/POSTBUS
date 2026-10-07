@@ -183,6 +183,8 @@ export function ProductDetailSheet({
                 </span>
               ) : null}
             </div>
+            <p className="mt-2 font-semibold text-zinc-900">Return policy</p>
+            <p className="mt-1">{product.returnAvailable === false ? "No Return" : "Return Available"}</p>
           </div>
         </div>
         {related.length ? (

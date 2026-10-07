@@ -154,6 +154,7 @@ export function InventoryStorefront({ canWrite }: { canWrite: boolean }) {
       prepaidEnabled: product.prepaidEnabled,
       codEnabled: product.codEnabled,
       codAdvancePercent: product.codAdvancePercent,
+      returnAvailable: product.returnAvailable !== false,
       lowStockThreshold: product.lowStockThreshold,
       bestSeller: product.bestSeller,
       createdAt: product.createdAt,

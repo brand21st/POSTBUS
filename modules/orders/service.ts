@@ -649,7 +649,7 @@ export async function confirmWhatsAppOrder(
 
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organizationId,
-    actor_id: ctx.userId,
+    actor_id: ctx.userId || null,
     action: "order.whatsapp_confirmed",
     entity_type: "order",
     entity_id: orderId,

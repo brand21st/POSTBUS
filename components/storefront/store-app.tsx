@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CheckCircle2, ShoppingBag } from "lucide-react";
+import { Check, ShoppingBag } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { CartSheet } from "@/components/storefront/cart-sheet";
+import { StoreOrderSuccess, type StoreOrderReceipt } from "@/components/storefront/order-success";
 import { ProductDetailSheet } from "@/components/storefront/product-detail-sheet";
 import { StoreHome } from "@/components/storefront/store-home";
 import { StorePincodeLookup } from "@/components/storefront/store-pincode-lookup";
@@ -22,6 +23,7 @@ import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS } from "@/lib/indian-states"
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { publicOrderLinkApiPath } from "@/modules/customer-order-links/schema";
 import { formatStorePrice } from "@/modules/storefront/pricing";
+import { returnPolicyLabel, summarizeReturnPolicy } from "@/modules/products/return-policy";
 import { pickStoreRecommendations } from "@/modules/storefront/recommendations";
 
 const checkoutSchema = z.object({
@@ -75,12 +77,14 @@ export function StoreApp({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartReady, setCartReady] = useState(isPreview);
   const [sheet, setSheet] = useState<"cart" | "checkout" | null>(null);
+  const [checkoutStep, setCheckoutStep] = useState<"details" | "summary">("details");
   const [product, setProduct] = useState<StoreProduct | null>(initialProduct ?? null);
-  const [orderNumber, setOrderNumber] = useState<string | null>(null);
+  const [orderReceipt, setOrderReceipt] = useState<StoreOrderReceipt | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const requestSequence = useRef(0);
   const submissionIdRef = useRef<string | null>(null);
+  const dismissReceipt = useCallback(() => setOrderReceipt(null), []);
   const apiRef = useMemo(() => ({ workspace, publicId, token }), [workspace, publicId, token]);
   const workspaceKey = workspace || initialStore?.workspace || preview?.workspace || "preview";
 
@@ -316,23 +320,8 @@ export function StoreApp({
     );
   }
 
-  if (orderNumber !== null) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-6 text-center">
-        <div className="w-full max-w-sm rounded-3xl bg-white p-8 shadow-xl ring-1 ring-zinc-100">
-          <span className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
-            <CheckCircle2 className="size-9" />
-          </span>
-          <p className="mt-5 text-xs font-bold uppercase tracking-[0.2em] text-emerald-700">Order received</p>
-          <h1 className="mt-2 text-2xl font-bold tracking-tight">Thank you for your order!</h1>
-          <p className="mt-2 text-sm leading-6 text-zinc-500">The merchant will review your order and contact you to confirm payment and delivery.</p>
-          {orderNumber ? <p className="mt-4 rounded-2xl bg-zinc-50 p-3 text-sm font-semibold">Reference {orderNumber}</p> : null}
-          <Button type="button" className="mt-6 w-full" onClick={() => setOrderNumber(null)}>
-            Continue shopping
-          </Button>
-        </div>
-      </div>
-    );
+  if (orderReceipt) {
+    return <StoreOrderSuccess receipt={orderReceipt} onContinue={dismissReceipt} />;
   }
 
   const count = cart.reduce((sum, line) => sum + line.quantity, 0);
@@ -414,6 +403,8 @@ export function StoreApp({
               cart={cart}
               submitting={submitting}
               error={submitError}
+              step={checkoutStep}
+              onStepChange={setCheckoutStep}
               onSubmit={async (values) => {
                 const path = publicOrderLinkApiPath(apiRef, "submit");
                 if (!path) {
@@ -423,7 +414,15 @@ export function StoreApp({
                 setSubmitting(true);
                 setSubmitError(null);
                 try {
-                  const result = await api<{ status: string; orderNumber?: string | null }>(path, {
+                  const result = await api<{
+                    status: string;
+                    orderNumber?: string | null;
+                    total?: number;
+                    advanceAmount?: number;
+                    codAmount?: number;
+                    paymentMethod?: string;
+                    returnPolicy?: string;
+                  }>(path, {
                     method: "POST",
                     body: JSON.stringify({
                       ...values,
@@ -435,7 +434,15 @@ export function StoreApp({
                   submissionIdRef.current = null;
                   setCart([]);
                   setSheet(null);
-                  setOrderNumber(result.orderNumber ?? "");
+                  setCheckoutStep("details");
+                  setOrderReceipt({
+                    orderNumber: result.orderNumber ?? "",
+                    total: Number(result.total ?? 0),
+                    advanceAmount: Number(result.advanceAmount ?? 0),
+                    codAmount: Number(result.codAmount ?? 0),
+                    paymentMethod: result.paymentMethod ?? "Prepaid",
+                    returnPolicy: result.returnPolicy ?? summarizeReturnPolicy(cart.map((line) => line.product.returnAvailable !== false)).label,
+                  });
                   trackEvent("PURCHASE", { value: total });
                 } catch (error) {
                   setSubmitError(error instanceof Error ? error.message : "Could not submit this order. Please try again.");
@@ -445,15 +452,25 @@ export function StoreApp({
               }}
             />
           }
+          checkoutStep={checkoutStep}
           onClose={() => {
             setSheet(null);
             setSubmitError(null);
+            setCheckoutStep("details");
           }}
           onCheckout={() => {
+            setProduct(null);
+            setCheckoutStep("details");
             setSheet("checkout");
             trackEvent("CHECKOUT_STARTED", { value: total });
           }}
-          onBack={() => setSheet("cart")}
+          onBack={() => {
+            if (checkoutStep === "summary") {
+              setCheckoutStep("details");
+              return;
+            }
+            setSheet("cart");
+          }}
           onAdd={addToCart}
           onDecrease={decrease}
           onRemove={(productId) => setCart((current) => current.filter((line) => line.product.id !== productId))}
@@ -472,12 +489,16 @@ function CheckoutForm({
   cart,
   submitting,
   error,
+  step,
+  onStepChange,
   onSubmit,
 }: {
   apiRef: StoreRef;
   cart: CartLine[];
   submitting: boolean;
   error: string | null;
+  step: "details" | "summary";
+  onStepChange: (step: "details" | "summary") => void;
   onSubmit: (values: CheckoutValues) => Promise<void>;
 }) {
   const form = useForm<CheckoutValues>({
@@ -508,6 +529,8 @@ function CheckoutForm({
   const prepaid = cart.every((line) => line.product.prepaidEnabled);
   const cod = cart.every((line) => line.product.codEnabled);
   const preference = useWatch({ control: form.control, name: "paymentPreference" }) ?? (cod ? "COD" : "PREPAID");
+  const productAmount = cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0);
+  const returns = summarizeReturnPolicy(cart.map((line) => line.product.returnAvailable !== false));
   const quote = useQuery({
     queryKey: ["store-quote", apiRef, preference, cart.map((line) => `${line.product.id}:${line.quantity}`).join(",")],
     enabled: Boolean(cart.length && (preference === "PREPAID" || preference === "COD") && (prepaid || cod)),
@@ -526,99 +549,226 @@ function CheckoutForm({
         }
       ),
   });
+  const watchedName = useWatch({ control: form.control, name: "customerName" });
+  const watchedPhone = useWatch({ control: form.control, name: "phone" });
+  const detailsDone = step === "summary";
+  const phoneDigits = extractIndiaMobileDigits(watchedPhone ?? "") ?? "";
 
   return (
-    <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)} noValidate>
-      <div>
-        <Label htmlFor="customer-name">Full name</Label>
-        <Input id="customer-name" className="mt-1 h-11" autoComplete="name" {...form.register("customerName")} />
-        <FieldError message={form.formState.errors.customerName?.message} />
-      </div>
-      <div>
-        <IndiaWhatsappField control={form.control} name="phone" />
-        <FieldError message={form.formState.errors.phone?.message} />
-      </div>
-      <div>
-        <Label htmlFor="delivery-address">Address</Label>
-        <Input id="delivery-address" className="mt-1 h-11" autoComplete="street-address" {...form.register("line1")} />
-        <FieldError message={form.formState.errors.line1?.message} />
-      </div>
-      <div>
-        <Label htmlFor="delivery-area">Area / locality</Label>
-        <Input id="delivery-area" className="mt-1 h-11" {...form.register("line2")} />
-        <FieldError message={form.formState.errors.line2?.message} />
-      </div>
-      <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
-        <div>
-          <Label htmlFor="delivery-city">City</Label>
-          <Input id="delivery-city" className="mt-1 h-11" autoComplete="address-level2" {...form.register("city")} />
-          <FieldError message={form.formState.errors.city?.message} />
-        </div>
-        <div>
-          <Label htmlFor="delivery-pincode">PIN code</Label>
-          <Input id="delivery-pincode" className="mt-1 h-11" inputMode="numeric" autoComplete="postal-code" maxLength={6} {...form.register("pincode")} />
-          <FieldError message={form.formState.errors.pincode?.message} />
-        </div>
-      </div>
-      <StorePincodeLookup linkRef={apiRef} pincode={pincode} onResolve={resolvePincode} />
-      <div>
-        <Label>State</Label>
-        <Controller
-          control={form.control}
-          name="state"
-          render={({ field }) => (
-            <Combobox className="mt-1" options={INDIAN_STATE_OPTIONS} value={field.value} onChange={field.onChange} />
-          )}
-        />
-        <FieldError message={form.formState.errors.state?.message} />
-      </div>
-      {prepaid || cod ? (
-        <fieldset className="rounded-2xl border border-zinc-200 p-3">
-          <legend className="px-1 text-sm font-semibold">Payment</legend>
-          <p className="mb-3 text-xs leading-5 text-zinc-500">No payment is collected here. Pay the merchant using the amount shown, then they will confirm your order.</p>
-          <div className="grid gap-2">
-            {prepaid ? (
-              <label className="flex min-h-11 items-center gap-3 rounded-xl bg-zinc-50 px-3 py-2 text-sm">
-                <input type="radio" value="PREPAID" {...form.register("paymentPreference")} />
-                <span>
-                  <span className="block font-semibold">Pay full amount</span>
-                  <span className="text-xs text-zinc-500">{formatStorePrice(quote.data?.total ?? cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0))}</span>
-                </span>
-              </label>
-            ) : null}
-            {cod ? (
-              <label className="flex min-h-11 items-center gap-3 rounded-xl bg-zinc-50 px-3 py-2 text-sm">
-                <input type="radio" value="COD" {...form.register("paymentPreference")} />
-                <span>
-                  <span className="block font-semibold">Cash on delivery</span>
-                  {quote.data && preference === "COD" && quote.data.amountDueNow > 0 ? (
-                    <span className="text-xs text-zinc-500">
-                      Pay {formatStorePrice(quote.data.amountDueNow)} now and {formatStorePrice(quote.data.amountOnDelivery)} when delivered.
-                    </span>
+    <form
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      onSubmit={form.handleSubmit(async (values) => {
+        if (step !== "summary") {
+          onStepChange("summary");
+          return;
+        }
+        await onSubmit(values);
+      })}
+      noValidate
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 py-4 [scrollbar-width:none] md:px-6 md:py-5 [&::-webkit-scrollbar]:hidden">
+        <ol className="mx-auto max-w-lg">
+          <li className="flex gap-3" aria-current={step === "details" ? "step" : undefined}>
+            <div className="flex w-7 shrink-0 flex-col items-center">
+              <span
+                className={`relative z-10 flex size-7 items-center justify-center rounded-full border text-xs font-semibold ${
+                  detailsDone ? "border-brand bg-brand text-white" : "border-brand bg-white text-brand"
+                }`}
+              >
+                {detailsDone ? <Check className="size-3.5" aria-hidden="true" /> : "1"}
+              </span>
+              <span className={`mt-1 w-px flex-1 min-h-6 ${detailsDone ? "bg-brand/40" : "bg-zinc-200"}`} aria-hidden="true" />
+            </div>
+            <div className="min-w-0 flex-1 pb-6">
+              {detailsDone ? (
+                <button type="button" className="block w-full text-left" onClick={() => onStepChange("details")}>
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Customer details</p>
+                  <p className="mt-1 truncate text-sm text-zinc-700">
+                    {[watchedName?.trim(), phoneDigits ? `+91 ${phoneDigits}` : null].filter(Boolean).join(" · ")}
+                  </p>
+                </button>
+              ) : (
+                <div className="space-y-5">
+                  <section className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Customer details</h3>
+                    <div>
+                      <Label htmlFor="customer-name">Full name</Label>
+                      <Input id="customer-name" className="mt-1 h-11" autoComplete="name" {...form.register("customerName")} />
+                      <FieldError message={form.formState.errors.customerName?.message} />
+                    </div>
+                    <div>
+                      <IndiaWhatsappField control={form.control} name="phone" />
+                      <FieldError message={form.formState.errors.phone?.message} />
+                    </div>
+                  </section>
+                  <section className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Delivery address</h3>
+                    <div>
+                      <Label htmlFor="delivery-address">Address</Label>
+                      <Input id="delivery-address" className="mt-1 h-11" autoComplete="street-address" {...form.register("line1")} />
+                      <FieldError message={form.formState.errors.line1?.message} />
+                    </div>
+                    <div>
+                      <Label htmlFor="delivery-area">Area / locality</Label>
+                      <Input id="delivery-area" className="mt-1 h-11" {...form.register("line2")} />
+                      <FieldError message={form.formState.errors.line2?.message} />
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
+                      <div>
+                        <Label htmlFor="delivery-pincode">PIN code</Label>
+                        <Input id="delivery-pincode" className="mt-1 h-11" inputMode="numeric" autoComplete="postal-code" maxLength={6} {...form.register("pincode")} />
+                        <FieldError message={form.formState.errors.pincode?.message} />
+                      </div>
+                      <div>
+                        <Label htmlFor="delivery-city">City</Label>
+                        <Input id="delivery-city" className="mt-1 h-11" autoComplete="address-level2" {...form.register("city")} />
+                        <FieldError message={form.formState.errors.city?.message} />
+                      </div>
+                    </div>
+                    <StorePincodeLookup linkRef={apiRef} pincode={pincode} onResolve={resolvePincode} />
+                    <div>
+                      <Label>State</Label>
+                      <Controller
+                        control={form.control}
+                        name="state"
+                        render={({ field }) => (
+                          <Combobox className="mt-1" options={INDIAN_STATE_OPTIONS} value={field.value} onChange={field.onChange} />
+                        )}
+                      />
+                      <FieldError message={form.formState.errors.state?.message} />
+                    </div>
+                  </section>
+                </div>
+              )}
+            </div>
+          </li>
+          <li className="flex gap-3" aria-current={step === "summary" ? "step" : undefined}>
+            <div className="flex w-7 shrink-0 flex-col items-center">
+              <span
+                className={`relative z-10 flex size-7 items-center justify-center rounded-full border text-xs font-semibold ${
+                  step === "summary" ? "border-brand bg-white text-brand" : "border-zinc-200 bg-zinc-50 text-zinc-400"
+                }`}
+              >
+                2
+              </span>
+            </div>
+            <div className="min-w-0 flex-1 pb-2">
+              <h3 className={`text-xs font-bold uppercase tracking-[0.16em] ${step === "summary" ? "text-zinc-500" : "text-zinc-300"}`}>
+                Order summary
+              </h3>
+              {step === "summary" ? (
+                <div className="mt-3 space-y-4">
+                  <section className="space-y-2 rounded-2xl bg-zinc-50 p-3 text-sm">
+                    {cart.map((line) => (
+                      <div key={line.product.id} className="flex justify-between gap-3">
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{line.product.name}</span>
+                          <span className="text-xs text-zinc-500">
+                            Qty {line.quantity}
+                            {line.product.sku ? ` · ${line.product.sku}` : ""} · {returnPolicyLabel(line.product.returnAvailable !== false)}
+                          </span>
+                        </span>
+                        <span className="shrink-0 font-semibold tabular-nums">{formatStorePrice(line.product.price * line.quantity)}</span>
+                      </div>
+                    ))}
+                  </section>
+                  {prepaid || cod ? (
+                    <fieldset className="min-w-0 rounded-2xl border border-zinc-200 p-3">
+                      <legend className="px-1 text-sm font-semibold">Payment summary</legend>
+                      <p className="mb-3 text-xs leading-5 text-zinc-500">Pay the merchant using these amounts. India Post shipment starts after confirmation.</p>
+                      <div className="grid min-w-0 gap-2">
+                        {prepaid ? (
+                          <label className="flex min-h-11 min-w-0 items-center gap-3 rounded-xl bg-zinc-50 px-3 py-2 text-sm">
+                            <input type="radio" value="PREPAID" className="shrink-0" {...form.register("paymentPreference")} />
+                            <span className="min-w-0">
+                              <span className="block font-semibold">Prepaid — full amount</span>
+                              <span className="text-xs text-zinc-500">{formatStorePrice(quote.data?.total ?? productAmount)}</span>
+                            </span>
+                          </label>
+                        ) : null}
+                        {cod ? (
+                          <label className="flex min-h-11 min-w-0 items-center gap-3 rounded-xl bg-zinc-50 px-3 py-2 text-sm">
+                            <input type="radio" value="COD" className="shrink-0" {...form.register("paymentPreference")} />
+                            <span className="min-w-0">
+                              <span className="block font-semibold">Cash on delivery</span>
+                              {quote.data && preference === "COD" && quote.data.amountDueNow > 0 ? (
+                                <span className="block text-xs leading-5 text-zinc-500">
+                                  Advance {formatStorePrice(quote.data.amountDueNow)} · COD {formatStorePrice(quote.data.amountOnDelivery)}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-zinc-500">Pay the full amount on delivery.</span>
+                              )}
+                            </span>
+                          </label>
+                        ) : null}
+                      </div>
+                      <dl className="mt-3 min-w-0 space-y-1.5 rounded-xl bg-white p-3 text-sm">
+                        <div className="flex min-w-0 justify-between gap-3">
+                          <dt className="min-w-0 text-zinc-500">Product amount</dt>
+                          <dd className="shrink-0 font-semibold tabular-nums">{formatStorePrice(quote.data?.total ?? productAmount)}</dd>
+                        </div>
+                        <div className="flex min-w-0 justify-between gap-3">
+                          <dt className="min-w-0 text-zinc-500">Advance payment</dt>
+                          <dd className="shrink-0 font-semibold tabular-nums">
+                            {formatStorePrice(preference === "COD" ? (quote.data?.amountDueNow ?? 0) : 0)}
+                          </dd>
+                        </div>
+                        <div className="flex min-w-0 justify-between gap-3">
+                          <dt className="min-w-0 text-zinc-500">COD amount</dt>
+                          <dd className="shrink-0 font-semibold tabular-nums">
+                            {formatStorePrice(preference === "COD" ? (quote.data?.amountOnDelivery ?? quote.data?.total ?? productAmount) : 0)}
+                          </dd>
+                        </div>
+                        <div className="flex min-w-0 justify-between gap-3 border-t border-zinc-100 pt-2 text-base">
+                          <dt className="min-w-0 font-bold">Final total</dt>
+                          <dd className="shrink-0 font-bold tabular-nums">{formatStorePrice(quote.data?.total ?? productAmount)}</dd>
+                        </div>
+                      </dl>
+                      {quote.data && preference === "COD" && quote.data.amountDueNow > 0 ? (
+                        <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm font-medium text-amber-950">
+                          Advance payment of {formatStorePrice(quote.data.amountDueNow)} is required to confirm this order.
+                        </p>
+                      ) : null}
+                    </fieldset>
                   ) : (
-                    <span className="text-xs text-zinc-500">Pay the full amount on delivery.</span>
+                    <p className="rounded-2xl bg-red-50 p-3 text-sm text-red-700">These products cannot be ordered together. Remove prepaid-only or COD-only items.</p>
                   )}
-                </span>
-              </label>
-            ) : null}
-          </div>
-          {quote.data && preference === "COD" && quote.data.amountDueNow > 0 ? (
-            <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              Pay {formatStorePrice(quote.data.amountDueNow)} to the merchant before dispatch and {formatStorePrice(quote.data.amountOnDelivery)} on delivery.
-            </p>
-          ) : null}
-        </fieldset>
-      ) : (
-        <p className="rounded-2xl bg-red-50 p-3 text-sm text-red-700">These products cannot be ordered together. Remove prepaid-only or COD-only items.</p>
-      )}
-      {error ? (
-        <div role="alert" className="rounded-2xl bg-red-50 p-3 text-sm text-red-700">
-          {error}
+                  <section className="rounded-2xl border border-zinc-200 p-3">
+                    <h3 className="text-sm font-semibold">Return policy</h3>
+                    <p className="mt-1 text-sm text-zinc-700">{returns.label}</p>
+                    {returns.kind === "mixed" ? (
+                      <ul className="mt-2 space-y-1 text-xs text-zinc-500">
+                        {cart.map((line) => (
+                          <li key={line.product.id} className="flex justify-between gap-2">
+                            <span className="min-w-0 truncate">{line.product.name}</span>
+                            <span className="shrink-0">{returnPolicyLabel(line.product.returnAvailable !== false)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </section>
+                  {error ? (
+                    <div role="alert" className="rounded-2xl bg-red-50 p-3 text-sm text-red-700">
+                      {error}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </li>
+        </ol>
+      </div>
+      <div className="mt-auto shrink-0 border-t border-zinc-100 bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6">
+        <div className="mx-auto max-w-lg">
+          <Button
+            type="submit"
+            className="h-12 w-full rounded-2xl"
+            disabled={submitting || !cart.length || (step === "summary" && !prepaid && !cod)}
+          >
+            {step === "summary" ? (submitting ? "Placing order…" : "Place order") : "Next"}
+          </Button>
         </div>
-      ) : null}
-      <Button type="submit" className="h-12 w-full rounded-2xl" disabled={submitting || !cart.length || (!prepaid && !cod)}>
-        {submitting ? "Submitting order…" : "Submit order"}
-      </Button>
+      </div>
     </form>
   );
 }

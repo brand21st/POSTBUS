@@ -10,6 +10,7 @@ export function CartSheet({
   cart,
   accent,
   checkout,
+  checkoutStep = "details",
   recommendations,
   checkoutForm,
   onClose,
@@ -22,6 +23,7 @@ export function CartSheet({
   cart: CartLine[];
   accent: string;
   checkout: boolean;
+  checkoutStep?: "details" | "summary";
   recommendations: StoreProduct[];
   checkoutForm: ReactNode;
   onClose: () => void;
@@ -48,22 +50,41 @@ export function CartSheet({
       ) / 100
     : 0;
 
+  if (checkout) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex h-dvh min-h-0 w-full flex-col bg-white"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Checkout"
+      >
+        <header className="flex shrink-0 items-center gap-1 border-b border-zinc-100 px-3 py-2.5 md:px-6">
+          <button type="button" className="flex size-11 items-center justify-center rounded-full hover:bg-zinc-100" onClick={onBack} aria-label={checkoutStep === "summary" ? "Back to customer details" : "Back to cart"}>
+            <ArrowLeft className="size-5" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-bold">Checkout</h2>
+            <p className="text-xs text-zinc-500">{checkoutStep === "summary" ? "Order summary" : "Customer details"}</p>
+          </div>
+          <button type="button" className="flex size-11 items-center justify-center rounded-full hover:bg-zinc-100" onClick={onClose} aria-label="Close checkout">
+            <X className="size-5" />
+          </button>
+        </header>
+        {checkoutForm}
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-label={checkout ? "Checkout" : "Your cart"}>
+    <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-label="Your cart">
       <button className="absolute inset-0 cursor-default" type="button" onClick={onClose} aria-label="Close cart" />
       <section className="absolute inset-x-0 bottom-0 flex max-h-[94dvh] w-full flex-col rounded-t-[1.75rem] bg-white shadow-2xl sm:inset-y-0 sm:left-auto sm:right-0 sm:w-[min(100%,440px)] sm:max-h-none sm:rounded-none">
         <header className="flex shrink-0 items-center gap-1 border-b border-zinc-100 px-3 py-2.5 sm:gap-2 sm:px-4 sm:py-3">
-          {checkout ? (
-            <button type="button" className="flex size-11 items-center justify-center rounded-full hover:bg-zinc-100" onClick={onBack} aria-label="Back to cart">
-              <ArrowLeft className="size-5" />
-            </button>
-          ) : (
-            <span className="flex size-11 items-center justify-center rounded-full bg-zinc-100">
-              <ShoppingBag className="size-5" />
-            </span>
-          )}
+          <span className="flex size-11 items-center justify-center rounded-full bg-zinc-100">
+            <ShoppingBag className="size-5" />
+          </span>
           <div className="min-w-0 flex-1">
-            <h2 className="font-bold">{checkout ? "Delivery details" : "Your cart"}</h2>
+            <h2 className="font-bold">Your cart</h2>
             <p className="text-xs text-zinc-500">{cart.reduce((sum, line) => sum + line.quantity, 0)} items</p>
           </div>
           <button type="button" className="flex size-11 items-center justify-center rounded-full hover:bg-zinc-100" onClick={onClose} aria-label="Close">
@@ -151,6 +172,7 @@ export function CartSheet({
                 </section>
               ) : null}
 
+              {!checkout ? (
               <section className="mt-6 space-y-2 rounded-2xl bg-zinc-50 p-4 text-sm">
                 <div className="flex justify-between text-zinc-600">
                   <span>Subtotal</span>
@@ -179,13 +201,12 @@ export function CartSheet({
                   <span>{formatStorePrice(subtotal)}</span>
                 </div>
               </section>
-
-              {checkout ? <div className="mt-5">{checkoutForm}</div> : null}
+              ) : null}
             </>
           )}
         </div>
 
-        {!checkout && cart.length ? (
+        {cart.length ? (
           <footer className="shrink-0 border-t border-zinc-100 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
             <button
               type="button"

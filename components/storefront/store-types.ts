@@ -17,6 +17,7 @@ export type StoreProduct = {
   prepaidEnabled: boolean;
   codEnabled: boolean;
   codAdvancePercent?: number;
+  returnAvailable?: boolean;
   lowStockThreshold?: number;
   bestSeller?: boolean;
   createdAt?: string;

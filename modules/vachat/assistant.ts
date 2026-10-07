@@ -288,6 +288,21 @@ export async function handleVachatAssistantMessage(
   if (!input.text.trim() || !input.from.trim()) return { handled: false, reason: "empty" };
 
   try {
+    const { handleMerchantWhatsAppOrderAction } = await import("@/modules/orders/whatsapp-merchant-action");
+    const merchantAction = await handleMerchantWhatsAppOrderAction(supabase, input);
+    if (merchantAction.handled) {
+      return {
+        handled: true,
+        sent: true,
+        reply: merchantAction.reply,
+        organizationId: null as string | null,
+      };
+    }
+  } catch {
+    // Merchant YES/NO is optional; fall through to customer support.
+  }
+
+  try {
     let existing: WhatsappSupportSession | null = null;
     try {
       existing = await getSupportSessionByPhone(supabase, input.from);

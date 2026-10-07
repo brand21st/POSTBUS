@@ -144,6 +144,7 @@ export function ProductEditorFields({
       <section className="space-y-3">
         <h3 className="text-sm font-semibold text-ink">Store</h3>
         <ToggleRow control={form.control} name="storeVisible" label="Show in store" />
+        <ToggleRow control={form.control} name="returnAvailable" label="Return available" />
         <ToggleRow control={form.control} name="featured" label="Featured product" />
         {!showOpening ? <ToggleRow control={form.control} name="active" label="Active" /> : null}
       </section>

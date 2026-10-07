@@ -254,8 +254,31 @@ export async function submitPublicCustomerOrderLink(
     ? cart.map((item) => ({ productId: item.productId, quantity: item.quantity }))
     : [{ title: "WhatsApp order", quantity: 1, unitPrice: 0 }];
 
+  type CatalogRow = {
+    id: string;
+    name: string;
+    sku?: string | null;
+    price?: number | string;
+    active: boolean;
+    store_visible?: boolean;
+    prepaid_enabled?: boolean;
+    cod_enabled?: boolean;
+    cod_advance_percent?: number | string | null;
+    return_available?: boolean;
+    inventory_balances?: unknown;
+  };
+
   let quote: ReturnType<typeof quoteCatalogPayment> | null = null;
+  let returnSummary: { kind: "available" | "none" | "mixed"; label: string } = { kind: "none", label: "No Return" };
+  const messageItems: Array<{
+    name: string;
+    sku: string | null;
+    quantity: number;
+    unitPrice: number;
+    returnPolicy: string;
+  }> = [];
   if (cart.length) {
+    const { returnPolicyLabel, summarizeReturnPolicy } = await import("@/modules/products/return-policy");
     const catalog = await loadCatalogProducts(
       supabase,
       row.organization_id,
@@ -263,41 +286,39 @@ export async function submitPublicCustomerOrderLink(
     );
     const byId = new Map(catalog.map((product) => [String(product.id), product]));
     const lines = cart.map((item) => {
-      const product = byId.get(item.productId) as
-        | {
-            id: string;
-            name: string;
-            price?: number | string;
-            active: boolean;
-            store_visible?: boolean;
-            prepaid_enabled?: boolean;
-            cod_enabled?: boolean;
-            cod_advance_percent?: number | string | null;
-            inventory_balances?: unknown;
-          }
-        | undefined;
+      const product = byId.get(item.productId) as CatalogRow | undefined;
       if (!product || !product.active || product.store_visible === false) {
         throw new AppError(ERROR_CODES.VALIDATION_ERROR, "A product in your cart is no longer available.");
       }
       if (catalogOnHand(product) < item.quantity) {
         throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${product.name} is out of stock.`);
       }
+      const unitPrice = Number(product.price ?? 0);
+      const returnAvailable = product.return_available !== false;
+      messageItems.push({
+        name: product.name,
+        sku: product.sku ?? null,
+        quantity: item.quantity,
+        unitPrice,
+        returnPolicy: returnPolicyLabel(returnAvailable),
+      });
       return {
-        unitPrice: Number(product.price ?? 0),
+        unitPrice,
         quantity: item.quantity,
         prepaidEnabled: product.prepaid_enabled !== false,
         codEnabled: product.cod_enabled !== false,
         codAdvancePercent: product.cod_advance_percent ?? 0,
+        returnAvailable,
       };
     });
     if (input.paymentPreference === "PREPAID") {
-      const blocked = catalog.find((product) => (product as { prepaid_enabled?: boolean }).prepaid_enabled === false);
+      const blocked = catalog.find((product) => (product as CatalogRow).prepaid_enabled === false);
       if (blocked) {
         throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${(blocked as { name: string }).name} does not support prepaid.`);
       }
     }
     if (input.paymentPreference === "COD") {
-      const blocked = catalog.find((product) => (product as { cod_enabled?: boolean }).cod_enabled === false);
+      const blocked = catalog.find((product) => (product as CatalogRow).cod_enabled === false);
       if (blocked) {
         throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${(blocked as { name: string }).name} does not support COD.`);
       }
@@ -306,6 +327,7 @@ export async function submitPublicCustomerOrderLink(
       preference: input.paymentPreference === "COD" ? "COD" : "PREPAID",
       lines,
     });
+    returnSummary = summarizeReturnPolicy(lines.map((line) => line.returnAvailable));
   }
 
   const paymentStatus = "PENDING";
@@ -333,6 +355,8 @@ export async function submitPublicCustomerOrderLink(
             expectedAdvance: quote.expectedAdvance,
             amountOnDelivery: quote.amountOnDelivery,
             total: quote.total,
+            returnPolicy: returnSummary.label,
+            items: messageItems,
           },
         }
       : undefined,
@@ -365,7 +389,15 @@ export async function submitPublicCustomerOrderLink(
     after: { collectionLinkId: row.id, itemCount: cart.length },
   });
 
-  const total = Number(order.totalAmount ?? order.total_amount ?? 0);
+  const total = Number(quote?.total ?? order.totalAmount ?? order.total_amount ?? 0);
+  const advanceAmount = quote?.preference === "COD" ? Number(quote.amountDueNow ?? 0) : 0;
+  const codAmount = quote?.preference === "COD" ? Number(quote.amountOnDelivery ?? 0) : 0;
+  const paymentMethod =
+    quote?.preference === "COD"
+      ? advanceAmount > 0
+        ? "COD with advance"
+        : "Cash on delivery"
+      : "Prepaid";
   try {
     await supabase.from("notifications").insert({
       organization_id: row.organization_id,
@@ -384,6 +416,11 @@ export async function submitPublicCustomerOrderLink(
   const result = {
     status: "SUBMITTED" as const,
     orderNumber: (order.orderNumber ?? order.order_number ?? null) as string | null,
+    total,
+    advanceAmount,
+    codAmount,
+    paymentMethod,
+    returnPolicy: returnSummary.label,
   };
   if (idempotencyKey) {
     await supabase
@@ -392,5 +429,31 @@ export async function submitPublicCustomerOrderLink(
       .eq("organization_id", row.organization_id)
       .eq("key", idempotencyKey);
   }
+
+  try {
+    const { notifyStorefrontOrderCreated } = await import("@/modules/storefront/order-notify");
+    const orderNumber = result.orderNumber || "Order";
+    await notifyStorefrontOrderCreated(supabase, row.organization_id, order.id, {
+      storeName: (await merchantName(supabase, row.organization_id)) || "Postbus",
+      orderNumber,
+      customerName: input.customerName.trim(),
+      whatsapp: phone,
+      line1: input.line1.trim(),
+      line2: input.line2?.trim() || null,
+      city: input.city.trim(),
+      state: input.state.trim(),
+      pincode: input.pincode.trim(),
+      items: messageItems,
+      total,
+      advanceAmount,
+      codAmount,
+      paymentMethod,
+      returnPolicy: returnSummary.label,
+      status: "Processing",
+    });
+  } catch {
+    // WhatsApp delivery must not undo a created Postbus order.
+  }
+
   return result;
 }

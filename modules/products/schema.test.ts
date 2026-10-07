@@ -32,6 +32,7 @@ describe("product schemas", () => {
     });
     expect(parsed.openingStock).toBe(100);
     expect(parsed.codAdvancePercent).toBe(30);
+    expect(parsed.returnAvailable).toBe(true);
   });
 
   it("rejects products with neither prepaid nor COD", () => {

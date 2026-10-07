@@ -68,13 +68,14 @@ export function mapPublicProduct(row: Record<string, unknown>) {
     prepaidEnabled: Boolean(row.prepaid_enabled),
     codEnabled: Boolean(row.cod_enabled),
     codAdvancePercent: Number(row.cod_advance_percent ?? 0),
+    returnAvailable: row.return_available !== false,
     lowStockThreshold: Number(row.low_stock_threshold ?? 5),
     createdAt: String(row.created_at ?? ""),
   };
 }
 
 const PUBLIC_PRODUCT_SELECT =
-  "id, name, sku, public_slug, price, compare_at_price, description, weight_grams, prepaid_enabled, cod_enabled, cod_advance_percent, low_stock_threshold, image_urls, created_at, inventory_balances(on_hand)";
+  "id, name, sku, public_slug, price, compare_at_price, description, weight_grams, prepaid_enabled, cod_enabled, cod_advance_percent, return_available, low_stock_threshold, image_urls, created_at, inventory_balances(on_hand)";
 
 async function publicBestSellerIds(supabase: SupabaseClient, organizationId: string) {
   const { data } = await supabase.rpc("inventory_product_page", {

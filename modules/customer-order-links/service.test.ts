@@ -22,6 +22,10 @@ import { confirmWhatsAppOrder, createManualOrder } from "@/modules/orders/servic
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { loadCatalogProducts } from "@/modules/products/service";
 
+vi.mock("@/modules/storefront/order-notify", () => ({
+  notifyStorefrontOrderCreated: vi.fn(async () => {}),
+}));
+
 vi.mock("@/modules/orders/service", () => ({
   createManualOrder: vi.fn(async () => ({ id: "order-1", order_number: "PB-10001", totalAmount: 1499 })),
   confirmWhatsAppOrder: vi.fn(async () => ({ id: "order-1", status: "READY" })),
@@ -237,7 +241,7 @@ describe("submitPublicCustomerOrderLink", () => {
       },
     };
 
-    await expect(submitPublicCustomerOrderLink(client as never, PATH_REF, payload)).resolves.toEqual({
+    await expect(submitPublicCustomerOrderLink(client as never, PATH_REF, payload)).resolves.toMatchObject({
       status: "SUBMITTED",
       orderNumber: "PB-10001",
     });

@@ -166,6 +166,7 @@ export type ProductRecord = {
   prepaidEnabled: boolean;
   codEnabled: boolean;
   codAdvancePercent: number;
+  returnAvailable?: boolean;
   compareAtPrice?: number | null;
   description?: string | null;
   storeVisible?: boolean;

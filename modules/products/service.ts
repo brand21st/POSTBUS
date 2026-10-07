@@ -22,7 +22,7 @@ type ListQuery = z.infer<typeof productListQuery>;
 type MovementQuery = z.infer<typeof inventoryMovementListQuery>;
 
 const PRODUCT_SELECT =
-  "id, organization_id, name, sku, public_slug, price, compare_at_price, description, store_visible, low_stock_threshold, weight_grams, active, prepaid_enabled, cod_enabled, cod_advance_percent, image_urls, created_at, updated_at, inventory_balances(on_hand, reserved)";
+  "id, organization_id, name, sku, public_slug, price, compare_at_price, description, store_visible, low_stock_threshold, weight_grams, active, prepaid_enabled, cod_enabled, cod_advance_percent, return_available, image_urls, created_at, updated_at, inventory_balances(on_hand, reserved)";
 
 function productPublicSlug(name: string, id: string) {
   const base = name
@@ -81,6 +81,7 @@ export function mapProduct(row: Record<string, unknown>, categoryIds: string[] =
     prepaidEnabled: Boolean(row.prepaid_enabled),
     codEnabled: Boolean(row.cod_enabled),
     codAdvancePercent: Number(row.cod_advance_percent ?? 0),
+    returnAvailable: row.return_available !== false,
     imageUrls: images.imageUrls,
     imagePaths: images.imagePaths,
     categoryIds,
@@ -312,6 +313,7 @@ export async function createProduct(supabase: SupabaseClient, ctx: TenantContext
   if (input.compareAtPrice != null) extras.compare_at_price = input.compareAtPrice;
   if (input.description != null) extras.description = input.description || null;
   if (input.storeVisible != null) extras.store_visible = input.storeVisible;
+  if (input.returnAvailable != null) extras.return_available = input.returnAvailable;
   if (input.lowStockThreshold != null) extras.low_stock_threshold = input.lowStockThreshold;
   if (Object.keys(extras).length) {
     const { error: extraError } = await supabase
@@ -363,6 +365,7 @@ export async function updateProduct(
   if (input.compareAtPrice !== undefined) patch.compare_at_price = input.compareAtPrice;
   if (input.description !== undefined) patch.description = input.description || null;
   if (input.storeVisible != null) patch.store_visible = input.storeVisible;
+  if (input.returnAvailable != null) patch.return_available = input.returnAvailable;
   if (input.lowStockThreshold != null) patch.low_stock_threshold = input.lowStockThreshold;
   if (input.imageUrls) {
     const { reorderProductImages } = await import("@/modules/products/images");
@@ -508,6 +511,7 @@ export async function duplicateProduct(supabase: SupabaseClient, ctx: TenantCont
     prepaidEnabled: current.prepaidEnabled,
     codEnabled: current.codEnabled,
     codAdvancePercent: current.codAdvancePercent,
+    returnAvailable: current.returnAvailable,
     storeVisible: false,
     featured: false,
     lowStockThreshold: current.lowStockThreshold,
@@ -528,7 +532,7 @@ export async function loadCatalogProducts(
   const { data, error } = await supabase
     .from("products")
     .select(
-      "id, name, sku, price, compare_at_price, description, store_visible, weight_grams, active, prepaid_enabled, cod_enabled, cod_advance_percent, image_urls, inventory_balances(on_hand)"
+      "id, name, sku, price, compare_at_price, description, store_visible, weight_grams, active, prepaid_enabled, cod_enabled, cod_advance_percent, return_available, image_urls, inventory_balances(on_hand)"
     )
     .eq("organization_id", organizationId)
     .in("id", unique);
