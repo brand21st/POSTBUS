@@ -46,6 +46,7 @@ function saveDb(initial: ContractRow[], range?: BarcodeRow | null) {
   const connectionUpdates: Record<string, unknown>[] = [];
   const deletes: string[] = [];
   const barcodeInserts: Record<string, unknown>[] = [];
+  let barcodeRetires = 0;
   let currentRange: BarcodeRow | null = range === undefined
     ? {
         next_number: 55697500,
@@ -75,8 +76,14 @@ function saveDb(initial: ContractRow[], range?: BarcodeRow | null) {
       maybeSingle() {
         return Promise.resolve({ data: currentRange, error: null });
       },
+      order() {
+        return thenable({ data: currentRange ? [{ ...currentRange }] : [], error: null });
+      },
       then(resolve: (value: { error: null }) => unknown, reject?: (reason: unknown) => unknown) {
-        if (kind === "update") currentRange = null;
+        if (kind === "update") {
+          barcodeRetires += 1;
+          currentRange = null;
+        }
         return Promise.resolve({ error: null }).then(resolve, reject);
       },
     };
@@ -88,6 +95,7 @@ function saveDb(initial: ContractRow[], range?: BarcodeRow | null) {
     connectionUpdates,
     deletes,
     barcodeInserts,
+    barcodeRetires: () => barcodeRetires,
     contracts: () => contracts,
     client: {
       from(table: string) {
@@ -470,5 +478,28 @@ describe("POST integrations/india-post connect:false", () => {
     );
     expect(db.barcodeInserts[0]?.next_number).toBe(55697500);
     expect(db.barcodeInserts[0]?.end_number).toBe(55698999);
+  });
+
+  it("retires the active barcode series when barcodeRange is null", async () => {
+    const db = saveDb([]);
+    const request = new NextRequest("http://localhost/api/v1/integrations/india-post", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        connect: false,
+        environment: "PRODUCTION",
+        bulkCustomerId: "1788590988",
+        barcodeRange: null,
+      }),
+    });
+    const result = await handleIntegrationRoutes(
+      request,
+      db.client as never,
+      ctx,
+      "POST integrations/india-post"
+    );
+    expect(result).toEqual({ saved: true, status: "CONNECTED" });
+    expect(db.barcodeInserts).toEqual([]);
+    expect(db.barcodeRetires()).toBeGreaterThan(0);
   });
 });

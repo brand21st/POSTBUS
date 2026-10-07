@@ -89,6 +89,13 @@ describe("permissionForTenantRoute", () => {
       ])
     ).toBe("integrations.manage");
     expect(
+      permissionForTenantRoute("PATCH", "integrations/india-post/barcode-range", [
+        "integrations",
+        "india-post",
+        "barcode-range",
+      ])
+    ).toBe("integrations.manage");
+    expect(
       permissionForTenantRoute("DELETE", "integrations/india-post", ["integrations", "india-post"])
     ).toBe("integrations.manage");
     expect(permissionForTenantRoute("POST", "integrations/wati", ["integrations", "wati"])).toBe(

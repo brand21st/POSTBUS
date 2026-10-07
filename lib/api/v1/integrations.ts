@@ -9,7 +9,12 @@ import type { IndiaPostOffice } from "@/modules/india-post/endpoints";
 import { indiaPostOfficeToApiRow, indiaPostOfficesForSelection } from "@/modules/india-post/endpoints";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
-import { isCeptUatTestSeries, nextSerialForSavedRange, parseBarcodeRange } from "@/modules/india-post/barcode";
+import {
+  isCeptUatTestSeries,
+  nextSerialForSavedRange,
+  parseBarcodeRange,
+  type BarcodeRangeInput,
+} from "@/modules/india-post/barcode";
 import { parcelServiceCode, resolveOrderBookingService } from "@/modules/india-post/booking-service";
 import {
   parcelDefaultsApiPayload,
@@ -102,6 +107,121 @@ function normalizeOfficePincode(value: unknown) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter a valid 6-digit pincode.");
   }
   return pin;
+}
+
+function barcodeRangeApiPayload(row: {
+  prefix?: string | null;
+  suffix?: string | null;
+  start_number?: number | null;
+  end_number?: number | null;
+  next_number?: number | null;
+  service_code?: string | null;
+} | null) {
+  if (!row) return null;
+  return {
+    prefix: row.prefix,
+    suffix: row.suffix,
+    startNumber: row.start_number,
+    endNumber: row.end_number,
+    nextNumber: row.next_number,
+    serviceCode: row.service_code ?? null,
+  };
+}
+
+async function listActiveBarcodeRanges(supabase: SupabaseClient, organizationId: string) {
+  const { data: ranges, error } = await supabase
+    .from("barcode_ranges")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .eq("is_active", true)
+    .order("service_code", { nullsFirst: true });
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return ranges ?? [];
+}
+
+async function persistIndiaPostBarcodeRange(
+  supabase: SupabaseClient,
+  organizationId: string,
+  environment: string | null | undefined,
+  barcodeRange: BarcodeRangeInput | null,
+  clear?: { serviceCode?: string | null; prefix?: string | null }
+) {
+  if (!barcodeRange) {
+    const prefix = (clear?.prefix ?? "").trim().toUpperCase();
+    let retire = supabase
+      .from("barcode_ranges")
+      .update({ is_active: false })
+      .eq("organization_id", organizationId)
+      .eq("is_active", true);
+    if (/^[A-Z]{2}$/.test(prefix)) retire = retire.eq("prefix", prefix);
+    else if (clear?.serviceCode) retire = retire.eq("service_code", clear.serviceCode);
+    else retire = retire.is("service_code", null);
+    const { error } = await retire;
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    return;
+  }
+
+  const parsed = parseBarcodeRange(barcodeRange);
+  if (
+    environment === "PRODUCTION" &&
+    isCeptUatTestSeries(parsed.prefix, parsed.startNumber, parsed.endNumber)
+  ) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      "21433001–21434000 is the CEPT UAT test serial range. Production must use the CL series from your India Post My Bookings list (e.g. CL556973995IN)."
+    );
+  }
+
+  let currentQuery = supabase
+    .from("barcode_ranges")
+    .select("next_number, prefix, suffix, start_number, end_number, service_code")
+    .eq("organization_id", organizationId)
+    .eq("is_active", true);
+  currentQuery = parsed.serviceCode
+    ? currentQuery.eq("service_code", parsed.serviceCode)
+    : currentQuery.is("service_code", null);
+  const { data: currentRange, error: currentRangeError } = await currentQuery.maybeSingle();
+  if (currentRangeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, currentRangeError.message);
+
+  const sameSeries =
+    currentRange &&
+    currentRange.prefix === parsed.prefix &&
+    currentRange.suffix === parsed.suffix &&
+    Number(currentRange.start_number) === parsed.startNumber &&
+    Number(currentRange.end_number) === parsed.endNumber &&
+    (currentRange.service_code ?? null) === parsed.serviceCode;
+
+  if (sameSeries) return;
+
+  const requestedNext = Number((barcodeRange as { nextNumber?: unknown }).nextNumber);
+  const nextNumber = nextSerialForSavedRange(
+    parsed,
+    currentRange,
+    Number.isInteger(requestedNext) ? requestedNext : undefined
+  );
+
+  let retire = supabase
+    .from("barcode_ranges")
+    .update({ is_active: false })
+    .eq("organization_id", organizationId)
+    .eq("is_active", true);
+  retire = parsed.serviceCode
+    ? retire.eq("service_code", parsed.serviceCode)
+    : retire.is("service_code", null);
+  const { error: retireError } = await retire;
+  if (retireError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, retireError.message);
+
+  const { error: rangeError } = await supabase.from("barcode_ranges").insert({
+    organization_id: organizationId,
+    service_code: parsed.serviceCode,
+    prefix: parsed.prefix,
+    suffix: parsed.suffix,
+    start_number: parsed.startNumber,
+    end_number: parsed.endNumber,
+    next_number: nextNumber,
+    is_active: true,
+  });
+  if (rangeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, rangeError.message);
 }
 
 function pickupOfficeApiPayload(row: {
@@ -504,14 +624,9 @@ export async function handleIntegrationRoutes(
       .select("*")
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
-    const { data: ranges } = await supabase
-      .from("barcode_ranges")
-      .select("*")
-      .eq("organization_id", ctx.organizationId)
-      .eq("is_active", true)
-      .order("service_code", { nullsFirst: true });
+    const ranges = await listActiveBarcodeRanges(supabase, ctx.organizationId);
     const contracts = await listContracts(supabase, ctx.organizationId);
-    const range = ranges?.[0] ?? null;
+    const range = ranges.find((item) => item.service_code == null) ?? null;
     return {
       environment: data?.environment ?? DEFAULT_PROVIDER_ENVIRONMENT,
       status: data?.status ?? "NOT_CONNECTED",
@@ -538,24 +653,8 @@ export async function handleIntegrationRoutes(
         contracts.find((contract) => contract.isDefault)?.serviceCode ?? DEFAULT_INDIA_POST_SERVICE,
       bookingServiceOverride: parcelServiceCode(data?.booking_service_override),
       ...parcelDefaultsApiPayload(parcelDefaultsFromConnection(data)),
-      barcodeRange: range
-        ? {
-            prefix: range.prefix,
-            suffix: range.suffix,
-            startNumber: range.start_number,
-            endNumber: range.end_number,
-            nextNumber: range.next_number,
-            serviceCode: range.service_code ?? null,
-          }
-        : null,
-      barcodeRanges: (ranges ?? []).map((item) => ({
-        prefix: item.prefix,
-        suffix: item.suffix,
-        startNumber: item.start_number,
-        endNumber: item.end_number,
-        nextNumber: item.next_number,
-        serviceCode: item.service_code ?? null,
-      })),
+      barcodeRange: barcodeRangeApiPayload(range),
+      barcodeRanges: ranges.map((item) => barcodeRangeApiPayload(item)!),
     };
   }
 
@@ -798,6 +897,47 @@ export async function handleIntegrationRoutes(
     return pickupOfficeApiPayload(data);
   }
 
+  if (key === "PATCH integrations/india-post/barcode-range") {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { data: existing, error: existingError } = await supabase
+      .from("india_post_connections")
+      .select("id, environment")
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (existingError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingError.message);
+    if (!existing) {
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        "Save your India Post customer ID and password first."
+      );
+    }
+    const rangeInput = Object.prototype.hasOwnProperty.call(body, "barcodeRange")
+      ? (body.barcodeRange as BarcodeRangeInput | null)
+      : Object.prototype.hasOwnProperty.call(body, "barcode_range")
+        ? (body.barcode_range as BarcodeRangeInput | null)
+        : body.prefix
+          ? (body as unknown as BarcodeRangeInput)
+          : null;
+    await persistIndiaPostBarcodeRange(
+      supabase,
+      ctx.organizationId,
+      existing.environment,
+      rangeInput,
+      rangeInput == null
+        ? {
+            serviceCode: parcelServiceCode(String(body.serviceCode ?? body.service_code ?? "")) || null,
+            prefix: String(body.prefix ?? body.clearPrefix ?? ""),
+          }
+        : undefined
+    );
+    const ranges = await listActiveBarcodeRanges(supabase, ctx.organizationId);
+    const range = ranges.find((item) => item.service_code == null) ?? null;
+    return {
+      barcodeRange: barcodeRangeApiPayload(range),
+      barcodeRanges: ranges.map((item) => barcodeRangeApiPayload(item)!),
+    };
+  }
+
   if (key === "PUT integrations/india-post" || key === "POST integrations/india-post" || key === "PATCH integrations/india-post") {
     const body = await request.json();
     const connect = body.connect !== false;
@@ -902,73 +1042,24 @@ export async function handleIntegrationRoutes(
       else await syncPageContracts(supabase, ctx.organizationId, body.contracts);
     }
 
-    if (body.barcodeRange) {
-      const parsed = parseBarcodeRange(body.barcodeRange);
-      const environment = payload.environment ?? data.environment;
-      if (
-        environment === "PRODUCTION" &&
-        isCeptUatTestSeries(parsed.prefix, parsed.startNumber, parsed.endNumber)
-      ) {
-        throw new AppError(
-          ERROR_CODES.VALIDATION_ERROR,
-          "21433001–21434000 is the CEPT UAT test serial range. Production must use the CL series from your India Post My Bookings list (e.g. CL556973995IN)."
-        );
-      }
-
-      let currentQuery = supabase
-        .from("barcode_ranges")
-        .select("next_number, prefix, suffix, start_number, end_number, service_code")
-        .eq("organization_id", ctx.organizationId)
-        .eq("is_active", true);
-      currentQuery = parsed.serviceCode
-        ? currentQuery.eq("service_code", parsed.serviceCode)
-        : currentQuery.is("service_code", null);
-      const { data: currentRange, error: currentRangeError } = await currentQuery.maybeSingle();
-      if (currentRangeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, currentRangeError.message);
-
-      const sameSeries =
-        currentRange &&
-        currentRange.prefix === parsed.prefix &&
-        currentRange.suffix === parsed.suffix &&
-        Number(currentRange.start_number) === parsed.startNumber &&
-        Number(currentRange.end_number) === parsed.endNumber &&
-        (currentRange.service_code ?? null) === parsed.serviceCode;
-
-      if (!sameSeries) {
-        const nextNumber = nextSerialForSavedRange(
-          parsed,
-          currentRange,
-          Number.isInteger(Number(body.barcodeRange.nextNumber))
-            ? Number(body.barcodeRange.nextNumber)
-            : undefined
-        );
-
-        // Saving twice used to add a second active row, and the booking worker's
-        // single-row lookup then failed. Retire the current series for this service
-        // first, which is also how a used-up series gets replaced.
-        let retire = supabase
-          .from("barcode_ranges")
-          .update({ is_active: false })
-          .eq("organization_id", ctx.organizationId)
-          .eq("is_active", true);
-        retire = parsed.serviceCode
-          ? retire.eq("service_code", parsed.serviceCode)
-          : retire.is("service_code", null);
-        const { error: retireError } = await retire;
-        if (retireError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, retireError.message);
-
-        const { error: rangeError } = await supabase.from("barcode_ranges").insert({
-          organization_id: ctx.organizationId,
-          service_code: parsed.serviceCode,
-          prefix: parsed.prefix,
-          suffix: parsed.suffix,
-          start_number: parsed.startNumber,
-          end_number: parsed.endNumber,
-          next_number: nextNumber,
-          is_active: true,
-        });
-        if (rangeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, rangeError.message);
-      }
+    if (
+      Object.prototype.hasOwnProperty.call(body, "barcodeRange") ||
+      Object.prototype.hasOwnProperty.call(body, "barcode_range")
+    ) {
+      const rangeInput = (body.barcodeRange ?? body.barcode_range ?? null) as BarcodeRangeInput | null;
+      await persistIndiaPostBarcodeRange(
+        supabase,
+        ctx.organizationId,
+        payload.environment ?? data.environment,
+        rangeInput,
+        rangeInput == null
+          ? {
+              serviceCode:
+                parcelServiceCode(String(body.rangeServiceCode ?? body.serviceCode ?? "")) || null,
+              prefix: String(body.barcodePrefix ?? body.prefix ?? ""),
+            }
+          : undefined
+      );
     }
 
     if (!connect) {
