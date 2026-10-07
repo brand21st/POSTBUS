@@ -1867,9 +1867,13 @@ export async function fulfillShopifyShipment(
   });
   if (!payload.fulfillment.trackingInfo) return { skipped: true, reason: "no_barcode" };
 
+  const linkedOrderId = order.id;
+  const shopDomain = shop;
+  const adminToken = token;
+
   async function finishShopifyFulfillment(updated: boolean, reason?: string) {
-    await markOrderFulfilled(supabase, order.id);
-    await tagShopifyOrderStage(shop, token, sourceOrderId, "booked").catch(() => null);
+    await markOrderFulfilled(supabase, linkedOrderId);
+    await tagShopifyOrderStage(shopDomain, adminToken, sourceOrderId, "booked").catch(() => null);
     return updated
       ? { skipped: false, fulfilled: true }
       : { skipped: true, reason: reason ?? "already_fulfilled_remote", fulfilled: true };
