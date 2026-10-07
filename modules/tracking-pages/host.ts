@@ -1,3 +1,4 @@
+import { siteConfig } from "@/lib/site-config";
 import {
   APEX_HOSTS,
   PRODUCTION_APEX_HOST,
@@ -6,6 +7,8 @@ import {
   TEMP_APEX_HOST,
   TRACKING_PARENT_HOSTS,
 } from "./constants";
+
+export const POSTBUS_PUBLIC_TRACK_URL = `${siteConfig.url}/track`;
 
 export function hostnameFromHost(host: string | null | undefined) {
   return (host ?? "").split(":")[0]?.trim().toLowerCase() ?? "";
@@ -100,6 +103,12 @@ export function customerTrackingLink(publicUrl: string, trackingId: string) {
   const id = trackingId.trim();
   if (id) url.searchParams.set("tracking", id);
   return url.toString();
+}
+
+export function postbusTrackingLink(trackingNumber?: string | null) {
+  const id = trackingNumber?.trim();
+  if (!id) return POSTBUS_PUBLIC_TRACK_URL;
+  return customerTrackingLink(POSTBUS_PUBLIC_TRACK_URL, id);
 }
 
 export function trackingPagePublicUrl(subdomain: string) {

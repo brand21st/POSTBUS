@@ -3,6 +3,8 @@ import {
   classifySubdomain,
   customerTrackingLink,
   parseTrackingSubdomain,
+  postbusTrackingLink,
+  POSTBUS_PUBLIC_TRACK_URL,
   subdomainCandidates,
   trackingPagePublicUrl,
 } from "./host";
@@ -64,6 +66,16 @@ describe("customerTrackingLink", () => {
     expect(customerTrackingLink("https://priya.postbus.in", "CL556974704IN")).toBe(
       "https://priya.postbus.in/?tracking=CL556974704IN"
     );
+  });
+});
+
+describe("postbusTrackingLink", () => {
+  it("builds the public PostBus tracking page with the article id", () => {
+    expect(POSTBUS_PUBLIC_TRACK_URL).toBe("https://www.postbus.in/track");
+    expect(postbusTrackingLink("CL556974704IN")).toBe(
+      "https://www.postbus.in/track?tracking=CL556974704IN"
+    );
+    expect(postbusTrackingLink(null)).toBe("https://www.postbus.in/track");
   });
 });
 
