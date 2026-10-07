@@ -7,6 +7,8 @@ import {
   indiaPostBookingFileUrl,
   indiaPostBookingUrl,
   indiaPostDomesticLabelPayload,
+  indiaPostLabelProductCaption,
+  indiaPostLabelServiceType,
   indiaPostMobile,
   indiaPostSessionUrl,
   indiaPostShapeOfArticle,
@@ -83,6 +85,11 @@ describe("article type and shape", () => {
     expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BUSINESS_PARCEL");
     expect(indiaPostBookingArticleType("BP")).toBe("BUSINESS_PARCEL");
     expect(indiaPostBookingArticleType("SP_INLAND_PARCEL", "CX075250510IN")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostLabelServiceType("SP_INLAND_PARCEL", "CX075250554IN")).toBe("BP");
+    expect(indiaPostTransmissionMode("SP_INLAND_PARCEL", "CX075250554IN")).toBe("S");
+    expect(indiaPostLabelProductCaption("SP_INLAND_PARCEL", "CX075250554IN")).toBe(
+      "INDIAPOST PARCEL CONTRACTUAL"
+    );
   });
 
   it("follows the selected Speed Post product and falls back to weight for bare SP", () => {
@@ -162,6 +169,39 @@ describe("indiaPost domestic label payload", () => {
     expect(payload.sender_addressl2).toBe("Near SO");
     expect(payload.booking_office_name).toBe("Kolenchery SO");
     expect(payload.booking_office_pin).toBe("682311");
+  });
+
+  it("prints CX articles as INDIAPOST PARCEL CONTRACTUAL on the official label API", () => {
+    const payload = indiaPostDomesticLabelPayload({
+      customerId: "1665681680",
+      barcode: "CX075250554IN",
+      serviceCode: "SP_INLAND_PARCEL",
+      bookedAt: "2026-10-07T10:00:00.000Z",
+      weightGrams: 50,
+      lengthCm: 15,
+      widthCm: 10,
+      heightCm: 5,
+      tariff: "37.00",
+      bkgRefId: "4150084661362788",
+      recipientName: "Goutham Krishna",
+      recipientMobile: "9876543210",
+      recipientLine1: "Kolaggapara Kavala",
+      recipientCity: "Sulthan Bathery",
+      recipientState: "Kerala",
+      recipientPin: "673592",
+      senderName: "SH Brand Hub",
+      senderLine1: "Registered pickup",
+      senderCity: "Malappuram",
+      senderState: "Kerala",
+      senderPin: "673637",
+      bookingOfficeName: "Pulikkal SO",
+      bookingOfficePin: "673637",
+    });
+    expect(payload.service_type).toBe("BP");
+    expect(payload.transmission_mode).toBe("S");
+    expect(indiaPostLabelProductCaption("SP_INLAND_PARCEL", "CX075250554IN")).toBe(
+      "INDIAPOST PARCEL CONTRACTUAL"
+    );
   });
 
   it("maps COD orders onto India Post COD payment and amount", () => {

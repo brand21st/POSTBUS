@@ -10,7 +10,7 @@ import { notifyLabelsReadyIfComplete } from "@/lib/notifications/labels-ready";
 import { logError } from "@/lib/logger";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { organizationLogoUrl } from "@/modules/organizations/branding";
-import { indiaPostServiceLabel } from "@/types/domain";
+import { indiaPostBookingServiceCode, indiaPostLabelProductCaption } from "@/modules/india-post/endpoints";
 
 export type PackingPartyInput = {
   name?: string | null;
@@ -319,8 +319,15 @@ export async function loadPackingLabelData(
     logoMime: logo?.mime ?? null,
     logoUrl: organizationLogoUrl(org?.logo_path),
     articleId: articleIdFromShipment(shipment),
-    articleType: shipment.service_code ? indiaPostServiceLabel(String(shipment.service_code)) : "",
-    ...(await indiaPostLabelIdentity(supabase, organizationId, shipment.service_code)),
+    articleType: indiaPostLabelProductCaption(
+      String(shipment.service_code || ""),
+      articleIdFromShipment(shipment)
+    ),
+    ...(await indiaPostLabelIdentity(
+      supabase,
+      organizationId,
+      indiaPostBookingServiceCode(String(shipment.service_code || ""), articleIdFromShipment(shipment))
+    )),
     paymentMode: paymentMode,
     weightGrams: Number(shipment.weight_grams) > 0 ? Number(shipment.weight_grams) : null,
     lengthCm: Number(shipment.length_cm) > 0 ? Number(shipment.length_cm) : null,

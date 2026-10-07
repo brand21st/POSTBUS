@@ -4,6 +4,7 @@ import { logError } from "@/lib/logger";
 import { persistIndiaPostTokens } from "@/modules/india-post/session";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import {
+  indiaPostBookingServiceCode,
   indiaPostDomesticLabelPayload,
   indiaPostMobile,
 } from "@/modules/india-post/endpoints";
@@ -106,7 +107,10 @@ export async function fetchOfficialIndiaPostLabelPdf(
         indiaPostDomesticLabelPayload({
         customerId: String(connection.bulk_customer_id ?? ""),
         barcode: String(shipment.barcode),
-        serviceCode: String(shipment.service_code || DEFAULT_INDIA_POST_SERVICE),
+        serviceCode: indiaPostBookingServiceCode(
+          String(shipment.service_code || DEFAULT_INDIA_POST_SERVICE),
+          String(shipment.barcode)
+        ),
         bookedAt: shipment.booked_at as string | null,
         weightGrams: Number(shipment.weight_grams) || 100,
         lengthCm: Number(shipment.length_cm) || 0,

@@ -2,7 +2,7 @@ import { indiaPostBaseUrl } from "@/lib/env";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { indiaPostServiceForBarcodePrefix } from "@/modules/india-post/barcode";
 import { INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G } from "@/modules/india-post/spec";
-import type { ProviderEnvironment } from "@/types/domain";
+import { indiaPostServiceLabel, type ProviderEnvironment } from "@/types/domain";
 
 /**
  * India Post CEPT root: https://{host}/beextcustomer
@@ -78,6 +78,16 @@ export function indiaPostLabelServiceType(serviceCode: string, barcode?: string)
   if (type === "BP" || type === "BUSINESS_PARCEL") return "BP";
   if (type.startsWith("24_") || type.startsWith("48_")) return type;
   return "SP";
+}
+
+/** Printed under the barcode on the official CX / Business Parcel label. */
+export const INDIA_POST_PARCEL_CONTRACTUAL_CAPTION = "INDIAPOST PARCEL CONTRACTUAL";
+
+export function indiaPostLabelProductCaption(serviceCode: string, barcode?: string) {
+  if (indiaPostLabelServiceType(serviceCode, barcode) === "BP") {
+    return INDIA_POST_PARCEL_CONTRACTUAL_CAPTION;
+  }
+  return indiaPostServiceLabel(indiaPostBookingServiceCode(serviceCode, barcode) || serviceCode);
 }
 
 /**
@@ -247,8 +257,8 @@ export function indiaPostVolumetricWeightGrams(lengthCm: number, widthCm: number
   return Math.ceil((lengthCm * widthCm * heightCm) / 5);
 }
 
-export function indiaPostTransmissionMode(serviceCode: string) {
-  const type = indiaPostBookingArticleType(serviceCode);
+export function indiaPostTransmissionMode(serviceCode: string, barcode?: string) {
+  const type = indiaPostBookingArticleType(serviceCode, barcode);
   return type === "BP" || type === "BUSINESS_PARCEL" ? "S" : "A";
 }
 
@@ -362,7 +372,7 @@ export function indiaPostDomesticLabelPayload(input: {
     sender_city: input.senderCity || "",
     sender_pin: originPin,
     sender_state: input.senderState || "",
-    transmission_mode: indiaPostTransmissionMode(input.serviceCode),
+    transmission_mode: indiaPostTransmissionMode(input.serviceCode, input.barcode),
     payment_mode: payment.payment_mode,
     routing_data: `${input.bookingOfficePin} - ${input.recipientPin}`,
     booking_office_name: input.bookingOfficeName,
