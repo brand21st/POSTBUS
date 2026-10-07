@@ -6,6 +6,13 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   compress: true,
   serverExternalPackages: ["bullmq", "ioredis", "@napi-rs/canvas"],
+  turbopack: {
+    resolveAlias: {
+      "@napi-rs/canvas": {
+        browser: "./modules/labels/unicode/canvas-browser-stub.ts",
+      },
+    },
+  },
   outputFileTracingIncludes: {
     "*": ["./assets/fonts/noto/**/*", "./node_modules/@napi-rs/canvas/**/*"],
   },
