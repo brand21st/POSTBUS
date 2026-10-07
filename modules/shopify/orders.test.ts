@@ -21,6 +21,8 @@ import {
   shopifyDimensionToCm,
   shopifyParcelFromLineItems,
   shopifyShipmentParcelExtras,
+  shopifyResolvedShipmentDims,
+  parseShopifyVariantShippingNode,
   applyShopifyProductShippingToLineItem,
   shopifyLineItemImageUrl,
   shopifyImageLookupKey,
@@ -655,6 +657,41 @@ describe("shopify product shipping hydrate", () => {
     expect(shopifyShipmentParcelExtras([{ title: "Kurta", quantity: 1, grams: 500 }])).toEqual({});
   });
 
+  it("reads aliased GraphQL metafields and prefers them over workspace defaults", () => {
+    expect(
+      parseShopifyVariantShippingNode({
+        id: "gid://shopify/ProductVariant/22",
+        customLength: { value: "10 in" },
+        customWidth: { value: "15" },
+        customHeight: { value: "10" },
+      })
+    ).toEqual({ grams: null, weight: null, lengthCm: 25.4, widthCm: 15, heightCm: 10 });
+    expect(parseShopifyVariantShippingNode({ id: "gid://shopify/ProductVariant/1" })).toEqual({
+      grams: null,
+      weight: null,
+      lengthCm: null,
+      widthCm: null,
+      heightCm: null,
+    });
+    const metafieldDims = shopifyResolvedShipmentDims(
+      [{ title: "Kurta", quantity: 1, grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
+      { lengthCm: 30, widthCm: 20, heightCm: 12, weightGrams: 800 }
+    );
+    expect(metafieldDims).toEqual({ lengthCm: 20, widthCm: 15, heightCm: 10 });
+    expect(
+      shopifyResolvedShipmentDims([{ title: "Kurta", quantity: 1, grams: 500 }], {
+        lengthCm: 30,
+        widthCm: 20,
+        heightCm: 12,
+        weightGrams: 800,
+      })
+    ).toEqual({ lengthCm: 30, widthCm: 20, heightCm: 12 });
+  });
+
+  it("does not invent Shopify saved-package dimensions when none were fetched", () => {
+    expect(shopifyResolvedShipmentDims([{ title: "Kurta", quantity: 1, grams: 200 }])).toEqual({});
+  });
+
   it("stores converted grams when order grams are zero and the variant has weight", async () => {
     const inserts: Array<{ table: string; payload: unknown }> = [];
     const result = await upsertShopifyOrder(trackedOrderClient({ inserts, deletes: [] }) as never, {
@@ -827,11 +864,9 @@ describe("shopify product shipping hydrate", () => {
               nodes: [
                 {
                   id: "gid://shopify/ProductVariant/22",
-                  metafields: [
-                    { namespace: "custom", key: "length", value: "20" },
-                    { namespace: "custom", key: "width", value: "15" },
-                    { namespace: "custom", key: "height", value: "10" },
-                  ],
+                  customLength: { value: "20" },
+                  customWidth: { value: "15" },
+                  customHeight: { value: "10" },
                 },
               ],
             },
@@ -886,6 +921,107 @@ describe("shopify product shipping hydrate", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+
+  it("keeps importing weight when GraphQL dimension enrichment fails", async () => {
+    getAutomationSettings.mockResolvedValue({
+      autoShopifySync: true,
+      autoShipmentCreation: true,
+      autoBooking: false,
+    });
+    createShipmentsForOrders.mockClear();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const href = String(input);
+      if (href.includes("/products.json")) {
+        return new Response(
+          JSON.stringify({
+            products: [{ id: 9, variants: [{ id: 22, grams: 400, weight: 0.4, weight_unit: "kg" }] }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (href.includes("graphql.json")) {
+        return new Response(JSON.stringify({ errors: [{ message: "ACCESS_DENIED" }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const tracked = trackedOrderClient({ inserts, deletes: [] });
+    const supabase = {
+      from: vi.fn((table: string) => {
+        if (table === "shopify_connections") {
+          return query({
+            shop_domain: "demo.myshopify.com",
+            encrypted_access_token: encryptSecret("shpat_test"),
+          });
+        }
+        if (table === "india_post_connections") {
+          return query({
+            default_length_cm: 22,
+            default_width_cm: 16,
+            default_height_cm: 11,
+          });
+        }
+        return tracked.from(table);
+      }),
+    };
+    try {
+      const result = await importShopifyWebhookOrder(supabase as never, {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        topic: "orders/create",
+        remote: {
+          ...remoteOrder,
+          line_items: [{ title: "Kurta", quantity: 1, price: "499", grams: 0, product_id: 9, variant_id: 22 }],
+        },
+      });
+      expect(result.imported).toBe(true);
+      const items = inserts.find((row) => row.table === "order_line_items");
+      expect(items?.payload).toEqual([expect.objectContaining({ weight_grams: 400 })]);
+      expect(createShipmentsForOrders).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ organizationId: "org-1" }),
+        ["ord-1"],
+        { enqueueBooking: false, runBookingNow: false, lengthCm: 22, widthCm: 16, heightCm: 11 }
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("stamps workspace parcel defaults onto a new Shopify shipment when metafields are absent", async () => {
+    createShipmentsForOrders.mockClear();
+    const base = newOrderClient();
+    const supabase = {
+      from: vi.fn((table: string) => {
+        if (table === "india_post_connections") {
+          return query({
+            default_length_cm: 25,
+            default_width_cm: 18,
+            default_height_cm: 12,
+            default_weight_grams: 900,
+          });
+        }
+        return base.from(table);
+      }),
+    };
+    const result = await upsertShopifyOrder(supabase as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: remoteOrder,
+      createShipment: true,
+      enqueueBooking: false,
+    });
+    expect(result.imported).toBe(true);
+    expect(createShipmentsForOrders).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ organizationId: "org-1" }),
+      ["ord-1"],
+      { enqueueBooking: false, runBookingNow: false, lengthCm: 25, widthCm: 18, heightCm: 12 }
+    );
   });
 
   it("creates a draft shipment from Shopify dimensions when auto-create is off", async () => {

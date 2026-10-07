@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptSecret } from "@/lib/security/crypto";
 import { AUTOMATION_DEFAULTS, getAutomationSettings } from "@/modules/automation/service";
+import { parcelDefaultsFromConnection, type WorkspaceParcelDefaults } from "@/modules/india-post/parcel-defaults";
 import {
   normalizeShopDomain,
   resolveShopifyAppCredentials,
@@ -182,37 +183,43 @@ const SHOPIFY_VARIANT_SHIPPING_QUERY = `
     nodes(ids: $ids) {
       ... on ProductVariant {
         id
-        inventoryItem {
-          measurement {
-            weight { value unit }
-          }
-        }
-        metafields(identifiers: [
-          {namespace: "custom", key: "length"},
-          {namespace: "custom", key: "width"},
-          {namespace: "custom", key: "height"},
-          {namespace: "custom", key: "length_cm"},
-          {namespace: "custom", key: "width_cm"},
-          {namespace: "custom", key: "height_cm"},
-          {namespace: "custom", key: "package_length"},
-          {namespace: "custom", key: "package_width"},
-          {namespace: "custom", key: "package_height"},
-          {namespace: "shipping", key: "length"},
-          {namespace: "shipping", key: "width"},
-          {namespace: "shipping", key: "height"},
-          {namespace: "shipping", key: "length_cm"},
-          {namespace: "shipping", key: "width_cm"},
-          {namespace: "shipping", key: "height_cm"}
-        ]) {
-          namespace
-          key
-          value
-          type
-        }
+        customLength: metafield(namespace: "custom", key: "length") { value type }
+        customWidth: metafield(namespace: "custom", key: "width") { value type }
+        customHeight: metafield(namespace: "custom", key: "height") { value type }
+        customLengthCm: metafield(namespace: "custom", key: "length_cm") { value type }
+        customWidthCm: metafield(namespace: "custom", key: "width_cm") { value type }
+        customHeightCm: metafield(namespace: "custom", key: "height_cm") { value type }
+        customPackageLength: metafield(namespace: "custom", key: "package_length") { value type }
+        customPackageWidth: metafield(namespace: "custom", key: "package_width") { value type }
+        customPackageHeight: metafield(namespace: "custom", key: "package_height") { value type }
+        shippingLength: metafield(namespace: "shipping", key: "length") { value type }
+        shippingWidth: metafield(namespace: "shipping", key: "width") { value type }
+        shippingHeight: metafield(namespace: "shipping", key: "height") { value type }
+        shippingLengthCm: metafield(namespace: "shipping", key: "length_cm") { value type }
+        shippingWidthCm: metafield(namespace: "shipping", key: "width_cm") { value type }
+        shippingHeightCm: metafield(namespace: "shipping", key: "height_cm") { value type }
       }
     }
   }
 `;
+
+const SHOPIFY_DIM_METAFIELD_ALIASES = [
+  ["customLength", "custom.length"],
+  ["customWidth", "custom.width"],
+  ["customHeight", "custom.height"],
+  ["customLengthCm", "custom.length_cm"],
+  ["customWidthCm", "custom.width_cm"],
+  ["customHeightCm", "custom.height_cm"],
+  ["customPackageLength", "custom.package_length"],
+  ["customPackageWidth", "custom.package_width"],
+  ["customPackageHeight", "custom.package_height"],
+  ["shippingLength", "shipping.length"],
+  ["shippingWidth", "shipping.width"],
+  ["shippingHeight", "shipping.height"],
+  ["shippingLengthCm", "shipping.length_cm"],
+  ["shippingWidthCm", "shipping.width_cm"],
+  ["shippingHeightCm", "shipping.height_cm"],
+] as const;
 
 export type ShopifyProductImageCatalog = {
   bySku: Map<string, string>;
@@ -761,13 +768,13 @@ export function shopifyDimensionToCm(value: unknown, unit?: string | null): numb
   return cm > 0 ? cm : null;
 }
 
-function metafieldMap(
-  nodes: Array<{ namespace?: string | null; key?: string | null; value?: string | null; type?: string | null } | null> | null | undefined
-) {
+function metafieldMapFromVariantNode(node: Record<string, unknown> | null | undefined) {
   const map = new Map<string, string>();
-  for (const node of nodes ?? []) {
-    if (!node?.key || node.value == null || node.value === "") continue;
-    map.set(`${String(node.namespace ?? "").toLowerCase()}.${String(node.key).toLowerCase()}`, node.value);
+  if (!node) return map;
+  for (const [alias, key] of SHOPIFY_DIM_METAFIELD_ALIASES) {
+    const field = node[alias] as { value?: string | null } | null | undefined;
+    if (field?.value == null || field.value === "") continue;
+    map.set(key, field.value);
   }
   return map;
 }
@@ -817,10 +824,53 @@ export function shopifyParcelFromLineItems(items: ShopifyRemoteLineItem[]): Shop
   };
 }
 
-export function shopifyShipmentParcelExtras(lineItems: ShopifyRemoteLineItem[]) {
+export type ShopifyShipmentDimExtras = {
+  lengthCm?: number;
+  widthCm?: number;
+  heightCm?: number;
+};
+
+export function shopifyShipmentParcelExtras(lineItems: ShopifyRemoteLineItem[]): ShopifyShipmentDimExtras {
   const parcel = shopifyParcelFromLineItems(lineItems);
   if (parcel.lengthCm == null || parcel.widthCm == null || parcel.heightCm == null) return {};
   return { lengthCm: parcel.lengthCm, widthCm: parcel.widthCm, heightCm: parcel.heightCm };
+}
+
+/** Metafield box first; else complete workspace L×W×H. Saved Shopify packages are not readable on Admin 2026-04. */
+export function shopifyResolvedShipmentDims(
+  lineItems: ShopifyRemoteLineItem[],
+  workspace?: WorkspaceParcelDefaults | null
+): ShopifyShipmentDimExtras {
+  const fromItems = shopifyShipmentParcelExtras(lineItems);
+  if (fromItems.lengthCm != null && fromItems.widthCm != null && fromItems.heightCm != null) {
+    return fromItems;
+  }
+  const lengthCm = workspace?.lengthCm != null
+    ? clampShopifyCm(workspace.lengthCm, SHOPIFY_PARCEL_LENGTH_CM.min, SHOPIFY_PARCEL_LENGTH_CM.max)
+    : null;
+  const widthCm = workspace?.widthCm != null
+    ? clampShopifyCm(workspace.widthCm, SHOPIFY_PARCEL_WIDTH_CM.min, SHOPIFY_PARCEL_WIDTH_CM.max)
+    : null;
+  const heightCm = workspace?.heightCm != null
+    ? clampShopifyCm(workspace.heightCm, SHOPIFY_PARCEL_HEIGHT_CM.min, SHOPIFY_PARCEL_HEIGHT_CM.max)
+    : null;
+  if (lengthCm != null && widthCm != null && heightCm != null) {
+    return { lengthCm, widthCm, heightCm };
+  }
+  return {};
+}
+
+async function loadWorkspaceParcelDefaults(supabase: SupabaseClient, organizationId: string) {
+  try {
+    const { data } = await supabase
+      .from("india_post_connections")
+      .select("default_length_cm, default_width_cm, default_height_cm, default_weight_grams")
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    return parcelDefaultsFromConnection(data);
+  } catch {
+    return parcelDefaultsFromConnection(null);
+  }
 }
 
 export function applyShopifyProductShippingToLineItem(
@@ -1009,7 +1059,8 @@ async function applyShopifyParcelToShipment(
   }
 ) {
   const parcel = shopifyParcelFromLineItems(input.lineItems);
-  const extras = shopifyShipmentParcelExtras(input.lineItems);
+  const workspace = await loadWorkspaceParcelDefaults(supabase, input.organizationId);
+  const extras = shopifyResolvedShipmentDims(input.lineItems, workspace);
   const orderLocked = SHOPIFY_WEIGHT_LOCKED_ORDER.has((input.orderStatus ?? "").toUpperCase());
   if (orderLocked) return;
 
@@ -1992,7 +2043,8 @@ export async function upsertShopifyOrder(
     // VaChat knowledge is optional; the Shopify import should still succeed.
   }
 
-  const parcelExtras = shopifyShipmentParcelExtras(lineItems);
+  const workspace = await loadWorkspaceParcelDefaults(supabase, input.organizationId);
+  const parcelExtras = shopifyResolvedShipmentDims(lineItems, workspace);
   if (input.createShipment) {
     try {
       const { createShipmentsForOrders } = await import("@/modules/shipments/service");
@@ -2162,21 +2214,11 @@ async function fetchShopifyProductsByIds(shop: string, token: string, productIds
   return products;
 }
 
-function parseShopifyVariantShippingNode(node: {
-  id?: string | null;
-  inventoryItem?: { measurement?: { weight?: { value?: number | string | null; unit?: string | null } | null } | null } | null;
-  metafields?: Array<{ namespace?: string | null; key?: string | null; value?: string | null; type?: string | null } | null> | null;
-}): ShopifyVariantShipping {
-  const weight = node.inventoryItem?.measurement?.weight;
-  const weightValue = shopifyNumeric(weight?.value);
-  const dims = dimsFromMetafields(metafieldMap(node.metafields));
-  const grams =
-    weightValue != null && weight?.unit
-      ? shopifyWeightToGrams(weightValue, weight.unit)
-      : null;
+export function parseShopifyVariantShippingNode(node: Record<string, unknown> | null | undefined): ShopifyVariantShipping {
+  const dims = dimsFromMetafields(metafieldMapFromVariantNode(node));
   return {
-    grams,
-    weight: weightValue != null && weight?.unit ? { value: weightValue, unit: String(weight.unit) } : null,
+    grams: null,
+    weight: null,
     lengthCm: dims?.lengthCm ?? null,
     widthCm: dims?.widthCm ?? null,
     heightCm: dims?.heightCm ?? null,
@@ -2190,23 +2232,17 @@ async function fetchShopifyVariantShipping(shop: string, token: string, variantI
     const chunk = gids.slice(index, index + 50);
     try {
       const result = await shopifyGraphql<{
-        nodes?: Array<{
-          id?: string | null;
-          inventoryItem?: {
-            measurement?: { weight?: { value?: number | string | null; unit?: string | null } | null } | null;
-          } | null;
-          metafields?: Array<{
-            namespace?: string | null;
-            key?: string | null;
-            value?: string | null;
-            type?: string | null;
-          } | null> | null;
-        } | null>;
+        nodes?: Array<Record<string, unknown> | null>;
       }>(shop, token, SHOPIFY_VARIANT_SHIPPING_QUERY, { ids: chunk });
-      if (!result.ok) continue;
+      if (!result.ok) {
+        logError("shopify.variant_shipping.graphql", {
+          message: result.json.errors?.[0]?.message || `HTTP ${result.ok ? "ok" : "failed"}`,
+        });
+        continue;
+      }
       for (const node of result.json.data?.nodes ?? []) {
         if (!node?.id) continue;
-        byGid.set(node.id, parseShopifyVariantShippingNode(node));
+        byGid.set(String(node.id), parseShopifyVariantShippingNode(node));
       }
     } catch {
       // Keep the order import even if variant dimensions cannot be loaded.
