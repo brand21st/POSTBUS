@@ -46,10 +46,7 @@ const FILES: Record<PaintFamily, { regular: string; bold: string; family: string
 let registered = false;
 
 function fontDirectories() {
-  return [
-    path.join(process.cwd(), "assets/fonts/noto"),
-    path.resolve(__dirname, "../../../assets/fonts/noto"),
-  ];
+  return [path.join(process.cwd(), "assets", "fonts", "noto")];
 }
 
 export function notoFontDirectory() {

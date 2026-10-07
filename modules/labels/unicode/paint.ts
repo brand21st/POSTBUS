@@ -1,6 +1,6 @@
 import { type PDFDocument, type PDFFont, type PDFImage, type PDFPage, type RGB } from "pdf-lib";
 import { unicodeLabelRenderingEnabled } from "@/modules/labels/unicode/flag";
-import { measureShapedText, rasterizeShapedLine, wrapShapedText } from "@/modules/labels/unicode/raster";
+import { measureShapedText, rasterizeShapedLine, wrapShapedText } from "@/modules/labels/unicode/shaped";
 import { sanitizeLabelText } from "@/modules/labels/unicode/text";
 import { isWinAnsiText } from "@/modules/labels/unicode/winansi";
 import { measureHelvetica, type FontWeight } from "@/modules/labels/layout/measure";

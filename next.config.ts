@@ -1,5 +1,9 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 import { securityHeaderEntries } from "./lib/security/headers";
+
+const rasterClient = "./modules/labels/unicode/raster-client.ts";
+const canvasStub = "./modules/labels/unicode/canvas-browser-stub.ts";
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -8,9 +12,10 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["bullmq", "ioredis", "@napi-rs/canvas"],
   turbopack: {
     resolveAlias: {
-      "@napi-rs/canvas": {
-        browser: "./modules/labels/unicode/canvas-browser-stub.ts",
-      },
+      "@napi-rs/canvas": { browser: canvasStub },
+      "@/modules/labels/unicode/shaped": { browser: rasterClient },
+      "@/modules/labels/unicode/raster": { browser: rasterClient },
+      "@/modules/labels/unicode/canvas-native": { browser: canvasStub },
     },
   },
   outputFileTracingIncludes: {
@@ -25,6 +30,9 @@ const nextConfig: NextConfig = {
       config.resolve.alias = {
         ...config.resolve.alias,
         "@napi-rs/canvas": false,
+        "@/modules/labels/unicode/shaped": path.resolve(__dirname, "modules/labels/unicode/raster-client.ts"),
+        "@/modules/labels/unicode/raster": path.resolve(__dirname, "modules/labels/unicode/raster-client.ts"),
+        "@/modules/labels/unicode/canvas-native": path.resolve(__dirname, "modules/labels/unicode/canvas-browser-stub.ts"),
       };
     }
     return config;
