@@ -5,7 +5,10 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   compress: true,
-  serverExternalPackages: ["bullmq", "ioredis"],
+  serverExternalPackages: ["bullmq", "ioredis", "@napi-rs/canvas"],
+  outputFileTracingIncludes: {
+    "*": ["./assets/fonts/noto/**/*"],
+  },
   images: {
     formats: ["image/avif", "image/webp"],
     qualities: [75],

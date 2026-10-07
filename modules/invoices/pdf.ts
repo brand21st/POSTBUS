@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from "pdf-lib";
+import { drawPaintedText, wrapPaintText } from "@/modules/labels/unicode/paint";
 import type { InvoiceAppearance } from "@/modules/invoices/schema";
 import { parseInvoiceAppearance, readableTextOn } from "@/modules/invoices/schema";
 import type { InvoiceViewModel } from "@/modules/invoices/data";
@@ -22,34 +23,22 @@ function money(value: number, currency = "INR") {
   return currency === "INR" ? `Rs ${formatted}` : `${currency} ${formatted}`;
 }
 
-function wrapLines(font: PDFFont, text: string, size: number, maxWidth: number) {
-  const words = String(text || "").split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (font.widthOfTextAtSize(next, size) <= maxWidth) {
-      current = next;
-    } else {
-      if (current) lines.push(current);
-      if (font.widthOfTextAtSize(word, size) <= maxWidth) {
-        current = word;
-      } else {
-        let chunk = "";
-        for (const char of word) {
-          const trial = chunk + char;
-          if (font.widthOfTextAtSize(trial, size) <= maxWidth) chunk = trial;
-          else {
-            if (chunk) lines.push(chunk);
-            chunk = char;
-          }
-        }
-        current = chunk;
-      }
-    }
-  }
-  if (current) lines.push(current);
-  return lines.length ? lines : [""];
+function wrapLines(text: string, size: number, maxWidth: number, bold = false) {
+  return wrapPaintText(String(text || ""), maxWidth, size, bold ? "bold" : "normal");
+}
+
+async function paint(
+  document: PDFDocument,
+  page: PDFPage,
+  font: PDFFont,
+  text: string,
+  x: number,
+  y: number,
+  size: number,
+  color: RGB,
+  bold = false
+) {
+  return drawPaintedText(document, page, { text, x, y, size, font, color, bold });
 }
 
 const CODE128_PATTERNS = [
@@ -147,7 +136,7 @@ export async function renderInvoicePdf(data: InvoiceViewModel) {
     }
   }
 
-  page.drawText(data.storeName || "Store", { x: MARGIN + logoWidth, y, size: 13, font: bold, color: text });
+  await paint(document, page, bold, data.storeName || "Store", MARGIN + logoWidth, y, 13, text, true);
   let infoY = y - 14;
   for (const line of [
     data.storeAddress.join(", "),
@@ -156,7 +145,7 @@ export async function renderInvoicePdf(data: InvoiceViewModel) {
     data.storeWebsite,
     data.storeGstin ? `GSTIN ${data.storeGstin}` : "",
   ].filter(Boolean)) {
-    page.drawText(line, { x: MARGIN + logoWidth, y: infoY, size: 8, font: regular, color: muted });
+    await paint(document, page, regular, line, MARGIN + logoWidth, infoY, 8, muted);
     infoY -= 11;
   }
 
@@ -189,21 +178,21 @@ export async function renderInvoicePdf(data: InvoiceViewModel) {
   }
 
   const boxWidth = (PAGE_WIDTH - MARGIN * 2 - 12) / 2;
-  const drawParty = (title: string, party: InvoiceViewModel["billing"], x: number, top: number) => {
+  const drawParty = async (title: string, party: InvoiceViewModel["billing"], x: number, top: number) => {
     page.drawText(title, { x, y: top, size: 8, font: bold, color: primary });
     let cursor = top - 14;
     const lines = [party.name, ...party.lines, party.phone, party.email].filter(Boolean);
     for (const line of lines) {
-      const wrapped = wrapLines(regular, line, 8, boxWidth - 4);
+      const wrapped = wrapLines(line, 8, boxWidth - 4);
       for (const part of wrapped) {
-        page.drawText(part, { x, y: cursor, size: 8, font: regular, color: text });
+        await paint(document, page, regular, part, x, cursor, 8, text);
         cursor -= 11;
       }
     }
     return cursor;
   };
-  const billBottom = drawParty("BILL TO", data.billing.name ? data.billing : data.customer, MARGIN, y);
-  const shipBottom = drawParty("SHIP TO", data.shipping.name ? data.shipping : data.customer, MARGIN + boxWidth + 12, y);
+  const billBottom = await drawParty("BILL TO", data.billing.name ? data.billing : data.customer, MARGIN, y);
+  const shipBottom = await drawParty("SHIP TO", data.shipping.name ? data.shipping : data.customer, MARGIN + boxWidth + 12, y);
   y = Math.min(billBottom, shipBottom) - 16;
 
   const tableLeft = MARGIN;
@@ -218,22 +207,22 @@ export async function renderInvoicePdf(data: InvoiceViewModel) {
 
   const items = data.items.length ? data.items : [];
   for (const item of items) {
-    const nameLines = wrapLines(regular, item.title, 9, 250);
-    const skuLines = item.sku ? wrapLines(regular, `SKU ${item.sku}`, 7, 250) : [];
+    const nameLines = wrapLines(item.title, 9, 250);
+    const skuLines = item.sku ? wrapLines(`SKU ${item.sku}`, 7, 250) : [];
     const rowHeight = Math.max(18, nameLines.length * 11 + skuLines.length * 9 + 8);
     if (y - rowHeight < 90) {
       page.drawText("Continued on next page is not used; extra rows stay on this page.", { x: tableLeft, y: 70, size: 7, font: regular, color: muted });
     }
     page.drawLine({ start: { x: tableLeft, y }, end: { x: tableLeft + tableWidth, y }, thickness: 0.4, color: border });
     let textY = y - 12;
-    nameLines.forEach((line) => {
-      page.drawText(line, { x: cols.product, y: textY, size: 9, font: regular, color: text });
+    for (const line of nameLines) {
+      await paint(document, page, regular, line, cols.product, textY, 9, text);
       textY -= 11;
-    });
-    skuLines.forEach((line) => {
-      page.drawText(line, { x: cols.product, y: textY, size: 7, font: regular, color: muted });
+    }
+    for (const line of skuLines) {
+      await paint(document, page, regular, line, cols.product, textY, 7, muted);
       textY -= 9;
-    });
+    }
     page.drawText(String(item.quantity), { x: cols.qty, y: y - 12, size: 9, font: regular, color: text });
     page.drawText(money(item.unitPrice, data.currency), { x: cols.price, y: y - 12, size: 9, font: regular, color: text });
     drawRight(page, regular, money(item.lineTotal, data.currency), cols.total, y - 12, 9, text);

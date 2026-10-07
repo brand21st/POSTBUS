@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PDFDocument } from "pdf-lib";
 import { renderReceiptPdf, type ReceiptData } from "@/modules/labels/receipt";
 
 const sample: ReceiptData = {
@@ -24,10 +25,12 @@ const sample: ReceiptData = {
 };
 
 describe("renderReceiptPdf", () => {
-  it("renders a PDF and drops characters Helvetica cannot encode", async () => {
+  it("renders a PDF and keeps Devanagari address characters", async () => {
     const pdf = await renderReceiptPdf(sample);
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
     expect(pdf.byteLength).toBeGreaterThan(1000);
+    const loaded = await PDFDocument.load(pdf);
+    expect(loaded.getPages()[0].node.normalizedEntries().XObject).toBeTruthy();
   });
 
   it("renders when India Post has not reported tariff or invoice yet", async () => {

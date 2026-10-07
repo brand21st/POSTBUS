@@ -1,6 +1,6 @@
 import { MERCHANT_ELEMENT_IDS } from "@/modules/labels/template-schema";
 import { clampRect } from "@/modules/labels/collision";
-import { measureHelvetica } from "@/modules/labels/layout/measure";
+import { measurePaintText } from "@/modules/labels/unicode/paint";
 import { wrapText } from "@/modules/labels/layout/text";
 import { addressLineTexts, SAMPLE_SHIP_PARTS, type AddressParts } from "@/modules/labels/address-layout";
 
@@ -124,7 +124,7 @@ export function customTextBlockHeight(
   const lineHeight = size + (element.lineGap ?? 2);
   const bold = element.fontWeight === "bold";
   const source = text.trim() ? text.split("\n") : [];
-  const lines = source.flatMap((line) => wrapText(line || " ", inner, (value) => measureHelvetica(value, size, bold ? "bold" : "normal")));
+  const lines = source.flatMap((line) => wrapText(line || " ", inner, (value) => measurePaintText(value, size, bold ? "bold" : "normal")));
   return gap * 2 + Math.max(source.length ? 1 : 0, lines.length) * lineHeight;
 }
 
@@ -228,7 +228,7 @@ export const PRODUCT_COLUMN_FLEX: Record<ProductColumnId, number> = {
 };
 
 export function wrapProductCell(text: string, maxWidth: number, fontSize: number, bold = false) {
-  return wrapText(text, Math.max(0, maxWidth), (value) => measureHelvetica(value, fontSize, bold ? "bold" : "normal")).filter(
+  return wrapText(text, Math.max(0, maxWidth), (value) => measurePaintText(value, fontSize, bold ? "bold" : "normal")).filter(
     (line) => line.length > 0
   );
 }
@@ -456,7 +456,7 @@ export function codAmountLines(amount: number) {
 }
 
 export function wrapPlainText(text: string, maxWidth: number, fontSize: number, bold = false) {
-  return wrapText(text, Math.max(0, maxWidth), (value) => measureHelvetica(value, fontSize, bold ? "bold" : "normal"));
+  return wrapText(text, Math.max(0, maxWidth), (value) => measurePaintText(value, fontSize, bold ? "bold" : "normal"));
 }
 
 export function codBlockHeight(

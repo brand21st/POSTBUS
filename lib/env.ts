@@ -42,6 +42,8 @@ export const env = {
   vachatWebhookSecret: optional(process.env.VACHAT_WEBHOOK_SECRET),
   // Coolify persistent volume destination. Relative DB paths are resolved under this root.
   labelStoragePath: optional(process.env.LABEL_STORAGE_PATH) || "/data/labels",
+  // Default on. Set POSTBUS_UNICODE_LABEL_RENDERING=false to use Helvetica-only Postbus PDFs.
+  unicodeLabelRendering: optional(process.env.POSTBUS_UNICODE_LABEL_RENDERING).toLowerCase() !== "false",
   invoiceStoragePath: (() => {
     const configured = optional(process.env.INVOICE_STORAGE_PATH);
     // /data/invoices is not on the Coolify labels volume, so PDFs vanished after write.

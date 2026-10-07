@@ -1,4 +1,5 @@
 import { measureHelvetica, type FontWeight } from "@/modules/labels/layout/measure";
+import { graphemes } from "@/modules/labels/unicode/text";
 
 export const HELVETICA_ASCENDER = 718;
 
@@ -59,6 +60,25 @@ export function wrapRuns(
     if (!space && line.length && used + width > maxWidth) commit();
     if (space && line.length === 0) continue;
     if (!space && width > maxWidth && line.length === 0) {
+      const units = graphemes(token.text);
+      if (units.length > 1) {
+        let chunk = "";
+        for (const unit of units) {
+          const trial = chunk + unit;
+          if (chunk && measure(trial, token) > maxWidth) {
+            line.push({ ...token, text: chunk });
+            commit();
+            chunk = unit;
+          } else {
+            chunk = trial;
+          }
+        }
+        if (chunk) {
+          line.push({ ...token, text: chunk });
+          used = measure(chunk, token);
+        }
+        continue;
+      }
       line.push(token);
       commit();
       continue;

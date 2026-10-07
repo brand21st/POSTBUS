@@ -1,4 +1,4 @@
-import { measureHelvetica } from "@/modules/labels/layout/measure";
+import { measurePaintText } from "@/modules/labels/unicode/paint";
 import { lineStep, placeLines, wrapText, type PlacedLine, type TextRun } from "@/modules/labels/layout/text";
 import type { PointBox } from "@/modules/labels/layout/units";
 import { PRODUCT_COLUMN_FLEX, type ProductColumnId, type ProductTable } from "@/modules/labels/custom-blocks";
@@ -34,13 +34,13 @@ export function layoutTableGrid(input: {
   const wrapped = [
     input.table.columns.map((column, index) =>
       wrapText(column.label, Math.max(0, (widths[index] ?? input.frame.width) - TABLE_CELL_PAD * 2), (text) =>
-        measureHelvetica(text, input.fontSize, "bold")
+        measurePaintText(text, input.fontSize, "bold")
       )
     ),
     ...input.table.rows.map((row) =>
       row.cells.map((cell, index) =>
         wrapText(cell, Math.max(0, (widths[index] ?? input.frame.width) - TABLE_CELL_PAD * 2), (text) =>
-          measureHelvetica(text, input.fontSize, row.bold ? "bold" : "normal")
+          measurePaintText(text, input.fontSize, row.bold ? "bold" : "normal")
         )
       )
     ),
@@ -78,7 +78,7 @@ export function layoutTableGrid(input: {
           fontSize: input.fontSize,
           extra: input.extra,
           clip: input.clip,
-          measure: (text, run) => measureHelvetica(text, input.fontSize, run.bold ? "bold" : "normal", run.italic),
+          measure: (text, run) => measurePaintText(text, input.fontSize, run.bold ? "bold" : "normal", run.italic),
         }),
       });
       x += width;

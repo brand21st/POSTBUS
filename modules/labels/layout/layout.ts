@@ -8,6 +8,7 @@ import {
 } from "@/modules/labels/custom-blocks";
 import { fitContain, insetBox } from "@/modules/labels/layout/fit";
 import { measureHelvetica } from "@/modules/labels/layout/measure";
+import { measurePaintText } from "@/modules/labels/unicode/paint";
 import { layoutTableGrid, type TableCell } from "@/modules/labels/layout/table";
 import { lineStep, placeLines, wrapRuns, wrapText, type PlacedLine, type TextRun } from "@/modules/labels/layout/text";
 import { mmFromPt, ptFromMm, topLeftFromStored, type PointBox } from "@/modules/labels/layout/units";
@@ -83,7 +84,7 @@ function textBlock(
   const gap = Math.max(0, element.gap ?? 0);
   const fontSize = element.fontSize ?? 9;
   const innerWidth = Math.max(0, stored.width - gap * 2);
-  const paragraphs = text ? wrapText(text, innerWidth, (value) => measureHelvetica(value, fontSize, weight, false)) : [];
+  const paragraphs = text ? wrapText(text, innerWidth, (value) => measurePaintText(value, fontSize, weight, false)) : [];
   const contentHeight = gap * 2 + paragraphs.length * lineStep(fontSize, extra);
   const placed = grow(stored, contentHeight, element.autoHeight);
   const box = insetBox(placed, gap);
@@ -94,7 +95,7 @@ function textBlock(
     fontSize,
     extra,
     clip: placed,
-    measure: (value, run) => measureHelvetica(value, fontSize, run.bold ? "bold" : "normal", run.italic),
+    measure: (value, run) => measurePaintText(value, fontSize, run.bold ? "bold" : "normal", run.italic),
   });
   return { id, kind, ...placed, stored, clip: placed, lines, fontSize, gap };
 }
@@ -113,7 +114,7 @@ function addressBlock(
   const gap = Math.max(0, element.gap ?? 0);
   const innerWidth = Math.max(0, stored.width - gap * 2);
   const measure = (text: string, run: Pick<TextRun, "bold" | "italic">) =>
-    measureHelvetica(text, fontSize, run.bold ? "bold" : "normal", run.italic);
+    measurePaintText(text, fontSize, run.bold ? "bold" : "normal", run.italic);
   const heading = composed.heading ? wrapRuns([{ ...composed.heading, italic: composed.heading.italic }], innerWidth, measure) : [];
   const body = composed.lines.flatMap((line) => wrapRuns(line, innerWidth, measure));
   const wrapped = [...heading, ...body];
@@ -193,14 +194,14 @@ function barcodeBlock(
   const lines = showText
     ? placeLines({
         lines: wrapText(article, captionBox.width, (value) =>
-          measureHelvetica(value, fontSize, element.fontWeight === "bold" ? "bold" : "normal")
+          measurePaintText(value, fontSize, element.fontWeight === "bold" ? "bold" : "normal")
         ).map((line) => [{ text: line, bold: element.fontWeight === "bold", italic: false }]),
         box: captionBox,
         align: "center",
         fontSize,
         extra: 0,
         clip: placed,
-        measure: (value, run) => measureHelvetica(value, fontSize, run.bold ? "bold" : "normal", run.italic),
+        measure: (value, run) => measurePaintText(value, fontSize, run.bold ? "bold" : "normal", run.italic),
       })
     : [];
   return {

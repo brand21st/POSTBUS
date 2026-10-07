@@ -18,6 +18,7 @@ import type { PlacedLine } from "@/modules/labels/layout/text";
 import type { PointBox } from "@/modules/labels/layout/units";
 import type { PackingLabelData } from "@/modules/labels/packing-pdf";
 import type { LabelTemplate } from "@/modules/labels/template-schema";
+import { drawPaintedText } from "@/modules/labels/unicode/paint";
 
 const INK = rgb(0.07, 0.09, 0.15);
 const MUTED = rgb(0.28, 0.3, 0.34);
@@ -87,33 +88,36 @@ export async function paintMerchantLabel(
   });
   const baselineY = (baseline: number) => pageHeight - baseline * scaleY;
 
-  const drawLine = (line: PlacedLine, color: ReturnType<typeof rgb>) => {
+  const drawLine = async (line: PlacedLine, color: ReturnType<typeof rgb>) => {
     const size = line.fontSize * fontScale;
     const y = baselineY(line.baseline);
     for (const run of line.runs) {
       if (!run.text) continue;
-      page.drawText(run.text, {
+      await drawPaintedText(document, page, {
+        text: run.text,
         x: run.x * scaleX,
         y,
         size,
         font: fontFor(regular, bold, italic, boldItalic, run),
         color,
+        bold: run.bold,
+        italic: run.italic,
       });
     }
   };
 
-  const withClip = (box: PointBox, draw: () => void) => {
+  const withClip = async (box: PointBox, draw: () => Promise<void>) => {
     const placed = pdfBox(box);
     if (placed.width <= 0 || placed.height <= 0) return;
     page.pushOperators(pushGraphicsState(), rectangle(placed.x, placed.y, placed.width, placed.height), clip(), endPath());
     try {
-      draw();
+      await draw();
     } finally {
       page.pushOperators(popGraphicsState());
     }
   };
 
-  const paint = (block: LayoutBlock) => {
+  const paint = async (block: LayoutBlock) => {
     if (block.kind === "border") {
       if (block.borderPath && block.stroke) {
         const path = pdfBox(block.borderPath);
@@ -129,10 +133,10 @@ export async function paintMerchantLabel(
       return;
     }
     if (block.kind === "watermark") {
-      block.lines.forEach((line) => drawLine(line, MUTED));
+      for (const line of block.lines) await drawLine(line, MUTED);
       return;
     }
-    withClip(block.clip, () => {
+    await withClip(block.clip, async () => {
       if (block.kind === "logo" && block.image && logoImage) {
         page.drawImage(logoImage, pdfBox(block.image));
       }
@@ -148,13 +152,13 @@ export async function paintMerchantLabel(
             borderWidth: 0.6 * fontScale,
             borderColor: GRID,
           });
-          cell.lines.forEach((line) => drawLine(line, INK));
+          for (const line of cell.lines) await drawLine(line, INK);
         }
         return;
       }
-      block.lines.forEach((line) => drawLine(line, INK));
+      for (const line of block.lines) await drawLine(line, INK);
     });
   };
 
-  layout.blocks.forEach(paint);
+  for (const block of layout.blocks) await paint(block);
 }

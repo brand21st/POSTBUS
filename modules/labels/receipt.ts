@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from "pdf-lib";
+import { drawPaintedText, wrapPaintText } from "@/modules/labels/unicode/paint";
 import { logError } from "@/lib/logger";
 import { drawBarcode } from "@/modules/invoices/pdf";
 import { indiaPostVolumetricWeightGrams } from "@/modules/india-post/endpoints";
@@ -252,43 +253,22 @@ function money(value: number) {
   return `Rs ${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function wrap(font: PDFFont, value: string, size: number, maxWidth: number) {
-  const lines: string[] = [];
-  let current = "";
-  const pushWord = (word: string) => {
-    let chunk = "";
-    for (const char of word) {
-      if (font.widthOfTextAtSize(chunk + char, size) > maxWidth && chunk) {
-        lines.push(chunk);
-        chunk = char;
-      } else {
-        chunk += char;
-      }
-    }
-    return chunk;
-  };
-  for (const word of value.split(/\s+/).filter(Boolean)) {
-    const next = current ? `${current} ${word}` : word;
-    if (font.widthOfTextAtSize(next, size) <= maxWidth) {
-      current = next;
-    } else {
-      if (current) lines.push(current);
-      current = font.widthOfTextAtSize(word, size) <= maxWidth ? word : pushWord(word);
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
+function wrap(value: string, size: number, maxWidth: number, bold = false) {
+  return wrapPaintText(value, maxWidth, size, bold ? "bold" : "normal");
 }
 
-function encodable<T>(value: T, supported: Set<number>): T {
-  if (typeof value === "string") {
-    return [...value].filter((char) => supported.has(char.codePointAt(0) ?? 0)).join("").trim() as T;
-  }
-  if (Array.isArray(value)) return value.map((item) => encodable(item, supported)) as T;
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encodable(item, supported)])) as T;
-  }
-  return value;
+async function paint(
+  document: PDFDocument,
+  page: PDFPage,
+  font: PDFFont,
+  text: string,
+  x: number,
+  y: number,
+  size: number,
+  color: RGB,
+  bold = false
+) {
+  return drawPaintedText(document, page, { text, x, y, size, font, color, bold });
 }
 
 export async function renderReceiptPdf(input: ReceiptData) {
@@ -296,8 +276,7 @@ export async function renderReceiptPdf(input: ReceiptData) {
   const page: PDFPage = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   const regular = await document.embedFont(StandardFonts.Helvetica);
   const bold = await document.embedFont(StandardFonts.HelveticaBold);
-  // Standard Helvetica is WinAnsi-only; drawText throws on other scripts (e.g. Devanagari addresses).
-  const data = encodable(input, new Set(regular.getCharacterSet()));
+  const data = input;
   document.setTitle(`India Post receipt ${data.articleId}`);
   const ink = rgb(0.07, 0.07, 0.09);
   const muted = rgb(0.38, 0.4, 0.45);
@@ -342,8 +321,8 @@ export async function renderReceiptPdf(input: ReceiptData) {
     if (fullWidth) {
       page.drawText(label, { x: MARGIN, y, size: 7, font: regular, color: muted });
       let cursor = y - 11;
-      for (const part of wrap(bold, value, 9, contentWidth)) {
-        page.drawText(part, { x: MARGIN, y: cursor, size: 9, font: bold, color: ink });
+      for (const part of wrap(value, 9, contentWidth, true)) {
+        await paint(document, page, bold, part, MARGIN, cursor, 9, ink, true);
         cursor -= 11;
       }
       y = cursor - 4;
@@ -356,8 +335,8 @@ export async function renderReceiptPdf(input: ReceiptData) {
       const x = MARGIN + col * colWidth;
       page.drawText(cellLabel, { x, y, size: 7, font: regular, color: muted });
       let cursor = y - 11;
-      for (const part of wrap(bold, cellValue, 9, colWidth - 8)) {
-        page.drawText(part, { x, y: cursor, size: 9, font: bold, color: ink });
+      for (const part of wrap(cellValue, 9, colWidth - 8, true)) {
+        await paint(document, page, bold, part, x, cursor, 9, ink, true);
         cursor -= 11;
       }
       rowBottom = Math.min(rowBottom, cursor);
@@ -368,25 +347,25 @@ export async function renderReceiptPdf(input: ReceiptData) {
   divider(y);
   y -= 14;
 
-  const drawParty = (heading: string, party: ReceiptParty, x: number, top: number) => {
+  const drawParty = async (heading: string, party: ReceiptParty, x: number, top: number) => {
     page.drawText(heading, { x, y: top, size: 7, font: bold, color: brand });
     let cursor = top - 12;
-    const entries: Array<[string, PDFFont]> = [
-      [party.name, bold],
-      ...party.lines.map((value) => [value, regular] as [string, PDFFont]),
-      [party.phone ? `Ph ${party.phone}` : "", regular],
+    const entries: Array<[string, PDFFont, boolean]> = [
+      [party.name, bold, true],
+      ...party.lines.map((value) => [value, regular, false] as [string, PDFFont, boolean]),
+      [party.phone ? `Ph ${party.phone}` : "", regular, false],
     ];
-    for (const [value, font] of entries) {
+    for (const [value, font, heavy] of entries) {
       if (!value) continue;
-      for (const part of wrap(font, value, 8, colWidth - 10)) {
-        page.drawText(part, { x, y: cursor, size: 8, font, color: ink });
+      for (const part of wrap(value, 8, colWidth - 10, heavy)) {
+        await paint(document, page, font, part, x, cursor, 8, ink, heavy);
         cursor -= 10;
       }
     }
     return cursor;
   };
-  const senderBottom = drawParty("FROM", data.sender, MARGIN, y);
-  const receiverBottom = drawParty("TO", data.receiver, MARGIN + colWidth, y);
+  const senderBottom = await drawParty("FROM", data.sender, MARGIN, y);
+  const receiverBottom = await drawParty("TO", data.receiver, MARGIN + colWidth, y);
   y = Math.min(senderBottom, receiverBottom) - 6;
   divider(y);
   y -= 16;
