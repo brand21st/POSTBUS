@@ -37,6 +37,7 @@ function chain(result: { data: unknown; error: unknown; count?: number | null })
   query.update = self;
   query.eq = self;
   query.in = self;
+  query.range = self;
   query.maybeSingle = () => Promise.resolve({ data: result.data, error: result.error });
   query.single = () => Promise.resolve({ data: result.data, error: result.error });
   query.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
@@ -49,6 +50,10 @@ function mockClient(options?: { product?: typeof catalog | null; otherOrg?: bool
   const product = options?.product === undefined ? catalog : options.product;
   return {
     inserts,
+    rpc: async (name: string) => {
+      if (name === "next_pb_order_number") return { data: "PB-10001", error: null };
+      return { data: null, error: { message: `unknown rpc ${name}` } };
+    },
     from: (table: string) => {
       if (table === "products") {
         return chain({

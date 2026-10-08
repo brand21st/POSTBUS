@@ -39,6 +39,7 @@ function chain(result: { data: unknown; error: unknown; count?: number | null })
     return query;
   };
   query.eq = self;
+  query.range = self;
   query.single = () => Promise.resolve({ data: result.data, error: result.error });
   query.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
     Promise.resolve({ data: result.data, error: result.error, count: result.count ?? null }).then(resolve, reject);
@@ -49,6 +50,10 @@ function mockClient() {
   const inserts: Record<string, unknown> = {};
   return {
     inserts,
+    rpc: async (name: string) => {
+      if (name === "next_pb_order_number") return { data: "PB-10001", error: null };
+      return { data: null, error: { message: `unknown rpc ${name}` } };
+    },
     from: (table: string) => {
       if (table === "customers") {
         const q = chain({ data: { id: "cust-1", name: "Priya Stores" }, error: null });

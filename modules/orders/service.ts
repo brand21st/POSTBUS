@@ -43,13 +43,32 @@ function orderDateBoundary(value: string, endOfDay: boolean) {
 }
 
 async function nextOrderNumber(supabase: SupabaseClient, organizationId: string) {
-  const { data, error } = await supabase
-    .from("orders")
-    .select("order_number")
-    .eq("organization_id", organizationId);
-  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-  const rows = Array.isArray(data) ? data : data ? [data] : [];
-  return nextPbOrderNumber(rows.map((row) => (row as { order_number?: string }).order_number));
+  const { data, error } = await supabase.rpc("next_pb_order_number", {
+    p_organization_id: organizationId,
+  });
+  if (!error && typeof data === "string" && /^PB-\d+$/i.test(data.trim())) {
+    return data.trim();
+  }
+
+  const numbers: string[] = [];
+  const page = 1000;
+  for (let from = 0; from < 50_000; from += page) {
+    const query = await supabase
+      .from("orders")
+      .select("order_number")
+      .eq("organization_id", organizationId)
+      .range(from, from + page - 1);
+    if (query.error) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, query.error.message || error?.message || "Order number failed.");
+    }
+    const rows = Array.isArray(query.data) ? query.data : query.data ? [query.data] : [];
+    for (const row of rows) {
+      const value = (row as { order_number?: string }).order_number;
+      if (value) numbers.push(value);
+    }
+    if (rows.length < page) break;
+  }
+  return nextPbOrderNumber(numbers);
 }
 
 type OrderDateRange = "list" | "none" | { from?: string; to?: string };
@@ -235,14 +254,14 @@ export async function createManualOrder(
   let inserted = await insertOrder(orderNumber);
   for (let attempt = 0; attempt < 7; attempt += 1) {
     if (!inserted.error && inserted.data) break;
-    if (!isOrderNumberConflict(inserted.error?.message)) break;
+    if (!isOrderNumberConflict(inserted.error)) break;
     if (requestedNumber) {
       throw new AppError(
         ERROR_CODES.VALIDATION_ERROR,
         "That order number already exists. Leave it blank or use a different number."
       );
     }
-    orderNumber = await nextOrderNumber(supabase, ctx.organizationId);
+    orderNumber = nextPbOrderNumber([orderNumber]);
     inserted = await insertOrder(orderNumber);
   }
 
@@ -250,7 +269,7 @@ export async function createManualOrder(
   if (orderError || !order) {
     throw new AppError(
       ERROR_CODES.VALIDATION_ERROR,
-      isOrderNumberConflict(orderError?.message)
+      isOrderNumberConflict(orderError)
         ? "That order number already exists. Leave it blank or use a different number."
         : orderError?.message || "Order failed."
     );

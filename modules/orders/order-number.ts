@@ -11,7 +11,20 @@ export function nextPbOrderNumber(existing: Array<string | null | undefined>) {
   return `PB-${max + 1}`;
 }
 
-export function isOrderNumberConflict(message?: string | null) {
-  if (!message) return false;
-  return /orders_org_number_idx|duplicate key value/i.test(message);
+type ConflictSource = {
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+  code?: string | null;
+};
+
+export function isOrderNumberConflict(error?: string | ConflictSource | null) {
+  if (!error) return false;
+  if (typeof error === "string") {
+    return /orders_org_number_idx|duplicate key value|23505/i.test(error);
+  }
+  if (error.code === "23505") return true;
+  return /orders_org_number_idx|duplicate key value|23505/i.test(
+    `${error.message ?? ""} ${error.details ?? ""} ${error.hint ?? ""}`
+  );
 }

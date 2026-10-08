@@ -17,6 +17,9 @@ describe("isOrderNumberConflict", () => {
     expect(
       isOrderNumberConflict('duplicate key value violates unique constraint "orders_org_number_idx"')
     ).toBe(true);
+    expect(isOrderNumberConflict({ code: "23505", details: "Key (organization_id, order_number)=(…) already exists." })).toBe(
+      true
+    );
     expect(isOrderNumberConflict("Order failed.")).toBe(false);
   });
 });
