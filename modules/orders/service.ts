@@ -26,6 +26,11 @@ import { isOrderNumberConflict, nextPbOrderNumber } from "@/modules/orders/order
 type CreateInput = z.infer<typeof createOrderSchema> & { status?: OrderStatus };
 type OrderActor = Pick<TenantContext, "organizationId"> & { userId?: string | null };
 type OrderListQuery = z.infer<typeof orderListQuery>;
+type CreatedManualOrder = {
+  id: string;
+  order_number: string;
+  total_amount?: number | string | null;
+};
 
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
@@ -209,11 +214,7 @@ export async function createManualOrder(
   });
   const requestedNumber = input.orderNumber?.trim() || "";
   let orderNumber = requestedNumber || (await nextOrderNumber(supabase, ctx.organizationId));
-  let order: {
-    id: string;
-    order_number: string;
-    total_amount?: number | string | null;
-  } | null = null;
+  let saved: CreatedManualOrder | undefined;
   let orderError: { message?: string } | null = null;
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -237,17 +238,19 @@ export async function createManualOrder(
       })
       .select()
       .single();
-    order = inserted.data as typeof order;
     orderError = inserted.error;
-    if (!orderError && order) break;
-    if (!isOrderNumberConflict(orderError?.message)) break;
+    if (!inserted.error && inserted.data) {
+      saved = inserted.data as CreatedManualOrder;
+      break;
+    }
+    if (!isOrderNumberConflict(inserted.error?.message)) break;
     if (requestedNumber) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "That order number already exists. Leave it blank or use a different number.");
     }
     orderNumber = await nextOrderNumber(supabase, ctx.organizationId);
   }
 
-  if (orderError || !order) {
+  if (!saved) {
     throw new AppError(
       ERROR_CODES.VALIDATION_ERROR,
       isOrderNumberConflict(orderError?.message)
@@ -259,7 +262,7 @@ export async function createManualOrder(
   const { error: itemsError } = await supabase.from("order_line_items").insert(
     resolvedLines.map((item) => ({
       organization_id: ctx.organizationId,
-      order_id: order.id,
+      order_id: saved.id,
       product_id: item.productId,
       title: item.title,
       sku: item.sku || null,
@@ -276,7 +279,7 @@ export async function createManualOrder(
     actor_id: ctx.userId || null,
     action: "order.created",
     entity_type: "order",
-    entity_id: order.id,
+    entity_id: saved.id,
     after: {
       orderNumber,
       source: input.source ?? "MANUAL",
@@ -294,11 +297,11 @@ export async function createManualOrder(
   }
 
   return {
-    ...order,
-    id: order.id,
-    order_number: order.order_number,
-    orderNumber: order.order_number,
-    totalAmount: Number(order.total_amount ?? 0),
+    ...saved,
+    id: saved.id,
+    order_number: saved.order_number,
+    orderNumber: saved.order_number,
+    totalAmount: Number(saved.total_amount ?? 0),
     createShipment: Boolean(input.createShipment),
     shipment: input.shipment,
   };
