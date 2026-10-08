@@ -575,6 +575,8 @@ export type AutomationSettings = {
   auto_tracking_sync?: boolean;
   autoShopifyFulfillment?: boolean;
   auto_shopify_fulfillment?: boolean;
+  autoShopifyProcessing?: boolean;
+  auto_shopify_processing?: boolean;
   autoWatiOrderConfirmation?: boolean;
   auto_wati_order_confirmation?: boolean;
   autoWatiProcessing?: boolean;

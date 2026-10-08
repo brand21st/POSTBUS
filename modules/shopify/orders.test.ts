@@ -3,6 +3,7 @@ import { encryptSecret } from "@/lib/security/crypto";
 import {
   canReportShopifyFulfillmentProgress,
   fulfillShopifyShipment,
+  importShopifyProgressReported,
   importShopifyWebhookOrder,
   isUnfulfilledShopifyOrder,
   mapShopifyCollectable,
@@ -329,7 +330,7 @@ describe("shopify automation flags", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false }
+      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false }
     );
   });
 
@@ -348,8 +349,175 @@ describe("shopify automation flags", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false }
+      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false }
     );
+  });
+
+  it("does not auto-process a newly imported Shopify order when auto processing is off", async () => {
+    getAutomationSettings.mockResolvedValue({
+      autoShopifySync: true,
+      autoShipmentCreation: false,
+      autoBooking: false,
+      autoShopifyProcessing: false,
+    });
+    createShipmentsForOrders.mockClear();
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const result = await importShopifyWebhookOrder(
+      trackedOrderClient({ inserts, deletes: [] }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        topic: "orders/create",
+        remote: remoteOrder,
+      }
+    );
+    expect(result.imported).toBe(true);
+    expect(inserts.find((row) => row.table === "orders")?.payload).toEqual(
+      expect.objectContaining({ status: "READY", source: "SHOPIFY" })
+    );
+    expect(createShipmentsForOrders).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ action: "processing" })
+    );
+  });
+
+  it("runs the existing processing workflow for a new Shopify import when auto processing is on", async () => {
+    getAutomationSettings.mockResolvedValue({
+      autoShopifySync: true,
+      autoShipmentCreation: true,
+      autoBooking: true,
+      autoShopifyProcessing: true,
+    });
+    createShipmentsForOrders.mockClear();
+    const result = await importShopifyWebhookOrder(newOrderClient() as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      topic: "orders/create",
+      remote: remoteOrder,
+    });
+    expect(result.imported).toBe(true);
+    expect(createShipmentsForOrders).toHaveBeenCalledTimes(1);
+    expect(createShipmentsForOrders).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ organizationId: "org-1" }),
+      ["ord-1"],
+      expect.objectContaining({ action: "processing", enqueueBooking: false, runBookingNow: false })
+    );
+  });
+
+  it("still imports a Shopify order if auto processing shipment create fails", async () => {
+    createShipmentsForOrders.mockRejectedValueOnce(new Error("queue down"));
+    const result = await upsertShopifyOrder(newOrderClient() as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: remoteOrder,
+      autoShopifyProcessing: true,
+    });
+    expect(result.imported).toBe(true);
+    expect(result.orderId).toBe("ord-1");
+  });
+
+  it("does not auto-process after the toggle is turned off", async () => {
+    getAutomationSettings.mockResolvedValue({
+      autoShopifySync: true,
+      autoShipmentCreation: false,
+      autoBooking: false,
+      autoShopifyProcessing: false,
+    });
+    createShipmentsForOrders.mockClear();
+    await importShopifyWebhookOrder(newOrderClient() as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      topic: "orders/create",
+      remote: remoteOrder,
+    });
+    expect(createShipmentsForOrders).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ action: "processing" })
+    );
+  });
+
+  it("does not auto-process an existing Shopify order when the toggle is on", async () => {
+    createShipmentsForOrders.mockClear();
+    const result = await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        inserts: [],
+        deletes: [],
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: remoteOrder,
+        autoShopifyProcessing: true,
+        createShipment: true,
+      }
+    );
+    expect(result.updated).toBe(true);
+    expect(result.imported).toBe(false);
+    expect(createShipmentsForOrders).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ action: "processing" })
+    );
+  });
+
+  it("does not auto-process a duplicate webhook after the order already exists", async () => {
+    createShipmentsForOrders.mockClear();
+    const first = await upsertShopifyOrder(newOrderClient() as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: remoteOrder,
+      autoShopifyProcessing: true,
+    });
+    expect(first.imported).toBe(true);
+    expect(createShipmentsForOrders).toHaveBeenCalledTimes(1);
+    createShipmentsForOrders.mockClear();
+    const second = await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        inserts: [],
+        deletes: [],
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: remoteOrder,
+        autoShopifyProcessing: true,
+      }
+    );
+    expect(second.updated).toBe(true);
+    expect(createShipmentsForOrders).not.toHaveBeenCalled();
+  });
+
+  it("keeps READY Shopify orders out of Processing on progress-reported when auto processing is off", async () => {
+    getAutomationSettings.mockResolvedValue({
+      autoShopifySync: true,
+      autoShopifyProcessing: false,
+    });
+    const updates: Array<{ table: string; payload: unknown }> = [];
+    const result = await importShopifyProgressReported(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        inserts: [],
+        deletes: [],
+        updates,
+      }) as never,
+      {
+        organizationId: "org-1",
+        payload: { fulfillment_order: { id: 9, order_id: 1042, status: "in_progress" } },
+      }
+    );
+    expect(result.skipped).toBe(true);
+    expect(updates.filter((row) => row.table === "orders")).toEqual([]);
   });
 });
 
@@ -771,7 +939,7 @@ describe("shopify product shipping hydrate", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false, lengthCm: 14, widthCm: 9, heightCm: 5 }
+      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 14, widthCm: 9, heightCm: 5 }
     );
   });
 
@@ -943,7 +1111,7 @@ describe("shopify product shipping hydrate", () => {
         expect.anything(),
         expect.objectContaining({ organizationId: "org-1" }),
         ["ord-1"],
-        { enqueueBooking: false, runBookingNow: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
+        { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
       );
     } finally {
       fetchSpy.mockRestore();
@@ -1012,7 +1180,7 @@ describe("shopify product shipping hydrate", () => {
         expect.anything(),
         expect.objectContaining({ organizationId: "org-1" }),
         ["ord-1"],
-        { enqueueBooking: false, runBookingNow: false, lengthCm: 22, widthCm: 16, heightCm: 11 }
+        { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 22, widthCm: 16, heightCm: 11 }
       );
     } finally {
       fetchSpy.mockRestore();
@@ -1047,11 +1215,11 @@ describe("shopify product shipping hydrate", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false, lengthCm: 25, widthCm: 18, heightCm: 12 }
+      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 25, widthCm: 18, heightCm: 12 }
     );
   });
 
-  it("creates a draft shipment from Shopify dimensions when auto-create is off", async () => {
+  it("creates a draft shipment from Shopify dimensions when auto-create is off without moving to Processing", async () => {
     createShipmentsForOrders.mockClear();
     const result = await upsertShopifyOrder(newOrderClient() as never, {
       organizationId: "org-1",
@@ -1077,7 +1245,7 @@ describe("shopify product shipping hydrate", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
+      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
     );
   });
 });

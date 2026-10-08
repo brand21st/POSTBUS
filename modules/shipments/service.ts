@@ -86,6 +86,7 @@ export async function createShipmentsForOrders(
     serviceCode?: string;
     enqueueBooking?: boolean;
     runBookingNow?: boolean;
+    setOrderProcessing?: boolean;
     action?: "processing" | "fulfill" | "in_transit" | "delivered";
   }
 ) {
@@ -273,7 +274,7 @@ export async function createShipmentsForOrders(
 
     if (action === "processing") {
       await applyProcessingSideEffects(supabase, ctx, order.id, shipment.id);
-    } else {
+    } else if (extras?.setOrderProcessing !== false) {
       await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", order.id);
       if (action !== "fulfill") {
         await enqueueOptionalWatiNotify(supabase, ctx.organizationId, "processing", {

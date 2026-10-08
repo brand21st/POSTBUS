@@ -59,8 +59,13 @@ describe("plan entitlements", () => {
     const starter = (feature: string) => STARTER_FEATURES.includes(feature as (typeof STARTER_FEATURES)[number]);
     const pro = (feature: string) => PRO_FEATURES.includes(feature as (typeof PRO_FEATURES)[number]);
     expect(automationToggleLock("autoShopifySync", starter)).toBe(FEATURE.automation);
+    expect(automationToggleLock("autoShopifyProcessing", starter)).toBe(FEATURE.automation);
     expect(automationToggleLock("autoWatiBooked", pro)).toBe(FEATURE.wati);
     expect(automationToggleLock("autoManifest", pro)).toBeNull();
     expect(automationToggleLock("autoLabelPrinting", pro)).toBeNull();
+    expect(automationToggleLock("autoShopifyProcessing", pro)).toBeNull();
+    expect(automationToggleLock("autoShopifyProcessing", (feature) => feature === FEATURE.automation)).toBe(
+      FEATURE.shopify
+    );
   });
 });

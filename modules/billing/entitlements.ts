@@ -102,7 +102,10 @@ export function automationToggleLock(camel: string, allows: (feature: string) =>
   if (!allows(FEATURE.automation)) return FEATURE.automation;
   if (camel.startsWith("autoWati") && !allows(FEATURE.wati)) return FEATURE.wati;
   if (camel === "autoManifest" && !allows(FEATURE.manifests)) return FEATURE.manifests;
-  if ((camel === "autoShopifySync" || camel === "autoShopifyFulfillment") && !allows(FEATURE.shopify)) {
+  if (
+    (camel === "autoShopifySync" || camel === "autoShopifyFulfillment" || camel === "autoShopifyProcessing") &&
+    !allows(FEATURE.shopify)
+  ) {
     return FEATURE.shopify;
   }
   if (

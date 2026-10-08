@@ -1098,6 +1098,7 @@ async function refreshShopifyLineItems(
     userId: undefined,
     lineItems: input.lineItems,
     createIfMissing: true,
+    setOrderProcessing: false,
   });
 }
 
@@ -1111,6 +1112,7 @@ async function applyShopifyParcelToShipment(
     lineItems: ShopifyRemoteLineItem[];
     createIfMissing?: boolean;
     enqueueBooking?: boolean;
+    setOrderProcessing?: boolean;
   }
 ) {
   const parcel = shopifyParcelFromLineItems(input.lineItems);
@@ -1146,7 +1148,12 @@ async function applyShopifyParcelToShipment(
           permissions: [],
         },
         [input.orderId],
-        { enqueueBooking: input.enqueueBooking === true, runBookingNow: false, ...extras }
+        {
+          enqueueBooking: input.enqueueBooking === true,
+          runBookingNow: false,
+          setOrderProcessing: input.setOrderProcessing !== false,
+          ...extras,
+        }
       );
     } catch {
       // Parcel hydrate is optional; order import/update should still succeed.
@@ -2000,6 +2007,7 @@ export async function upsertShopifyOrder(
     remote: ShopifyRemoteOrder;
     createShipment?: boolean;
     enqueueBooking?: boolean;
+    autoShopifyProcessing?: boolean;
   }
 ) {
   const sourceId = String(input.remote.id || "");
@@ -2029,7 +2037,12 @@ export async function upsertShopifyOrder(
     fulfillmentStatus,
     currentStatus: existingOrder?.status,
   });
-  if (shopifyRemoteSignalsProcessing(input.remote) && orderStatus === "READY") {
+  const autoShopifyProcessing = Boolean(input.autoShopifyProcessing);
+  if (
+    autoShopifyProcessing &&
+    shopifyRemoteSignalsProcessing(input.remote) &&
+    orderStatus === "READY"
+  ) {
     orderStatus = "PROCESSING";
   }
   const collect = mapShopifyCollectable(input.remote, paymentStatus);
@@ -2056,9 +2069,6 @@ export async function upsertShopifyOrder(
       orderStatus: existingOrder?.status,
       lineItems,
     });
-    if (shopifyRemoteSignalsProcessing(input.remote)) {
-      await notifyShopifyProcessingWati(supabase, input.organizationId, existing.order_id as string);
-    }
     return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string };
   }
 
@@ -2198,23 +2208,36 @@ export async function upsertShopifyOrder(
 
   const workspace = await loadWorkspaceParcelDefaults(supabase, input.organizationId);
   const parcelExtras = shopifyResolvedShipmentDims(lineItems, workspace);
-  if (input.createShipment) {
+  const shipmentCtx = {
+    userId: input.userId ?? "",
+    email: null,
+    fullName: null,
+    organizationId: input.organizationId,
+    organizationName: "",
+    role: "OWNER" as const,
+    permissions: [],
+  };
+  if (autoShopifyProcessing) {
     try {
       const { createShipmentsForOrders } = await import("@/modules/shipments/service");
-      await createShipmentsForOrders(
-        supabase,
-        {
-          userId: input.userId ?? "",
-          email: null,
-          fullName: null,
-          organizationId: input.organizationId,
-          organizationName: "",
-          role: "OWNER",
-          permissions: [],
-        },
-        [order.id],
-        { enqueueBooking: input.enqueueBooking !== false, runBookingNow: false, ...parcelExtras }
-      );
+      await createShipmentsForOrders(supabase, shipmentCtx, [order.id], {
+        action: "processing",
+        enqueueBooking: false,
+        runBookingNow: false,
+        ...parcelExtras,
+      });
+    } catch {
+      // Order import should still succeed if processing automation fails.
+    }
+  } else if (input.createShipment) {
+    try {
+      const { createShipmentsForOrders } = await import("@/modules/shipments/service");
+      await createShipmentsForOrders(supabase, shipmentCtx, [order.id], {
+        enqueueBooking: input.enqueueBooking !== false,
+        runBookingNow: false,
+        setOrderProcessing: false,
+        ...parcelExtras,
+      });
     } catch {
       // Order import should still succeed if shipment automation fails.
     }
@@ -2227,6 +2250,7 @@ export async function upsertShopifyOrder(
       lineItems,
       createIfMissing: true,
       enqueueBooking: false,
+      setOrderProcessing: false,
     });
   }
 
@@ -2240,12 +2264,14 @@ async function shopifyOrderAutomation(supabase: SupabaseClient, organizationId: 
       autoShopifySync: Boolean(automation.autoShopifySync),
       createShipment: Boolean(automation.autoShipmentCreation),
       enqueueBooking: Boolean(automation.autoBooking),
+      autoShopifyProcessing: Boolean(automation.autoShopifyProcessing),
     };
   } catch {
     return {
       autoShopifySync: AUTOMATION_DEFAULTS.auto_shopify_sync,
       createShipment: AUTOMATION_DEFAULTS.auto_shipment_creation,
       enqueueBooking: AUTOMATION_DEFAULTS.auto_booking,
+      autoShopifyProcessing: AUTOMATION_DEFAULTS.auto_shopify_processing,
     };
   }
 }
@@ -2282,6 +2308,10 @@ export async function importShopifyProgressReported(
   }
 
   if (current !== "PROCESSING") {
+    const automation = await shopifyOrderAutomation(supabase, input.organizationId);
+    if (!automation.autoShopifyProcessing && ["READY", "IMPORTED", ""].includes(current)) {
+      return { updated: false, skipped: true, orderId: order.id as string };
+    }
     await supabase.from("orders").update({ status: "PROCESSING" }).eq("id", order.id);
   }
   await notifyShopifyProcessingWati(supabase, input.organizationId, order.id as string);
@@ -2320,6 +2350,7 @@ export async function importShopifyWebhookOrder(
     remote,
     createShipment: automation.createShipment,
     enqueueBooking: automation.enqueueBooking,
+    autoShopifyProcessing: automation.autoShopifyProcessing,
   });
 }
 
@@ -2596,6 +2627,7 @@ export async function syncUnfulfilledShopifyOrders(
           remote,
           createShipment: automation.createShipment,
           enqueueBooking: automation.enqueueBooking,
+          autoShopifyProcessing: automation.autoShopifyProcessing,
         });
         if (upserted.imported) result.imported += 1;
         else if (upserted.updated) result.updated += 1;

@@ -11,6 +11,7 @@ type Column =
   | "auto_manifest"
   | "auto_tracking_sync"
   | "auto_shopify_fulfillment"
+  | "auto_shopify_processing"
   | "auto_wati_order_confirmation"
   | "auto_wati_processing"
   | "auto_wati_booked"
@@ -33,6 +34,8 @@ const CAMEL_TO_COLUMN: Record<string, Column> = {
   auto_tracking_sync: "auto_tracking_sync",
   autoShopifyFulfillment: "auto_shopify_fulfillment",
   auto_shopify_fulfillment: "auto_shopify_fulfillment",
+  autoShopifyProcessing: "auto_shopify_processing",
+  auto_shopify_processing: "auto_shopify_processing",
   autoWatiOrderConfirmation: "auto_wati_order_confirmation",
   auto_wati_order_confirmation: "auto_wati_order_confirmation",
   autoWatiProcessing: "auto_wati_processing",
@@ -56,6 +59,7 @@ export type AutomationRow = {
   auto_manifest: boolean;
   auto_tracking_sync: boolean;
   auto_shopify_fulfillment: boolean;
+  auto_shopify_processing?: boolean;
   auto_wati_order_confirmation?: boolean;
   auto_wati_processing?: boolean;
   auto_wati_booked?: boolean;
@@ -72,6 +76,7 @@ export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
   auto_manifest: true,
   auto_tracking_sync: true,
   auto_shopify_fulfillment: true,
+  auto_shopify_processing: false,
   auto_wati_order_confirmation: true,
   auto_wati_processing: true,
   auto_wati_booked: true,
@@ -97,6 +102,8 @@ export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
     auto_tracking_sync: row.auto_tracking_sync,
     autoShopifyFulfillment: row.auto_shopify_fulfillment,
     auto_shopify_fulfillment: row.auto_shopify_fulfillment,
+    autoShopifyProcessing: row.auto_shopify_processing ?? false,
+    auto_shopify_processing: row.auto_shopify_processing ?? false,
     autoWatiOrderConfirmation: row.auto_wati_order_confirmation ?? true,
     auto_wati_order_confirmation: row.auto_wati_order_confirmation ?? true,
     autoWatiProcessing: row.auto_wati_processing ?? true,

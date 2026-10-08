@@ -28,6 +28,12 @@ const TOGGLES = [
     description: "Import new and updated Shopify orders from store webhooks into PostBus.",
   },
   {
+    camel: "autoShopifyProcessing",
+    snake: "auto_shopify_processing",
+    title: "Shopify Auto Processing",
+    description: "Automatically move newly imported Shopify orders into the processing workflow.",
+  },
+  {
     camel: "autoShipmentCreation",
     snake: "auto_shipment_creation",
     title: "Auto shipment creation",

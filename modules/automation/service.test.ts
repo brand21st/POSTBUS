@@ -88,6 +88,8 @@ describe("automation settings", () => {
     expect(mapped.autoWatiDelivered).toBe(true);
     expect(mapped.autoLabelPrinting).toBe(false);
     expect(mapped.auto_label_printing).toBe(false);
+    expect(mapped.autoShopifyProcessing).toBe(false);
+    expect(mapped.auto_shopify_processing).toBe(false);
   });
 
   it("creates a row with service defaults when none exists", async () => {
@@ -98,6 +100,8 @@ describe("automation settings", () => {
     expect(settings.autoShopifyFulfillment).toBe(AUTOMATION_DEFAULTS.auto_shopify_fulfillment);
     expect(settings.autoLabelPrinting).toBe(false);
     expect(AUTOMATION_DEFAULTS.auto_label_printing).toBe(false);
+    expect(settings.autoShopifyProcessing).toBe(false);
+    expect(AUTOMATION_DEFAULTS.auto_shopify_processing).toBe(false);
   });
 
   it("accepts camelCase and snake_case patches", async () => {
@@ -105,8 +109,10 @@ describe("automation settings", () => {
     const supabase = automationClient({ onUpdate: (payload) => captured.push(payload) });
     await updateAutomationSettings(supabase as never, ctx, { autoBooking: true });
     await updateAutomationSettings(supabase as never, ctx, { auto_shopify_sync: false });
+    await updateAutomationSettings(supabase as never, ctx, { autoShopifyProcessing: true });
     expect(captured[0]).toEqual({ auto_booking: true });
     expect(captured[1]).toEqual({ auto_shopify_sync: false });
+    expect(captured[2]).toEqual({ auto_shopify_processing: true });
   });
 
   it("rejects patches with no boolean automation flags", async () => {
