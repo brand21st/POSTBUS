@@ -436,7 +436,20 @@ export async function processRazorpayEvent(
 
   if (event === "payment.captured") {
     const orderId = paymentEntity.order_id ? String(paymentEntity.order_id) : razorpayOrderId || null;
-    const paid = subscription ?? (await loadSubscriptionByOrderId(supabase, orderId));
+    let aiCreditsHandled = false;
+    if (orderId) {
+      const { fulfillCapturedAiCreditPayment } = await import("@/modules/ai-credits/service");
+      const credits = await fulfillCapturedAiCreditPayment(supabase, {
+        razorpayOrderId: orderId,
+        razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
+        amountPaise: paymentEntity.amount != null ? Number(paymentEntity.amount) : null,
+        method: paymentEntity.method ? String(paymentEntity.method) : null,
+      });
+      aiCreditsHandled = credits.handled;
+    }
+    const paid = aiCreditsHandled
+      ? null
+      : subscription ?? (await loadSubscriptionByOrderId(supabase, orderId));
     if (
       paid &&
       paymentEntity.amount != null &&

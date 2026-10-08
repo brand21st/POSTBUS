@@ -23,6 +23,8 @@ const saveSchema = z.object({
   apiKey: z.string().optional().nullable(),
   model: z.string().optional().nullable(),
   clearKey: z.boolean().optional(),
+  packSize: z.number().int().min(1).max(100000).optional(),
+  packPaise: z.number().int().min(100).max(10_000_000).optional(),
 });
 
 function ip(request: NextRequest) {
@@ -59,6 +61,8 @@ export async function saveOpenRouterSettings(
   if (typeof body.enabled === "boolean") patch.openrouter_enabled = body.enabled;
   else if (!current.flagEnabled && incomingKey) patch.openrouter_enabled = true;
   if (body.model != null) patch.openrouter_model = sanitizeOpenRouterModel(body.model);
+  if (body.packSize != null) patch.ai_credit_pack_size = body.packSize;
+  if (body.packPaise != null) patch.ai_credit_pack_paise = body.packPaise;
   if (body.clearKey) {
     patch.encrypted_openrouter_api_key = null;
     patch.openrouter_enabled = false;
@@ -85,6 +89,8 @@ export async function saveOpenRouterSettings(
     metadata: {
       enabled: patch.openrouter_enabled ?? current.flagEnabled,
       model: patch.openrouter_model ?? current.model,
+      packSize: patch.ai_credit_pack_size ?? current.packSize,
+      packPaise: patch.ai_credit_pack_paise ?? current.packPaise,
       keyUpdated: Boolean(incomingKey && !/^•+$/.test(incomingKey)),
       cleared: Boolean(body.clearKey),
     },

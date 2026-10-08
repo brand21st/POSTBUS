@@ -113,6 +113,8 @@ export function permissionForTenantRoute(
 
   if (key === "PATCH organizations") return "org.manage";
 
+  if (root === "ai-credits") return "orders.read";
+
   if (root === "billing") {
     if (method === "GET") return undefined;
     return "org.billing";

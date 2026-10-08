@@ -86,6 +86,8 @@ type OpenRouterSettings = {
   keyMasked: string;
   model: string;
   source: string;
+  packSize?: number;
+  packPaise?: number;
   models?: Array<{ id: string; name: string }>;
 };
 
@@ -138,6 +140,8 @@ export default function AdminSettingsPage() {
   const [openrouterKey, setOpenrouterKey] = useState("");
   const [openrouterModel, setOpenrouterModel] = useState("");
   const [openrouterEnabled, setOpenrouterEnabled] = useState<boolean | null>(null);
+  const [packSizeDraft, setPackSizeDraft] = useState("");
+  const [packRupeesDraft, setPackRupeesDraft] = useState("");
   const [vachatKey, setVachatKey] = useState("");
   const [vachatUrl, setVachatUrl] = useState("");
   const [vachatEnabled, setVachatEnabled] = useState<boolean | null>(null);
@@ -149,6 +153,9 @@ export default function AdminSettingsPage() {
   const resolvedOpenrouterEnabled = openrouterEnabled ?? openrouter?.enabled ?? false;
   const chatgptModels = openrouterModelsQuery.data?.models ?? openrouter?.models ?? [];
   const resolvedOpenrouterModel = openrouterModel || openrouter?.model || "openai/gpt-4o-mini";
+  const resolvedPackSize = packSizeDraft || String(openrouter?.packSize ?? 500);
+  const resolvedPackRupees =
+    packRupeesDraft || String(Math.round((openrouter?.packPaise ?? 9900) / 100));
   const resolvedVachatEnabled = vachatEnabled ?? vachat?.enabled ?? false;
   const resolvedTestPhone = vachatTestPhone || vachat?.lastTestPhone || "";
   const templateCol: Record<VachatEventKey, string> = {
@@ -215,6 +222,8 @@ export default function AdminSettingsPage() {
           enabled: resolvedOpenrouterEnabled,
           model: resolvedOpenrouterModel,
           apiKey: openrouterKey || undefined,
+          packSize: Number(resolvedPackSize),
+          packPaise: Math.round(Number(resolvedPackRupees) * 100),
         }),
       }),
     onSuccess: () => {
@@ -472,6 +481,33 @@ export default function AdminSettingsPage() {
               }
             />
             <p className="text-xs text-muted">OpenAI ChatGPT models via OpenRouter. Save after changing the model.</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="ai-credit-pack-size">Credit pack size</Label>
+              <Input
+                id="ai-credit-pack-size"
+                type="number"
+                min={1}
+                step={1}
+                value={resolvedPackSize}
+                onChange={(event) => setPackSizeDraft(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ai-credit-pack-price">Pack price (₹)</Label>
+              <Input
+                id="ai-credit-pack-price"
+                type="number"
+                min={1}
+                step={1}
+                value={resolvedPackRupees}
+                onChange={(event) => setPackRupeesDraft(event.target.value)}
+              />
+              <p className="text-xs text-muted">
+                Charged as {Math.round(Number(resolvedPackRupees) * 100 || 0)} paise via Razorpay.
+              </p>
+            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="openrouter-key">API key</Label>

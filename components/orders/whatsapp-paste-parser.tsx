@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clipboard, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,7 +25,17 @@ PIN: 673001`;
 type ParseResponse = {
   fields: WhatsAppCustomerFields;
   source: "ai" | "rules";
+  creditsRemaining?: number;
 };
+
+type CreditsResponse = {
+  remaining: number;
+  included?: number;
+  packSize: number;
+  packPaise: number;
+};
+
+const FREE_CREDITS = 500;
 
 export function WhatsAppPasteParser({
   getCurrent,
@@ -38,6 +50,16 @@ export function WhatsAppPasteParser({
   const [hint, setHint] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const inflight = useRef(false);
+  const queryClient = useQueryClient();
+  const credits = useQuery({
+    queryKey: ["ai-credits"],
+    queryFn: () => api<CreditsResponse>("/api/v1/ai-credits"),
+  });
+  const included = credits.data?.included ?? FREE_CREDITS;
+  const remaining = credits.isSuccess ? credits.data.remaining : included;
+  const outOfCredits = credits.isSuccess && remaining === 0;
+  const creditLabel =
+    remaining > included ? String(remaining) : `${remaining}/${included}`;
 
   async function parse() {
     const paste = text.trim();
@@ -54,6 +76,18 @@ export function WhatsAppPasteParser({
       if (!filled) {
         setHint("Could not read name, phone, or address from that message. Fill the fields manually.");
         return;
+      }
+      if (typeof parsed.creditsRemaining === "number") {
+        queryClient.setQueryData(["ai-credits"], (current: CreditsResponse | undefined) =>
+          current
+            ? { ...current, remaining: parsed.creditsRemaining as number }
+            : {
+                remaining: parsed.creditsRemaining as number,
+                included: FREE_CREDITS,
+                packSize: 500,
+                packPaise: 9900,
+              }
+        );
       }
       onApply(applyWhatsAppCustomerFields(getCurrent(), parsed.fields, { overwrite }));
       const via = parsed.source === "ai" ? " with AI" : "";
@@ -108,13 +142,30 @@ export function WhatsAppPasteParser({
             </p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1 text-emerald-800 sm:items-start sm:gap-2 sm:rounded-xl sm:px-3 sm:py-2">
-          <Sparkles className="size-3.5 shrink-0 sm:mt-0.5 sm:size-4" aria-hidden />
-          <div className="hidden min-[400px]:block">
-            <p className="text-[11px] font-semibold sm:text-xs">AI powered</p>
-            <p className="hidden text-[11px] leading-snug text-emerald-700/80 md:block">Saves time, reduces errors</p>
+        {outOfCredits ? (
+          <Link
+            href="/dashboard/billing#ai-credits"
+            className="flex shrink-0 items-center rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-800 sm:px-3 sm:text-xs"
+          >
+            Recharge now
+          </Link>
+        ) : (
+          <div
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 sm:px-2.5",
+              remaining <= 20
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : "border-emerald-100 bg-emerald-50 text-emerald-800"
+            )}
+            title={`${remaining} of ${included} free AI credits`}
+          >
+            <Sparkles className="size-3.5 shrink-0" aria-hidden />
+            <p className="text-[11px] font-semibold leading-none sm:text-xs">
+              <span className="tabular-nums">{creditLabel}</span>
+              <span className="ml-1 font-medium text-current/70">AI</span>
+            </p>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="relative mt-3 sm:mt-4">
@@ -154,7 +205,7 @@ export function WhatsAppPasteParser({
             "h-11 min-w-0 flex-1 text-white shadow-sm sm:h-12 sm:flex-none sm:px-6 sm:text-base",
             "!bg-[#25D366] hover:!bg-[#20bd5a] hover:shadow-md"
           )}
-          disabled={!text.trim() || parsing}
+          disabled={!text.trim() || parsing || outOfCredits}
           aria-busy={parsing}
           onClick={() => void parse()}
         >
@@ -177,10 +228,12 @@ export function WhatsAppPasteParser({
       </div>
 
       <p className="mt-2 text-xs text-muted sm:mt-3 sm:text-sm" role={hint ? "status" : undefined} aria-live={hint ? "polite" : undefined}>
-        {hint ??
-          (overwrite
-            ? "Extract updates name, phone, and address in the form."
-            : "Extract fills empty name, phone, and address fields below.")}
+        {outOfCredits
+          ? "Recharge AI credits to extract with AI."
+          : hint ??
+            (overwrite
+              ? `${included} free AI extracts · 1 credit each. Extract updates name, phone, and address.`
+              : `${included} free AI extracts · 1 credit each. Extract fills empty fields below.`)}
       </p>
     </section>
   );

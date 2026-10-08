@@ -8,6 +8,7 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "orders/whatsapp-parse", ["orders", "whatsapp-parse"])).toBe(
       "orders.write"
     );
+    expect(permissionForTenantRoute("GET", "ai-credits", ["ai-credits"])).toBe("orders.read");
     expect(permissionForTenantRoute("GET", "shipment-presets", ["shipment-presets"])).toBe("orders.read");
     expect(permissionForTenantRoute("POST", "shipment-presets", ["shipment-presets"])).toBe("orders.write");
     expect(
@@ -200,6 +201,9 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("GET", "billing", ["billing"])).toBeUndefined();
     expect(permissionForTenantRoute("GET", "billing/plans", ["billing", "plans"])).toBeUndefined();
     expect(permissionForTenantRoute("POST", "billing/subscribe", ["billing", "subscribe"])).toBe("org.billing");
+    expect(
+      permissionForTenantRoute("POST", "billing/ai-credits/checkout", ["billing", "ai-credits", "checkout"])
+    ).toBe("org.billing");
     expect(permissionForTenantRoute("POST", "billing/cancel", ["billing", "cancel"])).toBe("org.billing");
     expect(permissionForTenantRoute("GET", "tutorials", ["tutorials"])).toBeUndefined();
     expect(permissionForTenantRoute("GET", "tutorials/categories", ["tutorials", "categories"])).toBeUndefined();

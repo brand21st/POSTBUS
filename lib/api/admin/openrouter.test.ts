@@ -35,6 +35,8 @@ describe("GET/PATCH /api/admin/settings/openrouter", () => {
       apiKey: "",
       model: "openai/gpt-4o-mini",
       source: "none",
+      packSize: 500,
+      packPaise: 9900,
     });
   });
 
@@ -45,6 +47,8 @@ describe("GET/PATCH /api/admin/settings/openrouter", () => {
       apiKey: "sk-or-v1-secret-value-xyz",
       model: "openai/gpt-4o-mini",
       source: "database",
+      packSize: 500,
+      packPaise: 9900,
     });
     const result = (await loadOpenRouterSettings()) as Record<string, unknown>;
 

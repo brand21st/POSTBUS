@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { logError } from "@/lib/logger";
 import {
@@ -5,6 +6,7 @@ import {
   parseWhatsAppCustomerMessage,
   type WhatsAppCustomerFields,
 } from "@/lib/parsers/whatsapp-customer-message";
+import { consumeAiCredit, getAiCreditsRemaining } from "@/modules/ai-credits/service";
 import {
   OPENROUTER_API_BASE,
   getPlatformOpenRouterConfig,
@@ -31,6 +33,7 @@ export type WhatsAppPasteSource = "ai" | "rules";
 export type WhatsAppPasteParseResponse = {
   fields: WhatsAppCustomerFields;
   source: WhatsAppPasteSource;
+  creditsRemaining: number;
 };
 
 function filledCount(fields: WhatsAppCustomerFields) {
@@ -78,7 +81,7 @@ export async function extractWhatsAppFieldsWithOpenRouter(
 export function mergeWhatsAppPasteResult(
   text: string,
   aiJson: unknown | null
-): WhatsAppPasteParseResponse {
+): Omit<WhatsAppPasteParseResponse, "creditsRemaining"> {
   const rules = parseWhatsAppCustomerMessage(text);
   if (aiJson == null) return { fields: rules.fields, source: "rules" };
   const ai = fieldsFromUnknown(aiJson, "ai");
@@ -86,19 +89,40 @@ export function mergeWhatsAppPasteResult(
   return { fields: rules.fields, source: "rules" };
 }
 
-export async function parseWhatsAppOrderPaste(text: string): Promise<WhatsAppPasteParseResponse> {
+export async function parseWhatsAppOrderPaste(
+  text: string,
+  options?: { organizationId?: string; supabase?: SupabaseClient }
+): Promise<WhatsAppPasteParseResponse> {
   const trimmed = text.trim().slice(0, WHATSAPP_PASTE_MAX_CHARS);
+  const organizationId = options?.organizationId;
+  const supabase = options?.supabase;
+  const creditsRemaining =
+    organizationId && supabase ? await getAiCreditsRemaining(supabase, organizationId) : 0;
+  const withCredits = (
+    result: Omit<WhatsAppPasteParseResponse, "creditsRemaining">,
+    remaining: number
+  ): WhatsAppPasteParseResponse => ({ ...result, creditsRemaining: remaining });
+
+  if (organizationId && supabase && creditsRemaining <= 0) {
+    return withCredits(mergeWhatsAppPasteResult(trimmed, null), 0);
+  }
+
   const config = await getPlatformOpenRouterConfig();
   if (!config.enabled || !config.apiKey) {
-    return mergeWhatsAppPasteResult(trimmed, null);
+    return withCredits(mergeWhatsAppPasteResult(trimmed, null), creditsRemaining);
   }
   try {
     const json = await extractWhatsAppFieldsWithOpenRouter(trimmed, config);
-    return mergeWhatsAppPasteResult(trimmed, json);
+    const merged = mergeWhatsAppPasteResult(trimmed, json);
+    if (merged.source === "ai" && organizationId && supabase) {
+      const remaining = await consumeAiCredit(supabase, organizationId);
+      return withCredits(merged, remaining ?? creditsRemaining);
+    }
+    return withCredits(merged, creditsRemaining);
   } catch (error) {
     logError("openrouter.whatsapp_parse_failed", {
       message: error instanceof Error ? error.message : "unknown",
     });
-    return mergeWhatsAppPasteResult(trimmed, null);
+    return withCredits(mergeWhatsAppPasteResult(trimmed, null), creditsRemaining);
   }
 }

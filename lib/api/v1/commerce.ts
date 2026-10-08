@@ -181,10 +181,18 @@ export async function handleCommerceRoutes(
     return getOrder(supabase, ctx, slugs[1]);
   }
 
+  if (key === "GET ai-credits") {
+    const { getAiCreditsSnapshot } = await import("@/modules/ai-credits/service");
+    return getAiCreditsSnapshot(supabase, ctx.organizationId);
+  }
+
   if (key === "POST orders/whatsapp-parse") {
     const { parseWhatsAppOrderPaste, whatsappPasteSchema } = await import("@/modules/openrouter/parse-whatsapp");
     const body = whatsappPasteSchema.parse(await request.json());
-    return parseWhatsAppOrderPaste(body.text);
+    return parseWhatsAppOrderPaste(body.text, {
+      organizationId: ctx.organizationId,
+      supabase,
+    });
   }
 
   if (key === "POST orders") {

@@ -135,6 +135,16 @@ export async function handleBillingRoutes(
     return { invoices: data ?? [] };
   }
 
+  if (key === "POST billing/ai-credits/checkout") {
+    const { startAiCreditsCheckout } = await import("@/modules/ai-credits/service");
+    return startAiCreditsCheckout(writeClient(), {
+      organizationId: ctx.organizationId,
+      organizationName: ctx.organizationName,
+      email: ctx.email,
+      userId: ctx.userId,
+    });
+  }
+
   if (key === "POST billing/subscribe") {
     const body = subscribeSchema.parse(await request.json());
     return startCheckout(writeClient(), {

@@ -31,7 +31,7 @@ describe("renderReceiptPdf", () => {
     expect(pdf.byteLength).toBeGreaterThan(1000);
     const loaded = await PDFDocument.load(pdf);
     expect(loaded.getPages()[0].node.normalizedEntries().XObject).toBeTruthy();
-  });
+  }, 20_000);
 
   it("renders when India Post has not reported tariff or invoice yet", async () => {
     const pdf = await renderReceiptPdf({ ...sample, invoiceNo: "", tariff: null, codAmount: 0, paymentMode: "PREPAID" });

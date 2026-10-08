@@ -371,6 +371,29 @@ export async function verifyCheckout(
     throw new AppError(ERROR_CODES.PROVIDER_ERROR, "Payment was not captured.");
   }
   const orderId = String(payment.order_id ?? input.razorpayOrderId);
+  const { fulfillCapturedAiCreditPayment } = await import("@/modules/ai-credits/service");
+  const credits = await fulfillCapturedAiCreditPayment(supabase, {
+    razorpayOrderId: orderId,
+    razorpayPaymentId: input.paymentId,
+    amountPaise: Number(payment.amount),
+    method: payment.method ? String(payment.method) : null,
+  });
+  if (credits.handled) {
+    if (credits.amountMismatch) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Paid amount does not match the AI credit pack.");
+    }
+    await writeBillingAudit(supabase, {
+      actorId: input.userId,
+      actorType: "USER",
+      action: "ai_credits.payment_verified",
+      targetType: "payment",
+      targetId: orderId,
+      organizationId: input.organizationId,
+      ip: input.ip,
+      metadata: { paymentId: input.paymentId, razorpayOrderId: orderId, remaining: credits.remaining },
+    });
+    return { verified: true, creditsRemaining: credits.remaining };
+  }
   const { data: subscription } = await supabase
     .from("subscriptions")
     .select(SUBSCRIPTION_WITH_PLAN)

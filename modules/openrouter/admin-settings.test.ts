@@ -26,6 +26,8 @@ describe("OpenRouter platform settings", () => {
       apiKey,
       model: DEFAULT_OPENROUTER_MODEL,
       source: "database",
+      packSize: 500,
+      packPaise: 9900,
     });
     expect(status.hasApiKey).toBe(true);
     expect(status.connected).toBe(true);

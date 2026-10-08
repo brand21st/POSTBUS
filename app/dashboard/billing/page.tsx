@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CreditCard } from "lucide-react";
 import { toast } from "sonner";
+import { AiCreditsCheckoutButton } from "@/components/billing/ai-credits-checkout-button";
 import { PlanPicker, type PublicPlan } from "@/components/billing/plan-picker";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -50,6 +51,11 @@ export default function BillingPage() {
       api<{
         payments: Array<{ id: string; amount_paise: number; status: string; created_at: string; razorpay_payment_id?: string }>;
       }>("/api/v1/billing/payments"),
+  });
+  const aiCredits = useQuery({
+    queryKey: ["ai-credits"],
+    queryFn: () =>
+      api<{ remaining: number; included: number; packSize: number; packPaise: number }>("/api/v1/ai-credits"),
   });
   const invoices = useQuery({
     queryKey: ["billing", "invoices"],
@@ -149,6 +155,26 @@ export default function BillingPage() {
               </CardContent>
             </Card>
           </div>
+
+          <Card id="ai-credits">
+            <CardHeader>
+              <CardDescription>AI credits</CardDescription>
+              <CardTitle className="tabular-nums">
+                {formatNumber(aiCredits.data?.remaining ?? 500)}
+                <span className="text-base font-medium text-muted">
+                  /{formatNumber(aiCredits.data?.included ?? 500)}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <p className="text-muted">
+                Every workspace gets {formatNumber(aiCredits.data?.included ?? 500)} free AI extracts.
+                One extract uses 1 credit. Recharge adds {formatNumber(aiCredits.data?.packSize ?? 500)}{" "}
+                credits for {formatPaise(aiCredits.data?.packPaise ?? 9900)}.
+              </p>
+              <AiCreditsCheckoutButton className="w-full sm:w-auto" />
+            </CardContent>
+          </Card>
 
           {data?.subscription?.status === "TRIAL" && (data.plan?.features?.length ?? 0) > 0 ? (
             <Card>
