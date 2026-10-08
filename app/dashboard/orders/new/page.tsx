@@ -15,7 +15,7 @@ import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
 import { WhatsAppPasteParser } from "@/components/orders/whatsapp-paste-parser";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Combobox } from "@/components/ui/combobox";
@@ -518,13 +518,19 @@ export default function NewOrderPage() {
       ) : null}
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between p-4">
+        <CardHeader className="flex-row items-center justify-between gap-3 p-4">
           <div>
             <CardTitle>Line items</CardTitle>
             <p className="mt-0.5 text-xs text-muted">
               {items.fields.length} {items.fields.length === 1 ? "item" : "items"} · {totalQuantity} units
             </p>
           </div>
+          <Link
+            href="/dashboard/inventory?tab=products"
+            className={cn(buttonVariants({ variant: "link", size: "sm" }), "h-auto shrink-0 px-0 font-medium")}
+          >
+            Add inventory
+          </Link>
         </CardHeader>
         <CardContent className="p-4 pt-0">
           <div
