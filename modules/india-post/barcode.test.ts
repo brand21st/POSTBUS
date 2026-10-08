@@ -7,10 +7,12 @@ import {
   indiaPostPublicTrackingUrl,
   isCeptUatTestSeries,
   formatAllotmentNumber,
+  formatStoredSerial,
   barcodePrefixAllowedForService,
   indiaPostServiceForBarcodePrefix,
   nextSerialForSavedRange,
   parseBarcodeRange,
+  primaryActiveBarcodeRange,
   sanitizeBarcodeAllotmentField,
   isValidIndiaPostS10,
 } from "@/modules/india-post/barcode";
@@ -52,6 +54,19 @@ describe("barcodesLeft", () => {
     const business = { ...shared, prefix: "ET", serviceCode: "BUSINESS_PARCEL", nextNumber: 55697990 };
     expect(barcodeStockForService([shared, business], "BUSINESS_PARCEL")?.prefix).toBe("ET");
     expect(barcodesLeft(barcodeStockForService([shared, business], "SP_INLAND_PARCEL"))).toBe(601);
+  });
+});
+
+describe("primaryActiveBarcodeRange", () => {
+  it("falls back to a service-specific series when no Any-service series is active", () => {
+    const cx = { prefix: "CX", serviceCode: "BUSINESS_PARCEL", startNumber: 7536320 };
+    expect(primaryActiveBarcodeRange([cx])).toEqual(cx);
+  });
+
+  it("prefers the Any-service series when both exist", () => {
+    const any = { prefix: "EY", serviceCode: null };
+    const cx = { prefix: "CX", serviceCode: "BUSINESS_PARCEL" };
+    expect(primaryActiveBarcodeRange([cx, any])?.prefix).toBe("EY");
   });
 });
 
@@ -108,6 +123,8 @@ describe("parseBarcodeRange", () => {
     ).toMatchObject({ startNumber: 55697399, endNumber: 55697999 });
     expect(formatAllotmentNumber(55697399)).toBe("556973995");
     expect(formatAllotmentNumber(55697999)).toBe("556979998");
+    expect(formatStoredSerial(7536320)).toBe("7536320");
+    expect(formatStoredSerial(7537319)).toBe("7537319");
   });
 
   it("binds CX allotments to Business Parcel (India Post Parcel Contractual)", () => {

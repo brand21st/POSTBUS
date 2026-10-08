@@ -76,6 +76,11 @@ export function formatAllotmentNumber(serialNumber: number) {
   return `${serial}${indiaPostS10CheckDigit(serial)}`;
 }
 
+/** Start/end fields show the same serial stored in barcode_ranges. */
+export function formatStoredSerial(serialNumber: number) {
+  return String(serialNumber);
+}
+
 /**
  * An allotment is the 8-digit serial or the 9-digit number India Post prints
  * (serial plus check digit). The stored value is always the 8-digit serial.
@@ -260,6 +265,16 @@ export function indiaPostAcceptedArticleId(
     .map(normalizeIndiaPostArticleId)
     .find(Boolean);
   return fromBooking || normalizeIndiaPostArticleId(fallback) || fallback;
+}
+
+/** Prefer the Any-service series; if none, show the first remaining active series. */
+export function primaryActiveBarcodeRange<
+  T extends { service_code?: string | null; serviceCode?: string | null },
+>(ranges: T[]): T | null {
+  if (!ranges.length) return null;
+  return (
+    ranges.find((item) => (item.service_code ?? item.serviceCode ?? null) == null) ?? ranges[0] ?? null
+  );
 }
 
 export function indiaPostPublicTrackingUrl(articleId: string) {

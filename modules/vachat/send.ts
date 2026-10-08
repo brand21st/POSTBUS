@@ -3,8 +3,8 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import { toIndiaWhatsappE164 } from "@/lib/phone/india-whatsapp";
 import { WATI_NOTIFY_EVENTS, type WatiNotifyEvent } from "@/modules/wati/notify";
-import { loadNoticeContext, resolveWatiTrackingUrl } from "@/modules/wati/send";
-import { getTrackingPage } from "@/modules/tracking-pages/service";
+import { postbusTrackingLink } from "@/modules/tracking-pages/host";
+import { loadNoticeContext } from "@/modules/wati/send";
 import { isAutoWatiEventEnabled } from "@/modules/automation/service";
 import { vachatHeaders, type VachatConnectionRow } from "@/modules/vachat/service";
 import {
@@ -18,6 +18,8 @@ import {
   upsertVachatNotificationLog,
 } from "@/modules/vachat/logs";
 import { vachatAddressParam, vachatAmountParam, vachatMerchantTemplateFields, vachatSingleLine } from "@/modules/vachat/notice-fields";
+import { readVachatTemplateCatalog } from "@/modules/vachat/templates";
+import { otpTemplateDecision } from "@/lib/auth/otp/template-policy";
 
 export const VACHAT_DEFAULT_TEST_PHONE = "918618456029";
 export const VACHAT_PLATFORM_WEBHOOK_EVENTS = ["message.status_updated", "message.received"] as const;
@@ -97,7 +99,40 @@ async function postVachatNotification(
   };
 }
 
-export async function sendVachatSessionText(to: string, text: string) {
+export type VachatSessionTextPayload = {
+  to: string;
+  text: string;
+  extras?: { interactive_payload?: Record<string, unknown>; image_url?: string };
+  orderId?: string;
+};
+
+export async function enqueueVachatSessionText(
+  supabase: SupabaseClient,
+  organizationId: string,
+  payload: VachatSessionTextPayload
+) {
+  if (!organizationId || !payload.to.trim() || !payload.text.trim()) return { queued: false as const };
+  const { createBackgroundJob } = await import("@/modules/jobs/service");
+  await createBackgroundJob(supabase, {
+    organizationId,
+    jobType: "vachat-notify",
+    entityType: "whatsapp_session",
+    entityId: payload.orderId || crypto.randomUUID(),
+    progress: {
+      kind: "session_text",
+      to: payload.to,
+      text: payload.text.trim(),
+      extras: payload.extras ?? null,
+    },
+  });
+  return { queued: true as const };
+}
+
+export async function sendVachatSessionText(
+  to: string,
+  text: string,
+  extras?: { interactive_payload?: Record<string, unknown>; image_url?: string }
+) {
   const platform = await getPlatformVachatConfig();
   if (!isPlatformVachatActive(platform) || !text.trim()) return { sent: false as const };
   const recipient = vachatRecipientE164(to);
@@ -108,6 +143,8 @@ export async function sendVachatSessionText(to: string, text: string) {
       to: recipient,
       text: text.trim(),
       content_text: text.trim(),
+      ...(extras?.interactive_payload ? { interactive_payload: extras.interactive_payload } : {}),
+      ...(extras?.image_url ? { image_url: extras.image_url, content_type: "image" } : {}),
     }),
     signal: AbortSignal.timeout(15000),
   });
@@ -177,8 +214,7 @@ export async function sendVachatNotice(
     .maybeSingle();
 
   const trackingNumber = context.trackingNumber ?? context.barcode;
-  const trackingPage = await getTrackingPage(supabase, organizationId).catch(() => null);
-  const trackingUrl = resolveWatiTrackingUrl(trackingNumber, trackingPage);
+  const trackingUrl = postbusTrackingLink(trackingNumber);
   const phone = context.phone?.trim();
   if (!phone) {
     await upsertVachatNotificationLog(supabase, {
@@ -256,8 +292,7 @@ export async function sendVachatTestNotice(
       : "booked";
   const to = vachatRecipientE164(input?.phone);
   const { data: org } = await supabase.from("organizations").select("name").eq("id", organizationId).maybeSingle();
-  const trackingPage = await getTrackingPage(supabase, organizationId).catch(() => null);
-  const trackingUrl = resolveWatiTrackingUrl("TESTTRACKIN", trackingPage);
+  const trackingUrl = postbusTrackingLink("TESTTRACKIN");
   try {
     await postVachatNotification(creds, {
       merchant_id: organizationId,
@@ -349,6 +384,72 @@ export function vachatEventFromJobProgress(progress: unknown): WatiNotifyEvent {
     return event as WatiNotifyEvent;
   }
   return "booked";
+}
+
+/**
+ * Platform VaChat AUTHENTICATION template only.
+ * OTP is a template parameter. Do not fall back to session text or merchant WATI.
+ */
+export async function sendVachatAuthenticationTemplate(input: {
+  to: string;
+  templateName: string;
+  language: string;
+  otp: string;
+}) {
+  const platform = await getPlatformVachatConfig();
+  const templateName = input.templateName.trim();
+  if (!isPlatformVachatActive(platform) || !templateName) {
+    logError("vachat.auth_template.unavailable", {
+      reason: isPlatformVachatActive(platform) ? "template_missing" : "platform_inactive",
+    });
+    throw new Error("vachat_auth_unavailable");
+  }
+  const catalog = await loadVachatTemplateCatalog(platform.apiBaseUrl, platform.apiKey);
+  const decision = otpTemplateDecision(templateName, catalog);
+  if (!decision.allow) {
+    logError("vachat.auth_template.rejected", { reason: decision.reason });
+    throw new Error(`vachat_auth_${decision.reason}`);
+  }
+  const recipient = vachatRecipientE164(input.to);
+  const res = await fetch(`${platform.apiBaseUrl.replace(/\/$/, "")}/api/v1/messages`, {
+    method: "POST",
+    headers: vachatHeaders(platform.apiKey),
+    body: JSON.stringify({
+      to: recipient,
+      type: "template",
+      template: {
+        name: templateName,
+        language: input.language.trim() || "en",
+        params: {
+          body: [input.otp],
+          buttonParams: { 0: input.otp },
+        },
+      },
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    logError("vachat.auth_template.failed", { status: res.status });
+    throw new Error("vachat_auth_send_failed");
+  }
+  const json = (await res.json().catch(() => null)) as { data?: { message_id?: string } } | null;
+  return { sent: true as const, messageId: json?.data?.message_id ?? null };
+}
+
+async function loadVachatTemplateCatalog(apiBaseUrl: string, apiKey: string) {
+  try {
+    const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/postbus/templates`, {
+      headers: vachatHeaders(apiKey),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return null;
+    return readVachatTemplateCatalog(await res.json().catch(() => null));
+  } catch (error) {
+    logError("vachat.auth_template.catalog_failed", {
+      message: error instanceof Error ? error.message : "catalog",
+    });
+    return null;
+  }
 }
 
 export function vachatIdsFromJob(progress: unknown, fallbackId?: string | null): VachatNotifyIds {

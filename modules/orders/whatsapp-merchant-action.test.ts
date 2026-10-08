@@ -4,12 +4,15 @@ import { parseMerchantOrderAction, rejectWhatsAppOrder } from "@/modules/orders/
 describe("parseMerchantOrderAction", () => {
   it("reads YES and NO with the Postbus order number", () => {
     expect(parseMerchantOrderAction("YES PB-10001")).toEqual({ action: "YES", orderNumber: "PB-10001" });
+    expect(parseMerchantOrderAction("PROCESS PB-10001")).toEqual({ action: "YES", orderNumber: "PB-10001" });
     expect(parseMerchantOrderAction("NO #PB-10002 — Reject Order")).toEqual({ action: "NO", orderNumber: "PB-10002" });
+    expect(parseMerchantOrderAction("CANCEL PB-10002")).toEqual({ action: "NO", orderNumber: "PB-10002" });
   });
 
   it("ignores replies that are not merchant decisions", () => {
     expect(parseMerchantOrderAction("Where is PB-10001")).toBeNull();
     expect(parseMerchantOrderAction("YES")).toBeNull();
+    expect(parseMerchantOrderAction("I HAVE PAID PB-10001")).toBeNull();
   });
 });
 

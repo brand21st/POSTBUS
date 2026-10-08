@@ -1,8 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
-import { customerTrackingLink } from "@/modules/tracking-pages/host";
-import { getTrackingPage } from "@/modules/tracking-pages/service";
+import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 import { watiClientFromRow } from "@/modules/wati/client";
 import { listWatiTemplates } from "@/modules/wati/service";
 import {
@@ -22,26 +20,10 @@ export type WatiNotifyIds = {
 const TEMPLATE_COLUMNS =
   "status, order_confirmation_template_name, processing_template_name, booked_template_name, in_transit_template_name, delivered_template_name";
 
-export function resolveWatiTrackingUrl(
-  trackingNumber: string | null | undefined,
-  trackingPage?: { status?: string | null; publicUrl?: string | null } | null
-) {
+export function resolveWatiTrackingUrl(trackingNumber: string | null | undefined) {
   const tracking = trackingNumber?.trim();
   if (!tracking) return null;
-  if (trackingPage?.status === "PUBLISHED" && trackingPage.publicUrl) {
-    return customerTrackingLink(trackingPage.publicUrl, tracking);
-  }
-  return indiaPostPublicTrackingUrl(tracking);
-}
-
-async function loadWatiTrackingUrl(
-  supabase: SupabaseClient,
-  organizationId: string,
-  trackingNumber: string | null | undefined
-) {
-  if (!trackingNumber?.trim()) return null;
-  const trackingPage = await getTrackingPage(supabase, organizationId).catch(() => null);
-  return resolveWatiTrackingUrl(trackingNumber, trackingPage);
+  return postbusTrackingLink(tracking);
 }
 
 export async function sendWatiNotice(
@@ -82,7 +64,7 @@ export async function sendWatiNotice(
       orderNumber: context.orderNumber,
       trackingNumber,
       barcode: context.barcode,
-      trackingUrl: await loadWatiTrackingUrl(supabase, organizationId, trackingNumber),
+      trackingUrl: resolveWatiTrackingUrl(trackingNumber),
     },
     template
   );

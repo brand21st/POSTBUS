@@ -45,7 +45,7 @@ export function StoreOrderSuccess({
         <p className="mt-3 rounded-2xl bg-zinc-50 px-3 py-2 text-sm font-semibold">
           Order {receipt.orderNumber || "received"}
         </p>
-        <p className="mt-2 text-sm text-zinc-500">Payment/Order status: Processing</p>
+        <p className="mt-2 text-sm text-zinc-500">Payment/Order status: Awaiting Confirmation</p>
         <dl className="mt-4 space-y-1.5 text-left text-sm">
           <div className="flex justify-between gap-3">
             <dt className="text-zinc-500">Total</dt>

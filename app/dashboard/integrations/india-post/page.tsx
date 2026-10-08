@@ -24,7 +24,8 @@ import {
   BARCODE_ALLOTMENT_DIGITS,
   barcodeStockForService,
   barcodesLeft,
-  formatAllotmentNumber,
+  formatStoredSerial,
+  primaryActiveBarcodeRange,
   sanitizeBarcodeAllotmentField,
 } from "@/modules/india-post/barcode";
 import { api } from "@/lib/hooks/use-api";
@@ -68,6 +69,11 @@ type FormState = {
 };
 
 const ANY_SERVICE = "ANY";
+
+function displayedIndiaPostRange(config: IndiaPostConfig | undefined) {
+  if (!config) return null;
+  return config.barcodeRange ?? primaryActiveBarcodeRange(config.barcodeRanges ?? []) ?? null;
+}
 
 function barcodeRangeWritePayload(snapshot: FormState) {
   const prefix = snapshot.prefix.trim();
@@ -138,7 +144,8 @@ export default function IndiaPostPage() {
         : [];
 
     const savedDefault = config.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
-    const savedRange = config.barcodeRange?.serviceCode ?? ANY_SERVICE;
+    const displayedRange = displayedIndiaPostRange(config);
+    const savedRange = displayedRange?.serviceCode ?? ANY_SERVICE;
 
     setForm((current) => ({
       ...current,
@@ -163,15 +170,15 @@ export default function IndiaPostPage() {
       defaultServiceCode: knownService.has(savedDefault) ? savedDefault : DEFAULT_INDIA_POST_SERVICE,
       rangeServiceCode:
         savedRange === ANY_SERVICE || knownService.has(savedRange) ? savedRange : ANY_SERVICE,
-      prefix: String(config.barcodeRange?.prefix ?? ""),
-      suffix: String(config.barcodeRange?.suffix ?? "IN"),
+      prefix: String(displayedRange?.prefix ?? ""),
+      suffix: String(displayedRange?.suffix ?? "IN"),
       startNumber:
-        config.barcodeRange?.startNumber != null
-          ? formatAllotmentNumber(Number(config.barcodeRange.startNumber))
+        displayedRange?.startNumber != null
+          ? formatStoredSerial(Number(displayedRange.startNumber))
           : "",
       endNumber:
-        config.barcodeRange?.endNumber != null
-          ? formatAllotmentNumber(Number(config.barcodeRange.endNumber))
+        displayedRange?.endNumber != null
+          ? formatStoredSerial(Number(displayedRange.endNumber))
           : "",
     }));
   }, [config]);
@@ -195,16 +202,17 @@ export default function IndiaPostPage() {
   );
   const savedPickupOfficeCity = String(config?.pickupOfficeCity ?? config?.pickup_office_city ?? "");
   const savedPickupOfficeState = String(config?.pickupOfficeState ?? config?.pickup_office_state ?? "");
-  const savedRangeService = config?.barcodeRange?.serviceCode ?? ANY_SERVICE;
-  const savedPrefix = String(config?.barcodeRange?.prefix ?? "");
-  const savedSuffix = String(config?.barcodeRange?.suffix ?? "IN");
+  const displayedSavedRange = displayedIndiaPostRange(config);
+  const savedRangeService = displayedSavedRange?.serviceCode ?? ANY_SERVICE;
+  const savedPrefix = String(displayedSavedRange?.prefix ?? "");
+  const savedSuffix = String(displayedSavedRange?.suffix ?? "IN");
   const savedStart =
-    config?.barcodeRange?.startNumber != null
-      ? formatAllotmentNumber(Number(config.barcodeRange.startNumber))
+    displayedSavedRange?.startNumber != null
+      ? formatStoredSerial(Number(displayedSavedRange.startNumber))
       : "";
   const savedEnd =
-    config?.barcodeRange?.endNumber != null
-      ? formatAllotmentNumber(Number(config.barcodeRange.endNumber))
+    displayedSavedRange?.endNumber != null
+      ? formatStoredSerial(Number(displayedSavedRange.endNumber))
       : "";
   const hasSavedRange = Boolean(savedPrefix || savedStart || savedEnd);
 
@@ -468,7 +476,7 @@ export default function IndiaPostPage() {
     mutationFn: (snapshot: FormState) => {
       const customerId = snapshot.customerId.trim();
       if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
-        throw new Error("Live booking is not ready yet. Keep Test selected.");
+        throw new Error("Live booking is not ready yet. Keep Sandbox / UAT selected.");
       }
       return api<{ saved: boolean; status: string }>("/api/v1/integrations/india-post", {
         method: "POST",
@@ -516,7 +524,7 @@ export default function IndiaPostPage() {
       const customerId = snapshot.customerId.trim();
       const needsCredentials = replaceSecrets || !hasSecrets;
       if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
-        throw new Error("Live booking is not ready yet. Keep Test selected.");
+        throw new Error("Live booking is not ready yet. Keep Sandbox / UAT selected.");
       }
       if (!customerId) {
         throw new Error("Enter your India Post customer ID.");
@@ -705,15 +713,21 @@ export default function IndiaPostPage() {
         body: JSON.stringify({ barcodeRange, serviceCode, prefix }),
       }),
     onSuccess: (data, variables) => {
-      const next = variables.barcodeRange ? data.barcodeRange ?? null : null;
+      const next =
+        primaryActiveBarcodeRange(
+          [
+            ...(data.barcodeRange ? [data.barcodeRange] : []),
+            ...(data.barcodeRanges ?? []),
+          ].filter(Boolean)
+        ) ?? (variables.barcodeRange ? data.barcodeRange ?? null : null);
       setForm((current) => ({
         ...current,
         rangeServiceCode: next?.serviceCode ?? ANY_SERVICE,
         prefix: String(next?.prefix ?? ""),
         suffix: String(next?.suffix ?? "IN"),
         startNumber:
-          next?.startNumber != null ? formatAllotmentNumber(Number(next.startNumber)) : "",
-        endNumber: next?.endNumber != null ? formatAllotmentNumber(Number(next.endNumber)) : "",
+          next?.startNumber != null ? formatStoredSerial(Number(next.startNumber)) : "",
+        endNumber: next?.endNumber != null ? formatStoredSerial(Number(next.endNumber)) : "",
       }));
       queryClient.setQueryData<IndiaPostConfig>(INDIA_POST_QUERY_KEY, (current) =>
         current
@@ -738,6 +752,7 @@ export default function IndiaPostPage() {
   ) {
     const payload = barcodeRangeWritePayload(snapshot);
     if (payload === undefined) return;
+    if (payload === null && !options?.force) return;
     const sameAsSaved =
       !payload && !hasSavedRange
         ? true
@@ -830,15 +845,32 @@ export default function IndiaPostPage() {
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <div className="space-y-2">
-            <Label>Account</Label>
-            <Select value={form.environment} onValueChange={(value) => set("environment", value)}>
-              <SelectTrigger>
+            <Label>India Post Environment</Label>
+            <Select
+              value={form.environment}
+              onValueChange={(value) => {
+                if (value === "PRODUCTION" && form.environment !== "PRODUCTION") {
+                  const ok = window.confirm(
+                    "Switch to India Post Production? Bookings will be sent to live CEPT (app.indiapost.gov.in), not Sandbox/UAT."
+                  );
+                  if (!ok) return;
+                }
+                set("environment", value);
+              }}
+            >
+              <SelectTrigger
+                className={
+                  form.environment === "PRODUCTION"
+                    ? "border-error/40 bg-error/5 font-medium text-error"
+                    : "border-amber-500/40 bg-amber-50 font-medium text-amber-950"
+                }
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {PROVIDER_ENVIRONMENTS.map((item) => (
                   <SelectItem key={item} value={item}>
-                    {item === "UAT" ? "Test" : "Live"}
+                    {item === "UAT" ? "Sandbox / UAT" : "Production"}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -874,9 +906,18 @@ export default function IndiaPostPage() {
               autoComplete="new-password"
             />
           )}
+          {form.environment === "UAT" ? (
+            <p className="rounded-xl border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-950 sm:col-span-2 xl:col-span-3">
+              Sandbox / UAT is selected. Authentication and bookings use <strong>test.cept.gov.in</strong> only.
+            </p>
+          ) : (
+            <p className="rounded-xl border border-error/30 bg-error/5 px-3 py-2 text-sm text-error sm:col-span-2 xl:col-span-3">
+              Production is selected. Bookings go to live India Post. Use Sandbox / UAT for the test organization.
+            </p>
+          )}
           {productionBlocked ? (
             <p className="text-sm text-muted sm:col-span-2 xl:col-span-3">
-              Live booking is not ready yet. Keep <strong>Test</strong> selected.
+              Live booking is not ready yet. Keep <strong>Sandbox / UAT</strong> selected.
             </p>
           ) : null}
           {lastError ? (
@@ -1119,7 +1160,7 @@ export default function IndiaPostPage() {
           <CardHeader className="pb-4">
             <CardTitle>Barcode range</CardTitle>
             <CardDescription className="mt-1">
-              The article number series from your India Post allotment. Paste the 9-digit number with check digit, or the 8-digit serial. CX books India Post Parcel Contractual (Business Parcel) only.
+              The article number series from your India Post allotment. These fields show the same start and end serials saved in the database. You can paste the 8-digit serial or the 9-digit number with check digit. CX books India Post Parcel Contractual (Business Parcel) only.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -1130,7 +1171,7 @@ export default function IndiaPostPage() {
                 onValueChange={(value) => {
                   const next = { ...form, rangeServiceCode: value };
                   setForm(next);
-                  persistBarcodeRange(next);
+                  if (barcodeRangeWritePayload(next)) persistBarcodeRange(next);
                 }}
               >
                 <SelectTrigger>
@@ -1177,7 +1218,7 @@ export default function IndiaPostPage() {
             <Field
               label="Start number"
               value={form.startNumber}
-              placeholder="556973995"
+              placeholder="7536320"
               maxLength={BARCODE_ALLOTMENT_DIGITS}
               inputMode="numeric"
               onChange={(value) => applyAllotmentField("startNumber", value)}
@@ -1188,7 +1229,7 @@ export default function IndiaPostPage() {
             <Field
               label="End number"
               value={form.endNumber}
-              placeholder="556979998"
+              placeholder="7537319"
               maxLength={BARCODE_ALLOTMENT_DIGITS}
               inputMode="numeric"
               onChange={(value) => applyAllotmentField("endNumber", value)}

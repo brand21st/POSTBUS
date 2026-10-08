@@ -47,8 +47,15 @@ describe("itemSummary", () => {
 describe("canShipOrder", () => {
   it("allows imported and ready orders to be fulfilled", () => {
     expect(canFulfillOrder({ status: "IMPORTED" })).toBe(true);
+    expect(canFulfillOrder({ status: "IMPORTED", source: "WHATSAPP" })).toBe(false);
+    expect(canFulfillOrder({ status: "READY", source: "WHATSAPP" })).toBe(true);
     expect(canFulfillOrder({ status: "READY" })).toBe(true);
     expect(canFulfillOrder({ status: "PROCESSING" })).toBe(true);
+    expect(canFulfillOrder({ status: "PROCESSING", source: "WHATSAPP", payment_status: "PENDING" })).toBe(false);
+    expect(canFulfillOrder({ status: "IMPORTED", source: "WHATSAPP" })).toBe(false);
+    expect(canShipOrder({ status: "PROCESSING", source: "WHATSAPP", payment_status: "PENDING" })).toBe(false);
+    expect(canShipOrder({ status: "READY", source: "WHATSAPP" })).toBe(true);
+    expect(canFulfillOrder({ status: "PROCESSING", source: "MANUAL", payment_status: "PENDING" })).toBe(true);
     expect(canFulfillOrder({ status: "FAILED" })).toBe(true);
   });
 
@@ -81,6 +88,9 @@ describe("canShipOrder", () => {
     expect(orderStageMenu("DELIVERED").hideActions).toBe(true);
     expect(orderStageMenu("DELIVERED").next).toBeNull();
     expect(orderStageMenu("CANCELLED").hideActions).toBe(true);
+    expect(orderStageMenu("IMPORTED", "WHATSAPP").hideActions).toBe(true);
+    expect(orderStageMenu("IMPORTED", "WHATSAPP").next).toBeNull();
+    expect(orderStageMenu("READY", "WHATSAPP").hideActions).toBe(false);
   });
 
   it("blocks booked, in transit, delivered, and cancelled orders", () => {
@@ -93,6 +103,14 @@ describe("canShipOrder", () => {
 
   it("explains why Booked / packed cannot run", () => {
     expect(fulfillSkipReason({ status: "PROCESSING", order_number: "1020" })).toBeNull();
+    expect(
+      fulfillSkipReason({
+        status: "PROCESSING",
+        source: "WHATSAPP",
+        payment_status: "PENDING",
+        order_number: "PB-11219",
+      })
+    ).toContain("READY");
     expect(fulfillSkipReason({ status: "DELIVERED", order_number: "1024" })).toBe(
       "Order #1024 cannot be marked Booked / packed because it is already Delivered."
     );

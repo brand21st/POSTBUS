@@ -7,6 +7,7 @@ import {
 } from "@/modules/vachat/assistant";
 import { searchOrderDetails } from "@/modules/vachat/mcp";
 import { sendVachatSessionText } from "@/modules/vachat/send";
+import { handleWhatsAppStorefrontAction } from "@/modules/orders/whatsapp-lifecycle";
 import type { WhatsappSupportSession } from "@/modules/vachat/support-session";
 import { POLICY_PICK_MERCHANT_REPLY } from "@/modules/vachat/policies";
 
@@ -25,6 +26,13 @@ vi.mock("@/modules/vachat/platform-config", () => ({
 
 vi.mock("@/modules/vachat/send", () => ({
   sendVachatSessionText: vi.fn(async () => ({ sent: true })),
+}));
+
+vi.mock("@/modules/orders/whatsapp-lifecycle", () => ({
+  handleWhatsAppStorefrontAction: vi.fn(async () => ({
+    handled: true,
+    reply: "Your confirmation for PB-11143 has been recorded.",
+  })),
 }));
 
 type Customer = { id: string; organization_id: string; phone: string };
@@ -65,7 +73,7 @@ function sessionRow(overrides: Partial<WhatsappSupportSession> = {}): WhatsappSu
     selected_order_id: null,
     selected_organization_id: null,
     state: "IDENTIFY",
-    expires_at: "2026-10-07T00:00:00.000Z",
+    expires_at: "2026-12-31T00:00:00.000Z",
     last_seen_at: "2026-10-06T00:00:00.000Z",
     created_at: "2026-10-06T00:00:00.000Z",
     updated_at: "2026-10-06T00:00:00.000Z",
@@ -503,6 +511,22 @@ describe("handlePlatformSupportTurn", () => {
 });
 
 describe("handleVachatAssistantMessage dual-brain", () => {
+  it("handles YES PB-11143 before native AI or support", async () => {
+    vi.mocked(sendVachatSessionText).mockClear();
+    vi.mocked(handleWhatsAppStorefrontAction).mockClear();
+    const result = await handleVachatAssistantMessage(fakeSupabase(sampleDb()) as never, {
+      from: PHONE_A,
+      text: "YES PB-11143",
+    });
+    expect(handleWhatsAppStorefrontAction).toHaveBeenCalledWith(expect.anything(), {
+      from: PHONE_A,
+      text: "YES PB-11143",
+    });
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("PB-11143");
+    expect(sendVachatSessionText).toHaveBeenCalled();
+  });
+
   it("leaves greetings to native VaChat and does not send PostBus order text", async () => {
     vi.mocked(sendVachatSessionText).mockClear();
     const db = sampleDb();

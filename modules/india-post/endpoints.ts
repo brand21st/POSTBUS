@@ -1,6 +1,7 @@
 import { indiaPostBaseUrl } from "@/lib/env";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { indiaPostServiceForBarcodePrefix } from "@/modules/india-post/barcode";
+import { assertIndiaPostEnvironmentUrl } from "@/modules/india-post/environment";
 import { INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G } from "@/modules/india-post/spec";
 import { indiaPostServiceLabel, type ProviderEnvironment } from "@/types/domain";
 
@@ -29,7 +30,9 @@ function apiRoot(environment: ProviderEnvironment) {
 
 export function indiaPostSessionUrl(environment: ProviderEnvironment, path: string) {
   const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `${apiRoot(environment)}/v1${suffix}`;
+  const url = `${apiRoot(environment)}/v1${suffix}`;
+  assertIndiaPostEnvironmentUrl(environment, url);
+  return url;
 }
 
 /** Documented CEPT lookup for post offices by 6-digit pincode (requires Bearer token). */
@@ -39,11 +42,15 @@ export function indiaPostPincodeSearchApiUrl(environment: ProviderEnvironment, p
 }
 
 export function indiaPostBookingUrl(environment: ProviderEnvironment, customerId: string) {
-  return `${apiRoot(environment)}/process-articles/${encodeURIComponent(customerId)}`;
+  const url = `${apiRoot(environment)}/process-articles/${encodeURIComponent(customerId)}`;
+  assertIndiaPostEnvironmentUrl(environment, url);
+  return url;
 }
 
 export function indiaPostBookingFileUrl(environment: ProviderEnvironment, customerId: string) {
-  return `${apiRoot(environment)}/process-articles-file/${encodeURIComponent(customerId)}`;
+  const url = `${apiRoot(environment)}/process-articles-file/${encodeURIComponent(customerId)}`;
+  assertIndiaPostEnvironmentUrl(environment, url);
+  return url;
 }
 
 /**

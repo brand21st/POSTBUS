@@ -36,6 +36,9 @@ type Storefront = {
   workspace: string;
   footer: StorefrontFooterConfig;
   footerPreview: StorePayload["footer"];
+  upiId?: string | null;
+  gpayNumber?: string | null;
+  qrImageUrl?: string | null;
   footerSources: {
     organization: {
       name?: string | null;
@@ -97,7 +100,7 @@ export function InventoryStorefront({ canWrite }: { canWrite: boolean }) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  async function upload(kind: "logo" | "slide", file: File | undefined) {
+  async function upload(kind: "logo" | "slide" | "qr", file: File | undefined) {
     if (!file) return;
     const optimized = await optimizeImageFile(
       file,
@@ -105,11 +108,16 @@ export function InventoryStorefront({ canWrite }: { canWrite: boolean }) {
     );
     const body = new FormData();
     body.append("image", optimized);
-    const path = kind === "logo" ? "/api/v1/inventory/storefront/logo" : "/api/v1/inventory/storefront/slides";
+    const path =
+      kind === "logo"
+        ? "/api/v1/inventory/storefront/logo"
+        : kind === "qr"
+          ? "/api/v1/inventory/storefront/qr"
+          : "/api/v1/inventory/storefront/slides";
     try {
       const next = await api<Storefront>(path, { method: "POST", body });
       queryClient.setQueryData(["inventory-storefront"], next);
-      toast.success(kind === "logo" ? "Logo uploaded." : "Cover slide added.");
+      toast.success(kind === "logo" ? "Logo uploaded." : kind === "qr" ? "Payment QR uploaded." : "Cover slide added.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Upload failed.");
     }
@@ -272,6 +280,51 @@ export function InventoryStorefront({ canWrite }: { canWrite: boolean }) {
             <div className="mt-3">
               <Label>Logo</Label>
               <Input className="mt-1 min-w-0 max-w-full" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void upload("logo", event.target.files?.[0])} />
+            </div>
+          ) : null}
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card p-4">
+          <h3 className="text-sm font-semibold">WhatsApp order payments</h3>
+          <p className="mt-1 text-xs text-muted">
+            Shown to customers after you process a WhatsApp order that needs advance or prepaid payment. Not used for Postbus SaaS billing.
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="min-w-0">
+              <Label htmlFor="store-upi">UPI ID</Label>
+              <Input
+                id="store-upi"
+                className="mt-1 h-11 min-w-0"
+                defaultValue={settings.upiId ?? ""}
+                disabled={!canWrite}
+                placeholder="merchant@upi"
+                onBlur={(event) => save.mutate({ upiId: event.target.value })}
+              />
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="store-gpay">GPay number</Label>
+              <Input
+                id="store-gpay"
+                className="mt-1 h-11 min-w-0"
+                defaultValue={settings.gpayNumber ?? ""}
+                disabled={!canWrite}
+                placeholder="98XXXXXXXX"
+                onBlur={(event) => save.mutate({ gpayNumber: event.target.value })}
+              />
+            </div>
+          </div>
+          {canWrite ? (
+            <div className="mt-3">
+              <Label>UPI / GPay QR</Label>
+              <Input
+                className="mt-1 min-w-0 max-w-full"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(event) => void upload("qr", event.target.files?.[0])}
+              />
+              {settings.qrImageUrl ? (
+                <p className="mt-2 text-xs text-muted">QR uploaded. Customers receive this image with payment instructions.</p>
+              ) : null}
             </div>
           ) : null}
         </section>

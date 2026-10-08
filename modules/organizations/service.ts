@@ -116,11 +116,21 @@ export async function switchOrganization(
 export async function ensureActiveWorkspace(
   supabase: SupabaseClient,
   userId: string,
-  options?: { fullName?: string | null; email?: string | null; activeOrganizationId?: string | null }
+  options?: {
+    fullName?: string | null;
+    email?: string | null;
+    activeOrganizationId?: string | null;
+    workspaceName?: string | null;
+  }
 ) {
   let memberships = await listMemberships(supabase, userId);
   if (memberships.length === 0) {
-    await createOrganization(supabase, userId, defaultWorkspaceName(options?.fullName, options?.email));
+    const named = options?.workspaceName?.trim();
+    await createOrganization(
+      supabase,
+      userId,
+      named && named.length >= 2 ? named : defaultWorkspaceName(options?.fullName, options?.email)
+    );
     memberships = await listMemberships(supabase, userId);
   }
 

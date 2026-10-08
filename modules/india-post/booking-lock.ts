@@ -160,6 +160,7 @@ export async function withIndiaPostBookingLock<T>(
           jobId: input.jobId,
           shipmentId: input.shipmentId,
           connectionId: input.connectionId,
+          lock_unavailable: true,
           reason: acquired.reason,
         });
         throw bookingLockUnavailableError(acquired.reason);
@@ -185,6 +186,7 @@ export async function withIndiaPostBookingLock<T>(
       jobId: input.jobId,
       shipmentId: input.shipmentId,
       connectionId: input.connectionId,
+      lock_acquired: true,
       waitMs: Date.now() - started,
       dbLock: true,
       tokenRef: lockTokenRef(token),
@@ -198,6 +200,7 @@ export async function withIndiaPostBookingLock<T>(
         jobId: input.jobId,
         shipmentId: input.shipmentId,
         connectionId: input.connectionId,
+        lock_released: true,
         holdMs: Date.now() - started,
         tokenRef: lockTokenRef(token),
       });

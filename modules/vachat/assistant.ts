@@ -281,25 +281,37 @@ async function postAssistantReply(to: string, text: string) {
 
 export async function handleVachatAssistantMessage(
   supabase: SupabaseClient,
-  input: { from: string; text: string }
+  input: { from: string; text: string; skipSend?: boolean }
 ) {
   const platform = await getPlatformVachatConfig();
   if (!isPlatformVachatActive(platform)) return { handled: false, reason: "platform_off" };
   if (!input.text.trim() || !input.from.trim()) return { handled: false, reason: "empty" };
 
   try {
-    const { handleMerchantWhatsAppOrderAction } = await import("@/modules/orders/whatsapp-merchant-action");
-    const merchantAction = await handleMerchantWhatsAppOrderAction(supabase, input);
-    if (merchantAction.handled) {
-      return {
-        handled: true,
-        sent: true,
-        reply: merchantAction.reply,
-        organizationId: null as string | null,
-      };
+    const { isWhatsAppOrderCommand } = await import("@/modules/orders/whatsapp-commands");
+    if (isWhatsAppOrderCommand(input.text)) {
+      const { handleWhatsAppStorefrontAction } = await import("@/modules/orders/whatsapp-lifecycle");
+      const action = await handleWhatsAppStorefrontAction(supabase, input);
+      if (action.handled) {
+        const reply = action.reply ?? "";
+        if (reply && !input.skipSend) await postAssistantReply(input.from, reply);
+        return {
+          handled: true,
+          sent: !input.skipSend,
+          reply,
+          organizationId: "organizationId" in action ? action.organizationId ?? null : null,
+          orderId: "orderId" in action ? action.orderId ?? null : null,
+        };
+      }
     }
   } catch {
-    // Merchant YES/NO is optional; fall through to customer support.
+    // Deterministic order actions must not fall through to native AI.
+    const { isWhatsAppOrderCommand } = await import("@/modules/orders/whatsapp-commands");
+    if (isWhatsAppOrderCommand(input.text)) {
+      const reply = "Could not update that order. Check it in Postbus.";
+      if (!input.skipSend) await postAssistantReply(input.from, reply);
+      return { handled: true, sent: !input.skipSend, reply, organizationId: null as string | null };
+    }
   }
 
   try {

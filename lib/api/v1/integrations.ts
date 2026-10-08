@@ -13,6 +13,7 @@ import {
   isCeptUatTestSeries,
   nextSerialForSavedRange,
   parseBarcodeRange,
+  primaryActiveBarcodeRange,
   type BarcodeRangeInput,
 } from "@/modules/india-post/barcode";
 import { parcelServiceCode, resolveOrderBookingService } from "@/modules/india-post/booking-service";
@@ -45,7 +46,6 @@ import {
 } from "@/modules/shopify/oauth";
 import { shopifyReadyToSync } from "@/modules/shopify/orders";
 import { enqueueShopifyOrderSync, latestShopifySyncJob } from "@/modules/shopify/sync-job";
-import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { watiClientFromRow } from "@/modules/wati/client";
 import { watiBroadcastName, watiNotifyRecipient } from "@/modules/wati/notify";
 import { resolveWatiTrackingUrl } from "@/modules/wati/send";
@@ -626,7 +626,7 @@ export async function handleIntegrationRoutes(
       .maybeSingle();
     const ranges = await listActiveBarcodeRanges(supabase, ctx.organizationId);
     const contracts = await listContracts(supabase, ctx.organizationId);
-    const range = ranges.find((item) => item.service_code == null) ?? null;
+    const range = primaryActiveBarcodeRange(ranges);
     return {
       environment: data?.environment ?? DEFAULT_PROVIDER_ENVIRONMENT,
       status: data?.status ?? "NOT_CONNECTED",
@@ -931,7 +931,7 @@ export async function handleIntegrationRoutes(
         : undefined
     );
     const ranges = await listActiveBarcodeRanges(supabase, ctx.organizationId);
-    const range = ranges.find((item) => item.service_code == null) ?? null;
+    const range = primaryActiveBarcodeRange(ranges);
     return {
       barcodeRange: barcodeRangeApiPayload(range),
       barcodeRanges: ranges.map((item) => barcodeRangeApiPayload(item)!),
@@ -1394,14 +1394,13 @@ export async function handleIntegrationRoutes(
     if (!template) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose an approved Utility template.");
     }
-    const trackingPage = await getTrackingPage(supabase, ctx.organizationId).catch(() => null);
     const recipient = watiNotifyRecipient(
       {
         customerName: "Test customer",
         phone: String(body.phone ?? ""),
         orderNumber: "TEST-001",
         trackingNumber: "TESTTRACKIN",
-        trackingUrl: resolveWatiTrackingUrl("TESTTRACKIN", trackingPage),
+        trackingUrl: resolveWatiTrackingUrl("TESTTRACKIN"),
       },
       template
     );

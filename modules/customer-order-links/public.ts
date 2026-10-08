@@ -15,6 +15,7 @@ import {
 } from "@/modules/india-post/endpoints";
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { createOrderSchema } from "@/modules/orders/schema";
+import { formatWhatsAppOrderNumber } from "@/modules/orders/order-number";
 import { createManualOrder } from "@/modules/orders/service";
 import { loadCatalogProducts } from "@/modules/products/service";
 import { quoteCatalogPayment } from "@/modules/storefront/quote";
@@ -398,24 +399,12 @@ export async function submitPublicCustomerOrderLink(
         ? "COD with advance"
         : "Cash on delivery"
       : "Prepaid";
-  try {
-    await supabase.from("notifications").insert({
-      organization_id: row.organization_id,
-      type: "whatsapp.order_created",
-      title: "New WhatsApp Order",
-      body: `${order.orderNumber ?? order.order_number ?? "Order"} · ${input.customerName.trim()}${
-        total > 0 ? ` · ₹${total}` : ""
-      }`,
-      entity_type: "order",
-      entity_id: order.id,
-    });
-  } catch {
-    // In-app alerts are optional; the WhatsApp order should still succeed.
-  }
-
   const result = {
     status: "SUBMITTED" as const,
-    orderNumber: (order.orderNumber ?? order.order_number ?? null) as string | null,
+    orderNumber: (() => {
+      const stored = (order.orderNumber ?? order.order_number ?? null) as string | null;
+      return stored ? formatWhatsAppOrderNumber(stored) || stored : null;
+    })(),
     total,
     advanceAmount,
     codAmount,
@@ -449,7 +438,7 @@ export async function submitPublicCustomerOrderLink(
       codAmount,
       paymentMethod,
       returnPolicy: returnSummary.label,
-      status: "Processing",
+      status: "Awaiting Confirmation",
     });
   } catch {
     // WhatsApp delivery must not undo a created Postbus order.

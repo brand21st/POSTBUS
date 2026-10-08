@@ -86,6 +86,8 @@ export const storefrontSettingsSchema = z.object({
   seoTitle: z.string().trim().max(70).optional().nullable(),
   seoDescription: z.string().trim().max(180).optional().nullable(),
   footer: z.unknown().optional(),
+  upiId: z.string().trim().max(80).optional().nullable(),
+  gpayNumber: z.string().trim().max(20).optional().nullable(),
 });
 
 export const storefrontSlideSchema = z.object({

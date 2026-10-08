@@ -21,6 +21,11 @@ const SECRET_KEYS = [
   "devicekey",
   "serial_number",
   "serialnumber",
+  "otp",
+  "pepper",
+  "otp_hmac",
+  "cookie",
+  "set-cookie",
 ];
 
 export function redact(value: unknown): unknown {

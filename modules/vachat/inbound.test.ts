@@ -35,6 +35,24 @@ describe("VaChat inbound payload (WACRM message.received)", () => {
     });
   });
 
+  it("prefers interactive button ids that include the order number", () => {
+    expect(
+      parseInboundMessage({
+        contact_id: "ctc-1",
+        conversation_id: "conv-1",
+        text: "YES",
+        interactive: { button_reply: { id: "yes:PB-11143", title: "YES" } },
+      }).text
+    ).toBe("yes:PB-11143");
+    expect(
+      parseInboundMessage({
+        contact_id: "ctc-1",
+        text: "I HAVE PAID",
+        interactive: { button_reply: { id: "paid:PB-11143", title: "I HAVE PAID" } },
+      }).text
+    ).toBe("paid:PB-11143");
+  });
+
   it("resolves the sender phone from contact_id when from is missing", async () => {
     vi.stubGlobal(
       "fetch",

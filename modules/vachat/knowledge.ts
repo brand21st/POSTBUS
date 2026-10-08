@@ -1,10 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { siteConfig } from "@/lib/site-config";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { vachatSingleLine } from "@/modules/vachat/notice-fields";
 import { getPlatformVachatConfig, isPlatformVachatActive } from "@/modules/vachat/platform-config";
 import { vachatHeaders } from "@/modules/vachat/service";
-import { customerTrackingLink } from "@/modules/tracking-pages/host";
+import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 import { getTrackingPage } from "@/modules/tracking-pages/service";
 import { logError, logInfo } from "@/lib/logger";
 import { formatPolicyKnowledgeSections, loadOrganizationPolicies, type OrganizationPolicies } from "@/modules/vachat/policies";
@@ -14,13 +13,7 @@ export const VACHAT_ASSISTANT_NAME = "Order management WhatsApp AI Assistant";
 export const VACHAT_BUSINESS_WHATSAPP = "+918618456029";
 export const CUSTOMER_PHONE_ONLY_REPLY =
   "I can only share order, shipment, invoice, and tracking details for the WhatsApp number that placed the order.";
-export const POSTBUS_PUBLIC_TRACK_URL = `${siteConfig.url}/track`;
-
-export function postbusTrackingLink(trackingNumber?: string | null) {
-  const id = trackingNumber?.trim();
-  if (!id) return POSTBUS_PUBLIC_TRACK_URL;
-  return customerTrackingLink(POSTBUS_PUBLIC_TRACK_URL, id);
-}
+export { POSTBUS_PUBLIC_TRACK_URL, postbusTrackingLink } from "@/modules/tracking-pages/host";
 
 export type TrackingTimelineItem = {
   at: string | null;

@@ -117,6 +117,10 @@ function bookingDb(input: {
 }) {
   const updateShipmentMock = vi.fn().mockReturnValue(chainableWrite());
   const supabase = {
+    rpc: async (name: string) => {
+      if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+      return { data: null, error: null };
+    },
     from: (table: string) => {
       if (table === "india_post_connections") {
         return {

@@ -1,3 +1,5 @@
+import { indiaPostResolvedBaseUrl } from "@/modules/india-post/environment";
+
 function optional(value: string | undefined) {
   return value?.trim() || "";
 }
@@ -36,6 +38,8 @@ export const env = {
   razorpayKeySecret: optional(process.env.RAZORPAY_KEY_SECRET),
   razorpayWebhookSecret: optional(process.env.RAZORPAY_WEBHOOK_SECRET),
   razorpayPublicKeyId: optional(process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID),
+  posthogProjectToken: optional(process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN),
+  posthogHost: optional(process.env.NEXT_PUBLIC_POSTHOG_HOST) || "https://us.i.posthog.com",
   platformAdminEmail: optional(process.env.PLATFORM_ADMIN_EMAIL),
   vachatApiKey: optional(process.env.VACHAT_API_KEY),
   vachatApiBaseUrl: optional(process.env.VACHAT_API_BASE_URL),
@@ -68,7 +72,5 @@ export function isBillingConfigured() {
 }
 
 export function indiaPostBaseUrl(environment: "UAT" | "PRODUCTION") {
-  return environment === "PRODUCTION"
-    ? env.indiaPostProdBaseUrl
-    : env.indiaPostUatBaseUrl;
+  return indiaPostResolvedBaseUrl(environment, env.indiaPostUatBaseUrl, env.indiaPostProdBaseUrl);
 }

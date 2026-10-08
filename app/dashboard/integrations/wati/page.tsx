@@ -326,7 +326,7 @@ export default function WatiIntegrationPage() {
           <CardDescription>
             Only approved Utility templates from Wati are listed. Marketing and authentication
             templates stay hidden. Parameters sent: customer_name, order_number, tracking_number,
-            and tracking_url (your published customer tracking page).
+            and tracking_url (https://www.postbus.in/track with the article ID).
           </CardDescription>
         </CardHeader>
         <CardContent className="grid max-w-xl gap-4">

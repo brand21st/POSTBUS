@@ -154,22 +154,15 @@ describe("watiValuesForPlaceholders", () => {
 });
 
 describe("resolveWatiTrackingUrl", () => {
-  it("prefers the published customer tracking page", () => {
-    expect(
-      resolveWatiTrackingUrl("CL123456789IN", {
-        status: "PUBLISHED",
-        publicUrl: "https://priya.postbus.in",
-      })
-    ).toBe("https://priya.postbus.in/?tracking=CL123456789IN");
-  });
-
-  it("falls back to India Post when the page is not published", () => {
-    expect(resolveWatiTrackingUrl("CL123456789IN", { status: "DRAFT", publicUrl: "https://priya.postbus.in" })).toBe(
-      "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=CL123456789IN"
+  it("sends the public PostBus tracking page with the article id", () => {
+    expect(resolveWatiTrackingUrl("CL123456789IN")).toBe(
+      "https://www.postbus.in/track?tracking=CL123456789IN"
     );
-    expect(resolveWatiTrackingUrl("CL123456789IN", null)).toBe(
-      "https://www.indiapost.gov.in/_layouts/15/dop.portal.tracking/trackconsignment.aspx?articleid=CL123456789IN"
+    expect(resolveWatiTrackingUrl("  CL123456789IN  ")).toBe(
+      "https://www.postbus.in/track?tracking=CL123456789IN"
     );
+    expect(resolveWatiTrackingUrl(null)).toBeNull();
+    expect(resolveWatiTrackingUrl("")).toBeNull();
   });
 });
 

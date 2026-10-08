@@ -207,6 +207,15 @@ export async function handleInventoryRoutes(
     return uploadStorefrontAsset(supabase, ctx, file, "logo");
   }
 
+  if (key === "POST inventory/storefront/qr") {
+    const form = await request.formData();
+    const file = form.get("image") ?? form.get("file");
+    if (!(file instanceof File) || file.size === 0) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose a QR image to upload.");
+    }
+    return uploadStorefrontAsset(supabase, ctx, file, "qr");
+  }
+
   if (key === "POST inventory/storefront/slides") {
     const form = await request.formData();
     const file = form.get("image") ?? form.get("file");

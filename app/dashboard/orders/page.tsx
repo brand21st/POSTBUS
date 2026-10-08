@@ -435,7 +435,7 @@ export default function OrdersPage() {
 
   function rowActions(row: OrderRecord) {
     const pending = ship.isPending && (ship.variables?.orderIds ?? []).includes(row.id);
-    const menu = orderStageMenu(row.status);
+    const menu = orderStageMenu(row.status, row.source, row.paymentStatus ?? row.payment_status);
     const next = menu.next;
     return (
       <div className="inline-flex w-full items-center justify-center gap-1" onClick={(event) => event.stopPropagation()}>

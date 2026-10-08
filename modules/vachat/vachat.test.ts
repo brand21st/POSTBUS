@@ -2,7 +2,24 @@ import { createHmac } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { verifyVachatSignature } from "@/modules/vachat/signature";
 import { isDuplicateVachatNotifyJob, vachatExternalRef, vachatRecipientE164 } from "@/modules/vachat/send";
-import { acceptVachatWebhook, vachatWebhookNotification } from "@/modules/vachat/webhook";
+import {
+  acceptVachatWebhook,
+  claimVachatInboundEnvelope,
+  inboundWebhookEnvelopeId,
+  vachatWebhookNotification,
+} from "@/modules/vachat/webhook";
+
+const assistant = vi.hoisted(() => ({
+  isInboundAssistantEvent: vi.fn(),
+  resolveInboundSender: vi.fn(),
+  handleVachatAssistantMessage: vi.fn(),
+}));
+
+vi.mock("@/modules/vachat/assistant", () => ({
+  isInboundAssistantEvent: (...args: unknown[]) => assistant.isInboundAssistantEvent(...args),
+  resolveInboundSender: (...args: unknown[]) => assistant.resolveInboundSender(...args),
+  handleVachatAssistantMessage: (...args: unknown[]) => assistant.handleVachatAssistantMessage(...args),
+}));
 
 const platform = vi.hoisted(() => ({
   getPlatformVachatConfig: vi.fn(),
@@ -161,4 +178,91 @@ describe("acceptVachatWebhook platform routing", () => {
       })
     ).rejects.toThrow(/Unknown PostBus merchant/);
   });
+
+  it("records inbound envelopes even when organizationId is null and skips duplicate command execution", async () => {
+    const secret = "whsec_platform";
+    const body = JSON.stringify({
+      id: "evt-inbound-1",
+      event: "message.received",
+      data: { from: "918848772371", text: "YES PB-11143" },
+    });
+    const t = Math.floor(Date.now() / 1000);
+    const v1 = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
+    platform.isPlatformVachatActive.mockReturnValue(true);
+    platform.getPlatformVachatConfig.mockResolvedValue({
+      enabled: true,
+      flagEnabled: true,
+      apiKey: "key",
+      webhookSecret: secret,
+      apiBaseUrl: "https://cloud.vachat.in",
+    });
+    assistant.isInboundAssistantEvent.mockReturnValue(true);
+    assistant.resolveInboundSender.mockResolvedValue({ from: "918848772371", text: "YES PB-11143", contactId: "" });
+    assistant.handleVachatAssistantMessage.mockResolvedValue({
+      handled: true,
+      reply: "confirmed",
+      organizationId: null,
+    });
+    const envelopes = new Set<string>();
+    const supabase = {
+      from: (table: string) => {
+        if (table === "vachat_webhook_envelopes") {
+          return {
+            select: () => ({
+              eq: (_column: string, value: string) => ({
+                maybeSingle: async () => ({ data: envelopes.has(value) ? { envelope_id: value } : null }),
+              }),
+            }),
+            insert: async (row: { envelope_id: string }) => {
+              if (envelopes.has(row.envelope_id)) return { error: { code: "23505" } };
+              envelopes.add(row.envelope_id);
+              return { error: null };
+            },
+          };
+        }
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
+      },
+    };
+    const first = await acceptVachatWebhook(supabase as never, {
+      rawBody: body,
+      signatureHeader: `t=${t},v1=${v1}`,
+    });
+    const second = await acceptVachatWebhook(supabase as never, {
+      rawBody: body,
+      signatureHeader: `t=${t},v1=${v1}`,
+    });
+    expect(first).toMatchObject({ accepted: true, duplicate: false, assistant: true });
+    expect(second).toMatchObject({ accepted: true, duplicate: true, assistant: true });
+    expect(assistant.handleVachatAssistantMessage).toHaveBeenCalledTimes(1);
+  });
 });
+
+describe("inbound webhook envelope identity", () => {
+  it("falls back to a body hash when organizationId and envelope id are missing", () => {
+    const id = inboundWebhookEnvelopeId({ data: {} }, '{"text":"YES PB-11143"}');
+    expect(id.startsWith("body:")).toBe(true);
+  });
+
+  it("treats a second insert of the same envelope as a duplicate without an organization", async () => {
+    const seen = new Set<string>();
+    const supabase = {
+      from: () => ({
+        select: () => ({
+          eq: (_column: string, value: string) => ({
+            maybeSingle: async () => ({ data: seen.has(value) ? { envelope_id: value } : null }),
+          }),
+        }),
+        insert: async (row: { envelope_id: string }) => {
+          if (seen.has(row.envelope_id)) return { error: { code: "23505" } };
+          seen.add(row.envelope_id);
+          return { error: null };
+        },
+      }),
+    };
+    const first = await claimVachatInboundEnvelope(supabase as never, "evt-null-org", "hash");
+    const second = await claimVachatInboundEnvelope(supabase as never, "evt-null-org", "hash");
+    expect(first).toEqual({ duplicate: false });
+    expect(second).toEqual({ duplicate: true });
+  });
+});
+

@@ -128,6 +128,10 @@ export async function getStorefrontSettings(supabase: SupabaseClient, ctx: Tenan
     footer: footerConfig,
     footerPreview,
     footerSources,
+    upiId: (settings?.upi_id as string | null) ?? null,
+    gpayNumber: (settings?.gpay_number as string | null) ?? null,
+    qrImageUrl: productImagePublicUrl(settings?.qr_image_path as string | null),
+    qrImagePath: (settings?.qr_image_path as string | null) ?? null,
     ...link,
   };
 }
@@ -146,6 +150,8 @@ export async function updateStorefrontSettings(
   if (input.seoTitle !== undefined) patch.seo_title = input.seoTitle?.trim() || null;
   if (input.seoDescription !== undefined) patch.seo_description = input.seoDescription?.trim() || null;
   if (input.footer !== undefined) patch.footer = normalizeStorefrontFooterConfig(input.footer);
+  if (input.upiId !== undefined) patch.upi_id = input.upiId?.trim() || null;
+  if (input.gpayNumber !== undefined) patch.gpay_number = input.gpayNumber?.trim() || null;
   if (input.featuredProductIds) {
     const unique = [...new Set(input.featuredProductIds)];
     if (unique.length) {
@@ -170,7 +176,7 @@ export async function uploadStorefrontAsset(
   supabase: SupabaseClient,
   ctx: TenantContext,
   file: File,
-  kind: "logo" | "slide"
+  kind: "logo" | "slide" | "qr"
 ) {
   if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Upload a PNG, JPEG, or WebP image.");
@@ -187,9 +193,10 @@ export async function uploadStorefrontAsset(
   });
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
-  if (kind === "logo") {
+  if (kind === "logo" || kind === "qr") {
+    const column = kind === "logo" ? "logo_path" : "qr_image_path";
     const { error: upsertError } = await supabase.from("storefront_settings").upsert(
-      { organization_id: ctx.organizationId, logo_path: path },
+      { organization_id: ctx.organizationId, [column]: path },
       { onConflict: "organization_id" }
     );
     if (upsertError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, upsertError.message);

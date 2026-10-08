@@ -309,6 +309,7 @@ export async function runIndiaPostBooking(
     const unknownCode =
       String(row.last_error_code ?? "").toUpperCase() === "ETIMEDOUT" ? "ETIMEDOUT" : "CEPT_UNKNOWN";
     logInfo("booking.recovery_required", {
+      INDIA_POST_ENV: connection.environment === "PRODUCTION" ? "PRODUCTION" : "UAT",
       organizationId: input.organizationId,
       shipmentId: row.id,
       jobId: input.jobId,
@@ -498,7 +499,9 @@ export async function runIndiaPostBooking(
   const transport = indiaPostBookingTransport(prepared.length);
   const articles = prepared.map((item) => item.payload);
   const { timed } = await import("@/lib/jobs/timing");
+  const indiaPostEnv = connection.environment === "PRODUCTION" ? "PRODUCTION" : "UAT";
   logInfo("booking.cept_call", {
+    INDIA_POST_ENV: indiaPostEnv,
     organizationId: input.organizationId,
     jobId: input.jobId,
     connectionId: connection.id,
@@ -538,6 +541,7 @@ export async function runIndiaPostBooking(
     const message = error instanceof Error ? error.message : "India Post booking failed.";
     const classified = classifyProviderError(error);
     logError("booking.cept_failed", {
+      INDIA_POST_ENV: indiaPostEnv,
       organizationId: input.organizationId,
       jobId: input.jobId,
       connectionId: connection.id,

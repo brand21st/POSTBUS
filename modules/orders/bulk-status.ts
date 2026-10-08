@@ -18,7 +18,7 @@ export async function bulkUpdateOrderStatus(
   const uniqueIds = [...new Set(input.orderIds)];
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, order_number, status")
+    .select("id, order_number, status, source, payment_status")
     .eq("organization_id", ctx.organizationId)
     .in("id", uniqueIds);
 
@@ -27,7 +27,7 @@ export async function bulkUpdateOrderStatus(
   const byId = new Map(
     (orders ?? []).map((order) => [
       order.id as string,
-      order as { id: string; order_number?: string; status?: string },
+      order as { id: string; order_number?: string; status?: string; source?: string; payment_status?: string },
     ])
   );
 

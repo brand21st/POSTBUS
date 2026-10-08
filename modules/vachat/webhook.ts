@@ -123,6 +123,42 @@ async function recordAccepted(
   return { accepted: true, duplicate: false };
 }
 
+export function inboundWebhookEnvelopeId(
+  body: ReturnType<typeof parseEnvelope>,
+  rawBody: string
+) {
+  const fromBody = String(body.id ?? "").trim();
+  if (fromBody) return fromBody;
+  const data = body.data ?? {};
+  const fromMessage = String(data.whatsapp_message_id ?? data.message_id ?? "").trim();
+  if (fromMessage) return fromMessage;
+  return `body:${hashSecret(rawBody || "empty")}`;
+}
+
+export async function claimVachatInboundEnvelope(
+  supabase: SupabaseClient,
+  envelopeId: string,
+  requestHash: string
+) {
+  const { data: existing } = await supabase
+    .from("vachat_webhook_envelopes")
+    .select("envelope_id")
+    .eq("envelope_id", envelopeId)
+    .maybeSingle();
+  if (existing) return { duplicate: true as const };
+
+  const { error } = await supabase.from("vachat_webhook_envelopes").insert({
+    envelope_id: envelopeId,
+    request_hash: requestHash,
+  });
+  if (error?.code === "23505") return { duplicate: true as const };
+  if (error) {
+    logError("vachat.webhook.envelope_failed", { envelopeId, message: error.message });
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+  return { duplicate: false as const };
+}
+
 export async function acceptVachatWebhook(
   supabase: SupabaseClient,
   input: { rawBody: string; signatureHeader: string | null }
@@ -146,6 +182,11 @@ export async function acceptVachatWebhook(
       ...((body.data as Record<string, unknown> | undefined) ?? {}),
     };
     if (isInboundAssistantEvent(body.event ?? "", payload)) {
+      const envelopeId = inboundWebhookEnvelopeId(body, input.rawBody);
+      const claimed = await claimVachatInboundEnvelope(supabase, envelopeId, hashSecret(input.rawBody || envelopeId));
+      if (claimed.duplicate) {
+        return { accepted: true, duplicate: true, assistant: true };
+      }
       const inbound = await resolveInboundSender(payload, envelope);
       logInfo("vachat.webhook.inbound", {
         event: body.event ?? "",
@@ -156,12 +197,27 @@ export async function acceptVachatWebhook(
       const result = await handleVachatAssistantMessage(supabase, {
         from: inbound.from,
         text: inbound.text,
+        skipSend: true,
       });
-      const organizationId = result.organizationId || "";
-      if (organizationId) {
-        const { data: org } = await supabase.from("organizations").select("id").eq("id", organizationId).maybeSingle();
-        if (org?.id) {
-          return recordAccepted(supabase, { id: "platform", organization_id: org.id }, input, body);
+      const reply = String(result.reply ?? "").trim();
+      const organizationId = String(result.organizationId || "");
+      if (reply && inbound.from) {
+        if (organizationId) {
+          const { enqueueVachatSessionText } = await import("@/modules/vachat/send");
+          try {
+            await enqueueVachatSessionText(supabase, organizationId, {
+              to: inbound.from,
+              text: reply,
+              orderId: result.orderId ?? undefined,
+            });
+          } catch (error) {
+            logError("vachat.webhook.reply_enqueue_failed", {
+              organizationId,
+              message: error instanceof Error ? error.message : "enqueue failed",
+            });
+          }
+        } else {
+          logError("vachat.webhook.reply_missing_org", { hasReply: true });
         }
       }
       return { accepted: true, duplicate: false, assistant: true };

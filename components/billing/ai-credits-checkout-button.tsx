@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import posthog from "posthog-js";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/hooks/use-api";
@@ -97,6 +98,7 @@ export function AiCreditsCheckoutButton({
                   razorpaySignature: response.razorpay_signature,
                 }),
               });
+              posthog.capture("purchase_completed", { amount: data.amountPaise / 100 });
               toast.success(`${data.packSize.toLocaleString("en-IN")} AI credits added.`);
               await client.invalidateQueries({ queryKey: ["ai-credits"] });
               await client.invalidateQueries({ queryKey: ["billing"] });

@@ -59,6 +59,33 @@ describe("ensureActiveWorkspace", () => {
     expect(result.memberships).toHaveLength(1);
   });
 
+  it("uses the business name for a new WhatsApp OTP workspace", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: { id: "org-1", name: "Priya Stores", slug: "priya-stores" },
+      error: null,
+    });
+    const supabase = {
+      rpc,
+      from: vi.fn((table: string) => {
+        if (table === "organization_members") {
+          const result = rpc.mock.calls.length
+            ? { data: [membership("org-1", "Priya Stores", "2026-09-21")], error: null }
+            : { data: [], error: null };
+          return { select: () => ({ eq: () => result }) };
+        }
+        return { update: () => ({ eq: async () => ({ error: null }) }) };
+      }),
+    };
+
+    await ensureActiveWorkspace(supabase as never, "user-1", {
+      fullName: "Priya",
+      email: "priya@example.com",
+      workspaceName: "Priya Stores",
+    });
+
+    expect(rpc).toHaveBeenCalledWith("create_organization_for_user", { p_name: "Priya Stores" });
+  });
+
   it("does not create a second workspace when memberships already exist", async () => {
     const rpc = vi.fn();
     const supabase = supabaseMock(rpc, [membership("org-1", "One", "2026-09-21T00:00:00Z")]);

@@ -59,15 +59,25 @@ export function parseInboundMessage(data: Record<string, unknown> | undefined): 
       contact.phone ??
       contact.wa_id
   );
-  const text = firstString(
-    record.text ??
-      record.content_text ??
-      record.body ??
-      nested.text ??
-      nested.content_text ??
-      nested.body ??
-      (typeof record.message === "string" ? record.message : "")
+  const interactive = asRecord(record.interactive);
+  const buttonReply = asRecord(record.button_reply ?? interactive.button_reply ?? asRecord(nested.interactive).button_reply);
+  const buttonId = firstString(
+    record.button_id ??
+      record.interactive_id ??
+      buttonReply.id ??
+      asRecord(record.reply).id
   );
+  const text =
+    buttonId ||
+    firstString(
+      record.text ??
+        record.content_text ??
+        record.body ??
+        nested.text ??
+        nested.content_text ??
+        nested.body ??
+        (typeof record.message === "string" ? record.message : "")
+    );
   return {
     from,
     text,
