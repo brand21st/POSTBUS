@@ -293,13 +293,7 @@ export async function createManualOrder(
     // VaChat knowledge is optional; the order should still be created.
   }
 
-  return {
-    ...order,
-    orderNumber: order.order_number,
-    totalAmount: Number(order.total_amount ?? 0),
-    createShipment: Boolean(input.createShipment),
-    shipment: input.shipment,
-  };
+  return { ...order, createShipment: Boolean(input.createShipment), shipment: input.shipment };
 }
 
 function insertAddress(
