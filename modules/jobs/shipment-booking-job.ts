@@ -8,7 +8,11 @@ export const ACTIVE_SHIPMENT_BOOKING_JOB_STATUSES = ["PENDING", "QUEUED", "RUNNI
 
 function rpcMissing(error: { code?: string; message?: string } | null) {
   const message = String(error?.message ?? "");
-  return error?.code === "42883" || /does not exist|could not find the function/i.test(message);
+  return (
+    error?.code === "42883" ||
+    error?.code === "42501" ||
+    /does not exist|could not find the function|permission denied/i.test(message)
+  );
 }
 
 function uniqueViolation(error: { code?: string; message?: string } | null) {

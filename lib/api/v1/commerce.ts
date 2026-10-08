@@ -188,7 +188,14 @@ export async function handleCommerceRoutes(
     }
     const order = await createManualOrder(supabase, ctx, body);
     if (body.createShipment) {
-      await createShipmentsForOrders(supabase, ctx, [order.id], body.shipment);
+      try {
+        await createShipmentsForOrders(supabase, ctx, [order.id], body.shipment);
+      } catch (error) {
+        logError("orders.create_shipment_failed", {
+          orderId: order.id,
+          message: error instanceof Error ? error.message : "unknown",
+        });
+      }
     }
     return order;
   }
