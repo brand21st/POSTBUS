@@ -154,6 +154,15 @@ describe("createOrderSchema", () => {
     expect(parsed.amountPaid).toBe(200);
   });
 
+  it("omits zero shipment weight from the dashboard form default", () => {
+    const parsed = createOrderSchema.parse({
+      ...payload,
+      createShipment: false,
+      shipment: { serviceCode: "SP-PARCEL", weightGrams: 0 },
+    });
+    expect(parsed.shipment?.weightGrams).toBeUndefined();
+  });
+
   it("rejects a bad pincode", () => {
     expect(() =>
       createOrderSchema.parse({

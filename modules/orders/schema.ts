@@ -22,6 +22,19 @@ export const addressInput = z.object({
   country: z.string().min(2).default("IN"),
 });
 
+/** HTML number inputs send "" or 0; treat those as “not set”. */
+export const optionalPositiveInt = z.preprocess((value) => {
+  if (value === "" || value === null || value === undefined) return undefined;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return value;
+}, z.coerce.number().int().min(1).optional());
+
+export const optionalDimensionCm = z.preprocess((value) => {
+  if (value === "" || value === null || value === undefined) return undefined;
+  return value;
+}, z.coerce.number().min(0).max(150).optional());
+
 export const createOrderSchema = z.object({
   orderNumber: z.string().optional(),
   source: z.enum(ORDER_SOURCES).optional(),
@@ -51,10 +64,10 @@ export const createOrderSchema = z.object({
   createShipment: z.boolean().optional(),
   shipment: z
     .object({
-      weightGrams: z.coerce.number().int().min(1).optional(),
-      lengthCm: z.coerce.number().min(0).max(150).optional(),
-      widthCm: z.coerce.number().min(0).max(150).optional(),
-      heightCm: z.coerce.number().min(0).max(150).optional(),
+      weightGrams: optionalPositiveInt,
+      lengthCm: optionalDimensionCm,
+      widthCm: optionalDimensionCm,
+      heightCm: optionalDimensionCm,
       serviceCode: z.string().optional(),
     })
     .optional(),

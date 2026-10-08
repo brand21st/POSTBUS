@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS } from "@/lib/indian-states";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
+import { optionalDimensionCm, optionalPositiveInt } from "@/modules/orders/schema";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { IndiaPostConfig, Paginated, ProductRecord } from "@/types/api";
 import { catalogCodAdvancePaid } from "@/modules/products/payment";
@@ -67,7 +68,10 @@ const schema = z.object({
   lineItems: z
     .array(
       z.object({
-        productId: z.string().uuid().optional(),
+        productId: z.preprocess(
+          (value) => (value === "" ? undefined : value),
+          z.string().uuid().optional()
+        ),
         title: z.string().min(1, "Item title is required."),
         sku: z.string().optional(),
         quantity: z.coerce.number().int().min(1),
@@ -79,10 +83,10 @@ const schema = z.object({
   createShipment: z.boolean(),
   shipment: z
     .object({
-      weightGrams: z.coerce.number().int().min(1).optional(),
-      lengthCm: z.coerce.number().min(0).max(150).optional(),
-      widthCm: z.coerce.number().min(0).max(150).optional(),
-      heightCm: z.coerce.number().min(0).max(150).optional(),
+      weightGrams: optionalPositiveInt,
+      lengthCm: optionalDimensionCm,
+      widthCm: optionalDimensionCm,
+      heightCm: optionalDimensionCm,
       serviceCode: z.string().optional(),
     })
     .optional(),
@@ -147,7 +151,7 @@ export default function NewOrderPage() {
       },
       lineItems: [{ productId: undefined, title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0 }],
       createShipment: false,
-      shipment: { serviceCode: DEFAULT_INDIA_POST_SERVICE, weightGrams: 0 },
+      shipment: { serviceCode: DEFAULT_INDIA_POST_SERVICE },
     },
   });
 
@@ -289,7 +293,12 @@ export default function NewOrderPage() {
   }
 
   return (
-    <form className="space-y-4 pb-20 xl:pb-0" onSubmit={form.handleSubmit(onSubmit)}>
+    <form
+      className="space-y-4 pb-20 xl:pb-0"
+      onSubmit={form.handleSubmit(onSubmit, () => {
+        toast.error("Please check the highlighted fields.");
+      })}
+    >
       <PageHeader
         title="Add order"
         description="Create a manual order with customer, address, and line items."
@@ -660,16 +669,16 @@ export default function NewOrderPage() {
           {createShipment ? <IndiaPostBookingGuide selectedService={selectedService} /> : null}
           {createShipment ? (
             <div className="grid gap-3 md:grid-cols-5">
-              <Field label="Weight (g)">
+              <Field label="Weight (g)" error={form.formState.errors.shipment?.weightGrams?.message}>
                 <Input className="h-9" type="number" min={1} {...form.register("shipment.weightGrams")} />
               </Field>
-              <Field label="Length (cm)">
+              <Field label="Length (cm)" error={form.formState.errors.shipment?.lengthCm?.message}>
                 <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.lengthCm")} />
               </Field>
-              <Field label="Width (cm)">
+              <Field label="Width (cm)" error={form.formState.errors.shipment?.widthCm?.message}>
                 <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.widthCm")} />
               </Field>
-              <Field label="Height (cm)">
+              <Field label="Height (cm)" error={form.formState.errors.shipment?.heightCm?.message}>
                 <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.heightCm")} />
               </Field>
               <Field
@@ -844,7 +853,7 @@ function AddressFields({
   const phoneError = form.formState.errors[prefix]?.phone?.message;
   return (
     <>
-      <Field label="Recipient">
+      <Field label="Recipient" error={form.formState.errors[prefix]?.name?.message}>
         <Input className="h-9" {...form.register(`${prefix}.name`)} />
       </Field>
       <Field label="Phone" error={phoneError}>
@@ -859,16 +868,16 @@ function AddressFields({
           placeholder="10-digit mobile number"
         />
       </Field>
-      <Field label="Line 1" className="md:col-span-2">
+      <Field label="Line 1" className="md:col-span-2" error={form.formState.errors[prefix]?.line1?.message}>
         <Input className="h-9" {...form.register(`${prefix}.line1`)} />
       </Field>
       <Field label="Line 2" className="md:col-span-2">
         <Input className="h-9" {...form.register(`${prefix}.line2`)} />
       </Field>
-      <Field label="City">
+      <Field label="City" error={form.formState.errors[prefix]?.city?.message}>
         <Input className="h-9" {...form.register(`${prefix}.city`)} />
       </Field>
-      <Field label="State">
+      <Field label="State" error={form.formState.errors[prefix]?.state?.message}>
         <Controller
           control={form.control}
           name={`${prefix}.state`}
@@ -888,7 +897,7 @@ function AddressFields({
           )}
         />
       </Field>
-      <Field label="Pincode">
+      <Field label="Pincode" error={form.formState.errors[prefix]?.pincode?.message}>
         <Input
           className="h-9 tabular-nums tracking-wide"
           inputMode="numeric"
