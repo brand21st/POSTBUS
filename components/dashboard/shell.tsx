@@ -39,7 +39,13 @@ function DashboardPlanGate({ pathname, children }: { pathname: string; children:
   );
 }
 
-export function DashboardShell({ children }: { children: ReactNode }) {
+export function DashboardShell({
+  children,
+  announcement,
+}: {
+  children: ReactNode;
+  announcement?: ReactNode;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const me = useMe();
@@ -93,7 +99,10 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         className="hidden md:flex"
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
+        <div className="sticky top-0 z-30 bg-background">
+          {announcement}
+          <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
+        </div>
         <NewOrderAlerts />
         <WebusbJobListener />
         <main

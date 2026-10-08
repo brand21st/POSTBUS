@@ -119,7 +119,7 @@ export function Topbar({
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background px-4 lg:px-6">
+    <header className="flex h-16 items-center gap-3 border-b border-border bg-background px-4 lg:px-6">
       <Button
         type="button"
         variant="ghost"

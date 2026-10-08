@@ -142,7 +142,7 @@ export function NewOrderAlerts() {
   return (
     <div
       className={cn(
-        "fixed right-4 top-20 z-[80] w-[min(24rem,calc(100vw-2rem))] rounded-2xl border bg-card p-4 shadow-2xl",
+        "fixed right-4 top-36 z-[80] w-[min(24rem,calc(100vw-2rem))] rounded-2xl border bg-card p-4 shadow-2xl sm:top-32",
         successAlert ? "border-emerald-200" : "border-brand/20"
       )}
       role="alertdialog"
