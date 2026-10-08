@@ -21,7 +21,12 @@ import {
   enrichShopifyLineItemImagesFromCache,
   enrichShopifyLineItemImagesInOrders,
 } from "@/modules/shopify/orders";
-import { isOrderNumberConflict, nextPbOrderNumber } from "@/modules/orders/order-number";
+import {
+  isOrderNumberConflict,
+  isPbSequenceNumber,
+  nextPbOrderNumber,
+  shouldReallocateOnConflict,
+} from "@/modules/orders/order-number";
 
 type CreateInput = z.infer<typeof createOrderSchema> & { status?: OrderStatus };
 type OrderActor = Pick<TenantContext, "organizationId"> & { userId?: string | null };
@@ -227,7 +232,8 @@ export async function createManualOrder(
     amountPaid: input.amountPaid,
   });
   const requestedNumber = input.orderNumber?.trim() || "";
-  let orderNumber = requestedNumber || (await nextOrderNumber(supabase, ctx.organizationId));
+  const keepRequested = Boolean(requestedNumber) && !isPbSequenceNumber(requestedNumber);
+  let orderNumber = keepRequested ? requestedNumber : await nextOrderNumber(supabase, ctx.organizationId);
 
   const insertOrder = (number: string) =>
     supabase
@@ -255,13 +261,13 @@ export async function createManualOrder(
   for (let attempt = 0; attempt < 7; attempt += 1) {
     if (!inserted.error && inserted.data) break;
     if (!isOrderNumberConflict(inserted.error)) break;
-    if (requestedNumber) {
+    if (!shouldReallocateOnConflict(requestedNumber)) {
       throw new AppError(
         ERROR_CODES.VALIDATION_ERROR,
         "That order number already exists. Leave it blank or use a different number."
       );
     }
-    orderNumber = nextPbOrderNumber([orderNumber]);
+    orderNumber = await nextOrderNumber(supabase, ctx.organizationId);
     inserted = await insertOrder(orderNumber);
   }
 

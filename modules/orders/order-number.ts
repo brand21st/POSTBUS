@@ -1,5 +1,15 @@
 const PB_SEQUENCE = /^PB-(\d+)$/i;
 
+export function isPbSequenceNumber(value: string) {
+  return PB_SEQUENCE.test(value.trim());
+}
+
+/** Browser autofill often resubmits the last PB-#####; those must be reallocated. */
+export function shouldReallocateOnConflict(requestedNumber: string) {
+  const trimmed = requestedNumber.trim();
+  return !trimmed || isPbSequenceNumber(trimmed);
+}
+
 export function nextPbOrderNumber(existing: Array<string | null | undefined>) {
   let max = 10000;
   for (const value of existing) {

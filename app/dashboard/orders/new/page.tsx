@@ -245,7 +245,7 @@ export default function NewOrderPage() {
       const created = await api<{ id: string }>("/api/v1/orders", {
         method: "POST",
         body: JSON.stringify({
-          orderNumber: values.orderNumber || undefined,
+          orderNumber: values.orderNumber?.trim() || undefined,
           customer: {
             name: values.customerName,
             phone: extractIndiaMobileDigits(values.customerPhone) ?? values.customerPhone,
@@ -355,8 +355,15 @@ export default function NewOrderPage() {
           <CardTitle>Order</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
-          <Field label="Order number" hint="Leave blank to auto-generate">
-            <Input className="h-9" {...form.register("orderNumber")} placeholder="PB-1042" />
+          <Field label="Order number" hint="Leave blank to auto-generate a unique PB number">
+            <Input
+              className="h-9"
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="Leave blank"
+              {...form.register("orderNumber")}
+            />
           </Field>
           <div className="space-y-2">
             <Label>Payment</Label>

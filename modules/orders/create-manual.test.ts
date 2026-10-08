@@ -46,8 +46,9 @@ function chain(result: { data: unknown; error: unknown; count?: number | null })
   return query;
 }
 
-function mockClient() {
+function mockClient(options?: { failFirstOrderInsert?: boolean }) {
   const inserts: Record<string, unknown> = {};
+  let orderInserts = 0;
   return {
     inserts,
     rpc: async (name: string) => {
@@ -87,6 +88,13 @@ function mockClient() {
         const originalInsert = q.insert as (row: unknown) => unknown;
         q.insert = (row: unknown) => {
           inserts.orders = row;
+          orderInserts += 1;
+          if (options?.failFirstOrderInsert && orderInserts === 1) {
+            return chain({
+              data: null,
+              error: { code: "23505", message: 'duplicate key value violates unique constraint "orders_org_number_idx"' },
+            });
+          }
           return originalInsert(row);
         };
         return q;
@@ -266,5 +274,33 @@ describe("createManualOrder", () => {
     const result = await createManualOrder(client as never, ctx, parsed);
     expect((client.inserts.orders as { order_number: string }).order_number).toMatch(/^PB-/);
     expect(result.createShipment).toBe(true);
+  });
+
+  it("ignores a client PB-##### so Save does not collide with an autofilled previous number", async () => {
+    const client = mockClient();
+    await createManualOrder(
+      client as never,
+      ctx,
+      createOrderSchema.parse({ ...payload, orderNumber: "PB-10024" })
+    );
+    expect((client.inserts.orders as { order_number: string }).order_number).toBe("PB-10001");
+  });
+
+  it("keeps a custom order id and reallocates after a unique-index race", async () => {
+    const custom = mockClient();
+    await createManualOrder(
+      custom as never,
+      ctx,
+      createOrderSchema.parse({ ...payload, orderNumber: "PDDDf" })
+    );
+    expect((custom.inserts.orders as { order_number: string }).order_number).toBe("PDDDf");
+
+    const raced = mockClient({ failFirstOrderInsert: true });
+    await createManualOrder(
+      raced as never,
+      ctx,
+      createOrderSchema.parse({ ...payload, orderNumber: undefined })
+    );
+    expect((raced.inserts.orders as { order_number: string }).order_number).toBe("PB-10001");
   });
 });
