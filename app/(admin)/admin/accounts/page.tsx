@@ -33,6 +33,8 @@ type SignupRow = {
   fullName: string | null;
   email: string | null;
   whatsappNumber: string | null;
+  pincode: string | null;
+  city: string | null;
   createdAt: string;
   organization: { id: string; name: string; slug: string } | null;
 };
@@ -112,7 +114,7 @@ export default function AdminAccountsPage() {
           <label className="relative block w-full sm:w-80">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
             <Input
-              placeholder="Search name, email, WhatsApp…"
+              placeholder="Search name, email, WhatsApp, PIN, city…"
               value={q}
               onChange={(event) => setQ(event.target.value)}
               className="h-9 pl-9 shadow-none"
@@ -194,7 +196,7 @@ export default function AdminAccountsPage() {
             <EmptyState
               icon={UserPlus}
               title={debounced ? "No signups match" : "No new signups"}
-              description={debounced ? "Try a different name, email, or WhatsApp number." : "New registrations will appear here."}
+              description={debounced ? "Try a different name, email, WhatsApp, PIN, or city." : "New registrations will appear here."}
               className="border-0 py-12 shadow-none"
             />
           ) : (
@@ -204,6 +206,8 @@ export default function AdminAccountsPage() {
                   <tr>
                     <th className="px-3 py-2">Person</th>
                     <th className="hidden px-3 py-2 sm:table-cell">WhatsApp</th>
+                    <th className="hidden px-3 py-2 sm:table-cell">PIN</th>
+                    <th className="hidden px-3 py-2 sm:table-cell">City</th>
                     <th className="px-3 py-2">Workspace</th>
                     <th className="hidden px-3 py-2 md:table-cell">Signed up</th>
                   </tr>
@@ -224,6 +228,12 @@ export default function AdminAccountsPage() {
                       </td>
                       <td className="hidden whitespace-nowrap px-3 py-2 tabular-nums text-muted sm:table-cell">
                         {signup.whatsappNumber || "—"}
+                      </td>
+                      <td className="hidden whitespace-nowrap px-3 py-2 tabular-nums text-muted sm:table-cell">
+                        {signup.pincode || "—"}
+                      </td>
+                      <td className="hidden px-3 py-2 text-muted sm:table-cell">
+                        {signup.city || "—"}
                       </td>
                       <td className="px-3 py-2">
                         {signup.organization ? (

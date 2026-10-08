@@ -6,6 +6,8 @@ describe("registerAccountSchema", () => {
     name: "Priya Stores",
     email: "priya@example.com",
     password: "shipfast1",
+    pincode: "560001",
+    city: "Bengaluru",
   };
 
   it("stores WhatsApp as +91 E.164 from 10 digits", () => {
@@ -22,5 +24,27 @@ describe("registerAccountSchema", () => {
     expect(() => registerAccountSchema.parse({ ...base, whatsapp: "987654321" })).toThrow();
     expect(() => registerAccountSchema.parse({ ...base, whatsapp: "98765432101" })).toThrow();
     expect(() => registerAccountSchema.parse({ ...base, whatsapp: "5876543210" })).toThrow();
+  });
+
+  it("accepts a 6-digit PIN code and trims city", () => {
+    const parsed = registerAccountSchema.parse({
+      ...base,
+      whatsapp: "9876543210",
+      pincode: " 110001 ",
+      city: " New Delhi ",
+    });
+    expect(parsed.pincode).toBe("110001");
+    expect(parsed.city).toBe("New Delhi");
+  });
+
+  it("rejects invalid PIN codes", () => {
+    expect(() => registerAccountSchema.parse({ ...base, whatsapp: "9876543210", pincode: "056001" })).toThrow();
+    expect(() => registerAccountSchema.parse({ ...base, whatsapp: "9876543210", pincode: "56001" })).toThrow();
+    expect(() => registerAccountSchema.parse({ ...base, whatsapp: "9876543210", pincode: "5600011" })).toThrow();
+  });
+
+  it("rejects a missing or too-short city", () => {
+    expect(() => registerAccountSchema.parse({ ...base, whatsapp: "9876543210", city: "A" })).toThrow();
+    expect(() => registerAccountSchema.parse({ ...base, whatsapp: "9876543210", city: "  " })).toThrow();
   });
 });

@@ -24,6 +24,8 @@ const validBody = {
   email: "priya@example.com",
   password: "shipfast1",
   whatsapp: "9876543210",
+  pincode: "560001",
+  city: "Bengaluru",
 };
 
 function post(body: unknown) {
@@ -51,6 +53,16 @@ describe("POST /api/v1/auth/register", () => {
     expect(signUp).not.toHaveBeenCalled();
   });
 
+  it("rejects missing or invalid PIN code and city", async () => {
+    const missing = await post({ name: validBody.name, email: validBody.email, password: validBody.password, whatsapp: validBody.whatsapp });
+    const badPin = await post({ ...validBody, pincode: "056001" });
+    const shortCity = await post({ ...validBody, city: "A" });
+    expect(missing.status).toBe(422);
+    expect(badPin.status).toBe(422);
+    expect(shortCity.status).toBe(422);
+    expect(signUp).not.toHaveBeenCalled();
+  });
+
   it("signs up with +91 E.164 WhatsApp metadata", async () => {
     signUp.mockResolvedValue({
       data: { user: { id: "user-1" }, session: { access_token: "t" } },
@@ -69,6 +81,8 @@ describe("POST /api/v1/auth/register", () => {
           data: {
             full_name: "Priya Stores",
             whatsapp_number: "+919876543210",
+            pincode: "560001",
+            city: "Bengaluru",
           },
           emailRedirectTo: expect.stringMatching(/\/auth\/callback\?next=%2Fdashboard$/),
         }),

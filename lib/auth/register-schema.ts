@@ -10,6 +10,11 @@ export const registerAccountSchema = z.object({
     .trim()
     .refine(isIndiaWhatsappInput, "Enter a 10-digit Indian WhatsApp number.")
     .transform((value) => toIndiaWhatsappE164(value)),
+  pincode: z
+    .string()
+    .trim()
+    .regex(/^[1-9][0-9]{5}$/, "Enter a valid 6-digit PIN code."),
+  city: z.string().trim().min(2, "Enter your city.").max(80, "Enter your city."),
 });
 
 export type RegisterAccountInput = z.input<typeof registerAccountSchema>;

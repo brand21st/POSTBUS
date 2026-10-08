@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { Eye, EyeOff } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { IndiaWhatsappField } from "@/components/auth/india-whatsapp-field";
 import { Button } from "@/components/ui/button";
@@ -26,10 +27,11 @@ export default function RegisterPage() {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const form = useForm<RegisterAccountInput, unknown, RegisterAccountValues>({
     resolver: zodResolver(registerAccountSchema),
-    defaultValues: { name: "", email: "", password: "", whatsapp: "" },
+    defaultValues: { name: "", email: "", password: "", whatsapp: "", pincode: "", city: "" },
   });
 
   async function onSubmit(values: RegisterAccountValues) {
@@ -82,13 +84,45 @@ export default function RegisterPage() {
           error={form.formState.errors.whatsapp?.message}
         />
         <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
+          <Label htmlFor="pincode">PIN code</Label>
           <Input
-            id="password"
-            type="password"
-            autoComplete="new-password"
-            {...form.register("password")}
+            id="pincode"
+            inputMode="numeric"
+            autoComplete="postal-code"
+            maxLength={6}
+            {...form.register("pincode")}
           />
+          {form.formState.errors.pincode ? (
+            <p className="text-sm text-error">{form.formState.errors.pincode.message}</p>
+          ) : null}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="city">City</Label>
+          <Input id="city" autoComplete="address-level2" {...form.register("city")} />
+          {form.formState.errors.city ? (
+            <p className="text-sm text-error">{form.formState.errors.city.message}</p>
+          ) : null}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="password">Password</Label>
+          <div className="relative">
+            <Input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              autoComplete="new-password"
+              className="pr-11"
+              {...form.register("password")}
+            />
+            <button
+              type="button"
+              className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted hover:text-foreground"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
+              onClick={() => setShowPassword((current) => !current)}
+            >
+              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+          </div>
           {form.formState.errors.password ? (
             <p className="text-sm text-error">{form.formState.errors.password.message}</p>
           ) : null}

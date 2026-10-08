@@ -25,6 +25,8 @@ export async function POST(request: NextRequest) {
         data: {
           full_name: values.name,
           whatsapp_number: values.whatsapp,
+          pincode: values.pincode,
+          city: values.city,
         },
         emailRedirectTo: authCallbackUrl("/dashboard"),
       },
@@ -44,6 +46,8 @@ export async function POST(request: NextRequest) {
         .update({
           full_name: values.name,
           whatsapp_number: values.whatsapp,
+          pincode: values.pincode,
+          city: values.city,
         })
         .eq("id", data.user.id);
       if (profileError) {

@@ -289,13 +289,13 @@ function signupSearchFilter(q: string) {
   const safe = q.replace(/[%*,()"]/g, " ").trim();
   if (!safe) return null;
   const pattern = `%${safe}%`;
-  return `full_name.ilike."${pattern}",email.ilike."${pattern}",whatsapp_number.ilike."${pattern}"`;
+  return `full_name.ilike."${pattern}",email.ilike."${pattern}",whatsapp_number.ilike."${pattern}",pincode.ilike."${pattern}",city.ilike."${pattern}"`;
 }
 
 async function listAccountSignups(supabase: ReturnType<typeof createAdminClient>, q: string) {
   let query = supabase
     .from("profiles")
-    .select("id, email, full_name, whatsapp_number, created_at, active_organization_id")
+    .select("id, email, full_name, whatsapp_number, pincode, city, created_at, active_organization_id")
     .order("created_at", { ascending: false })
     .limit(50);
   const filter = signupSearchFilter(q);
@@ -334,6 +334,8 @@ async function listAccountSignups(supabase: ReturnType<typeof createAdminClient>
     fullName: profile.full_name ?? null,
     email: profile.email ?? null,
     whatsappNumber: profile.whatsapp_number ?? null,
+    pincode: profile.pincode ?? null,
+    city: profile.city ?? null,
     createdAt: profile.created_at,
     organization: orgByUser.get(profile.id) ?? null,
   }));
