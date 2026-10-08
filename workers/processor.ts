@@ -92,7 +92,7 @@ export async function processJob(queue: string, payload: JobPayload) {
         extras?: { interactive_payload?: Record<string, unknown>; image_url?: string };
       };
       if (progress.kind === "session_text") {
-        await sendVachatSessionText(String(progress.to ?? ""), String(progress.text ?? ""), progress.extras);
+        await sendVachatSessionText(String(progress.to ?? ""), String(progress.text ?? ""));
       } else {
         const ids = vachatIdsFromJob(job?.progress, payload.entityId);
         if (!ids.shipmentId && !ids.orderId) {
