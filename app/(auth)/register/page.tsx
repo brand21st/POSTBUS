@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Eye, EyeOff } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { IndiaWhatsappField } from "@/components/auth/india-whatsapp-field";
+import { RegisterPincodeLookup } from "@/components/auth/register-pincode-lookup";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -90,8 +91,16 @@ export default function RegisterPage() {
             inputMode="numeric"
             autoComplete="postal-code"
             maxLength={6}
-            {...form.register("pincode")}
+            {...form.register("pincode", {
+              onChange: (event) => {
+                const digits = String(event.target.value ?? "")
+                  .replace(/\D/g, "")
+                  .slice(0, 6);
+                form.setValue("pincode", digits, { shouldDirty: true, shouldValidate: digits.length === 6 });
+              },
+            })}
           />
+          <RegisterPincodeLookup form={form} />
           {form.formState.errors.pincode ? (
             <p className="text-sm text-error">{form.formState.errors.pincode.message}</p>
           ) : null}
