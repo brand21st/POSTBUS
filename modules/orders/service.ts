@@ -8,12 +8,6 @@ import type { createOrderSchema, orderListQuery, updateOrderWeightsSchema } from
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { settleOrderPayment } from "@/modules/orders/payment";
 import {
-  mergeWhatsappLifecycle,
-  storefrontQuoteFromMetadata,
-  whatsappLifecycleFromMetadata,
-  whatsappPaymentRequirement,
-} from "@/modules/orders/whatsapp-meta";
-import {
   mapCatalogRows,
   resolveLineFromCatalog,
   resolveManualLine,
@@ -574,10 +568,6 @@ export async function confirmWhatsAppOrder(
   if (order.source !== "WHATSAPP") {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This is not a WhatsApp order.");
   }
-  const life = whatsappLifecycleFromMetadata(order.metadata);
-  if (!life.customer_confirmed_at) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Customer has not confirmed this WhatsApp order.");
-  }
   if (order.status !== "IMPORTED" || order.payment_status !== "PENDING") {
     throw new AppError(ERROR_CODES.CONFLICT, "This WhatsApp order has already been confirmed.");
   }
@@ -602,88 +592,33 @@ export async function confirmWhatsAppOrder(
         }))
       : input.lineItems && input.lineItems.length > 0
         ? input.lineItems
-        : [{ title: "WhatsApp order", quantity: 1, unitPrice: Number(order.total_amount ?? 0) }];
+        : [{ title: "WhatsApp order", quantity: 1, unitPrice: input.amount }];
 
-  const subtotal = lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const quoteTotal = Number(storefrontQuoteFromMetadata(order.metadata).total || order.total_amount || subtotal);
-  const pay = whatsappPaymentRequirement(order.metadata, quoteTotal);
-  const now = new Date().toISOString();
+  const subtotal = keepCatalog
+    ? lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
+    : lineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
-  if (pay.required) {
-    if (!life.merchant_processed_at) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Process this WhatsApp order before confirming payment.");
-    }
-    const payment =
-      pay.preference === "PREPAID" || (pay.amount >= quoteTotal && quoteTotal > 0)
-        ? settleOrderPayment({ paymentStatus: "PAID", totalAmount: quoteTotal })
-        : settleOrderPayment({
-            paymentStatus: "PARTIAL",
-            totalAmount: quoteTotal,
-            amountPaid: pay.amount,
-          });
-    const { data: resolved, error: rpcError } = await supabase.rpc("resolve_whatsapp_payment_claim", {
-      p_action: "CONFIRM",
-      p_order_id: orderId,
-      p_organization_id: ctx.organizationId,
-      p_payment_status: payment.paymentStatus,
-      p_amount_paid: payment.amountPaid,
-      p_cod_amount: payment.codAmount,
-      p_metadata: mergeWhatsappLifecycle(order.metadata, {
-        merchant_accepted_at: life.merchant_accepted_at ?? now,
-        merchant_accepted_via: life.merchant_accepted_via ?? "dashboard",
-      }),
-    });
-    if (rpcError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, rpcError.message);
-    const result = String((resolved as { result?: string } | null)?.result ?? "");
-    if (result === "no_open_claim") {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Customer has not submitted a payment claim yet.");
-    }
-    if (result !== "confirmed") {
-      throw new AppError(ERROR_CODES.CONFLICT, "This WhatsApp order has already been confirmed.");
-    }
-    const { data: updated } = await supabase
-      .from("orders")
-      .select()
-      .eq("id", orderId)
-      .eq("organization_id", ctx.organizationId)
-      .maybeSingle();
-    if (!updated) throw new AppError(ERROR_CODES.CONFLICT, "This WhatsApp order has already been confirmed.");
-    await supabase.from("audit_logs").insert({
-      organization_id: ctx.organizationId,
-      actor_id: ctx.userId || null,
-      action: "order.whatsapp_confirmed",
-      entity_type: "order",
-      entity_id: orderId,
-      after: { via: "dashboard", settledFromQuote: true },
-    });
-    return updated;
-  }
-
-  const payment = settleOrderPayment({
-    paymentStatus: "COD",
-    totalAmount: quoteTotal || subtotal,
-  });
+  const payment =
+    input.amount >= subtotal && subtotal > 0
+      ? settleOrderPayment({ paymentStatus: "PAID", totalAmount: subtotal })
+      : settleOrderPayment({
+          paymentStatus: input.amount > 0 ? "PARTIAL" : "COD",
+          totalAmount: subtotal,
+          amountPaid: input.amount > 0 ? input.amount : undefined,
+        });
 
   const { data: updated, error: updateError } = await supabase
     .from("orders")
     .update({
-      subtotal: quoteTotal || subtotal,
-      total_amount: quoteTotal || subtotal,
+      subtotal,
+      total_amount: subtotal,
       payment_status: payment.paymentStatus,
       amount_paid: payment.amountPaid,
       cod_amount: payment.codAmount,
       status: "READY",
-      metadata: mergeWhatsappLifecycle(order.metadata, {
-        merchant_processed_at: life.merchant_processed_at ?? now,
-        merchant_accepted_at: life.merchant_accepted_at ?? now,
-        merchant_accepted_via: life.merchant_accepted_via ?? "dashboard",
-        payment_required: false,
-        payment_required_amount: 0,
-      }),
     })
     .eq("id", orderId)
     .eq("organization_id", ctx.organizationId)
-    .eq("source", "WHATSAPP")
     .eq("status", "IMPORTED")
     .eq("payment_status", "PENDING")
     .select()
