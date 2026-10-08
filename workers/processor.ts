@@ -17,6 +17,9 @@ import {
 } from "@/modules/india-post/apply-tracking";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
+import { assertIndiaPostBulkPostAllowed } from "@/modules/india-post/bulk-run";
+import { loadBulkBatchByJobId } from "@/modules/india-post/bulk-store";
+import { runIndiaPostBulkWorkerAttempt } from "@/modules/india-post/bulk-worker";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
@@ -233,10 +236,22 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   }
 
   const bookingStarted = Date.now();
-  const outcome = await runIndiaPostBooking(supabase, {
+  assertIndiaPostBulkPostAllowed(shipmentIds.length);
+  const bulkBatch = payload.jobId && shipmentIds.length > 1 ? await loadBulkBatchByJobId(supabase, payload.jobId) : null;
+  if (shipmentIds.length > 1 && !bulkBatch) {
+    throw Object.assign(new Error("Multi-article booking requires a durable bulk batch."), { code: "VALIDATION_ERROR" });
+  }
+  const outcome = await runIndiaPostBulkWorkerAttempt({
+    supabase,
     organizationId: payload.organizationId,
     shipmentIds,
-    jobId: payload.jobId,
+    bulkBatch,
+    post: () =>
+      runIndiaPostBooking(supabase, {
+        organizationId: payload.organizationId,
+        shipmentIds,
+        jobId: payload.jobId,
+      }),
   });
   logInfo("booking.completed", {
     organizationId: payload.organizationId,
