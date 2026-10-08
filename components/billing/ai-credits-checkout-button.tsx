@@ -49,17 +49,27 @@ function loadCheckoutScript() {
 }
 
 export function AiCreditsCheckoutButton({
-  label = "Recharge now",
+  label = "Buy AI Credits",
   className,
+  packageId,
+  credits,
+  disabled,
 }: {
   label?: string;
   className?: string;
+  packageId?: string;
+  credits?: number;
+  disabled?: boolean;
 }) {
   const client = useQueryClient();
   const start = useMutation({
     mutationFn: () =>
       api<CheckoutResponse>("/api/v1/billing/ai-credits/checkout", {
         method: "POST",
+        body: JSON.stringify({
+          packageId: packageId || undefined,
+          credits: packageId ? undefined : credits,
+        }),
       }),
     onSuccess: async (data) => {
       try {
@@ -87,7 +97,7 @@ export function AiCreditsCheckoutButton({
                   razorpaySignature: response.razorpay_signature,
                 }),
               });
-              toast.success(`${data.packSize} AI credits added.`);
+              toast.success(`${data.packSize.toLocaleString("en-IN")} AI credits added.`);
               await client.invalidateQueries({ queryKey: ["ai-credits"] });
               await client.invalidateQueries({ queryKey: ["billing"] });
             } catch (error) {
@@ -107,7 +117,7 @@ export function AiCreditsCheckoutButton({
   });
 
   return (
-    <Button className={className} onClick={() => start.mutate()} disabled={start.isPending}>
+    <Button className={className} onClick={() => start.mutate()} disabled={disabled || start.isPending}>
       {start.isPending ? "Starting…" : label}
     </Button>
   );

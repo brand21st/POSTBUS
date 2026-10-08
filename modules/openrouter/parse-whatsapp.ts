@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
+import { ZERO_AI_CREDITS_MESSAGE } from "@/modules/ai-credits/constants";
 import {
   fieldsFromUnknown,
   parseWhatsAppCustomerMessage,
@@ -18,6 +20,7 @@ export const WHATSAPP_PASTE_MAX_CHARS = 4000;
 
 export const whatsappPasteSchema = z.object({
   text: z.string().trim().min(1, "Paste a WhatsApp message first.").max(WHATSAPP_PASTE_MAX_CHARS),
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 const SYSTEM_PROMPT = `Extract Indian shipping customer details from pasted text. The text may be unstructured, a WhatsApp chat, labeled or unlabeled, or mixed Malayalam and English.
@@ -91,7 +94,7 @@ export function mergeWhatsAppPasteResult(
 
 export async function parseWhatsAppOrderPaste(
   text: string,
-  options?: { organizationId?: string; supabase?: SupabaseClient }
+  options?: { organizationId?: string; supabase?: SupabaseClient; idempotencyKey?: string }
 ): Promise<WhatsAppPasteParseResponse> {
   const trimmed = text.trim().slice(0, WHATSAPP_PASTE_MAX_CHARS);
   const organizationId = options?.organizationId;
@@ -104,7 +107,7 @@ export async function parseWhatsAppOrderPaste(
   ): WhatsAppPasteParseResponse => ({ ...result, creditsRemaining: remaining });
 
   if (organizationId && supabase && creditsRemaining <= 0) {
-    return withCredits(mergeWhatsAppPasteResult(trimmed, null), 0);
+    throw new AppError(ERROR_CODES.CONFLICT, ZERO_AI_CREDITS_MESSAGE);
   }
 
   const config = await getPlatformOpenRouterConfig();
@@ -115,11 +118,15 @@ export async function parseWhatsAppOrderPaste(
     const json = await extractWhatsAppFieldsWithOpenRouter(trimmed, config);
     const merged = mergeWhatsAppPasteResult(trimmed, json);
     if (merged.source === "ai" && organizationId && supabase) {
-      const remaining = await consumeAiCredit(supabase, organizationId);
+      const remaining = await consumeAiCredit(supabase, organizationId, {
+        reason: "AI_ADDRESS_EXTRACTION",
+        idempotencyKey: options?.idempotencyKey ?? null,
+      });
       return withCredits(merged, remaining ?? creditsRemaining);
     }
     return withCredits(merged, creditsRemaining);
   } catch (error) {
+    if (error instanceof AppError) throw error;
     logError("openrouter.whatsapp_parse_failed", {
       message: error instanceof Error ? error.message : "unknown",
     });

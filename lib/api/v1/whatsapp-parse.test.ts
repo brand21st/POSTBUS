@@ -7,6 +7,8 @@ const getPlatformOpenRouterConfig = vi.hoisted(() => vi.fn());
 const getAiCreditsRemaining = vi.hoisted(() => vi.fn());
 const consumeAiCredit = vi.hoisted(() => vi.fn());
 const getAiCreditsSnapshot = vi.hoisted(() => vi.fn());
+const listAiCreditLedger = vi.hoisted(() => vi.fn());
+const quoteMerchantAiCredits = vi.hoisted(() => vi.fn());
 
 vi.mock("@/modules/openrouter/platform-config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/openrouter/platform-config")>();
@@ -15,7 +17,14 @@ vi.mock("@/modules/openrouter/platform-config", async (importOriginal) => {
 
 vi.mock("@/modules/ai-credits/service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/ai-credits/service")>();
-  return { ...actual, getAiCreditsRemaining, consumeAiCredit, getAiCreditsSnapshot };
+  return {
+    ...actual,
+    getAiCreditsRemaining,
+    consumeAiCredit,
+    getAiCreditsSnapshot,
+    listAiCreditLedger,
+    quoteMerchantAiCredits,
+  };
 });
 
 const ctx: TenantContext = {
@@ -64,6 +73,20 @@ describe("POST /api/v1/orders/whatsapp-parse", () => {
       included: 500,
       packSize: 500,
       packPaise: 9900,
+    });
+    listAiCreditLedger.mockReset();
+    quoteMerchantAiCredits.mockReset();
+    listAiCreditLedger.mockImplementation(async (_supabase: unknown, organizationId: string) =>
+      organizationId === "org-1"
+        ? [{ id: "led-1", description: "AI Credits", credits: 2500, amountPaise: 39900, status: "POSTED" }]
+        : []
+    );
+    quoteMerchantAiCredits.mockResolvedValue({
+      credits: 500,
+      amountPaise: 9900,
+      perCreditPaise: 19.8,
+      perCreditRupees: 0.198,
+      packageId: "pkg-starter",
     });
   });
 
@@ -139,7 +162,7 @@ describe("POST /api/v1/orders/whatsapp-parse", () => {
     fetchMock.mockRestore();
   });
 
-  it("skips OpenRouter when the workspace has 0 AI credits", async () => {
+  it("blocks extraction when the workspace has 0 AI credits", async () => {
     getAiCreditsRemaining.mockResolvedValue(0);
     getPlatformOpenRouterConfig.mockResolvedValue({
       enabled: true,
@@ -152,6 +175,34 @@ describe("POST /api/v1/orders/whatsapp-parse", () => {
     });
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
+    await expect(
+      handleCommerceRoutes(
+        postParse({ text: LABELED }),
+        {} as never,
+        ctx,
+        "POST orders/whatsapp-parse",
+        "POST",
+        ["orders", "whatsapp-parse"]
+      )
+    ).rejects.toThrow("You're out of AI Credits.");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(consumeAiCredit).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("does not consume a credit when OpenRouter fails", async () => {
+    getPlatformOpenRouterConfig.mockResolvedValue({
+      enabled: true,
+      flagEnabled: true,
+      apiKey: "sk-or-test",
+      model: "openai/gpt-4o-mini",
+      source: "database",
+      packSize: 500,
+      packPaise: 9900,
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("timeout"));
+
     const result = (await handleCommerceRoutes(
       postParse({ text: LABELED }),
       {} as never,
@@ -159,12 +210,10 @@ describe("POST /api/v1/orders/whatsapp-parse", () => {
       "POST orders/whatsapp-parse",
       "POST",
       ["orders", "whatsapp-parse"]
-    )) as { source: string; creditsRemaining: number };
+    )) as { source: string };
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(consumeAiCredit).not.toHaveBeenCalled();
     expect(result.source).toBe("rules");
-    expect(result.creditsRemaining).toBe(0);
+    expect(consumeAiCredit).not.toHaveBeenCalled();
     fetchMock.mockRestore();
   });
 
@@ -179,6 +228,47 @@ describe("POST /api/v1/orders/whatsapp-parse", () => {
     );
     expect(result).toEqual({ remaining: 500, included: 500, packSize: 500, packPaise: 9900 });
     expect(getAiCreditsSnapshot).toHaveBeenCalled();
+  });
+
+  it("GET /api/v1/ai-credits/ledger is scoped to the authenticated workspace", async () => {
+    const result = (await handleCommerceRoutes(
+      new NextRequest("http://localhost:3000/api/v1/ai-credits/ledger"),
+      {} as never,
+      ctx,
+      "GET ai-credits/ledger",
+      "GET",
+      ["ai-credits", "ledger"]
+    )) as { entries: Array<{ id: string }> };
+    expect(listAiCreditLedger).toHaveBeenCalledWith(expect.anything(), "org-1");
+    expect(result.entries).toHaveLength(1);
+
+    const other = (await handleCommerceRoutes(
+      new NextRequest("http://localhost:3000/api/v1/ai-credits/ledger"),
+      {} as never,
+      { ...ctx, organizationId: "org-2" },
+      "GET ai-credits/ledger",
+      "GET",
+      ["ai-credits", "ledger"]
+    )) as { entries: Array<{ id: string }> };
+    expect(listAiCreditLedger).toHaveBeenCalledWith(expect.anything(), "org-2");
+    expect(other.entries).toHaveLength(0);
+  });
+
+  it("POST /api/v1/ai-credits/quote uses the server quote", async () => {
+    const result = await handleCommerceRoutes(
+      new NextRequest("http://localhost:3000/api/v1/ai-credits/quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credits: 500 }),
+      }),
+      {} as never,
+      ctx,
+      "POST ai-credits/quote",
+      "POST",
+      ["ai-credits", "quote"]
+    );
+    expect(quoteMerchantAiCredits).toHaveBeenCalledWith({ packageId: undefined, credits: 500 });
+    expect(result).toMatchObject({ credits: 500, amountPaise: 9900 });
   });
 
   it("rejects an empty paste", async () => {

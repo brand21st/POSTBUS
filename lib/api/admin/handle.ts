@@ -120,6 +120,10 @@ export async function handleAdminRoutes(
   if (slugs[0] === "subscriptions") return handleSubscriptions(supabase, request);
   if (slugs[0] === "payments") return handlePayments(supabase, request);
   if (slugs[0] === "plans") return handlePlans(request, supabase, ctx, slugs, method);
+  if (slugs[0] === "ai-credits") {
+    const { handleAdminAiCredits } = await import("@/modules/ai-credits/admin");
+    return handleAdminAiCredits(request, supabase, ctx, slugs, method);
+  }
   if (slugs[0] === "tutorials" || slugs[0] === "tutorial-categories") {
     return handleAdminTutorials(request, supabase, ctx, slugs, method);
   }

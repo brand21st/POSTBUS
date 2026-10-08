@@ -186,12 +186,24 @@ export async function handleCommerceRoutes(
     return getAiCreditsSnapshot(supabase, ctx.organizationId);
   }
 
+  if (key === "GET ai-credits/ledger") {
+    const { listAiCreditLedger } = await import("@/modules/ai-credits/service");
+    return { entries: await listAiCreditLedger(supabase, ctx.organizationId) };
+  }
+
+  if (key === "POST ai-credits/quote") {
+    const { quoteMerchantAiCredits } = await import("@/modules/ai-credits/service");
+    const body = (await request.json().catch(() => ({}))) as { packageId?: string; credits?: unknown };
+    return quoteMerchantAiCredits({ packageId: body.packageId, credits: body.credits });
+  }
+
   if (key === "POST orders/whatsapp-parse") {
     const { parseWhatsAppOrderPaste, whatsappPasteSchema } = await import("@/modules/openrouter/parse-whatsapp");
     const body = whatsappPasteSchema.parse(await request.json());
     return parseWhatsAppOrderPaste(body.text, {
       organizationId: ctx.organizationId,
       supabase,
+      idempotencyKey: body.idempotencyKey,
     });
   }
 

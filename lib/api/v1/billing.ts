@@ -137,11 +137,19 @@ export async function handleBillingRoutes(
 
   if (key === "POST billing/ai-credits/checkout") {
     const { startAiCreditsCheckout } = await import("@/modules/ai-credits/service");
+    const body = z
+      .object({
+        packageId: z.string().min(1).optional(),
+        credits: z.number().int().optional(),
+      })
+      .parse(await request.json().catch(() => ({})));
     return startAiCreditsCheckout(writeClient(), {
       organizationId: ctx.organizationId,
       organizationName: ctx.organizationName,
       email: ctx.email,
       userId: ctx.userId,
+      packageId: body.packageId,
+      credits: body.credits,
     });
   }
 

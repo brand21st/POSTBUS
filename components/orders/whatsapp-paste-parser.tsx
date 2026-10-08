@@ -31,11 +31,14 @@ type ParseResponse = {
 type CreditsResponse = {
   remaining: number;
   included?: number;
-  packSize: number;
-  packPaise: number;
+  packSize?: number;
+  packPaise?: number;
+  purchased?: number;
+  used?: number;
 };
 
 const FREE_CREDITS = 500;
+const LOW_CREDITS = 25;
 
 export function WhatsAppPasteParser({
   getCurrent,
@@ -70,7 +73,10 @@ export function WhatsAppPasteParser({
     try {
       const parsed = await api<ParseResponse>("/api/v1/orders/whatsapp-parse", {
         method: "POST",
-        body: JSON.stringify({ text: paste.slice(0, MAX_CHARS) }),
+        body: JSON.stringify({
+          text: paste.slice(0, MAX_CHARS),
+          idempotencyKey: crypto.randomUUID(),
+        }),
       });
       const filled = Object.values(parsed.fields).filter(Boolean).length;
       if (!filled) {
@@ -84,8 +90,6 @@ export function WhatsAppPasteParser({
             : {
                 remaining: parsed.creditsRemaining as number,
                 included: FREE_CREDITS,
-                packSize: 500,
-                packPaise: 9900,
               }
         );
       }
@@ -157,7 +161,7 @@ export function WhatsAppPasteParser({
                 ? "border-amber-200 bg-amber-50 text-amber-900"
                 : "border-emerald-100 bg-emerald-50 text-emerald-800"
             )}
-            title={`${remaining} of ${included} free AI credits`}
+            title={`${remaining} AI credits remaining`}
           >
             <Sparkles className="size-3.5 shrink-0" aria-hidden />
             <p className="text-[11px] font-semibold leading-none sm:text-xs">
@@ -228,12 +232,27 @@ export function WhatsAppPasteParser({
       </div>
 
       <p className="mt-2 text-xs text-muted sm:mt-3 sm:text-sm" role={hint ? "status" : undefined} aria-live={hint ? "polite" : undefined}>
-        {outOfCredits
-          ? "Recharge AI credits to extract with AI."
-          : hint ??
-            (overwrite
-              ? `${included} free AI extracts · 1 credit each. Extract updates name, phone, and address.`
-              : `${included} free AI extracts · 1 credit each. Extract fills empty fields below.`)}
+        {outOfCredits ? (
+          <>
+            You&apos;re out of AI Credits.{" "}
+            <Link href="/dashboard/billing#ai-credits" className="font-medium text-brand underline-offset-2 hover:underline">
+              Buy Credits
+            </Link>
+          </>
+        ) : remaining <= LOW_CREDITS && credits.isSuccess ? (
+          <>
+            Only {remaining} AI Credits remaining.{" "}
+            <Link href="/dashboard/billing#ai-credits" className="font-medium text-brand underline-offset-2 hover:underline">
+              Buy Credits
+            </Link>
+            {hint ? ` ${hint}` : ""}
+          </>
+        ) : (
+          hint ??
+          (overwrite
+            ? "1 credit per successful extract. Extract updates name, phone, and address."
+            : "1 credit per successful extract. Extract fills empty fields below.")
+        )}
       </p>
     </section>
   );

@@ -377,8 +377,12 @@ export async function verifyCheckout(
     razorpayPaymentId: input.paymentId,
     amountPaise: Number(payment.amount),
     method: payment.method ? String(payment.method) : null,
+    organizationId: input.organizationId,
   });
   if (credits.handled) {
+    if (credits.forbidden) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "This payment does not belong to your workspace.");
+    }
     if (credits.amountMismatch) {
       throw new AppError(ERROR_CODES.FORBIDDEN, "Paid amount does not match the AI credit pack.");
     }
