@@ -7,6 +7,11 @@ function text(value?: string | null) {
   return (value ?? "").trim();
 }
 
+function optionalStreet(value?: string | null) {
+  const street = text(value);
+  return street.length >= 3 ? street : undefined;
+}
+
 function party(input: {
   name?: string | null;
   company?: string | null;
@@ -25,8 +30,8 @@ function party(input: {
     name,
     company,
     line1: text(input.line1),
-    line2: text(input.line2) || undefined,
-    line3: text(input.line3) || undefined,
+    line2: optionalStreet(input.line2),
+    line3: optionalStreet(input.line3),
     city: text(input.city),
     state: text(input.state) || undefined,
     pincode: text(input.pincode),

@@ -5,6 +5,14 @@ describe("permissionForTenantRoute", () => {
   it("requires write permissions for mutating commerce routes", () => {
     expect(permissionForTenantRoute("GET", "orders", ["orders"])).toBe("orders.read");
     expect(permissionForTenantRoute("POST", "orders", ["orders"])).toBe("orders.write");
+    expect(permissionForTenantRoute("POST", "orders/whatsapp-parse", ["orders", "whatsapp-parse"])).toBe(
+      "orders.write"
+    );
+    expect(permissionForTenantRoute("GET", "shipment-presets", ["shipment-presets"])).toBe("orders.read");
+    expect(permissionForTenantRoute("POST", "shipment-presets", ["shipment-presets"])).toBe("orders.write");
+    expect(
+      permissionForTenantRoute("DELETE", "shipment-presets/abc", ["shipment-presets", "abc"])
+    ).toBe("orders.write");
     expect(permissionForTenantRoute("GET", "products", ["products"])).toBe("products.read");
     expect(permissionForTenantRoute("POST", "products", ["products"])).toBe("products.write");
     expect(permissionForTenantRoute("PATCH", "products/abc", ["products", "abc"])).toBe("products.write");

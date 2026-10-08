@@ -136,6 +136,10 @@ export function permissionForTenantRoute(
 
   if (path === "search") return "orders.read";
 
+  if (root === "shipment-presets") {
+    return method === "GET" ? "orders.read" : "orders.write";
+  }
+
   if (root === "ui") return undefined;
 
   if (root === "tutorials") {

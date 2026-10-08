@@ -6,11 +6,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { Lock, Minus, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Lock, Minus, Plus, Trash2 } from "lucide-react";
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
 import { WhatsAppPasteParser } from "@/components/orders/whatsapp-paste-parser";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
@@ -32,7 +33,8 @@ import {
 import { api, toSearchParams } from "@/lib/hooks/use-api";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS } from "@/lib/indian-states";
+import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS, INDIAN_STATES } from "@/lib/indian-states";
+import type { IndiaPostDirectoryLookup } from "@/lib/india-post/pincode-directory";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
 import { optionalDimensionCm, optionalPositiveInt } from "@/modules/orders/schema";
@@ -41,11 +43,11 @@ import type { IndiaPostConfig, Paginated, ProductRecord } from "@/types/api";
 import { catalogCodAdvancePaid } from "@/modules/products/payment";
 
 const addressSchema = z.object({
-  name: z.string().min(2, "Name is required."),
+  name: z.string().min(2, "Customer name is required."),
   phone: z
     .string()
     .refine((value) => extractIndiaMobileDigits(value) !== null, "Enter a 10-digit Indian mobile number."),
-  line1: z.string().min(3, "Address line 1 is required."),
+  line1: z.string().min(3, "Address is required."),
   line2: z.string().optional(),
   city: z.string().min(2, "City is required."),
   state: z.string().min(2, "State is required."),
@@ -55,11 +57,21 @@ const addressSchema = z.object({
 
 const schema = z.object({
   orderNumber: z.string().optional(),
-  customerName: z.string().min(2, "Customer name is required."),
+  customerName: z
+    .string()
+    .optional()
+    .refine((value) => !value?.trim() || value.trim().length >= 2, "Name is too short."),
   customerPhone: z
     .string()
-    .refine((value) => extractIndiaMobileDigits(value) !== null, "Enter a 10-digit Indian mobile number."),
-  customerEmail: z.union([z.email(), z.literal("")]).optional(),
+    .optional()
+    .refine(
+      (value) => !value?.trim() || extractIndiaMobileDigits(value) !== null,
+      "Enter a 10-digit Indian mobile number."
+    ),
+  customerEmail: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.union([z.literal(""), z.email("Enter a valid email.")]).optional()
+  ),
   paymentStatus: z.enum(PAYMENT_STATUSES),
   amountPaid: z.coerce.number().min(0).optional(),
   shippingAddress: addressSchema,
@@ -136,7 +148,7 @@ export default function NewOrderPage() {
       customerName: "",
       customerPhone: "",
       customerEmail: "",
-      paymentStatus: "PENDING",
+      paymentStatus: "PAID",
       amountPaid: 0,
       billingSameAsShipping: true,
       shippingAddress: {
@@ -150,12 +162,13 @@ export default function NewOrderPage() {
         country: "IN",
       },
       lineItems: [{ productId: undefined, title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0 }],
-      createShipment: false,
+      createShipment: true,
       shipment: { serviceCode: DEFAULT_INDIA_POST_SERVICE },
     },
   });
 
   const serviceTouched = useRef(false);
+  const customerPanel = useRef<HTMLDetailsElement>(null);
   const items = useFieldArray({ control: form.control, name: "lineItems" });
   // React Hook Form watch() is incompatible with the compiler memoization pass.
   // eslint-disable-next-line react-hooks/incompatible-library -- form.watch subscription
@@ -165,6 +178,10 @@ export default function NewOrderPage() {
   const amountPaid = Number(form.watch("amountPaid") || 0);
   const lineItemValues = form.watch("lineItems");
   const selectedService = form.watch("shipment.serviceCode");
+  const shipmentWeight = form.watch("shipment.weightGrams");
+  const shipmentLength = form.watch("shipment.lengthCm");
+  const shipmentWidth = form.watch("shipment.widthCm");
+  const shipmentHeight = form.watch("shipment.heightCm");
   const catalogItems = catalog.data?.items ?? [];
   const catalogById = useMemo(
     () => new Map(catalogItems.map((item) => [item.id, item])),
@@ -240,15 +257,26 @@ export default function NewOrderPage() {
     }
   }, [form, serviceOptions]);
 
+  const customerFieldError =
+    form.formState.errors.customerName ||
+    form.formState.errors.customerPhone ||
+    form.formState.errors.customerEmail;
+  useEffect(() => {
+    if (customerFieldError && customerPanel.current) customerPanel.current.open = true;
+  }, [customerFieldError]);
+
   async function onSubmit(values: FormValues) {
     try {
       const created = await api<{ id: string }>("/api/v1/orders", {
         method: "POST",
         body: JSON.stringify({
-          orderNumber: values.orderNumber?.trim() || undefined,
+          orderNumber: undefined,
           customer: {
-            name: values.customerName,
-            phone: extractIndiaMobileDigits(values.customerPhone) ?? values.customerPhone,
+            name: values.customerName?.trim() || values.shippingAddress.name,
+            phone:
+              extractIndiaMobileDigits(values.customerPhone ?? "") ??
+              extractIndiaMobileDigits(values.shippingAddress.phone) ??
+              values.shippingAddress.phone,
             email: values.customerEmail || undefined,
           },
           shippingAddress: {
@@ -281,11 +309,11 @@ export default function NewOrderPage() {
                   weightGrams: item.weightGrams,
                 }
           ),
-          createShipment: values.createShipment,
-          shipment: values.createShipment ? values.shipment : undefined,
+          createShipment: true,
+          shipment: values.shipment,
         }),
       });
-      toast.success("Order created.");
+      toast.success("Order saved. India Post booking started.");
       router.push(`/dashboard/orders/${created.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create the order.");
@@ -304,7 +332,7 @@ export default function NewOrderPage() {
         description="Create a manual order with customer, address, and line items."
         actions={
           <Button type="submit" size="sm" className="hidden xl:inline-flex" disabled={form.formState.isSubmitting}>
-            {form.formState.isSubmitting ? "Saving…" : "Save order"}
+            {form.formState.isSubmitting ? "Booking…" : "Book now"}
           </Button>
         }
       />
@@ -312,58 +340,60 @@ export default function NewOrderPage() {
       <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_17rem] xl:items-start xl:gap-6">
       <div className="space-y-4">
 
-      <Card>
-        <CardHeader className="p-4">
-          <CardTitle>Paste from WhatsApp</CardTitle>
-        </CardHeader>
-        <CardContent className="p-4 pt-0">
-          <WhatsAppPasteParser
-            getCurrent={() => ({
-              name: form.getValues("customerName"),
-              phone: form.getValues("customerPhone"),
-              line1: form.getValues("shippingAddress.line1"),
-              line2: form.getValues("shippingAddress.line2"),
-              city: form.getValues("shippingAddress.city"),
-              state: form.getValues("shippingAddress.state"),
-              pincode: form.getValues("shippingAddress.pincode"),
-            })}
-            onApply={(fields) => {
-              if (fields.name) {
-                form.setValue("customerName", fields.name, { shouldDirty: true });
-                if (!form.getValues("shippingAddress.name")) {
-                  form.setValue("shippingAddress.name", fields.name, { shouldDirty: true });
-                }
-              }
-              if (fields.phone) {
-                form.setValue("customerPhone", fields.phone, { shouldDirty: true });
-                if (!form.getValues("shippingAddress.phone")) {
-                  form.setValue("shippingAddress.phone", fields.phone, { shouldDirty: true });
-                }
-              }
-              if (fields.line1) form.setValue("shippingAddress.line1", fields.line1, { shouldDirty: true });
-              if (fields.line2) form.setValue("shippingAddress.line2", fields.line2, { shouldDirty: true });
-              if (fields.city) form.setValue("shippingAddress.city", fields.city, { shouldDirty: true });
-              if (fields.state) form.setValue("shippingAddress.state", fields.state, { shouldDirty: true });
-              if (fields.pincode) form.setValue("shippingAddress.pincode", fields.pincode, { shouldDirty: true });
-            }}
-          />
-        </CardContent>
-      </Card>
+      <WhatsAppPasteParser
+        getCurrent={() => ({
+          name: form.getValues("customerName"),
+          phone: form.getValues("customerPhone"),
+          email: form.getValues("customerEmail"),
+          line1: form.getValues("shippingAddress.line1"),
+          line2: form.getValues("shippingAddress.line2"),
+          city: form.getValues("shippingAddress.city"),
+          state: form.getValues("shippingAddress.state"),
+          pincode: form.getValues("shippingAddress.pincode"),
+        })}
+        onApply={(fields) => {
+          if (fields.name) {
+            form.setValue("customerName", fields.name, { shouldDirty: true });
+            if (!form.getValues("shippingAddress.name")) {
+              form.setValue("shippingAddress.name", fields.name, { shouldDirty: true });
+            }
+          }
+          if (fields.phone) {
+            form.setValue("customerPhone", fields.phone, { shouldDirty: true });
+            if (!form.getValues("shippingAddress.phone")) {
+              form.setValue("shippingAddress.phone", fields.phone, { shouldDirty: true });
+            }
+          }
+          if (fields.email && !String(form.getValues("customerEmail") ?? "").trim()) {
+            form.setValue("customerEmail", fields.email, { shouldDirty: true });
+          }
+          if (fields.line1) form.setValue("shippingAddress.line1", fields.line1, { shouldDirty: true });
+          if (fields.line2) form.setValue("shippingAddress.line2", fields.line2, { shouldDirty: true });
+          if (fields.city) form.setValue("shippingAddress.city", fields.city, { shouldDirty: true });
+          if (fields.state) form.setValue("shippingAddress.state", fields.state, { shouldDirty: true });
+          if (fields.pincode) form.setValue("shippingAddress.pincode", fields.pincode, { shouldDirty: true });
+        }}
+      />
 
       <Card>
         <CardHeader className="p-4">
           <CardTitle>Order</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
-          <Field label="Order number" hint="Leave blank to auto-generate a unique PB number">
-            <Input
-              className="h-9"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              placeholder="Leave blank"
-              {...form.register("orderNumber")}
-            />
+          <Field label="Order number" hint="A unique PB number is assigned when you book.">
+            <div className="relative">
+              <Input
+                className="h-9 cursor-not-allowed bg-surface-soft pr-9"
+                value=""
+                readOnly
+                disabled
+                tabIndex={-1}
+                autoComplete="off"
+                placeholder="Assigned on booking"
+                aria-readonly="true"
+              />
+              <Lock className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-muted" aria-hidden />
+            </div>
           </Field>
           <div className="space-y-2">
             <Label>Payment</Label>
@@ -377,7 +407,7 @@ export default function NewOrderPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PAYMENT_STATUSES.map((item) => (
+                {PAYMENT_STATUSES.filter((item) => item !== "FAILED" && item !== "PENDING" && item !== "REFUNDED").map((item) => (
                   <SelectItem key={item} value={item}>
                     {PAYMENT_STATUS_LABELS[item]}
                   </SelectItem>
@@ -403,15 +433,24 @@ export default function NewOrderPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="p-4">
-          <CardTitle>Customer</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-3">
-          <Field label="Name" error={form.formState.errors.customerName?.message}>
-            <Input className="h-9" {...form.register("customerName")} />
+      <details
+        ref={customerPanel}
+        className="group rounded-2xl border border-border bg-card text-foreground shadow-[0_1px_2px_rgb(9_9_11/0.04),0_8px_24px_rgb(9_9_11/0.04)]"
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 [&::-webkit-details-marker]:hidden">
+          <div>
+            <CardTitle>Create customer account</CardTitle>
+            <p className="mt-0.5 text-xs text-muted">
+              Optional. Skip this to use the shipping customer name and phone.
+            </p>
+          </div>
+          <ChevronDown className="size-4 shrink-0 text-muted transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="grid gap-3 px-4 pb-4 pt-0 md:grid-cols-3">
+          <Field label="Name" hint="Optional." error={form.formState.errors.customerName?.message}>
+            <Input className="h-9" autoComplete="name" {...form.register("customerName")} />
           </Field>
-          <Field label="Phone" error={form.formState.errors.customerPhone?.message}>
+          <Field label="Phone" hint="Optional." error={form.formState.errors.customerPhone?.message}>
             <IndiaWhatsappField
               control={form.control}
               name="customerPhone"
@@ -423,11 +462,17 @@ export default function NewOrderPage() {
               placeholder="10-digit mobile number"
             />
           </Field>
-          <Field label="Email">
-            <Input className="h-9" type="email" {...form.register("customerEmail")} />
+          <Field label="Email" hint="Optional." error={form.formState.errors.customerEmail?.message}>
+            <Input
+              className="h-9"
+              type="email"
+              autoComplete="email"
+              placeholder="name@example.com (optional)"
+              {...form.register("customerEmail")}
+            />
           </Field>
-        </CardContent>
-      </Card>
+        </div>
+      </details>
 
       <Card>
         <CardHeader className="p-4">
@@ -436,7 +481,12 @@ export default function NewOrderPage() {
         <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
           <AddressFields
             prefix="shippingAddress"
-            form={{ register: form.register, control: form.control, formState: form.formState }}
+            form={{
+              register: form.register,
+              control: form.control,
+              formState: form.formState,
+              setValue: form.setValue,
+            }}
           />
           <label className="col-span-full flex items-center gap-2 text-sm">
             <Checkbox
@@ -456,7 +506,12 @@ export default function NewOrderPage() {
           <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
             <AddressFields
               prefix="billingAddress"
-              form={{ register: form.register, control: form.control, formState: form.formState }}
+              form={{
+                register: form.register,
+                control: form.control,
+                formState: form.formState,
+                setValue: form.setValue,
+              }}
             />
           </CardContent>
         </Card>
@@ -671,10 +726,26 @@ export default function NewOrderPage() {
               checked={createShipment}
               onCheckedChange={(value) => form.setValue("createShipment", value === true)}
             />
-            Create shipment after save
+            Book with India Post
           </label>
           {createShipment ? <IndiaPostBookingGuide selectedService={selectedService} /> : null}
           {createShipment ? (
+            <div className="space-y-3">
+            <ShipmentPackPresets
+              weightGrams={Number(shipmentWeight) || undefined}
+              lengthCm={Number(shipmentLength) || undefined}
+              widthCm={Number(shipmentWidth) || undefined}
+              heightCm={Number(shipmentHeight) || undefined}
+              serviceCode={selectedService}
+              onApply={(pack) => {
+                serviceTouched.current = true;
+                form.setValue("shipment.weightGrams", pack.weightGrams, { shouldDirty: true });
+                form.setValue("shipment.lengthCm", pack.lengthCm, { shouldDirty: true });
+                form.setValue("shipment.widthCm", pack.widthCm, { shouldDirty: true });
+                form.setValue("shipment.heightCm", pack.heightCm, { shouldDirty: true });
+                form.setValue("shipment.serviceCode", pack.serviceCode, { shouldDirty: true });
+              }}
+            />
             <div className="grid gap-3 md:grid-cols-5">
               <Field label="Weight (g)" error={form.formState.errors.shipment?.weightGrams?.message}>
                 <Input className="h-9" type="number" min={1} {...form.register("shipment.weightGrams")} />
@@ -730,6 +801,7 @@ export default function NewOrderPage() {
                 ) : null}
               </Field>
             </div>
+            </div>
           ) : null}
         </CardContent>
       </Card>
@@ -752,16 +824,13 @@ export default function NewOrderPage() {
               <span className="tabular-nums">{formatCurrency(collectOnDelivery)}</span>
             </p>
           ) : null}
-          <Button type="submit" className="w-full" size="sm" disabled={form.formState.isSubmitting}>
-            {form.formState.isSubmitting ? "Saving…" : "Save order"}
-          </Button>
         </div>
       </aside>
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 p-3 backdrop-blur-sm xl:hidden">
         <Button type="submit" className="w-full" size="sm" disabled={form.formState.isSubmitting}>
-          {form.formState.isSubmitting ? "Saving…" : "Save order"}
+          {form.formState.isSubmitting ? "Booking…" : "Book now"}
         </Button>
       </div>
     </form>
@@ -777,30 +846,43 @@ function formatWeight(grams: number) {
   return grams >= 1000 ? `${(grams / 1000).toFixed(2).replace(/\.?0+$/, "")} kg` : `${grams} g`;
 }
 
-type PincodeOffices = {
-  pincode: string;
-  offices: Array<{ officeId: string; name: string; city: string; state: string; officeTypeCode: string }>;
-};
+function listedIndianState(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return INDIAN_STATES.find((state) => state.toLowerCase() === normalized) ?? value.trim();
+}
 
 function PincodeLookup({
   control,
-  name,
+  setValue,
+  prefix,
 }: {
   control: ReturnType<typeof useForm<FormValues>>["control"];
-  name: "shippingAddress.pincode" | "billingAddress.pincode";
+  setValue: ReturnType<typeof useForm<FormValues>>["setValue"];
+  prefix: "shippingAddress" | "billingAddress";
 }) {
-  const value = useWatch({ control, name });
+  const value = useWatch({ control, name: `${prefix}.pincode` });
   const pincode = String(value ?? "").replace(/\D/g, "");
-  const ready = /^\d{6}$/.test(pincode);
+  const ready = /^[1-9][0-9]{5}$/.test(pincode);
+  const filledFor = useRef("");
   const lookup = useQuery({
-    queryKey: ["india-post", "offices", pincode],
+    queryKey: ["india-post", "directory", pincode],
     queryFn: () =>
-      api<PincodeOffices>(`/api/v1/integrations/india-post/offices?pincode=${pincode}`),
+      api<IndiaPostDirectoryLookup>(`/api/v1/auth/pincode?pincode=${encodeURIComponent(pincode)}`),
     enabled: ready,
     staleTime: Infinity,
     gcTime: 30 * 60 * 1000,
     retry: false,
   });
+
+  const office = lookup.data?.offices?.[0];
+  useEffect(() => {
+    if (!office || filledFor.current === pincode) return;
+    filledFor.current = pincode;
+    const city = office.city.trim();
+    const state = listedIndianState(office.state ?? "");
+    if (city) setValue(`${prefix}.city`, city, { shouldDirty: true, shouldValidate: true });
+    if (state) setValue(`${prefix}.state`, state, { shouldDirty: true, shouldValidate: true });
+  }, [office, pincode, prefix, setValue]);
 
   if (!ready) return null;
 
@@ -855,13 +937,16 @@ function AddressFields({
   form,
 }: {
   prefix: "shippingAddress" | "billingAddress";
-  form: Pick<ReturnType<typeof useForm<FormValues>>, "register" | "control" | "formState">;
+  form: Pick<ReturnType<typeof useForm<FormValues>>, "register" | "control" | "formState" | "setValue">;
 }) {
   const phoneError = form.formState.errors[prefix]?.phone?.message;
   return (
     <>
-      <Field label="Recipient" error={form.formState.errors[prefix]?.name?.message}>
-        <Input className="h-9" {...form.register(`${prefix}.name`)} />
+      <Field
+        label={prefix === "billingAddress" ? "Name" : "Customer name"}
+        error={form.formState.errors[prefix]?.name?.message}
+      >
+        <Input className="h-9" autoComplete="name" placeholder="Customer name" {...form.register(`${prefix}.name`)} />
       </Field>
       <Field label="Phone" error={phoneError}>
         <IndiaWhatsappField
@@ -875,11 +960,41 @@ function AddressFields({
           placeholder="10-digit mobile number"
         />
       </Field>
-      <Field label="Line 1" className="md:col-span-2" error={form.formState.errors[prefix]?.line1?.message}>
-        <Input className="h-9" {...form.register(`${prefix}.line1`)} />
+      <Field
+        label="Address"
+        className="md:col-span-2"
+        hint="House, building, and street — required for booking."
+        error={form.formState.errors[prefix]?.line1?.message}
+      >
+        <Input
+          className="h-9"
+          autoComplete="address-line1"
+          placeholder="House / building, street"
+          {...form.register(`${prefix}.line1`)}
+        />
       </Field>
-      <Field label="Line 2" className="md:col-span-2">
-        <Input className="h-9" {...form.register(`${prefix}.line2`)} />
+      <Field
+        label="Area / locality"
+        className="md:col-span-2"
+        hint="Optional. Landmark or extra address — not required for India Post booking."
+      >
+        <Input
+          className="h-9"
+          autoComplete="address-line2"
+          placeholder="Landmark, area (optional)"
+          {...form.register(`${prefix}.line2`)}
+        />
+      </Field>
+      <Field label="Pincode" error={form.formState.errors[prefix]?.pincode?.message}>
+        <Input
+          className="h-9 tabular-nums tracking-wide"
+          inputMode="numeric"
+          maxLength={6}
+          autoComplete="postal-code"
+          placeholder="6-digit pincode"
+          {...form.register(`${prefix}.pincode`)}
+        />
+        <PincodeLookup control={form.control} setValue={form.setValue} prefix={prefix} />
       </Field>
       <Field label="City" error={form.formState.errors[prefix]?.city?.message}>
         <Input className="h-9" {...form.register(`${prefix}.city`)} />
@@ -903,17 +1018,6 @@ function AddressFields({
             />
           )}
         />
-      </Field>
-      <Field label="Pincode" error={form.formState.errors[prefix]?.pincode?.message}>
-        <Input
-          className="h-9 tabular-nums tracking-wide"
-          inputMode="numeric"
-          maxLength={6}
-          autoComplete="postal-code"
-          placeholder="6-digit pincode"
-          {...form.register(`${prefix}.pincode`)}
-        />
-        <PincodeLookup control={form.control} name={`${prefix}.pincode`} />
       </Field>
       <Field label="Country">
         <input type="hidden" defaultValue="IN" {...form.register(`${prefix}.country`)} />

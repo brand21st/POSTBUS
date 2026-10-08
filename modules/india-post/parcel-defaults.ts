@@ -6,6 +6,12 @@ export const FALLBACK_PARCEL_LENGTH_CM = 14;
 export const FALLBACK_PARCEL_WIDTH_CM = 9;
 export const FALLBACK_PARCEL_HEIGHT_CM = 1;
 export const FALLBACK_PARCEL_WEIGHT_G = 100;
+export const PARCEL_LENGTH_MIN_CM = FALLBACK_PARCEL_LENGTH_CM;
+export const PARCEL_LENGTH_MAX_CM = 150;
+export const PARCEL_WIDTH_MIN_CM = FALLBACK_PARCEL_WIDTH_CM;
+export const PARCEL_WIDTH_MAX_CM = 150;
+export const PARCEL_HEIGHT_MIN_CM = FALLBACK_PARCEL_HEIGHT_CM;
+export const PARCEL_HEIGHT_MAX_CM = 150;
 
 export type WorkspaceParcelDefaults = {
   lengthCm: number | null;
@@ -73,14 +79,23 @@ export function parseParcelDefaultsInput(body: Record<string, unknown>): Workspa
 }
 
 export function parcelDefaultsValidationError(defaults: WorkspaceParcelDefaults): string | null {
-  if (defaults.lengthCm != null && (defaults.lengthCm < 14 || defaults.lengthCm > 150)) {
-    return "Default length must be between 14 and 150 cm.";
+  if (
+    defaults.lengthCm != null &&
+    (defaults.lengthCm < PARCEL_LENGTH_MIN_CM || defaults.lengthCm > PARCEL_LENGTH_MAX_CM)
+  ) {
+    return `Default length must be between ${PARCEL_LENGTH_MIN_CM} and ${PARCEL_LENGTH_MAX_CM} cm.`;
   }
-  if (defaults.widthCm != null && (defaults.widthCm < 9 || defaults.widthCm > 150)) {
-    return "Default width must be between 9 and 150 cm.";
+  if (
+    defaults.widthCm != null &&
+    (defaults.widthCm < PARCEL_WIDTH_MIN_CM || defaults.widthCm > PARCEL_WIDTH_MAX_CM)
+  ) {
+    return `Default width must be between ${PARCEL_WIDTH_MIN_CM} and ${PARCEL_WIDTH_MAX_CM} cm.`;
   }
-  if (defaults.heightCm != null && (defaults.heightCm < 1 || defaults.heightCm > 150)) {
-    return "Default height must be between 1 and 150 cm.";
+  if (
+    defaults.heightCm != null &&
+    (defaults.heightCm < PARCEL_HEIGHT_MIN_CM || defaults.heightCm > PARCEL_HEIGHT_MAX_CM)
+  ) {
+    return `Default height must be between ${PARCEL_HEIGHT_MIN_CM} and ${PARCEL_HEIGHT_MAX_CM} cm.`;
   }
   if (
     defaults.weightGrams != null &&

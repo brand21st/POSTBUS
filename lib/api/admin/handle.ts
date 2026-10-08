@@ -15,6 +15,12 @@ import {
   testRazorpaySettings,
 } from "@/modules/razorpay/admin-settings";
 import {
+  listOpenRouterChatGptModelsForAdmin,
+  loadOpenRouterSettings,
+  saveOpenRouterSettings,
+  testOpenRouterSettings,
+} from "@/modules/openrouter/admin-settings";
+import {
   loadPlatformVachatLogs,
   loadPlatformVachatSettings,
   loadPlatformVachatStats,
@@ -71,6 +77,10 @@ export async function handleAdminRoutes(
   if (key === "PATCH settings/razorpay") return saveRazorpaySettings(request, supabase, ctx);
   if (key === "POST settings/razorpay/test") return testRazorpaySettings(request, supabase, ctx);
   if (key === "POST settings/razorpay/webhook") return registerRazorpayWebhook(request, supabase, ctx);
+  if (key === "GET settings/openrouter") return loadOpenRouterSettings();
+  if (key === "GET settings/openrouter/models") return listOpenRouterChatGptModelsForAdmin();
+  if (key === "PATCH settings/openrouter") return saveOpenRouterSettings(request, supabase, ctx);
+  if (key === "POST settings/openrouter/test") return testOpenRouterSettings(request, supabase, ctx);
   if (key === "GET settings/vachat") return loadPlatformVachatSettings();
   if (key === "PATCH settings/vachat") return savePlatformVachatSettings(request, supabase, ctx);
   if (key === "POST settings/vachat/test") return testPlatformVachatSettings(request, supabase, ctx);

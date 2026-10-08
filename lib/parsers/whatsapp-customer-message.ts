@@ -4,6 +4,7 @@ import { INDIAN_STATES } from "@/lib/indian-states";
 export type WhatsAppCustomerFields = {
   name?: string;
   phone?: string;
+  email?: string;
   line1?: string;
   line2?: string;
   city?: string;
@@ -26,12 +27,25 @@ const LABEL_ALIASES: Record<string, keyof WhatsAppCustomerFields> = {
   "mobile number": "phone",
   "phone number": "phone",
   contact: "phone",
+  mob: "phone",
+  "phone no": "phone",
+  "phone no.": "phone",
+  customer: "name",
+  email: "email",
+  "e-mail": "email",
+  "email id": "email",
+  "email address": "email",
+  mail: "email",
   address: "line1",
   addr: "line1",
   "full address": "line1",
   area: "line2",
   locality: "line2",
   "area / locality": "line2",
+  landmark: "line2",
+  remarks: "line2",
+  note: "line2",
+  notes: "line2",
   city: "city",
   town: "city",
   district: "city",
@@ -64,6 +78,13 @@ function cleanValue(value: string) {
   return value.replace(/^[\s,;.|]+/, "").replace(/[\s,;.|]+$/, "").replace(/\s+/g, " ").trim();
 }
 
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+
+function extractEmail(value: string) {
+  const match = value.match(EMAIL_RE);
+  return match ? match[0].toLowerCase() : null;
+}
+
 function assignField(
   result: WhatsAppCustomerParseResult,
   key: keyof WhatsAppCustomerFields,
@@ -78,6 +99,14 @@ function assignField(
     if (!digits) return;
     result.fields.phone = digits;
     result.sources.phone = source;
+    return;
+  }
+
+  if (key === "email") {
+    const email = extractEmail(value);
+    if (!email) return;
+    result.fields.email = email;
+    result.sources.email = source;
     return;
   }
 
@@ -104,8 +133,36 @@ function assignField(
   result.sources[key] = source;
 }
 
+const FIELD_KEYS: Array<keyof WhatsAppCustomerFields> = [
+  "name",
+  "phone",
+  "email",
+  "line1",
+  "line2",
+  "city",
+  "state",
+  "pincode",
+];
+
+/** Drop invented or invalid AI values using the same rules as the label parser. */
+export function fieldsFromUnknown(raw: unknown, source = "ai"): WhatsAppCustomerParseResult {
+  const result: WhatsAppCustomerParseResult = { fields: {}, sources: {} };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return result;
+  const row = raw as Record<string, unknown>;
+  for (const key of FIELD_KEYS) {
+    const value =
+      key === "line1" && !(typeof row.line1 === "string" && row.line1.trim())
+        ? row.address
+        : row[key];
+    if (typeof value === "string" || typeof value === "number") {
+      assignField(result, key, String(value), source);
+    }
+  }
+  return result;
+}
+
 /**
- * Deterministic WhatsApp address parser. Later an AI parser can implement the same result shape.
+ * Deterministic WhatsApp address parser. OpenRouter uses the same result shape.
  */
 export function parseWhatsAppCustomerMessage(text: string): WhatsAppCustomerParseResult {
   const result: WhatsAppCustomerParseResult = { fields: {}, sources: {} };
@@ -150,6 +207,11 @@ export function parseWhatsAppCustomerMessage(text: string): WhatsAppCustomerPars
     }
   }
   flushPending();
+
+  if (!result.fields.email) {
+    const email = extractEmail(String(text ?? ""));
+    if (email) assignField(result, "email", email, "email");
+  }
 
   return result;
 }

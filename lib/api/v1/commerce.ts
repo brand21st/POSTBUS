@@ -181,6 +181,12 @@ export async function handleCommerceRoutes(
     return getOrder(supabase, ctx, slugs[1]);
   }
 
+  if (key === "POST orders/whatsapp-parse") {
+    const { parseWhatsAppOrderPaste, whatsappPasteSchema } = await import("@/modules/openrouter/parse-whatsapp");
+    const body = whatsappPasteSchema.parse(await request.json());
+    return parseWhatsAppOrderPaste(body.text);
+  }
+
   if (key === "POST orders") {
     const body = createOrderSchema.parse(await request.json());
     if ((body.source ?? "MANUAL") === "WHATSAPP") {

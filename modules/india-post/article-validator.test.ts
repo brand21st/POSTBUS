@@ -44,6 +44,16 @@ describe("India Post article validation", () => {
     expect(validateIndiaPostArticle(baseDraft())).toEqual([]);
   });
 
+  it("does not require receiver line 2 for booking", () => {
+    expect(validateIndiaPostArticle(baseDraft({ receiverLine2: "" })).some((issue) => issue.field === "receiver_add_line_2")).toBe(
+      false
+    );
+    const short = baseDraft({ receiverLine2: "ab" });
+    expect(validateIndiaPostArticle(short).some((issue) => issue.field === "receiver_add_line_2")).toBe(false);
+    const payload = serializeIndiaPostBookingArticle(assertValidatedArticle(short));
+    expect(payload.receiver_add_line_2).toBe("");
+  });
+
   it("maps sender_mobile_no from the organization phone, not the customer phone", () => {
     const issues = validateIndiaPostArticle(baseDraft({ senderMobile: "" }));
     expect(issues.some((issue) => issue.field === "sender_mobile_no")).toBe(true);

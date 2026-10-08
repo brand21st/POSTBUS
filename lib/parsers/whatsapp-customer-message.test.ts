@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyWhatsAppCustomerFields,
+  fieldsFromUnknown,
   parseWhatsAppCustomerMessage,
 } from "@/lib/parsers/whatsapp-customer-message";
 
@@ -78,5 +79,65 @@ describe("parseWhatsAppCustomerMessage", () => {
   it("returns empty fields for unstructured text", () => {
     const parsed = parseWhatsAppCustomerMessage("please send to my house tomorrow thanks");
     expect(parsed.fields).toEqual({});
+  });
+
+  it("reads email and extra landmark text, including a second paste", () => {
+    const first = parseWhatsAppCustomerMessage(SAMPLE);
+    const second = parseWhatsAppCustomerMessage(`Email: Rahul.Shop@gmail.com\nLandmark: Near bus stand`);
+    expect(second.fields.email).toBe("rahul.shop@gmail.com");
+    expect(second.fields.line2).toBe("Near bus stand");
+    const merged = applyWhatsAppCustomerFields(
+      { ...first.fields, email: "", line2: "" },
+      second.fields
+    );
+    expect(merged.name).toBe("Rahul");
+    expect(merged.email).toBe("rahul.shop@gmail.com");
+    expect(merged.line2).toBe("Near bus stand");
+  });
+
+  it("picks an unlabeled email out of extra chat text", () => {
+    const parsed = parseWhatsAppCustomerMessage("also send invoice to Priya@shop.co.in thanks");
+    expect(parsed.fields.email).toBe("priya@shop.co.in");
+  });
+
+  it("maps Customer, Mob, Mail, and Pin labels", () => {
+    const parsed = parseWhatsAppCustomerMessage(`
+      Customer: Priya
+      Mob: 9876543210
+      Mail: priya@shop.co.in
+      Pin: 673001
+    `);
+    expect(parsed.fields.name).toBe("Priya");
+    expect(parsed.fields.phone).toBe("9876543210");
+    expect(parsed.fields.email).toBe("priya@shop.co.in");
+    expect(parsed.fields.pincode).toBe("673001");
+  });
+
+  it("maps AI address to line1 when line1 is empty", () => {
+    const parsed = fieldsFromUnknown({
+      name: "Rahul",
+      address: "12 ABC House, Main Road",
+      line1: "",
+    });
+    expect(parsed.fields.line1).toBe("12 ABC House, Main Road");
+  });
+
+  it("drops invented AI phones and pins while keeping valid fields", () => {
+    const parsed = fieldsFromUnknown({
+      name: "Rahul",
+      phone: "12345",
+      pincode: "12AB",
+      city: "Kozhikode",
+      state: "Kerala",
+      line1: "12 ABC House",
+    });
+    expect(parsed.fields.phone).toBeUndefined();
+    expect(parsed.fields.pincode).toBeUndefined();
+    expect(parsed.fields).toMatchObject({
+      name: "Rahul",
+      city: "Kozhikode",
+      state: "Kerala",
+      line1: "12 ABC House",
+    });
   });
 });

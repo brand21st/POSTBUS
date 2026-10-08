@@ -231,7 +231,9 @@ export function validateIndiaPostArticle(draft: DraftArticle): ValidationIssue[]
   checkText(draft, "sender_name", draft.sender.name, true, config, issues);
   checkText(draft, "sender_company", draft.sender.company, true, config, issues);
   checkText(draft, "sender_add_line_1", draft.sender.line1, true, config, issues);
-  if (trimText(draft.sender.line2)) checkText(draft, "sender_add_line_2", draft.sender.line2 ?? "", false, config, issues);
+  if (trimText(draft.sender.line2).length >= 3) {
+    checkText(draft, "sender_add_line_2", draft.sender.line2 ?? "", false, config, issues);
+  }
   checkText(draft, "sender_city", draft.sender.city, true, config, issues);
   if (trimText(draft.sender.state)) checkText(draft, "sender_state", draft.sender.state ?? "", false, config, issues);
   checkPin(draft, "sender_pincode", draft.sender.pincode, true, config, issues);
@@ -240,7 +242,9 @@ export function validateIndiaPostArticle(draft: DraftArticle): ValidationIssue[]
   checkText(draft, "receiver_name", draft.receiver.name, true, shopify, issues);
   checkText(draft, "receiver_company", draft.receiver.company, true, shopify, issues);
   checkText(draft, "receiver_add_line_1", draft.receiver.line1, true, shopify, issues);
-  if (trimText(draft.receiver.line2)) checkText(draft, "receiver_add_line_2", draft.receiver.line2 ?? "", false, shopify, issues);
+  if (trimText(draft.receiver.line2).length >= 3) {
+    checkText(draft, "receiver_add_line_2", draft.receiver.line2 ?? "", false, shopify, issues);
+  }
   checkText(draft, "receiver_city", draft.receiver.city, true, shopify, issues);
   if (trimText(draft.receiver.state)) checkText(draft, "receiver_state", draft.receiver.state ?? "", false, shopify, issues);
   checkPin(draft, "receiver_pincode", draft.receiver.pincode, true, shopify, issues);

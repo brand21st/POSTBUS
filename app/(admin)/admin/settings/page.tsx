@@ -79,6 +79,16 @@ type VachatStats = {
   last30d: Record<string, number>;
 };
 
+type OpenRouterSettings = {
+  enabled: boolean;
+  connected: boolean;
+  hasApiKey: boolean;
+  keyMasked: string;
+  model: string;
+  source: string;
+  models?: Array<{ id: string; name: string }>;
+};
+
 type VachatLogRow = {
   id: string;
   organization_id: string;
@@ -96,6 +106,17 @@ export default function AdminSettingsPage() {
     queryKey: ["admin", "settings", "razorpay"],
     queryFn: () => api<RazorpaySettings>("/api/admin/settings/razorpay"),
   });
+  const openrouterQuery = useQuery({
+    queryKey: ["admin", "settings", "openrouter"],
+    queryFn: () => api<OpenRouterSettings>("/api/admin/settings/openrouter"),
+  });
+  const openrouterModelsQuery = useQuery({
+    queryKey: ["admin", "settings", "openrouter", "models"],
+    queryFn: () =>
+      api<{ models: Array<{ id: string; name: string }>; selected: string }>(
+        "/api/admin/settings/openrouter/models"
+      ),
+  });
   const vachatQuery = useQuery({
     queryKey: ["admin", "settings", "vachat"],
     queryFn: () => api<VachatSettings>("/api/admin/settings/vachat"),
@@ -110,9 +131,13 @@ export default function AdminSettingsPage() {
   });
   const data = query.data;
   const vachat = vachatQuery.data;
+  const openrouter = openrouterQuery.data;
   const [keyId, setKeyId] = useState("");
   const [keySecret, setKeySecret] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [openrouterKey, setOpenrouterKey] = useState("");
+  const [openrouterModel, setOpenrouterModel] = useState("");
+  const [openrouterEnabled, setOpenrouterEnabled] = useState<boolean | null>(null);
   const [vachatKey, setVachatKey] = useState("");
   const [vachatUrl, setVachatUrl] = useState("");
   const [vachatEnabled, setVachatEnabled] = useState<boolean | null>(null);
@@ -121,6 +146,9 @@ export default function AdminSettingsPage() {
   const [templateDraft, setTemplateDraft] = useState<Partial<Record<string, string>>>({});
   const resolvedKeyId = keyId || data?.keyId || "";
   const resolvedVachatUrl = vachatUrl || vachat?.apiBaseUrl || "https://cloud.vachat.in";
+  const resolvedOpenrouterEnabled = openrouterEnabled ?? openrouter?.enabled ?? false;
+  const chatgptModels = openrouterModelsQuery.data?.models ?? openrouter?.models ?? [];
+  const resolvedOpenrouterModel = openrouterModel || openrouter?.model || "openai/gpt-4o-mini";
   const resolvedVachatEnabled = vachatEnabled ?? vachat?.enabled ?? false;
   const resolvedTestPhone = vachatTestPhone || vachat?.lastTestPhone || "";
   const templateCol: Record<VachatEventKey, string> = {
@@ -175,6 +203,52 @@ export default function AdminSettingsPage() {
     onSuccess: () => {
       toast.success("Razorpay billing webhook registered.");
       client.invalidateQueries({ queryKey: ["admin", "settings", "razorpay"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const saveOpenrouter = useMutation({
+    mutationFn: () =>
+      api<OpenRouterSettings>("/api/admin/settings/openrouter", {
+        method: "PATCH",
+        body: JSON.stringify({
+          enabled: resolvedOpenrouterEnabled,
+          model: resolvedOpenrouterModel,
+          apiKey: openrouterKey || undefined,
+        }),
+      }),
+    onSuccess: () => {
+      toast.success("OpenRouter credentials saved.");
+      setOpenrouterKey("");
+      client.invalidateQueries({ queryKey: ["admin", "settings", "openrouter"] });
+      client.invalidateQueries({ queryKey: ["admin", "settings", "openrouter", "models"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const testOpenrouter = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; model: string; label: string | null }>("/api/admin/settings/openrouter/test", {
+        method: "POST",
+        body: JSON.stringify({ apiKey: openrouterKey || undefined }),
+      }),
+    onSuccess: (result) => {
+      toast.success(result.label ? `OpenRouter OK (${result.label}).` : "OpenRouter API OK.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const disconnectOpenrouter = useMutation({
+    mutationFn: () =>
+      api<OpenRouterSettings>("/api/admin/settings/openrouter", {
+        method: "PATCH",
+        body: JSON.stringify({ clearKey: true, enabled: false }),
+      }),
+    onSuccess: () => {
+      toast.success("OpenRouter disconnected.");
+      setOpenrouterEnabled(false);
+      setOpenrouterKey("");
+      client.invalidateQueries({ queryKey: ["admin", "settings", "openrouter"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -288,7 +362,7 @@ export default function AdminSettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="System settings"
-        description="Connect Razorpay for billing and one global VaChat WhatsApp sender for every merchant. Secrets are encrypted and never shown again."
+        description="Connect Razorpay for billing, OpenRouter for WhatsApp paste autofill, and one global VaChat WhatsApp sender. Secrets are encrypted and never shown again."
       />
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
@@ -357,6 +431,78 @@ export default function AdminSettingsPage() {
           {data?.source && data.source !== "none" ? (
             <p className="text-xs text-muted">Active source: {data.source}.</p>
           ) : null}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <CardTitle>OpenRouter (WhatsApp paste)</CardTitle>
+          <Badge variant={openrouter?.connected ? "success" : "warning"}>
+            {openrouter?.connected ? "Connected" : "Not configured"}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-5 p-6 pt-0">
+          <p className="text-sm text-muted">
+            One platform key for every merchant. Parse message on Add order uses AI to fill name, phone, and address.
+            If the key is off or the request fails, the local parser still runs.
+          </p>
+          {openrouter?.hasApiKey && openrouter.keyMasked ? (
+            <p className="text-xs text-muted">Saved key: {openrouter.keyMasked}</p>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <input
+              id="openrouter-enabled"
+              type="checkbox"
+              checked={resolvedOpenrouterEnabled}
+              onChange={(event) => setOpenrouterEnabled(event.target.checked)}
+            />
+            <Label htmlFor="openrouter-enabled">Enable AI parse for pasted WhatsApp customer details</Label>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="openrouter-model">ChatGPT model</Label>
+            <Combobox
+              id="openrouter-model"
+              placeholder={openrouterModelsQuery.isPending ? "Loading ChatGPT models…" : "Select a ChatGPT model"}
+              emptyText="No ChatGPT models found"
+              value={resolvedOpenrouterModel}
+              onChange={(value) => setOpenrouterModel(value)}
+              options={
+                chatgptModels.length
+                  ? chatgptModels.map((item) => ({ value: item.id, label: `${item.name} · ${item.id}` }))
+                  : [{ value: resolvedOpenrouterModel, label: resolvedOpenrouterModel }]
+              }
+            />
+            <p className="text-xs text-muted">OpenAI ChatGPT models via OpenRouter. Save after changing the model.</p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="openrouter-key">API key</Label>
+            <Input
+              id="openrouter-key"
+              type="password"
+              autoComplete="new-password"
+              placeholder={openrouter?.hasApiKey ? "Saved — leave blank to keep" : "sk-or-v1-…"}
+              value={openrouterKey}
+              onChange={(event) => setOpenrouterKey(event.target.value)}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              onClick={() => saveOpenrouter.mutate()}
+              disabled={saveOpenrouter.isPending || (!openrouter?.hasApiKey && !openrouterKey)}
+            >
+              {saveOpenrouter.isPending ? "Saving…" : "Save"}
+            </Button>
+            <Button variant="secondary" onClick={() => testOpenrouter.mutate()} disabled={testOpenrouter.isPending}>
+              {testOpenrouter.isPending ? "Testing…" : "Test API"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => disconnectOpenrouter.mutate()}
+              disabled={disconnectOpenrouter.isPending || !openrouter?.hasApiKey}
+            >
+              {disconnectOpenrouter.isPending ? "Disconnecting…" : "Disconnect"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
       <Card>

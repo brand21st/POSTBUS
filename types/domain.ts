@@ -51,7 +51,7 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   PENDING: "Not paid yet",
-  PAID: "Paid in full",
+  PAID: "Paid - full payment",
   PARTIAL: "Partial — collect rest on delivery",
   COD: "Cash on delivery",
   REFUNDED: "Refunded",
