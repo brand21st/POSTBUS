@@ -1,3 +1,8 @@
+import {
+  isCeptTemporaryProcessingConflict,
+  isIndiaPostDuplicateArticleMessage,
+} from "@/modules/india-post/error-text";
+
 export const RETRY_DELAYS_MS = [
   60_000,
   5 * 60_000,
@@ -38,6 +43,7 @@ export type ClassifiedError = {
   retryable: boolean;
   code: string;
   message: string;
+  httpStatus?: number;
 };
 
 export function classifyProviderError(error: unknown): ClassifiedError {
@@ -50,28 +56,40 @@ export function classifyProviderError(error: unknown): ClassifiedError {
   const message = anyError?.message || "Provider request failed.";
   const code = anyError?.code || (anyError?.status ? `HTTP_${anyError.status}` : "PROVIDER_ERROR");
 
+  const httpStatus = typeof anyError?.status === "number" ? anyError.status : undefined;
+
   if (PERMANENT_CODES.has(code)) {
-    return { retryable: false, code, message };
+    return { retryable: false, code, message, httpStatus };
+  }
+
+  if (isCeptTemporaryProcessingConflict(anyError)) {
+    return { retryable: true, code: "TEMPORARY_PROVIDER_FAILURE", message, httpStatus: httpStatus ?? 409 };
   }
 
   if (anyError?.name === "AbortError" || anyError?.name === "TimeoutError" || anyError?.code === "ABORT_ERR") {
-    return { retryable: true, code: "ETIMEDOUT", message };
+    return { retryable: true, code: "ETIMEDOUT", message, httpStatus };
   }
 
   if (typeof anyError?.status === "number") {
+    if (anyError.status === 409) {
+      if (isIndiaPostDuplicateArticleMessage(message)) {
+        return { retryable: false, code: "CEPT_DUPLICATE", message, httpStatus: 409 };
+      }
+      return { retryable: false, code: "CEPT_UNKNOWN", message, httpStatus: 409 };
+    }
     if (anyError.status === 429 || anyError.status >= 500) {
-      return { retryable: true, code: `HTTP_${anyError.status}`, message };
+      return { retryable: true, code: `HTTP_${anyError.status}`, message, httpStatus };
     }
     if (anyError.status >= 400 && anyError.status < 500) {
-      return { retryable: false, code: `HTTP_${anyError.status}`, message };
+      return { retryable: false, code: `HTTP_${anyError.status}`, message, httpStatus };
     }
   }
 
   if (RETRYABLE_CODES.has(code) || /timeout|temporar|network|econn/i.test(message)) {
-    return { retryable: true, code, message };
+    return { retryable: true, code, message, httpStatus };
   }
 
-  return { retryable: false, code, message };
+  return { retryable: false, code, message, httpStatus };
 }
 
 export function delayForAttempt(attemptCount: number) {

@@ -11,6 +11,7 @@ import {
   isIndiaPostAcceptedStatus,
 } from "@/modules/india-post/booking-status";
 import { resolveDefaultServiceCode, savedParcelContracts } from "@/modules/india-post/contracts";
+import { whatsappShipmentBlocked } from "@/lib/dashboard/records";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { INDIA_POST_SERVICES } from "@/types/domain";
@@ -154,7 +155,19 @@ export async function createShipmentsForOrders(
 
   const created = [];
   const skipped = [];
+  const whatsappBlocked: string[] = [];
   for (const order of orders) {
+    if (
+      whatsappShipmentBlocked({
+        source: order.source,
+        status: order.status,
+        payment_status: (order as { payment_status?: string }).payment_status,
+      })
+    ) {
+      whatsappBlocked.push(String(order.order_number ?? order.id));
+      skipped.push(order.id);
+      continue;
+    }
     const current = existingByOrder.get(order.id);
     const currentStatus = (current?.status ?? "").toUpperCase();
     const alreadyBooked = isIndiaPostAcceptedStatus(currentStatus);
@@ -200,13 +213,14 @@ export async function createShipmentsForOrders(
     }
 
     if (enqueueBooking && current && !alreadyBooked) {
+      const recovering = currentStatus === "RECOVERY_REQUIRED" || currentStatus === "BOOKING";
       const collect = shipmentCollectFromOrder(order);
       await supabase
         .from("shipments")
         .update({
-          status: "QUEUED",
-          last_error: null,
-          last_error_code: null,
+          ...(recovering
+            ? { status: currentStatus }
+            : { status: "QUEUED", last_error: null, last_error_code: null }),
           payment_mode: collect.payment_mode,
           cod_amount: collect.cod_amount,
           service_code: serviceFor(order),
@@ -293,9 +307,11 @@ export async function createShipmentsForOrders(
   if (!created.length && skipped.length) {
     throw new AppError(
       ERROR_CODES.CONFLICT,
-      skipped.length === 1
-        ? "This order already has a shipment. Open the shipment to retry or cancel it."
-        : "Every selected order already has a shipment."
+      whatsappBlocked.length
+        ? `${whatsappBlocked[0]} cannot be booked until the WhatsApp order is READY.`
+        : skipped.length === 1
+          ? "This order already has a shipment. Open the shipment to retry or cancel it."
+          : "Every selected order already has a shipment."
     );
   }
 

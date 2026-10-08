@@ -22,17 +22,37 @@ export function isAuthoritativeIndiaPostBooking(row: {
   return isIndiaPostAcceptedStatus(row.status);
 }
 
-/** CAS already took the row; CEPT outcome is not persisted. Do not POST book again. */
+const UNKNOWN_BOOKING_STATUSES = new Set(["BOOKING", "RECOVERY_REQUIRED"]);
+
+/** CAS already took the row; CEPT outcome is not persisted. Do not POST book again unless recovery allows it. */
 export function isIndiaPostBookingUnknown(row: {
   status?: string | null;
   barcode?: string | null;
   booked_at?: string | null;
 }) {
   return (
-    String(row.status ?? "").toUpperCase() === "BOOKING" &&
+    UNKNOWN_BOOKING_STATUSES.has(String(row.status ?? "").toUpperCase()) &&
     Boolean(shipmentBarcode(row.barcode)) &&
     !row.booked_at
   );
+}
+
+/**
+ * Empty tracking is not proof the article was rejected.
+ * A second CEPT POST is allowed only via trackingConfirmedNotBooked().
+ */
+export function canRetryCeptPostAfterUnknown(row?: { last_error_code?: string | null }) {
+  void row;
+  return false;
+}
+
+/** Tracking explicitly proved this article was not accepted. Empty/unavailable results are not proof. */
+export function trackingConfirmedNotBooked(result: unknown, barcode: string) {
+  if (trackingHasArticle(result, barcode)) return false;
+  if (result == null) return false;
+  const rec = result as { message?: string; error?: string };
+  const message = String(rec.message ?? rec.error ?? "");
+  return /not found|no record|article not booked|not booked/i.test(message);
 }
 
 export function barcodeLogRef(barcode?: string | null) {

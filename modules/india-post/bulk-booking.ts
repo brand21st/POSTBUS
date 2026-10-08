@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { whatsappShipmentBlocked } from "@/lib/dashboard/records";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapExcelRowToArticle, mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import type { DraftArticle, DraftPickup, ValidationIssue } from "@/modules/india-post/article-types";
@@ -41,6 +42,7 @@ export type BulkBookingResult = {
   processing: number;
   booked: number;
   failed: number;
+  retrying: number;
   labelsGenerated: number;
   manifestEligible: number;
   rows: BulkBookingRow[];
@@ -76,11 +78,29 @@ async function loadStoreContext(supabase: SupabaseClient, organizationId: string
   return { connection, pickup, org, shop, defaultService, allowedServices };
 }
 
-function countsFromShipments(shipments: Array<{ status?: string | null }>) {
+function isRetryingShipment(row: { status?: string | null; last_error_code?: string | null }) {
+  const status = String(row.status ?? "").toUpperCase();
+  const code = String(row.last_error_code ?? "").toUpperCase();
+  if (!code) return false;
+  if (status === "QUEUED") return true;
+  if (status === "RECOVERY_REQUIRED") return true;
+  if (status === "BOOKING" && (code === "ETIMEDOUT" || code === "TEMPORARY_PROVIDER_FAILURE" || code === "CEPT_UNKNOWN")) {
+    return true;
+  }
+  return false;
+}
+
+export function countsFromShipments(
+  shipments: Array<{ status?: string | null; last_error_code?: string | null }>
+) {
   const statusOf = (value?: string | null) => String(value ?? "").toUpperCase();
+  const retrying = shipments.filter((row) => isRetryingShipment(row)).length;
+  const queued = shipments.filter((row) => statusOf(row.status) === "QUEUED" && !isRetryingShipment(row)).length;
   return {
-    queued: shipments.filter((row) => statusOf(row.status) === "QUEUED").length,
-    processing: shipments.filter((row) => ["BOOKING", "VALIDATING"].includes(statusOf(row.status))).length,
+    queued,
+    retrying,
+    processing: shipments.filter((row) => ["BOOKING", "VALIDATING"].includes(statusOf(row.status)) && !isRetryingShipment(row))
+      .length,
     booked: shipments.filter((row) => isIndiaPostAcceptedStatus(row.status)).length,
     failed: shipments.filter((row) => statusOf(row.status) === "FAILED").length,
     labelsGenerated: shipments.filter((row) =>
@@ -100,7 +120,7 @@ export async function summarizeBulkBookings(
   const ids = [...new Set(orderIds)].slice(0, 500);
   const { data: shipments } = await supabase
     .from("shipments")
-    .select("id, order_id, status, barcode")
+    .select("id, order_id, status, barcode, last_error_code")
     .eq("organization_id", ctx.organizationId)
     .in("order_id", ids);
   const stats = countsFromShipments(shipments ?? []);
@@ -174,7 +194,7 @@ export async function validateOrdersForBooking(
       status: "Failed",
       category: "POSTBUS_CONFIG",
     }));
-    return { total: ids.length, valid: 0, invalid: ids.length, queued: 0, processing: 0, booked: 0, failed: 0, labelsGenerated: 0, manifestEligible: 0, rows: [], issues };
+    return { total: ids.length, valid: 0, invalid: ids.length, queued: 0, retrying: 0, processing: 0, booked: 0, failed: 0, labelsGenerated: 0, manifestEligible: 0, rows: [], issues };
   }
 
   const rows: BulkBookingRow[] = [];
@@ -192,6 +212,35 @@ export async function validateOrdersForBooking(
       pincode?: string;
       phone?: string;
     } | null;
+    if (
+      whatsappShipmentBlocked({
+        source: (order as { source?: string }).source,
+        status: (order as { status?: string }).status,
+        payment_status: (order as { payment_status?: string }).payment_status,
+      })
+    ) {
+      const issue: ValidationIssue = {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        barcode: "",
+        field: "order",
+        value: order.order_number,
+        error: "WhatsApp orders cannot be booked until they are READY.",
+        status: "Failed",
+        category: "BOOKING",
+      };
+      issues.push(issue);
+      rows.push({
+        orderId: order.id,
+        orderNumber: order.order_number,
+        shipmentId: "",
+        barcode: "",
+        valid: false,
+        issues: [issue],
+        status: String((order as { status?: string }).status ?? ""),
+      });
+      continue;
+    }
     const existing = ((order.shipments as Array<Record<string, unknown>>) ?? [])[0];
     const existingStatus = String(existing?.status ?? "");
     if (existing && isIndiaPostAcceptedStatus(existingStatus)) {
@@ -422,6 +471,7 @@ export async function validateExcelBuffer(
       valid: 0,
       invalid: parsed.articles.length,
       queued: 0,
+      retrying: 0,
       processing: 0,
       booked: 0,
       failed: 0,
@@ -542,6 +592,7 @@ export async function validateExcelBuffer(
     valid,
     invalid: parsed.articles.length - valid,
     queued: 0,
+    retrying: 0,
     processing: 0,
     booked: 0,
     failed: 0,

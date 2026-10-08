@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { splitIndiaPostBookingResult } from "@/modules/india-post/booking-apply";
 import {
+  canRetryCeptPostAfterUnknown,
   isAuthoritativeIndiaPostBooking,
   isIndiaPostBookingUnknown,
   trackingHasArticle,
@@ -115,6 +116,10 @@ function memoryDb(rows: Record<string, unknown>[]) {
   };
 
   const supabase = {
+    rpc: async (name: string) => {
+      if (name === "acquire_india_post_booking_lock") return { data: "token-test", error: null };
+      return { data: null, error: null };
+    },
     from: (table: string) => {
       if (table === "india_post_connections") {
         return {
@@ -218,8 +223,9 @@ describe("booking idempotency helpers", () => {
     ).toBe(true);
   });
 
-  it("detects unknown in-flight BOOKING", () => {
+  it("detects unknown in-flight BOOKING and RECOVERY_REQUIRED", () => {
     expect(isIndiaPostBookingUnknown({ status: "BOOKING", barcode: BARCODE, booked_at: null })).toBe(true);
+    expect(isIndiaPostBookingUnknown({ status: "RECOVERY_REQUIRED", barcode: BARCODE, booked_at: null })).toBe(true);
   });
 
   it("detects duplicate article copy", () => {
@@ -238,6 +244,10 @@ describe("booking idempotency helpers", () => {
     expect(
       trackingHasArticle({ data: [{ booking_details: { article_number: BARCODE } }] }, BARCODE)
     ).toBe(true);
+  });
+
+  it("never treats TEMPORARY_PROVIDER_FAILURE as authorization to POST", () => {
+    expect(canRetryCeptPostAfterUnknown({ last_error_code: "TEMPORARY_PROVIDER_FAILURE" })).toBe(false);
   });
 });
 
@@ -296,8 +306,9 @@ describe("runIndiaPostBooking idempotency", () => {
     store[0]!.tracking_number = null;
     await expect(
       runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
     expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
   });
 
   it("TEST 6 duplicate CEPT response is not generic FAILED", async () => {
@@ -330,10 +341,13 @@ describe("runIndiaPostBooking idempotency", () => {
     ).rejects.toMatchObject({ code: "ETIMEDOUT" });
     expect(store[0]?.status).toBe("BOOKING");
     expect(store[0]?.booked_at).toBeNull();
+    store[0]!.status = "RECOVERY_REQUIRED";
+    store[0]!.last_error_code = "ETIMEDOUT";
     await expect(
       runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
     ).rejects.toMatchObject({ code: "ETIMEDOUT" });
     expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
   });
 
   it("TEST 9 pre-CEPT validation failure can retry CEPT later", async () => {
@@ -358,6 +372,161 @@ describe("runIndiaPostBooking idempotency", () => {
     const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
     expect(bookShipmentMock).toHaveBeenCalledTimes(1);
     expect(outcome.bookedIds).toEqual(["ship-1"]);
+  });
+
+  async function firstTemporary409() {
+    const conflict = Object.assign(new Error("Internal server error during processing"), { status: 409 });
+    bookShipmentMock.mockReset().mockRejectedValueOnce(conflict);
+    const { supabase, store } = memoryDb([baseShipment()]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    store[0]!.last_error_code = "TEMPORARY_PROVIDER_FAILURE";
+    store[0]!.status = "RECOVERY_REQUIRED";
+    return { supabase, store };
+  }
+
+  it("does not POST again after temporary 409 when tracking is empty", async () => {
+    const { supabase, store } = await firstTemporary409();
+    trackShipmentMock.mockReset().mockResolvedValue({ data: [] });
+    bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    expect(store[0]?.last_error_code).toBe("CEPT_UNKNOWN");
+    expect(store[0]?.booked_at).toBeNull();
+  });
+
+  it("does not POST again after temporary 409 when tracking is unavailable", async () => {
+    const { supabase, store } = await firstTemporary409();
+    trackShipmentMock.mockReset().mockRejectedValueOnce(new Error("tracking unavailable"));
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+  });
+
+  it("marks BOOKED from tracking after temporary 409 without a second POST", async () => {
+    const { supabase, store } = await firstTemporary409();
+    trackShipmentMock.mockReset().mockResolvedValue({
+      data: [{ booking_details: { article_number: BARCODE } }],
+    });
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+  });
+
+  it("allows one controlled POST after temporary 409 when tracking confirms not booked", async () => {
+    const { supabase, store } = await firstTemporary409();
+    bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
+    trackShipmentMock.mockReset().mockResolvedValue({ message: "Article not booked" });
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+  });
+
+  it("does not POST on auto or manual retry after temporary 409 + empty tracking", async () => {
+    const { supabase, store } = await firstTemporary409();
+    trackShipmentMock.mockReset().mockResolvedValue({ data: [] });
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+  });
+
+  it("does not POST when the DB booking lock RPC is unavailable", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase } = memoryDb([baseShipment()]);
+    delete (supabase as { rpc?: unknown }).rpc;
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "TEMPORARY_PROVIDER_FAILURE" });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+  });
+
+  it("recovers an unknown booking from tracking without a second CEPT POST", async () => {
+    bookShipmentMock.mockReset();
+    trackShipmentMock.mockReset().mockResolvedValue({
+      data: [{ booking_details: { article_number: BARCODE } }],
+    });
+    const { supabase, store } = memoryDb([
+      baseShipment({ status: "RECOVERY_REQUIRED", booked_at: null, last_error_code: "ETIMEDOUT" }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+  });
+
+  it("allows exactly one controlled CEPT POST after tracking confirms not booked", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    trackShipmentMock.mockReset().mockResolvedValue({ message: "Article not booked" });
+    const { supabase, store } = memoryDb([
+      baseShipment({ status: "RECOVERY_REQUIRED", booked_at: null, last_error_code: "ETIMEDOUT" }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+  });
+
+  it("treats duplicate 409 evidence as booked without retrying CEPT", async () => {
+    bookShipmentMock.mockReset().mockRejectedValueOnce(
+      Object.assign(new Error("Duplicate article: Already booked today or yesterday"), { status: 409 })
+    );
+    const { supabase, store } = memoryDb([baseShipment()]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+  });
+
+  it("does not blindly rebook an unrecognized 409", async () => {
+    bookShipmentMock.mockReset().mockRejectedValueOnce(
+      Object.assign(new Error("Mysterious conflict"), { status: 409 })
+    );
+    trackShipmentMock.mockReset().mockResolvedValue({ data: [] });
+    const { supabase, store } = memoryDb([baseShipment()]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(store[0]?.status).toBe("BOOKING");
+    expect(store[0]?.booked_at).toBeNull();
+    store[0]!.last_error_code = "CEPT_UNKNOWN";
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+  });
+
+  it("keeps PIN tariff rejection as FAILED without booked_at", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce({
+      error_articles: [
+        {
+          barcode_no: BARCODE,
+          errors: ["Please provide proper data for tariff calculation - Destination pincode 673589 not found"],
+        },
+      ],
+    });
+    const { supabase, store } = memoryDb([baseShipment()]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("FAILED");
+    expect(store[0]?.booked_at).toBeNull();
+    expect(store[0]?.tracking_number).toBeNull();
   });
 
   it("TEST 10 tenant isolation keeps the same barcode on another org bookable", async () => {

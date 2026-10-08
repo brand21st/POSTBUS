@@ -145,11 +145,41 @@ export function itemSummary(order: {
   return `${label} · ${names}`;
 }
 
-export function canProcessOrder(order: { status?: string | null }) {
+const WHATSAPP_SETTLED_PAYMENTS = new Set(["COD", "PAID", "PARTIAL"]);
+const WHATSAPP_POST_READY_STATUSES = new Set(["BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"]);
+
+export function whatsappShipmentBlocked(order: {
+  status?: string | null;
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  if ((order.source ?? "").toUpperCase() !== "WHATSAPP") return false;
+  const status = (order.status ?? "").toUpperCase();
+  if (status === "READY") return false;
+  if (WHATSAPP_POST_READY_STATUSES.has(status)) return false;
+  const payment = (order.payment_status ?? order.paymentStatus ?? "").toUpperCase();
+  if (status === "PROCESSING" && WHATSAPP_SETTLED_PAYMENTS.has(payment)) return false;
+  return true;
+}
+
+export function canProcessOrder(order: {
+  status?: string | null;
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  if (whatsappShipmentBlocked(order) && (order.status ?? "").toUpperCase() !== "PROCESSING") return false;
   return !BLOCKED_PROCESS_STATUSES.has((order.status ?? "").toUpperCase());
 }
 
-export function canFulfillOrder(order: { status?: string | null }) {
+export function canFulfillOrder(order: {
+  status?: string | null;
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  if (whatsappShipmentBlocked(order)) return false;
   return !BLOCKED_FULFILL_STATUSES.has((order.status ?? "").toUpperCase());
 }
 
@@ -158,7 +188,18 @@ export function fulfillSkipReason(order: {
   orderNumber?: string;
   order_number?: string;
   status?: string | null;
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
 }) {
+  if (whatsappShipmentBlocked(order)) {
+    const number = orderNumber({
+      id: order.id ?? "",
+      orderNumber: order.orderNumber,
+      order_number: order.order_number,
+    });
+    return `Order #${number} cannot be booked until the WhatsApp order is READY.`;
+  }
   if (canFulfillOrder(order)) return null;
   const status = (order.status ?? "").toUpperCase();
   const number = orderNumber({
@@ -173,7 +214,12 @@ export function fulfillSkipReason(order: {
   return `Order #${number} cannot be marked Booked / packed because it is already ${statusLabel}.`;
 }
 
-export function canShipOrder(order: { status?: string | null }) {
+export function canShipOrder(order: {
+  status?: string | null;
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
   return canFulfillOrder(order);
 }
 
@@ -190,15 +236,33 @@ export function isShopifyConnected(payload?: IntegrationsResponse | null) {
   return status === "CONNECTED" || Boolean(payload?.shopify?.readyToSync);
 }
 
-export function canProcessOrderAction(order: { status?: string | null }, extrasConnected = false) {
+export function canProcessOrderAction(
+  order: {
+    status?: string | null;
+    source?: string | null;
+    payment_status?: string | null;
+    paymentStatus?: string | null;
+  },
+  extrasConnected = false
+) {
   const status = (order.status ?? "").toUpperCase();
   if (status === "CANCELLED") return false;
+  if (whatsappShipmentBlocked(order) && status !== "PROCESSING") return false;
   return extrasConnected || canProcessOrder(order);
 }
 
-export function canFulfillOrderAction(order: { status?: string | null }, extrasConnected = false) {
+export function canFulfillOrderAction(
+  order: {
+    status?: string | null;
+    source?: string | null;
+    payment_status?: string | null;
+    paymentStatus?: string | null;
+  },
+  extrasConnected = false
+) {
   const status = (order.status ?? "").toUpperCase();
   if (status === "CANCELLED") return false;
+  if (whatsappShipmentBlocked(order)) return false;
   return extrasConnected || canFulfillOrder(order);
 }
 
@@ -238,7 +302,14 @@ export function completedOrderStageCount(status?: string | null) {
   }
 }
 
-export function orderStageMenu(status?: string | null) {
+export function orderStageMenu(
+  status?: string | null,
+  source?: string | null,
+  paymentStatus?: string | null
+) {
+  if (whatsappShipmentBlocked({ status, source, payment_status: paymentStatus })) {
+    return { hideActions: true, completed: [] as Array<{ action: OrderStageAction; label: string }>, next: null };
+  }
   const normalized = (status ?? "").toUpperCase();
   const hideActions = normalized === "DELIVERED" || normalized === "CANCELLED";
   const completedCount = completedOrderStageCount(status);

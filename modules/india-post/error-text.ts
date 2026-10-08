@@ -44,6 +44,22 @@ export function isIndiaPostDuplicateArticleMessage(value?: string | null) {
   return /duplicate article/i.test(text) || /already booked today or yesterday/i.test(text);
 }
 
+/** CEPT HTTP 409 + this copy is a session/conflict, not a duplicate article. */
+export const CEPT_TEMPORARY_PROCESSING_MESSAGE = /internal server error during processing/i;
+
+export function isCeptTemporaryProcessingConflict(error: {
+  status?: number;
+  code?: string;
+  message?: string;
+} | unknown) {
+  const anyError = error as { status?: number; code?: string; message?: string };
+  const message = String(anyError?.message ?? "");
+  if (!CEPT_TEMPORARY_PROCESSING_MESSAGE.test(message)) return false;
+  const status = anyError?.status;
+  const code = String(anyError?.code ?? "").toUpperCase();
+  return status === 409 || code === "HTTP_409";
+}
+
 export function indiaPostFormatBookingFailure(json: unknown): string {
   const rec = json && typeof json === "object" ? (json as Record<string, unknown>) : {};
   const field = Array.isArray(rec.errors) ? indiaPostJoinMessages(rec.errors) : "";

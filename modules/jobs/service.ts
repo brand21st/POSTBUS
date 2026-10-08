@@ -3,6 +3,7 @@ import { enqueueJob } from "@/lib/queue/queues";
 import { usesDatabaseJobRunner } from "@/lib/env";
 import { logError } from "@/lib/logger";
 import type { JobType } from "@/types/domain";
+import { enqueueShipmentBookingJob } from "@/modules/jobs/shipment-booking-job";
 
 export async function createBackgroundJob(
   supabase: SupabaseClient,
@@ -16,6 +17,10 @@ export async function createBackgroundJob(
     progress?: Record<string, unknown>;
   }
 ) {
+  if (input.jobType === "shipment-booking" && input.entityId) {
+    return enqueueShipmentBookingJob(supabase, input);
+  }
+
   const { data, error } = await supabase
     .from("background_jobs")
     .insert({

@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs/retry";
+import { bookingFailureShipmentUpdate } from "@/modules/india-post/booking-failure-state";
 import { logError, logInfo } from "@/lib/logger";
 import {
   AUTOMATION_DEFAULTS,
@@ -76,24 +77,36 @@ export async function processJob(queue: string, payload: JobPayload) {
       );
     }
     else if (queue === "vachat-notify") {
-      const { sendVachatNotice, vachatEventFromJobProgress, vachatIdsFromJob } = await import("@/modules/vachat/send");
+      const { sendVachatNotice, sendVachatSessionText, vachatEventFromJobProgress, vachatIdsFromJob } = await import(
+        "@/modules/vachat/send"
+      );
       const { data: job } = await supabase
         .from("background_jobs")
         .select("progress")
         .eq("id", jobId)
         .maybeSingle();
-      const ids = vachatIdsFromJob(job?.progress, payload.entityId);
-      if (!ids.shipmentId && !ids.orderId) {
-        throw Object.assign(new Error("Order or shipment id is missing for Vachat notify."), {
-          code: "VALIDATION_ERROR",
-        });
+      const progress = (job?.progress ?? {}) as {
+        kind?: string;
+        to?: string;
+        text?: string;
+        extras?: { interactive_payload?: Record<string, unknown>; image_url?: string };
+      };
+      if (progress.kind === "session_text") {
+        await sendVachatSessionText(String(progress.to ?? ""), String(progress.text ?? ""), progress.extras);
+      } else {
+        const ids = vachatIdsFromJob(job?.progress, payload.entityId);
+        if (!ids.shipmentId && !ids.orderId) {
+          throw Object.assign(new Error("Order or shipment id is missing for Vachat notify."), {
+            code: "VALIDATION_ERROR",
+          });
+        }
+        await sendVachatNotice(
+          supabase,
+          payload.organizationId,
+          vachatEventFromJobProgress(job?.progress),
+          ids
+        );
       }
-      await sendVachatNotice(
-        supabase,
-        payload.organizationId,
-        vachatEventFromJobProgress(job?.progress),
-        ids
-      );
     }
     else if (queue === "india-post-events") {
       const { processIndiaPostInboxEvent } = await import("@/modules/india-post/webhook");
@@ -112,13 +125,16 @@ export async function processJob(queue: string, payload: JobPayload) {
       .eq("id", jobId);
     logInfo("job.completed", { ...timing, durationMs: Date.now() - started, status: "ok" });
   } catch (error) {
+    const classified = classifyProviderError(error);
     logError("job.failed", {
       ...timing,
       durationMs: Date.now() - started,
       status: "failed",
-      message: error instanceof Error ? error.message : "job failed",
+      message: classified.message,
+      errorCode: classified.code,
+      httpStatus: classified.httpStatus,
+      retryable: classified.retryable,
     });
-    const classified = classifyProviderError(error);
     const { data: job } = await supabase
       .from("background_jobs")
       .select("attempt_count, max_attempts")
@@ -126,6 +142,16 @@ export async function processJob(queue: string, payload: JobPayload) {
       .single();
     const attempt = (job?.attempt_count ?? 0) + 1;
     const retryable = classified.retryable && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
+    const retryDelayMs = retryable ? delayForAttempt(attempt) : 0;
+    logInfo("job.retry_decision", {
+      ...timing,
+      attempt,
+      maxAttempts: job?.max_attempts ?? MAX_ATTEMPTS,
+      errorCode: classified.code,
+      httpStatus: classified.httpStatus,
+      retryable,
+      retryDelayMs,
+    });
     await supabase.from("shipment_job_attempts").insert({
       organization_id: payload.organizationId,
       job_id: jobId,
@@ -144,9 +170,7 @@ export async function processJob(queue: string, payload: JobPayload) {
         attempt_count: attempt,
         last_error: classified.message,
         last_error_code: classified.code,
-        next_attempt_at: retryable
-          ? new Date(Date.now() + delayForAttempt(attempt)).toISOString()
-          : null,
+        next_attempt_at: retryable ? new Date(Date.now() + retryDelayMs).toISOString() : null,
       })
       .eq("id", jobId);
 
@@ -159,16 +183,17 @@ export async function processJob(queue: string, payload: JobPayload) {
       payload.entityType === "shipment" &&
       payload.entityId
     ) {
+    const shipmentPatch = bookingFailureShipmentUpdate(classified, retryable);
     await supabase
       .from("shipments")
       .update({
-        status: retryable ? "QUEUED" : "FAILED",
+        status: shipmentPatch.status,
         last_error: classified.message,
         last_error_code: classified.code,
       })
       .eq("id", payload.entityId)
       .is("booked_at", null)
-      .in("status", retryable ? ["QUEUED", "VALIDATING", "DRAFT", "FAILED"] : ["QUEUED", "VALIDATING", "DRAFT"]);
+      .in("status", [...shipmentPatch.allowedStatuses]);
       await supabase.from("notifications").insert({
         organization_id: payload.organizationId,
         type: retryable ? "shipment.retrying" : "shipment.failed",

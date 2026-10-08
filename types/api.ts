@@ -316,6 +316,7 @@ export type BulkBookingResult = {
   valid: number;
   invalid: number;
   queued: number;
+  retrying: number;
   processing: number;
   booked: number;
   failed: number;

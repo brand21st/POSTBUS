@@ -3,6 +3,7 @@ import {
   indiaPostArticleErrorText,
   indiaPostBookingHasArticleOutcomes,
   indiaPostFormatBookingFailure,
+  isCeptTemporaryProcessingConflict,
   isIndiaPostDuplicateArticleMessage,
 } from "@/modules/india-post/error-text";
 
@@ -36,6 +37,22 @@ describe("indiaPostFormatBookingFailure", () => {
   it("detects duplicate-article CEPT copy", () => {
     expect(isIndiaPostDuplicateArticleMessage("Duplicate article: Already booked today or yesterday")).toBe(true);
     expect(isIndiaPostDuplicateArticleMessage("Dropoff pincode must be exactly 6 digits")).toBe(false);
+  });
+
+  it("detects CEPT 409 processing conflicts without treating other 409s as temporary", () => {
+    expect(
+      isCeptTemporaryProcessingConflict({
+        status: 409,
+        message: "Internal server error during processing",
+      })
+    ).toBe(true);
+    expect(isCeptTemporaryProcessingConflict({ status: 409, message: "Duplicate booking" })).toBe(false);
+    expect(
+      isCeptTemporaryProcessingConflict({
+        status: 500,
+        message: "Internal server error during processing",
+      })
+    ).toBe(false);
   });
 
   it("detects per-article CEPT outcomes", () => {

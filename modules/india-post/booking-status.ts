@@ -11,7 +11,13 @@ export const INDIA_POST_ACCEPTED_STATUSES = new Set([
   "RTO",
 ]);
 
-export const INDIA_POST_IN_FLIGHT_STATUSES = new Set(["VALIDATING", "QUEUED", "BOOKING", "LABEL_PENDING"]);
+export const INDIA_POST_IN_FLIGHT_STATUSES = new Set([
+  "VALIDATING",
+  "QUEUED",
+  "BOOKING",
+  "RECOVERY_REQUIRED",
+  "LABEL_PENDING",
+]);
 
 export function indiaPostStatusOf(value?: string | null) {
   return String(value ?? "").toUpperCase();

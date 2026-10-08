@@ -22,6 +22,7 @@ function Counts({ result }: { result: BulkBookingResult | undefined }) {
     ["Valid", result.valid],
     ["Invalid", result.invalid],
     ["Queued", result.queued],
+    ["Retrying", result.retrying],
     ["Processing", result.processing],
     ["Booked", result.booked],
     ["Failed", result.failed],
@@ -105,6 +106,7 @@ export function BulkIndiaPostBooking({
     ? {
         ...result,
         queued: live?.queued ?? result.queued,
+        retrying: live?.retrying ?? result.retrying,
         processing: live?.processing ?? result.processing,
         booked: live?.booked ?? result.booked,
         failed: live?.failed ?? result.failed,
