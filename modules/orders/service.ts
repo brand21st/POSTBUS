@@ -209,7 +209,11 @@ export async function createManualOrder(
   });
   const requestedNumber = input.orderNumber?.trim() || "";
   let orderNumber = requestedNumber || (await nextOrderNumber(supabase, ctx.organizationId));
-  let order: Record<string, unknown> | null = null;
+  let order: {
+    id: string;
+    order_number: string;
+    total_amount?: number | string | null;
+  } | null = null;
   let orderError: { message?: string } | null = null;
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -233,7 +237,7 @@ export async function createManualOrder(
       })
       .select()
       .single();
-    order = inserted.data as Record<string, unknown> | null;
+    order = inserted.data as typeof order;
     orderError = inserted.error;
     if (!orderError && order) break;
     if (!isOrderNumberConflict(orderError?.message)) break;
@@ -289,7 +293,15 @@ export async function createManualOrder(
     // VaChat knowledge is optional; the order should still be created.
   }
 
-  return { ...order, createShipment: Boolean(input.createShipment), shipment: input.shipment };
+  return {
+    ...order,
+    id: order.id,
+    order_number: order.order_number,
+    orderNumber: order.order_number,
+    totalAmount: Number(order.total_amount ?? 0),
+    createShipment: Boolean(input.createShipment),
+    shipment: input.shipment,
+  };
 }
 
 function insertAddress(
