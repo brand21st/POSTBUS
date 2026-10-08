@@ -63,12 +63,12 @@ export function AiCreditsCheckoutButton({
 }) {
   const client = useQueryClient();
   const start = useMutation({
-    mutationFn: () =>
+    mutationFn: (input: { packageId?: string; credits?: number }) =>
       api<CheckoutResponse>("/api/v1/billing/ai-credits/checkout", {
         method: "POST",
         body: JSON.stringify({
-          packageId: packageId || undefined,
-          credits: packageId ? undefined : credits,
+          packageId: input.packageId || undefined,
+          credits: input.packageId ? undefined : input.credits,
         }),
       }),
     onSuccess: async (data) => {
@@ -117,7 +117,11 @@ export function AiCreditsCheckoutButton({
   });
 
   return (
-    <Button className={className} onClick={() => start.mutate()} disabled={disabled || start.isPending}>
+    <Button
+      className={className}
+      onClick={() => start.mutate({ packageId, credits })}
+      disabled={disabled || start.isPending || (!packageId && !credits)}
+    >
       {start.isPending ? "Starting…" : label}
     </Button>
   );
