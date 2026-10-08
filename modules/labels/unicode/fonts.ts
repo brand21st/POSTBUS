@@ -45,12 +45,12 @@ const FILES: Record<PaintFamily, { regular: string; bold: string; family: string
 
 let registered = false;
 
-function fontDirectories() {
-  return [path.join(process.cwd(), "assets", "fonts", "noto")];
+export function notoFontDirectory() {
+  return path.join(process.cwd(), "assets", "fonts", "noto");
 }
 
-export function notoFontDirectory() {
-  return fontDirectories().find((dir) => existsSync(path.join(dir, FILES.latin.regular))) ?? fontDirectories()[0];
+function notoFontPath(file: string) {
+  return path.join(process.cwd(), "assets", "fonts", "noto", file);
 }
 
 export function registerPaintFonts() {
@@ -58,8 +58,8 @@ export function registerPaintFonts() {
   const dir = notoFontDirectory();
   const { GlobalFonts } = loadCanvas();
   for (const spec of Object.values(FILES)) {
-    const regular = path.join(dir, spec.regular);
-    const bold = path.join(dir, spec.bold);
+    const regular = notoFontPath(spec.regular);
+    const bold = notoFontPath(spec.bold);
     if (!existsSync(regular)) {
       logError("UNICODE_FONT_MISSING", { family: spec.family, file: spec.regular, dir });
       continue;
