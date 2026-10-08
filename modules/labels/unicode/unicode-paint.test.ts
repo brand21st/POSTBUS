@@ -8,6 +8,7 @@ import { SAMPLE_PACKING_DATA } from "@/modules/labels/packing-data";
 import { renderMerchantLabelPdf, renderPackingSlipPdf } from "@/modules/labels/packing-pdf";
 import { renderReceiptPdf, type ReceiptData } from "@/modules/labels/receipt";
 import { indiaPostLabelTemplate } from "@/modules/labels/template-schema";
+import { canvasRequireFrom, loadCanvas } from "@/modules/labels/unicode/canvas-native";
 import { measurePaintText, needsUnicodePaint } from "@/modules/labels/unicode/paint";
 import { measureShapedText, rasterizeShapedLine } from "@/modules/labels/unicode/raster";
 import { sanitizeLabelText, segmentScriptRuns } from "@/modules/labels/unicode/text";
@@ -62,6 +63,13 @@ function packingFor(name: string, address: string) {
     },
   };
 }
+
+describe("native canvas loader", () => {
+  it("resolves @napi-rs/canvas from the project root, not a virtual /ROOT/ filename", () => {
+    expect(canvasRequireFrom()).toBe(path.join(process.cwd(), "package.json"));
+    expect(typeof loadCanvas().createCanvas).toBe("function");
+  });
+});
 
 describe("unicode label text helpers", () => {
   it("keeps NFC, ZWJ and ZWNJ and drops bidi overrides", () => {

@@ -14,6 +14,7 @@ import {
 } from "@/modules/labels/custom-label-service";
 import { generateAndStoreOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
+import { retryIncompleteLabelById, retryIncompleteLabelsByIds } from "@/modules/labels/retry";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
 import { parseLabelTemplate } from "@/modules/labels/template-schema";
@@ -150,6 +151,15 @@ export async function handleLabelTemplateRoutes(
         : "Printer unavailable. Opening the official India Post PDF.",
       downloadPath: `/api/v1/labels/${official.id}/download?raw=1`,
     };
+  }
+
+  if (method === "POST" && slugs[0] === "labels" && slugs[1] === "retry-incomplete" && !slugs[2]) {
+    const body = (await request.json().catch(() => ({}))) as { ids?: unknown };
+    return retryIncompleteLabelsByIds(supabase, ctx.organizationId, body.ids);
+  }
+
+  if (method === "POST" && slugs[0] === "labels" && slugs[2] === "retry") {
+    return retryIncompleteLabelById(supabase, ctx.organizationId, slugs[1]);
   }
 
   if (method === "POST" && slugs[0] === "labels" && slugs[2] === "packing-slip") {

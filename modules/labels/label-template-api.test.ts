@@ -4,6 +4,7 @@ import { ptFromMm } from "@/modules/labels/layout/units";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/lib/api/context";
 import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
+import { retryIncompleteLabelById, retryIncompleteLabelsByIds } from "@/modules/labels/retry";
 import { indiaPostLabelTemplate, type LabelTemplate } from "@/modules/labels/template-schema";
 import { createCustomTextElement } from "@/modules/labels/custom-blocks";
 
@@ -35,6 +36,12 @@ vi.mock("@/modules/labels/persist", () => ({
 
 vi.mock("@/modules/labels/load", () => ({
   loadLabelPdfBytes: vi.fn(async () => Buffer.from("%PDF-1.7 official-cept")),
+}));
+
+vi.mock("@/modules/labels/retry", () => ({
+  retryIncompleteLabelById: vi.fn(),
+  retryIncompleteLabelsByIds: vi.fn(),
+  RETRY_INCOMPLETE_MAX: 20,
 }));
 
 vi.mock("@/modules/print/service", () => ({
@@ -150,6 +157,8 @@ beforeEach(() => {
   snapshots.length = 0;
   printCalls.length = 0;
   labelOps.length = 0;
+  vi.mocked(retryIncompleteLabelById).mockReset();
+  vi.mocked(retryIncompleteLabelsByIds).mockReset();
   labels = null;
   station = { connected: false, paperSize: "A4" };
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
@@ -486,6 +495,29 @@ describe("label template API", () => {
     expect(printed.job.paperSize).toBe("A3");
     expect(printCalls.at(-1)).toMatchObject({ paperSize: "A3" });
     expect(snapshots.at(-1)).toMatchObject({ page: { paperSize: "A3", widthMm: 297, heightMm: 420 } });
+  });
+
+  it("retries a single incomplete label", async () => {
+    vi.mocked(retryIncompleteLabelById).mockResolvedValue({
+      skipped: false,
+      generatedOfficial: false,
+      shipmentId: "ship-1",
+      indiaPostLabelId: "india-1",
+      packingLabelId: "pack-1",
+      message: "Packing slip was generated.",
+    });
+    const result = (await call("POST", "labels/label-1/retry")) as { message: string };
+    expect(result.message).toBe("Packing slip was generated.");
+    expect(retryIncompleteLabelById).toHaveBeenCalledWith(expect.anything(), "org-a", "label-1");
+  });
+
+  it("retries selected incomplete labels in bulk", async () => {
+    vi.mocked(retryIncompleteLabelsByIds).mockResolvedValue({ retried: 2, failed: 0, skipped: 0, results: [] });
+    const result = (await call("POST", "labels/retry-incomplete", { ids: ["a", "b"] })) as {
+      retried: number;
+    };
+    expect(result.retried).toBe(2);
+    expect(retryIncompleteLabelsByIds).toHaveBeenCalledWith(expect.anything(), "org-a", ["a", "b"]);
   });
 });
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Download, LayoutGrid, QrCode, Tag, Truck } from "lucide-react";
+import { Check, Download, LayoutGrid, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -81,6 +81,41 @@ async function downloadLabelsZip(ids: string[]) {
 
 function shipmentIdOf(row: LabelRecord) {
   return row.shipmentId ?? row.shipment_id ?? null;
+}
+
+function rowKey(row: LabelRecord) {
+  return barcodeId(row) ?? packingId(row) ?? row.id;
+}
+
+function canRetryDocuments(status: string) {
+  return status === "INCOMPLETE" || status === "FAILED";
+}
+
+type RetryIncompleteBatch = {
+  retried: number;
+  failed: number;
+  skipped: number;
+  results: Array<{ message?: string; error?: string }>;
+};
+
+function toastRetryBatch(data: RetryIncompleteBatch) {
+  if (data.retried && data.failed) {
+    toast.success(`${data.retried} labels generated. ${data.failed} failed.`);
+    return;
+  }
+  if (data.failed) {
+    toast.error(data.results.find((row) => row.error)?.error || "Could not generate the missing label files.");
+    return;
+  }
+  if (data.retried) {
+    toast.success(
+      data.retried === 1
+        ? data.results.find((row) => row.message)?.message || "Missing label files were generated."
+        : `${data.retried} labels generated.`
+    );
+    return;
+  }
+  toast.success("Those labels are already complete.");
 }
 
 async function readPdfResponse(response: Response, fallbackName: string) {
@@ -230,6 +265,10 @@ export default function LabelsPage() {
     : null;
 
   const list = asPaginated<LabelRecord>(query.data, ["labels", "items"]);
+  const incompleteIds = list.items
+    .filter((row) => documentsStatus(row) === "INCOMPLETE")
+    .map(rowKey)
+    .filter((id) => (selected.length ? selected.includes(id) : kind === "INCOMPLETE"));
 
   const bulk = useMutation({
     mutationFn: downloadLabelsZip,
@@ -267,6 +306,29 @@ export default function LabelsPage() {
   const downloadShippingSlip = useMutation({
     mutationFn: (id: string) => downloadLabelPdf(id, "shipping-slip"),
     onSuccess: () => toast.success("Shipping slip downloaded."),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const retryOne = useMutation({
+    mutationFn: (id: string) =>
+      api<{ message?: string }>(`/api/v1/labels/${id}/retry`, { method: "POST" }),
+    onSuccess: (data) => {
+      toast.success(data.message || "Missing label files were generated.");
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const retryIncomplete = useMutation({
+    mutationFn: (ids: string[]) =>
+      api<RetryIncompleteBatch>("/api/v1/labels/retry-incomplete", {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      }),
+    onSuccess: (data) => {
+      toastRetryBatch(data);
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -372,9 +434,26 @@ export default function LabelsPage() {
       cell: (row) => {
         const status = documentsStatus(row);
         const info = printLabel(row.printStatus ?? row.print_status);
+        const retryId = rowKey(row);
+        const retryBusy = retryOne.isPending && retryOne.variables === retryId;
         return (
           <div className="space-y-1">
             <StatusBadge value={status} />
+            {canRetryDocuments(status) ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={retryBusy || retryIncomplete.isPending}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  retryOne.mutate(retryId);
+                }}
+              >
+                <RefreshCw className="size-4" />
+                {retryBusy ? "Retrying…" : "Retry"}
+              </Button>
+            ) : null}
             {info ? <p className="text-xs text-muted">{info.text}</p> : null}
             {row.printError || row.print_error ? (
               <p className="max-w-[16rem] text-xs text-muted">{row.printError ?? row.print_error}</p>
@@ -405,6 +484,15 @@ export default function LabelsPage() {
                 </Button>
               </Link>
             ) : null}
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={incompleteIds.length === 0 || retryIncomplete.isPending || retryOne.isPending}
+              onClick={() => retryIncomplete.mutate(incompleteIds)}
+            >
+              <RefreshCw className="size-4" />
+              {retryIncomplete.isPending ? "Retrying…" : "Retry incomplete"}
+            </Button>
             <Button
               type="button"
               variant="secondary"
@@ -465,7 +553,7 @@ export default function LabelsPage() {
         onPageChange={setPage}
         selectable
         onSelectionChange={setSelected}
-        getRowId={(row) => barcodeId(row) ?? packingId(row) ?? row.id}
+        getRowId={rowKey}
       />
     </div>
   );

@@ -142,6 +142,13 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "labels/abc/india-post", ["labels", "abc", "india-post"])).toBe(
       "labels.write"
     );
+    expect(permissionForTenantRoute("POST", "labels/abc/retry", ["labels", "abc", "retry"])).toBe("labels.write");
+    expect(
+      permissionForTenantRoute("POST", "labels/retry-incomplete", ["labels", "retry-incomplete"])
+    ).toBe("labels.write");
+    expect(
+      permissionForTenantRoute("POST", "labels/abc/packing-slip", ["labels", "abc", "packing-slip"])
+    ).toBe("labels.write");
     expect(
       permissionForTenantRoute("POST", "shipments/abc/india-post-label", ["shipments", "abc", "india-post-label"])
     ).toBe("shipments.write");
