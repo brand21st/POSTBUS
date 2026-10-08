@@ -52,6 +52,7 @@ function mockClient(options?: { product?: typeof catalog | null; otherOrg?: bool
     inserts,
     rpc: async (name: string) => {
       if (name === "next_pb_order_number") return { data: "PB-10001", error: null };
+      if (name === "next_wa_pb_order_number") return { data: "WA-PB-10001", error: null };
       return { data: null, error: { message: `unknown rpc ${name}` } };
     },
     from: (table: string) => {

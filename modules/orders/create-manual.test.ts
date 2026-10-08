@@ -53,6 +53,7 @@ function mockClient(options?: { failFirstOrderInsert?: boolean }) {
     inserts,
     rpc: async (name: string) => {
       if (name === "next_pb_order_number") return { data: "PB-10001", error: null };
+      if (name === "next_wa_pb_order_number") return { data: "WA-PB-10001", error: null };
       return { data: null, error: { message: `unknown rpc ${name}` } };
     },
     from: (table: string) => {
@@ -302,5 +303,38 @@ describe("createManualOrder", () => {
       createOrderSchema.parse({ ...payload, orderNumber: undefined })
     );
     expect((raced.inserts.orders as { order_number: string }).order_number).toBe("PB-10001");
+  });
+
+  it("allocates WA-PB-##### for WhatsApp/storefront orders", async () => {
+    const client = mockClient();
+    await createManualOrder(
+      client as never,
+      ctx,
+      createOrderSchema.parse({
+        ...payload,
+        orderNumber: undefined,
+        source: "WHATSAPP",
+        paymentStatus: "PENDING",
+      })
+    );
+    expect(client.inserts.orders).toMatchObject({
+      order_number: "WA-PB-10001",
+      source: "WHATSAPP",
+    });
+  });
+
+  it("ignores a client WA-PB-##### so storefront does not reuse an autofilled id", async () => {
+    const client = mockClient();
+    await createManualOrder(
+      client as never,
+      ctx,
+      createOrderSchema.parse({
+        ...payload,
+        orderNumber: "WA-PB-10024",
+        source: "WHATSAPP",
+        paymentStatus: "PENDING",
+      })
+    );
+    expect((client.inserts.orders as { order_number: string }).order_number).toBe("WA-PB-10001");
   });
 });

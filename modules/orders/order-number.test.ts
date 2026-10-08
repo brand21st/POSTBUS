@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatWhatsAppOrderNumber,
   isOrderNumberConflict,
   isPbSequenceNumber,
+  isWaPbSequenceNumber,
   nextPbOrderNumber,
+  nextWaPbOrderNumber,
   shouldReallocateOnConflict,
 } from "@/modules/orders/order-number";
 
@@ -17,11 +20,33 @@ describe("nextPbOrderNumber", () => {
   });
 });
 
+describe("nextWaPbOrderNumber", () => {
+  it("starts at WA-PB-10001 and ignores dashboard PB sequence numbers", () => {
+    expect(nextWaPbOrderNumber([])).toBe("WA-PB-10001");
+    expect(nextWaPbOrderNumber(["PB-10016", "WA-BROWSER-TEST"])).toBe("WA-PB-10001");
+  });
+
+  it("increments past the highest existing WA-PB sequence", () => {
+    expect(nextWaPbOrderNumber(["WA-PB-10016", "#WA-PB-10001", "PB-99999"])).toBe("WA-PB-10017");
+  });
+});
+
+describe("formatWhatsAppOrderNumber", () => {
+  it("prefixes a stored sequence with #", () => {
+    expect(formatWhatsAppOrderNumber("WA-PB-10001")).toBe("#WA-PB-10001");
+    expect(formatWhatsAppOrderNumber("#WA-PB-10001")).toBe("#WA-PB-10001");
+    expect(formatWhatsAppOrderNumber("pb-10001")).toBe("#PB-10001");
+  });
+});
+
 describe("shouldReallocateOnConflict", () => {
-  it("reallocates blank and PB-##### values, but keeps custom ids", () => {
+  it("reallocates blank and sequence values, but keeps custom ids", () => {
     expect(isPbSequenceNumber("PB-10024")).toBe(true);
+    expect(isWaPbSequenceNumber("WA-PB-10024")).toBe(true);
+    expect(isWaPbSequenceNumber("#WA-PB-10024")).toBe(true);
     expect(shouldReallocateOnConflict("")).toBe(true);
     expect(shouldReallocateOnConflict("PB-10024")).toBe(true);
+    expect(shouldReallocateOnConflict("WA-PB-10024")).toBe(true);
     expect(shouldReallocateOnConflict("PDDDf")).toBe(false);
   });
 });

@@ -22,9 +22,10 @@ import {
   enrichShopifyLineItemImagesInOrders,
 } from "@/modules/shopify/orders";
 import {
+  isAllocatedSequenceNumber,
   isOrderNumberConflict,
-  isPbSequenceNumber,
   nextPbOrderNumber,
+  nextWaPbOrderNumber,
   shouldReallocateOnConflict,
 } from "@/modules/orders/order-number";
 
@@ -47,12 +48,19 @@ function orderDateBoundary(value: string, endOfDay: boolean) {
   return `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`;
 }
 
-async function nextOrderNumber(supabase: SupabaseClient, organizationId: string) {
-  const { data, error } = await supabase.rpc("next_pb_order_number", {
+function isWhatsAppSource(source?: string | null) {
+  return (source ?? "").toUpperCase() === "WHATSAPP";
+}
+
+async function nextOrderNumber(supabase: SupabaseClient, organizationId: string, source?: string | null) {
+  const whatsapp = isWhatsAppSource(source);
+  const rpcName = whatsapp ? "next_wa_pb_order_number" : "next_pb_order_number";
+  const valid = whatsapp ? /^WA-PB-\d+$/i : /^PB-\d+$/i;
+  const { data, error } = await supabase.rpc(rpcName, {
     p_organization_id: organizationId,
   });
-  if (!error && typeof data === "string" && /^PB-\d+$/i.test(data.trim())) {
-    return data.trim();
+  if (!error && typeof data === "string" && valid.test(data.trim())) {
+    return data.trim().toUpperCase();
   }
 
   const numbers: string[] = [];
@@ -73,7 +81,7 @@ async function nextOrderNumber(supabase: SupabaseClient, organizationId: string)
     }
     if (rows.length < page) break;
   }
-  return nextPbOrderNumber(numbers);
+  return whatsapp ? nextWaPbOrderNumber(numbers) : nextPbOrderNumber(numbers);
 }
 
 type OrderDateRange = "list" | "none" | { from?: string; to?: string };
@@ -232,8 +240,10 @@ export async function createManualOrder(
     amountPaid: input.amountPaid,
   });
   const requestedNumber = input.orderNumber?.trim() || "";
-  const keepRequested = Boolean(requestedNumber) && !isPbSequenceNumber(requestedNumber);
-  let orderNumber = keepRequested ? requestedNumber : await nextOrderNumber(supabase, ctx.organizationId);
+  const keepRequested = Boolean(requestedNumber) && !isAllocatedSequenceNumber(requestedNumber);
+  let orderNumber = keepRequested
+    ? requestedNumber
+    : await nextOrderNumber(supabase, ctx.organizationId, input.source);
 
   const insertOrder = (number: string) =>
     supabase
@@ -267,7 +277,7 @@ export async function createManualOrder(
         "That order number already exists. Leave it blank or use a different number."
       );
     }
-    orderNumber = await nextOrderNumber(supabase, ctx.organizationId);
+    orderNumber = await nextOrderNumber(supabase, ctx.organizationId, input.source);
     inserted = await insertOrder(orderNumber);
   }
 
