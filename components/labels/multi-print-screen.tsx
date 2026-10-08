@@ -147,6 +147,24 @@ function generatedOrderNumber(row: LabelRecord) {
   return (row.orderNumber || row.order_number || "").trim();
 }
 
+async function fetchAllLabelRecords() {
+  const pageSize = 100;
+  const items: LabelRecord[] = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+  while (items.length < total) {
+    const list = asPaginated<LabelRecord>(
+      await api<Paginated<LabelRecord>>(`/api/v1/labels?page=${page}&pageSize=${pageSize}`),
+      ["labels", "items"]
+    );
+    items.push(...list.items);
+    total = list.total;
+    if (list.items.length < pageSize) break;
+    page += 1;
+  }
+  return items;
+}
+
 function presetCaption(preset: FourBySixPreset | null, fallback: string) {
   if (!preset) return fallback;
   return preset.name.includes(" × 4×6") ? `${preset.name} Labels` : preset.name;
@@ -227,7 +245,7 @@ export function MultiPrintScreen() {
   });
   const labels = useQuery({
     queryKey: ["labels", "multi-print"],
-    queryFn: () => api<Paginated<LabelRecord>>("/api/v1/labels?page=1&pageSize=24"),
+    queryFn: fetchAllLabelRecords,
   });
   const station = usePrintStation();
   const library = useMemo(
@@ -349,8 +367,7 @@ export function MultiPrintScreen() {
   const selected = library.find((item) => item.id === selectedId);
   const templateLabel = useMemo(() => (selected ? pageMm(selected.page) : null), [selected]);
   const labeledOrders = useMemo(
-    () =>
-      [...new Set(asPaginated<LabelRecord>(labels.data, ["labels", "items"]).items.map(generatedOrderNumber).filter(Boolean))],
+    () => [...new Set((labels.data ?? []).map(generatedOrderNumber).filter(Boolean))],
     [labels.data]
   );
   const namedPaper = isMultiPrintPaperId(paper) ? multiPrintPaper(paper) : null;
@@ -1106,13 +1123,18 @@ export function MultiPrintScreen() {
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted">Generated labels</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-muted">Generated labels</p>
+                    {labels.isLoading ? null : (
+                      <p className="text-xs font-semibold text-ink">{labeledOrders.length} order IDs</p>
+                    )}
+                  </div>
                   {labels.isLoading ? (
                     <div className="flex flex-wrap gap-2">
                       {Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="h-8 w-16 rounded-full" />)}
                     </div>
                   ) : labeledOrders.length ? (
-                    <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+                    <div className="flex flex-wrap gap-1.5">
                       {labeledOrders.map((number) => {
                         const active = selectedOrderIds.has(number);
                         return (
