@@ -3,11 +3,11 @@ import { AppError } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import {
   CUSTOMER_PHONE_ONLY_REPLY,
-  findOrganizationsForCustomerPhone,
   type MerchantKnowledge,
   type MerchantKnowledgeOrder,
   VACHAT_ASSISTANT_NAME,
 } from "@/modules/vachat/knowledge";
+import { resolveTrackingOrganizationFromText } from "@/modules/vachat/tracking-tenant";
 import {
   listEligibleOrders,
   type EligibleOrderChoice,
@@ -187,6 +187,9 @@ export function answerFromKnowledge(knowledge: MerchantKnowledge, text: string) 
 export const NO_ELIGIBLE_ORDERS_REPLY =
   "We couldn't find any active orders linked to this WhatsApp number. Please contact the merchant if you believe this is incorrect.";
 
+export const ASK_ORDER_REFERENCE_REPLY =
+  "Please reply with your order number (for example PB-10948 or Shopify 1052). I can only share order details after that number is verified against this WhatsApp.";
+
 export const SUPPORT_UNAVAILABLE_REPLY =
   "Sorry, I couldn't retrieve that information right now. Please try again shortly.";
 
@@ -246,12 +249,22 @@ export async function handlePlatformSupportTurn(
     return liveBoundTurn(supabase, session, input.text, now);
   }
 
-  const listed = await listEligibleOrders(supabase, { session, now });
+  const scoped = { ...session };
+  if (!scoped.selected_organization_id) {
+    const fromText = await resolveTrackingOrganizationFromText(supabase, input.from, input.text);
+    if (fromText) scoped.selected_organization_id = fromText;
+  }
+
+  const listed = await listEligibleOrders(supabase, { session: scoped, now });
   const choices = listed.choices;
 
   if (choices.length === 0) {
     await setSupportSessionState(supabase, session.id, "LIST_ELIGIBLE", now);
-    return { reply: NO_ELIGIBLE_ORDERS_REPLY, session, organizationId: null as string | null };
+    return {
+      reply: scoped.selected_organization_id ? NO_ELIGIBLE_ORDERS_REPLY : ASK_ORDER_REFERENCE_REPLY,
+      session,
+      organizationId: null as string | null,
+    };
   }
 
   const picked = choices.length === 1 ? choices[0] : matchPickerSelection(input.text, choices);
@@ -343,20 +356,16 @@ export async function handleVachatAssistantMessage(
     }
     let organizationId = existing?.selected_organization_id ?? null;
     if (!organizationId) {
-      const orgIds = await findOrganizationsForCustomerPhone(supabase, input.from);
-      if (orgIds.length > 1) {
-        const sent = await postAssistantReply(input.from, POLICY_PICK_MERCHANT_REPLY);
-        return {
-          handled: true,
-          sent: sent.sent,
-          reply: POLICY_PICK_MERCHANT_REPLY,
-          organizationId: null,
-        };
-      }
-      organizationId = orgIds[0] ?? null;
+      organizationId = await resolveTrackingOrganizationFromText(supabase, input.from, input.text);
     }
     if (!organizationId) {
-      return { handled: false, reason: "native" };
+      const sent = await postAssistantReply(input.from, POLICY_PICK_MERCHANT_REPLY);
+      return {
+        handled: true,
+        sent: sent.sent,
+        reply: POLICY_PICK_MERCHANT_REPLY,
+        organizationId: null,
+      };
     }
     const context = await loadPolicyReplyContext(supabase, organizationId);
     const reply = formatPolicyWhatsAppReply(policyKind, context.policies, context.merchant);

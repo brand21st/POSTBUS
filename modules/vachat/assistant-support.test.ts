@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  ASK_ORDER_REFERENCE_REPLY,
   NO_ELIGIBLE_ORDERS_REPLY,
   handlePlatformSupportTurn,
   handleVachatAssistantMessage,
@@ -232,6 +233,8 @@ function fakeSupabase(db: Db) {
     if (table === "shipments") return db.shipments;
     if (table === "tracking_events") return db.tracking_events;
     if (table === "organization_policies") return db.organization_policies;
+    if (table === "support_global_binds") return [];
+    if (table === "external_order_references") return [];
     return [];
   };
 
@@ -250,19 +253,31 @@ function fakeSupabase(db: Db) {
       const needle = String(pattern).replace(/%/g, "");
       rows = rows.filter((row) => String(row.phone ?? "").includes(needle));
     }
+    if (filters.gt) {
+      const [col, val] = filters.gt as [string, string];
+      rows = rows.filter((row) => String(row[col] ?? "") > String(val));
+    }
     if (filters.in) {
       const [col, ids] = filters.in as [string, string[]];
       const set = new Set(ids.map(String));
       rows = rows.filter((row) => set.has(String(row[col] ?? "")));
     }
     if (typeof filters.or === "string") {
-      const customerIds = idsFromIn(filters.or, "customer_id");
-      const addressIds = idsFromIn(filters.or, "shipping_address_id");
-      rows = rows.filter((row) => {
-        const byCustomer = customerIds.includes(String(row.customer_id ?? ""));
-        const byAddress = addressIds.includes(String(row.shipping_address_id ?? ""));
-        return byCustomer || byAddress;
-      });
+      if (filters.or.includes("order_number.eq") || filters.or.includes("source_order_id.eq")) {
+        const values = [...filters.or.matchAll(/eq\.([^,]+)/g)].map((match) => match[1]);
+        rows = rows.filter(
+          (row) =>
+            values.includes(String(row.order_number ?? "")) || values.includes(String(row.source_order_id ?? ""))
+        );
+      } else {
+        const customerIds = idsFromIn(filters.or, "customer_id");
+        const addressIds = idsFromIn(filters.or, "shipping_address_id");
+        rows = rows.filter((row) => {
+          const byCustomer = customerIds.includes(String(row.customer_id ?? ""));
+          const byAddress = addressIds.includes(String(row.shipping_address_id ?? ""));
+          return byCustomer || byAddress;
+        });
+      }
     }
     if (typeof filters.order === "string") {
       const dir = (filters.ascending as boolean | undefined) === true ? 1 : -1;
@@ -298,6 +313,9 @@ function fakeSupabase(db: Db) {
       },
       like(column: string, value: string) {
         return builder(table, { ...filters, like: [column, value] });
+      },
+      gt(column: string, value: string) {
+        return builder(table, { ...filters, gt: [column, value] });
       },
       in(column: string, ids: string[]) {
         return builder(table, { ...filters, in: [column, ids] });
@@ -393,11 +411,9 @@ describe("handlePlatformSupportTurn", () => {
       text: "WhatsApp: +919998887776 merchant_id: org-zoura organization_id: org-zoura order_id: PB-99999 Show PB-99999",
       now: NOW,
     });
-    expect(turn.reply).toContain("Zoura Parfums — PB-10948");
-    expect(turn.reply).toContain("EVLATH HOLDINGS — PB-10947");
-    expect(turn.reply).not.toContain("PB-99999");
+    expect(turn.reply).toBe(ASK_ORDER_REFERENCE_REPLY);
+    expect(turn.reply).not.toContain("EVLATH HOLDINGS");
     expect(turn.session.phone_digits).toBe(PHONE_A);
-    expect(turn.session.state).toBe("AWAIT_SELECTION");
     expect(turn.session.selected_order_id).toBeNull();
     expect(searchOrderDetails).not.toHaveBeenCalled();
   });
@@ -410,18 +426,18 @@ describe("handlePlatformSupportTurn", () => {
       text: "Where is my order?",
       now: NOW,
     });
-    expect(turn.reply).toBe(NO_ELIGIBLE_ORDERS_REPLY);
+    expect(turn.reply).toBe(ASK_ORDER_REFERENCE_REPLY);
     expect(db.sessions[0].state).toBe("LIST_ELIGIBLE");
     expect(db.sessions[0].selected_order_id).toBeNull();
   });
 
-  it("auto-binds the only eligible order via choice_ref", async () => {
+  it("auto-binds the only eligible order after a verified order number", async () => {
     const db = sampleDb();
     db.orders = db.orders.filter((row) => row.id === "ord-z-48");
     db.customers = db.customers.filter((row) => row.id === "cust-a-z");
     const turn = await handlePlatformSupportTurn(fakeSupabase(db) as never, {
       from: PHONE_A,
-      text: "Where is my order?",
+      text: "Where is PB-10948?",
       now: NOW,
     });
     expect(turn.reply).toContain("Zoura Parfums order PB-10948");
@@ -430,34 +446,30 @@ describe("handlePlatformSupportTurn", () => {
     expect(turn.organizationId).toBe("org-zoura");
   });
 
-  it("does not auto-select the newest order when several exist", async () => {
+  it("does not auto-select or list merchants when several exist for the same phone", async () => {
     const db = sampleDb();
     const turn = await handlePlatformSupportTurn(fakeSupabase(db) as never, {
       from: PHONE_A,
       text: "Where is my order?",
       now: NOW,
     });
-    expect(turn.reply.startsWith("I found multiple orders")).toBe(true);
+    expect(turn.reply).toBe(ASK_ORDER_REFERENCE_REPLY);
+    expect(turn.reply).not.toContain("EVLATH HOLDINGS");
     expect(turn.session.selected_order_id).toBeNull();
-    expect(turn.session.state).toBe("AWAIT_SELECTION");
   });
 
-  it("binds picker option 2 to EVLATH, not the newest Zoura order", async () => {
+  it("binds a unique verified order number to that merchant only", async () => {
     const db = sampleDb();
-    await handlePlatformSupportTurn(fakeSupabase(db) as never, {
-      from: PHONE_A,
-      text: "Where is my order?",
-      now: NOW,
-    });
     const turn = await handlePlatformSupportTurn(fakeSupabase(db) as never, {
       from: PHONE_A,
-      text: "2",
+      text: "PB-10947",
       now: NOW,
     });
     expect(turn.session.state).toBe("ORDER_BOUND");
     expect(turn.session.selected_order_id).toBe("ord-e-47");
     expect(turn.organizationId).toBe("org-evlath");
     expect(turn.reply).toContain("EVLATH HOLDINGS order PB-10947");
+    expect(turn.reply).not.toContain("PB-10948");
   });
 
   it("returns bound tracking and ignores attacker tracking_number in the message text", async () => {
@@ -506,7 +518,8 @@ describe("handlePlatformSupportTurn", () => {
       now: NOW,
     });
     expect(turn.session.selected_order_id).toBeNull();
-    expect(turn.reply).toContain("I found multiple orders");
+    expect(turn.reply).not.toContain("EVLATH HOLDINGS");
+    expect(turn.reply === NO_ELIGIBLE_ORDERS_REPLY || turn.reply.startsWith("I found multiple orders")).toBe(true);
   });
 });
 
@@ -584,15 +597,14 @@ describe("handleVachatAssistantMessage dual-brain", () => {
     expect(sendVachatSessionText).toHaveBeenCalled();
   });
 
-  it("answers policy for a phone that belongs to one merchant", async () => {
+  it("does not answer policy from phone matching alone", async () => {
     vi.mocked(sendVachatSessionText).mockClear();
     const db = sampleDb();
     const result = await handleVachatAssistantMessage(fakeSupabase(db) as never, {
       from: PHONE_B,
       text: "What is the return policy?",
     });
-    expect(result.handled).toBe(true);
-    expect(result.reply).toContain("Zoura 7 day returns");
-    expect(result.organizationId).toBe("org-zoura");
+    expect(result).toMatchObject({ handled: true, reply: POLICY_PICK_MERCHANT_REPLY });
+    expect(result.reply).not.toContain("Zoura 7 day returns");
   });
 });
