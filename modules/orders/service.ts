@@ -4,7 +4,7 @@ import { orIlike } from "@/lib/api/filters";
 import type { OrderStatus } from "@/types/domain";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
-import type { createOrderSchema, orderListQuery, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { settleOrderPayment } from "@/modules/orders/payment";
 import {
@@ -334,7 +334,7 @@ export async function createManualOrder(
 function insertAddress(
   supabase: SupabaseClient,
   organizationId: string,
-  customerId: string,
+  customerId: string | null,
   address: CreateInput["shippingAddress"]
 ) {
   return supabase
@@ -483,6 +483,79 @@ export async function updateOrderWeights(
       .in("id", openIds);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   }
+
+  return getOrder(supabase, ctx, orderId);
+}
+
+export async function updateOrderShippingAddress(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  input: z.infer<typeof updateOrderAddressSchema>
+) {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, customer_id, shipping_address_id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, orderError.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+
+  const { data: shipments, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("id, status")
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+  const locked = ((shipments ?? []) as Array<{ status?: string | null }>).some(
+    (row) => !OPEN_WEIGHT_SHIPMENT_STATUSES.has((row.status ?? "").toUpperCase())
+  );
+  if (locked) {
+    throw new AppError(ERROR_CODES.CONFLICT, "Address is locked after India Post booking.");
+  }
+
+  const fields = {
+    name: input.name ?? null,
+    phone: input.phone ?? null,
+    line1: input.line1,
+    line2: input.line2 ?? null,
+    city: input.city,
+    state: input.state,
+    pincode: input.pincode,
+    country: input.country ?? "IN",
+  };
+
+  if (order.shipping_address_id) {
+    const { error } = await supabase
+      .from("addresses")
+      .update(fields)
+      .eq("id", order.shipping_address_id)
+      .eq("organization_id", ctx.organizationId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  } else {
+    const shipping = await insertAddress(
+      supabase,
+      ctx.organizationId,
+      (order.customer_id as string | null) ?? null,
+      input
+    );
+    const { error } = await supabase
+      .from("orders")
+      .update({ shipping_address_id: shipping.id })
+      .eq("id", orderId)
+      .eq("organization_id", ctx.organizationId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId || null,
+    action: "order.shipping_address_updated",
+    entity_type: "order",
+    entity_id: orderId,
+    after: { pincode: input.pincode, city: input.city, state: input.state },
+  });
 
   return getOrder(supabase, ctx, orderId);
 }

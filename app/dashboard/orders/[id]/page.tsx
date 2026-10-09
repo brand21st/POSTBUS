@@ -21,6 +21,7 @@ import { addressLine, customerName, lineItemImageUrl, lineItems, orderNumber } f
 import { formatCurrency, formatDate, formatWeightGrams } from "@/lib/format";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
+import { EditShippingAddressDialog } from "@/components/orders/edit-shipping-address-dialog";
 import { api } from "@/lib/hooks/use-api";
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
@@ -38,6 +39,7 @@ export default function OrderDetailPage() {
   const [itemModes, setItemModes] = useState<Record<string, "auto" | "manual">>({});
   const [draftWeights, setDraftWeights] = useState<Record<string, string>>({});
   const [manualBox, setManualBox] = useState("");
+  const [addressOpen, setAddressOpen] = useState(false);
 
   const order = useQuery({
     queryKey: ["order", params.id],
@@ -250,14 +252,37 @@ export default function OrderDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader className="p-4">
+          <CardHeader className="flex-row items-start justify-between gap-2 p-4">
             <CardTitle>Shipping address</CardTitle>
+            {weightsLocked ? null : (
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto px-0 font-medium"
+                onClick={() => setAddressOpen(true)}
+              >
+                Edit address
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="p-4 pt-0 text-sm text-muted">
             {addressLine(record.shippingAddress)}
+            {weightsLocked ? (
+              <p className="mt-2 text-xs">Address is locked after India Post booking.</p>
+            ) : null}
           </CardContent>
         </Card>
       </div>
+      <EditShippingAddressDialog
+        open={addressOpen}
+        onOpenChange={setAddressOpen}
+        orderId={record.id}
+        address={record.shippingAddress}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+        }}
+      />
 
       <Card>
         <CardHeader className="p-4">

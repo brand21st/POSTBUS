@@ -38,6 +38,9 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("PATCH", "orders/abc/service", ["orders", "abc", "service"])).toBe(
       "orders.write"
     );
+    expect(permissionForTenantRoute("PATCH", "orders/abc/address", ["orders", "abc", "address"])).toBe(
+      "orders.write"
+    );
     expect(
       permissionForTenantRoute("PATCH", "integrations/india-post/booking-service", [
         "integrations",
