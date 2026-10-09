@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { helpNav, isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
+import { useSupportUnread } from "@/lib/hooks/use-support-unread";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { lockedFeatureForPath } from "@/modules/billing/entitlements";
@@ -32,6 +33,7 @@ export function Sidebar({
   const trial = me?.subscription?.status === "TRIAL";
   const workspace = me?.organization?.name ?? "Workspace";
   const profileName = me?.user.fullName ?? me?.user.email ?? "Account";
+  const supportUnread = useSupportUnread();
 
   return (
     <aside
@@ -76,6 +78,11 @@ export function Sidebar({
             >
               <Icon className={cn("size-4 shrink-0", locked && "blur-[0.5px]")} />
               <span className={cn(collapsed && "sr-only", locked && "blur-[1px]")}>{item.label}</span>
+              {item.href === "/dashboard/support" && supportUnread.count > 0 && !collapsed ? (
+                <Badge variant="brand" className="ml-auto h-5 min-w-5 px-1.5">
+                  {supportUnread.count > 99 ? "99+" : supportUnread.count}
+                </Badge>
+              ) : null}
               {locked && !collapsed ? <Lock className="ml-auto size-3.5 shrink-0 text-muted" /> : null}
             </Link>
           );

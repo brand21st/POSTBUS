@@ -120,6 +120,15 @@ async function recordAccepted(
     });
   }
 
+  const providerMessageId = String(body.data?.message_id ?? body.data?.whatsapp_message_id ?? "").trim();
+  if (providerMessageId) {
+    const { ingestSupportEvent } = await import("@/modules/support/ingest");
+    await ingestSupportEvent(supabase, matched.organization_id, {
+      kind: "status",
+      payload: { event: "message.status_updated", ...((body as { data?: Record<string, unknown> }).data ?? {}), data: body.data },
+    }).catch(() => undefined);
+  }
+
   return { accepted: true, duplicate: false };
 }
 
@@ -159,6 +168,63 @@ export async function claimVachatInboundEnvelope(
   return { duplicate: false as const };
 }
 
+async function matchMerchantVachatWebhook(
+  supabase: SupabaseClient,
+  signatureHeader: string,
+  rawBody: string
+) {
+  const { data: connections, error } = await supabase
+    .from("vachat_connections")
+    .select("id, organization_id, webhook_secret_encrypted, status")
+    .not("webhook_secret_encrypted", "is", null);
+  if (error) {
+    logError("vachat.webhook.lookup_failed", { message: error.message });
+  }
+  for (const row of connections ?? []) {
+    try {
+      const secret = decryptSecret(row.webhook_secret_encrypted as string);
+      if (verifyVachatSignature(signatureHeader, rawBody, secret)) return row;
+    } catch {
+      // try next org
+    }
+  }
+  return null;
+}
+
+async function runPlatformAssistant(
+  supabase: SupabaseClient,
+  inbound: { from: string; text: string }
+) {
+  const { handleVachatAssistantMessage } = await import("@/modules/vachat/assistant");
+  const result = await handleVachatAssistantMessage(supabase, {
+    from: inbound.from,
+    text: inbound.text,
+    skipSend: true,
+  });
+  const reply = String(result.reply ?? "").trim();
+  const organizationId = String(result.organizationId || "");
+  if (reply && inbound.from) {
+    if (organizationId) {
+      const { enqueueVachatSessionText } = await import("@/modules/vachat/send");
+      try {
+        await enqueueVachatSessionText(supabase, organizationId, {
+          to: inbound.from,
+          text: reply,
+          orderId: result.orderId ?? undefined,
+        });
+      } catch (error) {
+        logError("vachat.webhook.reply_enqueue_failed", {
+          organizationId,
+          message: error instanceof Error ? error.message : "enqueue failed",
+        });
+      }
+    } else {
+      logError("vachat.webhook.reply_missing_org", { hasReply: true });
+    }
+  }
+  return { accepted: true, duplicate: false, assistant: true as const };
+}
+
 export async function acceptVachatWebhook(
   supabase: SupabaseClient,
   input: { rawBody: string; signatureHeader: string | null }
@@ -168,14 +234,14 @@ export async function acceptVachatWebhook(
   }
 
   const platform = await getPlatformVachatConfig();
-  if (isPlatformVachatActive(platform)) {
-    if (!platform.webhookSecret || !verifyVachatSignature(input.signatureHeader, input.rawBody, platform.webhookSecret)) {
-      throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Vachat webhook signature.");
-    }
+  const platformSigned =
+    isPlatformVachatActive(platform) &&
+    Boolean(platform.webhookSecret) &&
+    verifyVachatSignature(input.signatureHeader, input.rawBody, platform.webhookSecret);
+
+  if (isPlatformVachatActive(platform) && platformSigned) {
     const body = parseEnvelope(input.rawBody);
-    const { isInboundAssistantEvent, resolveInboundSender, handleVachatAssistantMessage } = await import(
-      "@/modules/vachat/assistant"
-    );
+    const { isInboundAssistantEvent, resolveInboundSender } = await import("@/modules/vachat/assistant");
     const envelope = body as unknown as Record<string, unknown>;
     const payload = {
       ...(typeof envelope === "object" ? envelope : {}),
@@ -194,33 +260,33 @@ export async function acceptVachatWebhook(
         hasText: Boolean(inbound.text),
         hasContact: Boolean(inbound.contactId),
       });
-      const result = await handleVachatAssistantMessage(supabase, {
-        from: inbound.from,
+      const { identifyGlobalInbound, quarantineInbound } = await import("@/modules/support/identify");
+      const identified = await identifyGlobalInbound(supabase, {
+        phone: inbound.from,
         text: inbound.text,
-        skipSend: true,
+        buttonId: inbound.text,
       });
-      const reply = String(result.reply ?? "").trim();
-      const organizationId = String(result.organizationId || "");
-      if (reply && inbound.from) {
-        if (organizationId) {
-          const { enqueueVachatSessionText } = await import("@/modules/vachat/send");
-          try {
-            await enqueueVachatSessionText(supabase, organizationId, {
-              to: inbound.from,
-              text: reply,
-              orderId: result.orderId ?? undefined,
-            });
-          } catch (error) {
-            logError("vachat.webhook.reply_enqueue_failed", {
-              organizationId,
-              message: error instanceof Error ? error.message : "enqueue failed",
-            });
-          }
-        } else {
-          logError("vachat.webhook.reply_missing_org", { hasReply: true });
-        }
+      if (identified.kind === "assigned") {
+        const { maybeRouteInboundToSupport } = await import("@/modules/support/ingest");
+        const routed = await maybeRouteInboundToSupport(
+          supabase,
+          identified.organizationId,
+          payload,
+          input.rawBody,
+          "postbus_global",
+          identified.orderId
+        );
+        return { accepted: true, duplicate: false, support: routed.routed };
       }
-      return { accepted: true, duplicate: false, assistant: true };
+      await quarantineInbound(supabase, {
+        phone: inbound.from,
+        text: inbound.text,
+        conversationId: inbound.conversationId,
+        providerMessageId: String(payload.message_id ?? payload.whatsapp_message_id ?? envelope.id ?? ""),
+        state: identified.state,
+        evidence: identified.evidence,
+      });
+      return runPlatformAssistant(supabase, inbound);
     }
     const merchantId = String(body.data?.merchant_id ?? "").trim();
     if (!merchantId) {
@@ -233,38 +299,34 @@ export async function acceptVachatWebhook(
     return recordAccepted(supabase, { id: "platform", organization_id: org.id }, input, body);
   }
 
-  const { data: connections, error } = await supabase
-    .from("vachat_connections")
-    .select("id, organization_id, webhook_secret_encrypted, status")
-    .not("webhook_secret_encrypted", "is", null);
-  if (error) {
-    logError("vachat.webhook.lookup_failed", { message: error.message });
-  }
-  const list = connections ?? [];
-  if (!list.length) {
-    throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Vachat webhook signature.");
-  }
-
-  let matched: (typeof list)[number] | null = null;
-  for (const row of list) {
-    try {
-      const secret = decryptSecret(row.webhook_secret_encrypted as string);
-      if (verifyVachatSignature(input.signatureHeader, input.rawBody, secret)) {
-        matched = row;
-        break;
-      }
-    } catch {
-      // try next org
-    }
-  }
+  const matched = await matchMerchantVachatWebhook(supabase, input.signatureHeader, input.rawBody);
   if (!matched) {
     throw new AppError(ERROR_CODES.FORBIDDEN, "Invalid Vachat webhook signature.");
   }
 
+  const merchantBody = parseEnvelope(input.rawBody);
+  const merchantPayload = {
+    ...(merchantBody as unknown as Record<string, unknown>),
+    ...((merchantBody.data as Record<string, unknown> | undefined) ?? {}),
+  };
+  const { isInboundAssistantEvent: isInbound } = await import("@/modules/vachat/inbound");
+  if (isInbound(merchantBody.event ?? "", merchantPayload)) {
+    const { maybeRouteInboundToSupport } = await import("@/modules/support/ingest");
+    const routed = await maybeRouteInboundToSupport(
+      supabase,
+      matched.organization_id,
+      merchantPayload,
+      input.rawBody,
+      "merchant_vachat"
+    );
+    if (routed.routed) {
+      return { accepted: true, duplicate: false, support: true };
+    }
+  }
   return recordAccepted(
     supabase,
     { id: matched.id, organization_id: matched.organization_id },
     input,
-    parseEnvelope(input.rawBody)
+    merchantBody
   );
 }

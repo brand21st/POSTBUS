@@ -108,14 +108,14 @@ export function DashboardShell({
         <main
           id="main-content"
           className={
-            pathname === "/dashboard/orders"
+            pathname === "/dashboard/orders" || pathname.startsWith("/dashboard/support")
               ? "min-w-0 flex-1 px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:py-4 xl:px-6"
               : "min-w-0 flex-1 px-4 py-6 lg:px-8 lg:py-8"
           }
         >
           <div
             className={
-              pathname === "/dashboard/orders"
+              pathname === "/dashboard/orders" || pathname.startsWith("/dashboard/support")
                 ? "mx-auto w-full min-w-0 max-w-full"
                 : "mx-auto w-full min-w-0 max-w-[1280px]"
             }

@@ -11,6 +11,7 @@ import {
   ClipboardList,
   Radio,
   Workflow,
+  MessageCircle,
   Plug,
   CreditCard,
   Settings,
@@ -37,6 +38,7 @@ export const sidebarNav: NavItem[] = [
   { label: "Manifest", href: "/dashboard/manifests", icon: ClipboardList },
   { label: "Tracking", href: "/dashboard/tracking", icon: Radio },
   { label: "Automation", href: "/dashboard/automation", icon: Workflow },
+  { label: "Support Center", href: "/dashboard/support", icon: MessageCircle },
   { label: "Integrations", href: "/dashboard/integrations", icon: Plug, tour: "nav-integrations" },
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
@@ -94,7 +96,9 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
           ? "New"
           : segment === "customer-links"
             ? "Customer order link"
-            : segment.replace(/-/g, " "),
+            : segment === "support"
+              ? "Support Center"
+              : segment.replace(/-/g, " "),
       href,
     });
   }

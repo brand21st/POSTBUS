@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { breadcrumbs, isNavItemActive, isResourceIdSegment, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
 
+describe("Support Center navigation", () => {
+  it("places Support Center after Automation", () => {
+    const support = sidebarNav.find((entry) => entry.href === "/dashboard/support");
+    expect(support?.label).toBe("Support Center");
+    expect(sidebarNav.findIndex((entry) => entry.href === "/dashboard/automation")).toBeLessThan(
+      sidebarNav.findIndex((entry) => entry.href === "/dashboard/support")
+    );
+  });
+});
+
 describe("NDR & RTO navigation", () => {
   it("adds the item with the existing sidebar shape", () => {
     const item = sidebarNav.find((entry) => entry.href === "/dashboard/ndr-rto");

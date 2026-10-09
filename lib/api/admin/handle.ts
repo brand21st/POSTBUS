@@ -21,9 +21,11 @@ import {
   testOpenRouterSettings,
 } from "@/modules/openrouter/admin-settings";
 import {
+  assignSupportUnassigned,
   loadPlatformVachatLogs,
   loadPlatformVachatSettings,
   loadPlatformVachatStats,
+  loadSupportUnassigned,
   registerPlatformVachatWebhook,
   savePlatformVachatSettings,
   sendPlatformVachatTest,
@@ -88,6 +90,8 @@ export async function handleAdminRoutes(
   if (key === "POST settings/vachat/webhook") return registerPlatformVachatWebhook(request, supabase, ctx);
   if (key === "GET settings/vachat/stats") return loadPlatformVachatStats(supabase);
   if (key === "GET settings/vachat/logs") return loadPlatformVachatLogs(request, supabase);
+  if (key === "GET settings/vachat/unassigned") return loadSupportUnassigned(supabase);
+  if (key === "POST settings/vachat/unassigned/assign") return assignSupportUnassigned(request, supabase, ctx);
   if (key === "GET trial-settings" || (key === "GET settings" && slugs[0] === "trial-settings")) {
     const { data } = await supabase.from("platform_settings").select("*").eq("id", 1).maybeSingle();
     return data ?? { trial_enabled: true, trial_days: 3 };
