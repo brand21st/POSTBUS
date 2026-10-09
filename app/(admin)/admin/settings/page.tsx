@@ -39,6 +39,7 @@ type VachatEventKey = (typeof VACHAT_LIVE_EVENTS)[number];
 
 type VachatSettings = {
   enabled: boolean;
+  supportEnabled?: boolean;
   connected: boolean;
   status: string;
   apiBaseUrl: string;
@@ -102,6 +103,15 @@ type VachatLogRow = {
   created_at: string;
 };
 
+type UnassignedThread = {
+  id: string;
+  phone_digits: string;
+  last_message_preview: string | null;
+  last_message_at: string | null;
+  status: string;
+  resolution_state?: string;
+};
+
 export default function AdminSettingsPage() {
   const client = useQueryClient();
   const query = useQuery({
@@ -131,6 +141,13 @@ export default function AdminSettingsPage() {
     queryKey: ["admin", "settings", "vachat", "logs"],
     queryFn: () => api<VachatLogRow[]>("/api/admin/settings/vachat/logs?limit=40"),
   });
+  const unassignedQuery = useQuery({
+    queryKey: ["admin", "settings", "vachat", "unassigned"],
+    queryFn: () =>
+      api<{ items: UnassignedThread[]; count: number; counts?: Record<string, number> }>(
+        "/api/admin/settings/vachat/unassigned"
+      ),
+  });
   const data = query.data;
   const vachat = vachatQuery.data;
   const openrouter = openrouterQuery.data;
@@ -143,6 +160,7 @@ export default function AdminSettingsPage() {
   const [vachatKey, setVachatKey] = useState("");
   const [vachatUrl, setVachatUrl] = useState("");
   const [vachatEnabled, setVachatEnabled] = useState<boolean | null>(null);
+  const [assignOrderId, setAssignOrderId] = useState("");
   const [vachatTestPhone, setVachatTestPhone] = useState("");
   const [eventDraft, setEventDraft] = useState<Partial<Record<VachatEventKey, boolean>>>({});
   const [templateDraft, setTemplateDraft] = useState<Partial<Record<string, string>>>({});
@@ -354,6 +372,37 @@ export default function AdminSettingsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const saveSupportEnabled = useMutation({
+    mutationFn: (supportEnabled: boolean) =>
+      api<VachatSettings>("/api/admin/settings/vachat", {
+        method: "PATCH",
+        body: JSON.stringify({ supportEnabled }),
+      }),
+    onSuccess: (result) => {
+      toast.success(
+        result.supportEnabled
+          ? "Support Center can use PostBus WhatsApp."
+          : "Support Center PostBus WhatsApp is off. Shipping notices are unchanged."
+      );
+      client.invalidateQueries({ queryKey: ["admin", "settings", "vachat"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const assignUnassigned = useMutation({
+    mutationFn: (threadId: string) =>
+      api("/api/admin/settings/vachat/unassigned/assign", {
+        method: "POST",
+        body: JSON.stringify({ threadId, orderId: assignOrderId.trim() }),
+      }),
+    onSuccess: () => {
+      toast.success("Thread assigned from the verified order.");
+      setAssignOrderId("");
+      client.invalidateQueries({ queryKey: ["admin", "settings", "vachat", "unassigned"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   async function copyWebhookUrl() {
     if (!data?.webhookUrl) return;
     await navigator.clipboard.writeText(data.webhookUrl);
@@ -552,6 +601,59 @@ export default function AdminSettingsPage() {
               onChange={(event) => setVachatEnabled(event.target.checked)}
             />
             <Label htmlFor="vachat-enabled">Enable PostBus WhatsApp Notifications for merchants without Vachat</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="vachat-support-enabled"
+              type="checkbox"
+              checked={Boolean(vachat?.supportEnabled)}
+              disabled={saveSupportEnabled.isPending || !vachat?.connected}
+              onChange={(event) => saveSupportEnabled.mutate(event.target.checked)}
+            />
+            <Label htmlFor="vachat-support-enabled">
+              Support Center on PostBus WhatsApp (does not change shipping templates)
+            </Label>
+          </div>
+          <p className="text-xs text-muted">
+            Health: shipping {vachat?.connected ? "connected" : "off"} · support messaging{" "}
+            {vachat?.supportEnabled ? "on" : "off"} · unassigned {unassignedQuery.data?.count ?? 0}
+          </p>
+          <div className="space-y-2 rounded-lg border p-3">
+            <h3 className="text-sm font-medium">Unassigned Support Center chats</h3>
+            <p className="text-xs text-muted">
+              Verified {unassignedQuery.data?.counts?.VERIFIED ?? 0} · Pending{" "}
+              {unassignedQuery.data?.counts?.VERIFICATION_REQUIRED ?? 0} · Ambiguous{" "}
+              {(unassignedQuery.data?.counts?.AMBIGUOUS ?? 0) + (unassignedQuery.data?.counts?.MULTIPLE_MATCHES ?? 0)}{" "}
+              · Not found{" "}
+              {(unassignedQuery.data?.counts?.NOT_FOUND ?? 0) + (unassignedQuery.data?.counts?.ORDER_NOT_FOUND ?? 0)}.
+              Assign only with a verified order id that matches this WhatsApp number.
+            </p>
+            <Input
+              placeholder="Order UUID"
+              value={assignOrderId}
+              onChange={(event) => setAssignOrderId(event.target.value)}
+            />
+            {(unassignedQuery.data?.items ?? []).map((row) => (
+              <div key={row.id} className="flex items-center justify-between gap-2 text-sm">
+                <div>
+                  <p className="font-medium">+91 {row.phone_digits}</p>
+                  <p className="text-xs text-muted">
+                    {row.resolution_state ?? "VERIFICATION_REQUIRED"} · {row.last_message_preview || "No preview"}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!assignOrderId.trim() || assignUnassigned.isPending}
+                  onClick={() => assignUnassigned.mutate(row.id)}
+                >
+                  Assign
+                </Button>
+              </div>
+            ))}
+            {!unassignedQuery.data?.items?.length ? (
+              <p className="text-xs text-muted">No unassigned threads.</p>
+            ) : null}
           </div>
           <div className="space-y-2">
             <Label htmlFor="vachat-url">VaChat base URL</Label>

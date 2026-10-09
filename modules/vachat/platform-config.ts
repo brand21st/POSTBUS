@@ -6,7 +6,7 @@ import { parseVachatBaseUrl } from "@/modules/vachat/signature";
 import { WATI_NOTIFY_EVENTS, type WatiNotifyEvent } from "@/modules/wati/notify";
 
 export const PLATFORM_VACHAT_COLUMNS =
-  "vachat_enabled, vachat_api_base_url, encrypted_vachat_api_key, encrypted_vachat_webhook_secret, vachat_webhook_endpoint_id, vachat_last_verified_at, vachat_last_error, vachat_event_settings, vachat_last_test_phone";
+  "vachat_enabled, vachat_support_enabled, vachat_api_base_url, encrypted_vachat_api_key, encrypted_vachat_webhook_secret, vachat_webhook_endpoint_id, vachat_last_verified_at, vachat_last_error, vachat_event_settings, vachat_last_test_phone";
 
 export type VachatEventSettings = Record<WatiNotifyEvent, boolean>;
 
@@ -33,6 +33,7 @@ export function parseVachatEventSettings(raw: unknown): VachatEventSettings {
 
 export type PlatformVachatConfig = {
   flagEnabled: boolean;
+  supportEnabled: boolean;
   enabled: boolean;
   apiBaseUrl: string;
   apiKey: string;
@@ -47,6 +48,7 @@ export type PlatformVachatConfig = {
 
 type SettingsRow = {
   vachat_enabled?: boolean | null;
+  vachat_support_enabled?: boolean | null;
   vachat_api_base_url?: string | null;
   encrypted_vachat_api_key?: string | null;
   encrypted_vachat_webhook_secret?: string | null;
@@ -122,6 +124,7 @@ export async function getPlatformVachatConfig(): Promise<PlatformVachatConfig> {
           : "env";
   return {
     flagEnabled: Boolean(row?.vachat_enabled),
+    supportEnabled: Boolean(row?.vachat_support_enabled),
     enabled: Boolean(row?.vachat_enabled && apiKey),
     apiBaseUrl,
     apiKey,
@@ -150,6 +153,7 @@ export function publicPlatformVachatStatus(config: PlatformVachatConfig) {
   const connected = isPlatformVachatActive(config);
   return {
     enabled: config.flagEnabled,
+    supportEnabled: config.supportEnabled,
     connected,
     status: connected ? "CONNECTED" : config.apiKey ? "NOT_CONNECTED" : "NOT_CONNECTED",
     apiBaseUrl: config.apiBaseUrl,

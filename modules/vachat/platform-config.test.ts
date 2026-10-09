@@ -12,6 +12,7 @@ function config(overrides: Partial<PlatformVachatConfig> = {}): PlatformVachatCo
     lastVerifiedAt: null,
     lastError: null,
     lastTestPhone: null,
+    supportEnabled: false,
     eventSettings: {
       order_confirmation: false,
       processing: false,

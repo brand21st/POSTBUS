@@ -56,6 +56,19 @@ export async function processJob(queue: string, payload: JobPayload) {
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
     else if (queue === "shopify-fulfillment") await shopifyFulfillment(supabase, payload);
     else if (queue === "webhook-processing") await deliverWebhooks(supabase, payload);
+    else if (queue === "support-ingest") {
+      const { data: job } = await supabase
+        .from("background_jobs")
+        .select("progress")
+        .eq("id", jobId)
+        .maybeSingle();
+      const { processSupportIngestJob } = await import("@/modules/support/ingest");
+      await processSupportIngestJob(
+        supabase,
+        payload.organizationId,
+        (job?.progress ?? {}) as Record<string, unknown>
+      );
+    }
     else if (queue === "wati-notify") {
       const { sendWatiNotice, watiEventFromJobProgress, watiIdsFromJob } = await import("@/modules/wati/send");
       const { data: job } = await supabase
@@ -87,11 +100,22 @@ export async function processJob(queue: string, payload: JobPayload) {
         .maybeSingle();
       const progress = (job?.progress ?? {}) as {
         kind?: string;
+        source?: string;
         to?: string;
         text?: string;
+        supportMessageId?: string;
+        templateName?: string;
+        language?: string;
+        variables?: string[];
         extras?: { interactive_payload?: Record<string, unknown>; image_url?: string };
       };
-      if (progress.kind === "session_text") {
+      if (progress.kind === "session_text" && progress.source === "support") {
+        const { deliverQueuedSupportMessage } = await import("@/modules/support/send");
+        await deliverQueuedSupportMessage(supabase, payload.organizationId, progress);
+      } else if (progress.kind === "support_template") {
+        const { deliverQueuedSupportMessage } = await import("@/modules/support/send");
+        await deliverQueuedSupportMessage(supabase, payload.organizationId, progress);
+      } else if (progress.kind === "session_text") {
         await sendVachatSessionText(String(progress.to ?? ""), String(progress.text ?? ""));
       } else {
         const ids = vachatIdsFromJob(job?.progress, payload.entityId);
@@ -180,6 +204,7 @@ export async function processJob(queue: string, payload: JobPayload) {
       queue !== "tracking-sync" &&
       queue !== "wati-notify" &&
       queue !== "vachat-notify" &&
+      queue !== "support-ingest" &&
       payload.entityType === "shipment" &&
       payload.entityId
     ) {

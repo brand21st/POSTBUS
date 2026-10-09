@@ -18,6 +18,7 @@ import { withApprovedVachatTemplates } from "@/modules/vachat/templates";
 
 const saveSchema = z.object({
   enabled: z.boolean().optional(),
+  supportEnabled: z.boolean().optional(),
   apiKey: z.string().optional().nullable(),
   apiBaseUrl: z.string().optional().nullable(),
   clearKey: z.boolean().optional(),
@@ -145,13 +146,21 @@ export async function savePlatformVachatSettings(
   const body = saveSchema.parse(await request.json());
   const current = await getPlatformVachatConfig();
   const incomingKey = body.apiKey?.trim() || "";
-  if (!current.apiKey && !incomingKey && !body.clearKey) {
+  const supportOnly =
+    typeof body.supportEnabled === "boolean" &&
+    !incomingKey &&
+    !body.clearKey &&
+    body.enabled === undefined &&
+    !body.eventSettings &&
+    !body.templates &&
+    body.apiBaseUrl == null &&
+    body.lastTestPhone == null;
+  if (!current.apiKey && !incomingKey && !body.clearKey && !supportOnly) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paste a Vachat API key the first time you connect.");
   }
   const apiBaseUrl = parseVachatBaseUrl(body.apiBaseUrl ?? current.apiBaseUrl);
-  const patch: Record<string, unknown> = {
-    vachat_api_base_url: apiBaseUrl,
-  };
+  const patch: Record<string, unknown> = supportOnly ? {} : { vachat_api_base_url: apiBaseUrl };
+  if (typeof body.supportEnabled === "boolean") patch.vachat_support_enabled = body.supportEnabled;
   if (typeof body.enabled === "boolean") patch.vachat_enabled = body.enabled;
   else if (!current.flagEnabled && incomingKey) patch.vachat_enabled = true;
   if (body.clearKey) {
@@ -220,6 +229,7 @@ export async function savePlatformVachatSettings(
       keyUpdated: Boolean(incomingKey && !/^•+$/.test(incomingKey)),
       keyCleared: Boolean(body.clearKey),
       enabled: patch.vachat_enabled ?? current.flagEnabled,
+      supportEnabled: patch.vachat_support_enabled ?? current.supportEnabled,
       eventsUpdated: Boolean(body.eventSettings),
       templatesUpdated: Boolean(body.templates),
       templateSyncError,
@@ -396,4 +406,37 @@ export async function loadPlatformVachatLogs(
     organizationId,
     limit: Number.isFinite(limit) ? limit : 50,
   });
+}
+
+export async function loadSupportUnassigned(supabase: ReturnType<typeof createAdminClient>) {
+  const { listUnassignedThreads } = await import("@/modules/support/identify");
+  return listUnassignedThreads(supabase);
+}
+
+export async function assignSupportUnassigned(
+  request: NextRequest,
+  supabase: ReturnType<typeof createAdminClient>,
+  ctx: AdminContext
+) {
+  const body = z
+    .object({
+      threadId: z.string().uuid(),
+      orderId: z.string().uuid(),
+    })
+    .parse(await request.json().catch(() => ({})));
+  const { assignUnassignedThread } = await import("@/modules/support/identify");
+  const result = await assignUnassignedThread(supabase, { ...body, actorId: ctx.userId });
+  if (!result.ok) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, result.error);
+  }
+  await writeBillingAudit(supabase, {
+    actorId: ctx.userId,
+    actorType: "SUPER_ADMIN",
+    action: "support.unassigned.assigned",
+    targetType: "support_unassigned_thread",
+    targetId: body.threadId,
+    ip: ip(request),
+    metadata: { orderId: result.orderId, organizationId: result.organizationId },
+  });
+  return result;
 }

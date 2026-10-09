@@ -143,6 +143,16 @@ export function permissionForTenantRoute(
     return method === "GET" ? "orders.read" : "orders.write";
   }
 
+  if (root === "support") {
+    if (method === "GET") return "support.read";
+    if (slugs[1] === "settings") return "support.settings";
+    if (slugs[3] === "messages" || slugs[3] === "templates" || slugs[3] === "read") return "support.reply";
+    if (slugs[1] === "tickets" && slugs[3] === "notes") return "support.reply";
+    if (slugs[1] === "tickets" && slugs[3] === "assign") return "support.assign";
+    if (method === "POST" && slugs[1] === "tickets" && !slugs[2]) return "support.manage";
+    return "support.manage";
+  }
+
   if (root === "ui") return undefined;
 
   if (root === "tutorials") {

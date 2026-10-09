@@ -183,6 +183,7 @@ export async function handleWorkspaceRoutes(
     return {
       items: (members ?? []).map((row) => ({
         id: row.id,
+        userId: row.user_id,
         role: row.role,
         email: byId.get(row.user_id)?.email,
         fullName: byId.get(row.user_id)?.full_name,

@@ -14,6 +14,7 @@ import { handleMerchantTutorials } from "@/lib/api/v1/tutorials";
 import { handleShipmentPresetRoutes } from "@/lib/api/v1/shipment-presets";
 import { handleUiRoutes } from "@/lib/api/v1/ui";
 import { handleWorkspaceRoutes } from "@/lib/api/v1/workspace";
+import { handleSupportRoutes } from "@/lib/api/v1/support";
 import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -66,6 +67,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   return (
     (await handleBillingRoutes(request, supabase, ctx, key)) ??
     (await handleWorkspaceRoutes(request, supabase, ctx, key, method, slugs)) ??
+    (await handleSupportRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleUiRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleShipmentPresetRoutes(request, supabase, ctx, method, slugs)) ??
     (await handlePrintStationRoutes(request, supabase, ctx, key, method, slugs)) ??

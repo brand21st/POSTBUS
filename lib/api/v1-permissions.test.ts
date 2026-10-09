@@ -58,6 +58,26 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "shipments/abc/retry", ["shipments", "abc", "retry"])).toBe(
       "shipments.write"
     );
+    expect(permissionForTenantRoute("GET", "support/conversations", ["support", "conversations"])).toBe(
+      "support.read"
+    );
+    expect(
+      permissionForTenantRoute("POST", "support/conversations/abc/messages", [
+        "support",
+        "conversations",
+        "abc",
+        "messages",
+      ])
+    ).toBe("support.reply");
+    expect(
+      permissionForTenantRoute("POST", "support/tickets/abc/assign", ["support", "tickets", "abc", "assign"])
+    ).toBe("support.assign");
+    expect(permissionForTenantRoute("PATCH", "support/settings", ["support", "settings"])).toBe(
+      "support.settings"
+    );
+    expect(permissionForTenantRoute("PATCH", "support/tickets/abc", ["support", "tickets", "abc"])).toBe(
+      "support.manage"
+    );
     expect(permissionForTenantRoute("GET", "ndr-rto", ["ndr-rto"])).toBe("shipments.read");
     expect(permissionForTenantRoute("GET", "ndr-rto/summary", ["ndr-rto", "summary"])).toBe("shipments.read");
     expect(permissionForTenantRoute("POST", "ndr-rto/abc/sync", ["ndr-rto", "abc", "sync"])).toBe(

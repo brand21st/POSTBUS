@@ -32,6 +32,24 @@ vi.mock("@/modules/vachat/platform-config", () => ({
   merchantVachatRowReady: () => false,
 }));
 
+const supportIdentify = vi.hoisted(() => ({
+  identifyGlobalInbound: vi.fn(async () => ({ kind: "unassigned" as const })),
+  quarantineInbound: vi.fn(async () => undefined),
+}));
+
+vi.mock("@/modules/support/identify", () => ({
+  identifyGlobalInbound: (...args: unknown[]) => supportIdentify.identifyGlobalInbound(...args),
+  quarantineInbound: (...args: unknown[]) => supportIdentify.quarantineInbound(...args),
+}));
+
+const supportIngest = vi.hoisted(() => ({
+  maybeRouteInboundToSupport: vi.fn(async () => ({ routed: true })),
+}));
+
+vi.mock("@/modules/support/ingest", () => ({
+  maybeRouteInboundToSupport: (...args: unknown[]) => supportIngest.maybeRouteInboundToSupport(...args),
+}));
+
 describe("verifyVachatSignature", () => {
   it("accepts a fresh t=/v1= HMAC and rejects a stale timestamp", () => {
     const secret = "whsec_test";
@@ -83,6 +101,15 @@ describe("acceptVachatWebhook platform routing", () => {
   beforeEach(() => {
     platform.getPlatformVachatConfig.mockReset();
     platform.isPlatformVachatActive.mockReset();
+    supportIdentify.identifyGlobalInbound.mockReset();
+    supportIdentify.identifyGlobalInbound.mockResolvedValue({ kind: "unassigned" });
+    supportIdentify.quarantineInbound.mockReset();
+    supportIdentify.quarantineInbound.mockResolvedValue(undefined);
+    supportIngest.maybeRouteInboundToSupport.mockReset();
+    supportIngest.maybeRouteInboundToSupport.mockResolvedValue({ routed: true });
+    assistant.handleVachatAssistantMessage.mockReset();
+    assistant.isInboundAssistantEvent.mockReset();
+    assistant.resolveInboundSender.mockReset();
   });
 
   it("routes a signed platform webhook by merchant_id", async () => {
@@ -234,6 +261,122 @@ describe("acceptVachatWebhook platform routing", () => {
     expect(first).toMatchObject({ accepted: true, duplicate: false, assistant: true });
     expect(second).toMatchObject({ accepted: true, duplicate: true, assistant: true });
     expect(assistant.handleVachatAssistantMessage).toHaveBeenCalledTimes(1);
+    expect(supportIdentify.quarantineInbound).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the platform assistant when inbound is uniquely assigned to a merchant inbox", async () => {
+    const secret = "whsec_platform";
+    const body = JSON.stringify({
+      id: "evt-assigned-1",
+      event: "message.received",
+      data: { from: "918848772371", text: "PB-11143" },
+    });
+    const t = Math.floor(Date.now() / 1000);
+    const v1 = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
+    platform.isPlatformVachatActive.mockReturnValue(true);
+    platform.getPlatformVachatConfig.mockResolvedValue({
+      enabled: true,
+      flagEnabled: true,
+      apiKey: "key",
+      webhookSecret: secret,
+      apiBaseUrl: "https://cloud.vachat.in",
+    });
+    assistant.isInboundAssistantEvent.mockReturnValue(true);
+    assistant.resolveInboundSender.mockResolvedValue({ from: "918848772371", text: "PB-11143", contactId: "" });
+    supportIdentify.identifyGlobalInbound.mockResolvedValue({
+      kind: "assigned",
+      organizationId: "org-1",
+      orderId: "ord-1",
+    });
+    const supabase = {
+      from: (table: string) => {
+        if (table === "vachat_webhook_envelopes") {
+          return {
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }),
+            insert: async () => ({ error: null }),
+          };
+        }
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
+      },
+    };
+    const result = await acceptVachatWebhook(supabase as never, {
+      rawBody: body,
+      signatureHeader: `t=${t},v1=${v1}`,
+    });
+    expect(result).toEqual({ accepted: true, duplicate: false, support: true });
+    expect(supportIngest.maybeRouteInboundToSupport).toHaveBeenCalledWith(
+      expect.anything(),
+      "org-1",
+      expect.anything(),
+      body,
+      "postbus_global",
+      "ord-1"
+    );
+    expect(assistant.handleVachatAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it("accepts a merchant HMAC while platform shipping VaChat is active", async () => {
+    const { encryptSecret } = await import("@/lib/security/crypto");
+    const platformSecret = "whsec_platform";
+    const merchantSecret = "whsec_merchant";
+    const body = JSON.stringify({
+      id: "evt-merchant-1",
+      event: "message.status_updated",
+      data: { status: "delivered", merchant_id: "org-m" },
+    });
+    const t = Math.floor(Date.now() / 1000);
+    const v1 = createHmac("sha256", merchantSecret).update(`${t}.${body}`).digest("hex");
+    platform.isPlatformVachatActive.mockReturnValue(true);
+    platform.getPlatformVachatConfig.mockResolvedValue({
+      enabled: true,
+      flagEnabled: true,
+      apiKey: "key",
+      webhookSecret: platformSecret,
+      apiBaseUrl: "https://cloud.vachat.in",
+    });
+    const encrypted = encryptSecret(merchantSecret);
+    const supabase = {
+      from: (table: string) => {
+        if (table === "vachat_connections") {
+          return {
+            select: () => ({
+              not: async () => ({
+                data: [
+                  {
+                    id: "conn-m",
+                    organization_id: "org-m",
+                    webhook_secret_encrypted: encrypted,
+                    status: "CONNECTED",
+                  },
+                ],
+                error: null,
+              }),
+            }),
+            update: () => ({ eq: async () => ({ error: null }) }),
+          };
+        }
+        if (table === "idempotency_keys") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({ maybeSingle: async () => ({ data: null }) }),
+              }),
+            }),
+            insert: async () => ({ error: null }),
+          };
+        }
+        if (table === "notifications") {
+          return { insert: async () => ({ error: null }) };
+        }
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
+      },
+    };
+    const result = await acceptVachatWebhook(supabase as never, {
+      rawBody: body,
+      signatureHeader: `t=${t},v1=${v1}`,
+    });
+    expect(result).toEqual({ accepted: true, duplicate: false });
+    expect(assistant.handleVachatAssistantMessage).not.toHaveBeenCalled();
   });
 });
 

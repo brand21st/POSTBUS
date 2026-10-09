@@ -17,6 +17,7 @@ export const QUEUE_NAMES = {
   watiNotify: "wati-notify",
   vachatNotify: "vachat-notify",
   invoiceGeneration: "invoice-generation",
+  supportIngest: "support-ingest",
 } as const;
 
 const queues = new Map<string, Queue>();
