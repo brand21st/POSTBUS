@@ -83,7 +83,13 @@ export async function selectSupportOrder(
 
   let listed;
   try {
-    listed = await listEligibleOrders(supabase, { session, now });
+    listed = await listEligibleOrders(supabase, {
+      session: {
+        ...session,
+        selected_organization_id: session.selected_organization_id || parsed.organization_id,
+      },
+      now,
+    });
   } catch (error) {
     if (isBusinessLineError(error)) return SAFE_REJECT;
     throw error;

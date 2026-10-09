@@ -1,10 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { hmacSha256, safeEqual } from "@/lib/security/crypto";
-import {
-  findOrganizationsForCustomerPhone,
-  orderIdsForCustomerPhone,
-} from "@/modules/vachat/knowledge";
+import { orderIdsForCustomerPhone } from "@/modules/vachat/knowledge";
+import { organizationIdsForTrackingAssistant } from "@/modules/vachat/tracking-scope";
 import {
   currentShipmentDeliveredAt,
   isWhatsAppSupportEligible,
@@ -167,7 +165,7 @@ export async function listEligibleOrders(
   if (!phoneDigits) return { choices: [] };
 
   const lookupPhone = `+91${phoneDigits}`;
-  const organizationIds = await findOrganizationsForCustomerPhone(supabase, lookupPhone);
+  const organizationIds = await organizationIdsForTrackingAssistant(supabase, phoneDigits, input.session);
   if (!organizationIds.length) return { choices: [] };
 
   const names = await loadMerchantNames(supabase, organizationIds);
