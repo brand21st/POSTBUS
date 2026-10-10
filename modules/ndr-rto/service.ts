@@ -192,6 +192,7 @@ function mapNdrRow(row: Record<string, unknown>) {
   const pickup = nestedOne<{ city?: string }>(row.pickup_locations);
   return {
     ...row,
+    id: String(row.id ?? ""),
     orderId: row.order_id,
     orderNumber: order?.order_number,
     order_number: order?.order_number,
