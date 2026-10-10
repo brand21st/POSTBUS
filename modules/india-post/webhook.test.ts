@@ -86,11 +86,27 @@ describe("event mapper", () => {
   });
 
   it("does not map booked or hold events to a new status", () => {
-    for (const eventCode of ["ITEM_BOOKED", "Item Booked", "ITEM_HOLD"]) {
+    for (const eventCode of ["ITEM_BOOKED", "Item Booked", "ITEM_HOLD", "Item Kept on Hold"]) {
       expect(mapIndiaPostEventToShipmentUpdate({ eventCode, eventDescription: null }).shouldUpdateStatus).toBe(
         false
       );
     }
+    expect(
+      mapIndiaPostEventToShipmentUpdate({
+        eventCode: "EVENT",
+        eventDescription: "Item Kept on Hold — Intimation Delivered",
+      }).shouldUpdateStatus
+    ).toBe(false);
+  });
+
+  it("maps rts true to return initiated without treating it as delivered", () => {
+    const mapped = mapIndiaPostEventToShipmentUpdate({
+      eventCode: "EVENT",
+      eventDescription: "Item Dispatched",
+      rts: true,
+    });
+    expect(mapped.operationalStatus).toBe("RTO");
+    expect(mapped.shipmentStatus).toBe("RTO");
   });
 
   it("maps out for delivery without collapsing it to in transit", () => {

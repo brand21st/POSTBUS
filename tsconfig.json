@@ -31,5 +31,5 @@
     "**/*.mts",
     "modules/labels/bwip-js.d.ts"
   ],
-  "exclude": ["node_modules", ".next/standalone", ".next/server", ".next/dev", ".next/cache", "**/*.test.ts"]
+  "exclude": ["node_modules", ".next/standalone", ".next/server", ".next/dev", ".next/cache", "**/*.test.ts", "scripts/**/*.mts"]
 }

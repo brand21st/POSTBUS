@@ -535,6 +535,7 @@ export type NdrSummary = {
   rto: number;
   rtoInTransit: number;
   rtoDelivered: number;
+  unclassifiedTracked: number;
 };
 
 export type NdrShipmentRecord = ShipmentRecord & {
@@ -1141,7 +1142,7 @@ export type PublicTrackedShipment = {
 
 export type PublicTrackResult = {
   found: boolean;
-  liveTracking: "ok" | "unavailable" | "not_connected";
+  liveTracking: "ok" | "cached" | "unavailable" | "not_connected";
   liveMessage?: string | null;
   shipment?: PublicTrackedShipment | null;
 };

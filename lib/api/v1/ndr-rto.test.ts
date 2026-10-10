@@ -5,8 +5,8 @@ import type { TenantContext } from "@/lib/api/context";
 import { ERROR_CODES } from "@/lib/api/errors";
 import { handleCommerceRoutes } from "@/lib/api/v1/commerce";
 
-vi.mock("@/modules/india-post/provider", () => ({
-  indiaPostFromRow: vi.fn(() => ({
+vi.mock("@/modules/india-post/session", () => ({
+  ensurePersistedIndiaPostSession: vi.fn(async () => ({
     trackShipment: vi.fn(async () => ({
       data: [
         {
@@ -100,6 +100,7 @@ function ndrDb() {
       api.gte = () => api;
       api.lt = () => api;
       api.lte = () => api;
+      api.is = () => api;
       api.or = () => api;
       api.order = () => api;
       api.range = () => api;
@@ -144,6 +145,7 @@ describe("NDR RTO commerce APIs", () => {
       rto: 1,
       rtoInTransit: 1,
       rtoDelivered: 1,
+      unclassifiedTracked: 1,
     });
   });
 

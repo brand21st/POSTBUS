@@ -273,6 +273,32 @@ describe("NDR RTO database migration", () => {
     expect(history.rows[0].classification).toBe("NDR");
   });
 
+  it("persists Item Delivered(Addressee) as operational DELIVERED", async () => {
+    const applied = await applyIndiaPostTracking(client(), snapshot(), {
+      eventCode: "ITEM_DELIVERED",
+      eventDescription: "Item Delivered(Addressee)",
+      officeName: "Pandhana S.O",
+      officeId: null,
+      occurredAt: "2026-09-28T08:00:00.000Z",
+      raw: { event: "Item Delivered(Addressee)" },
+      nonDeliveryReason: null,
+      mapText: "Item Delivered(Addressee)",
+    });
+    expect(applied.snapshot.status).toBe("DELIVERED");
+    expect(applied.snapshot.operationalStatus).toBe("DELIVERED");
+    const stored = await db.query<{ operational_status: string }>(
+      `select operational_status from public.shipments where id = $1`,
+      [shipmentA]
+    );
+    expect(stored.rows[0].operational_status).toBe("DELIVERED");
+    const classified = await db.query<{ classification: string | null }>(
+      `select classification from public.tracking_events
+        where shipment_id = $1 and event_code = 'ITEM_DELIVERED'`,
+      [shipmentA]
+    );
+    expect(classified.rows[0].classification).toBe("DELIVERED");
+  });
+
   it("stores CEPT out-for-delivery, return, and consignee delivery scans", async () => {
     const ofd = await applyIndiaPostTracking(client(), snapshot(), {
       eventCode: "OFD",
