@@ -4,10 +4,10 @@ import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import {
   ingestBulkTrackingArticle,
+  matchingBulkTrackingArticle,
   snapshotFromShipmentRow,
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
-import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 import type { NdrListQuery } from "@/modules/ndr-rto/schema";
 import type { NdrSummary } from "@/types/api";
@@ -265,7 +265,11 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
     .maybeSingle();
   if (connectionError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, connectionError.message);
 
-  const provider = indiaPostFromRow(connection);
+  if (!connection) {
+    throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post is not connected.");
+  }
+  const { ensurePersistedIndiaPostSession } = await import("@/modules/india-post/session");
+  const provider = await ensurePersistedIndiaPostSession(supabase, connection);
   let payload: { data?: BulkTrackingArticle[] };
   try {
     payload = (await provider.trackShipment([data.barcode])) as { data?: BulkTrackingArticle[] };
@@ -275,8 +279,7 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
     throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
   }
 
-  const article =
-    payload.data?.find((item) => item.booking_details?.article_number === data.barcode) ?? payload.data?.[0];
+  const article = matchingBulkTrackingArticle(payload.data, data.barcode);
   const trackedAt = new Date().toISOString();
   if (!article) {
     await supabase
@@ -296,6 +299,7 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
     organizationId: ctx.organizationId,
     shipment: snapshotFromShipmentRow(data, ctx.organizationId),
     article,
+    source: "bulk",
   });
   if (ingested.whatsappEvents.length || ingested.orderStatus) {
     await enqueueTrackingStageSideEffects(supabase, {

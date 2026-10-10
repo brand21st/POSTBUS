@@ -34,6 +34,11 @@ export const env = {
     "https://app.indiapost.gov.in/beextcustomer",
   indiaPostBookingBatchSize: optional(process.env.INDIA_POST_BOOKING_BATCH_SIZE) || "1",
   indiaPostBookingConcurrency: optional(process.env.INDIA_POST_BOOKING_CONCURRENCY) || "4",
+  // Empty = webhook HTTP is acknowledged but events are quarantined (not processed). Set official CEPT CIDRs only after India Post confirms them.
+  indiaPostWebhookAllowedCidrs: optional(process.env.INDIA_POST_WEBHOOK_ALLOWED_CIDRS),
+  indiaPostTrackingSyncMinIntervalMs: optional(process.env.INDIA_POST_TRACKING_SYNC_MIN_INTERVAL_MS) || "900000",
+  indiaPostTrackingSyncPageSize: optional(process.env.INDIA_POST_TRACKING_SYNC_PAGE_SIZE) || "500",
+  indiaPostTrackingSyncEnqueueLimit: optional(process.env.INDIA_POST_TRACKING_SYNC_ENQUEUE_LIMIT) || "50",
   razorpayKeyId: optional(process.env.RAZORPAY_KEY_ID),
   razorpayKeySecret: optional(process.env.RAZORPAY_KEY_SECRET),
   razorpayWebhookSecret: optional(process.env.RAZORPAY_WEBHOOK_SECRET),

@@ -44,6 +44,45 @@ describe("IndiaPostProvider in-memory session", () => {
     expect(result.data).toEqual([]);
   });
 
+  it("treats HTTP 200 with success false as a tracking failure", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes("/access/login")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: {
+              access_token: "live-token",
+              refresh_token: "refresh",
+              id_token: "id",
+              expires_in: 3600,
+              refresh_expires_in: 7200,
+            },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: false, status_code: 503, message: "lookup failed", data: [] }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new IndiaPostProvider({
+      environment: "UAT",
+      status: "CONNECTED",
+      encrypted_username: encryptSecret("user"),
+      encrypted_password: encryptSecret("pass"),
+      bulk_customer_id: "cust-1",
+    });
+
+    await expect(provider.trackShipment(["AW123456789IN"])).rejects.toMatchObject({
+      code: "TEMPORARY_PROVIDER_FAILURE",
+      status: 503,
+    });
+  });
+
   it("calls login once across ensureSession then bookShipment", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).includes("/access/login")) {

@@ -72,7 +72,11 @@ function hasToken(key: string, token: string) {
   return new RegExp(`(^|_)${token}($|_)`).test(key);
 }
 
-function classifyEvent(key: string, nonDeliveryReason: string | null): OperationalStatus | null {
+function classifyEvent(
+  key: string,
+  nonDeliveryReason: string | null,
+  rts?: boolean
+): OperationalStatus | null {
   if (
     hasPhrase(key, "rto_delivered") ||
     hasPhrase(key, "delivered_to_sender") ||
@@ -92,6 +96,7 @@ function classifyEvent(key: string, nonDeliveryReason: string | null): Operation
   }
 
   if (
+    rts ||
     hasToken(key, "rto") ||
     hasPhrase(key, "return_to_sender") ||
     hasPhrase(key, "returned_to_sender") ||
@@ -117,7 +122,10 @@ function classifyEvent(key: string, nonDeliveryReason: string | null): Operation
     return "OUT_FOR_DELIVERY";
   }
 
-  if (hasPhrase(key, "delivered") || hasPhrase(key, "item_delivered")) {
+  if (
+    hasPhrase(key, "item_delivered") ||
+    (hasPhrase(key, "delivered") && !hasPhrase(key, "intimation"))
+  ) {
     return "DELIVERED";
   }
 
@@ -164,11 +172,12 @@ export function mapIndiaPostEventToShipmentUpdate(event: {
   eventCode?: string | null;
   eventDescription?: string | null;
   nonDeliveryReason?: string | null;
+  rts?: boolean | null;
 }): IndiaPostShipmentUpdate {
   const eventCode = event.eventCode || "EVENT";
   const eventDescription = event.eventDescription ?? null;
   const ndrReason = event.nonDeliveryReason?.trim() || null;
-  const classification = classifyEvent(eventKey(event), ndrReason);
+  const classification = classifyEvent(eventKey(event), ndrReason, event.rts === true);
   const key = eventKey(event);
   const delayScan = isIndiaPostDelayScan(key, classification);
   const shipmentStatus = classification ? shipmentStatusForOperational(classification) : null;

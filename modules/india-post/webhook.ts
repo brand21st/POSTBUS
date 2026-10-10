@@ -3,8 +3,13 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError, logInfo } from "@/lib/logger";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { emitWebhook } from "@/modules/webhooks/outgoing";
-import { applyIndiaPostTracking, snapshotFromShipmentRow } from "@/modules/india-post/apply-tracking";
+import { applyIndiaPostTracking, snapshotFromShipmentRow, trackingEventRaw } from "@/modules/india-post/apply-tracking";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
+import {
+  assertIndiaPostWebhookSourceAllowed,
+  isIndiaPostWebhookQuarantined,
+  webhookSourceIp,
+} from "@/modules/india-post/webhook-allowlist";
 import {
   maskTrackingNumber,
   parseIndiaPostWebhook,
@@ -60,11 +65,31 @@ export async function acceptIndiaPostWebhook(
     headers: Headers;
   }
 ) {
+  if (isIndiaPostWebhookQuarantined()) {
+    logInfo("india_post.webhook.quarantined", {
+      provider: "INDIA_POST",
+      connectionId: input.connectionId,
+      channel: input.channel,
+    });
+    return { accepted: false, quarantined: true, duplicate: false, inboxEventId: null };
+  }
+  assertIndiaPostWebhookSourceAllowed(webhookSourceIp(input.headers));
   if (Buffer.byteLength(input.rawBody, "utf8") > INDIA_POST_WEBHOOK_MAX_BYTES) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Payload too large.");
   }
 
   const parsed = parseIndiaPostWebhook(input.rawBody, input.contentType, input.channel);
+  if (parsed.customerId) {
+    const { data: connection } = await supabase
+      .from("india_post_connections")
+      .select("id, bulk_customer_id")
+      .eq("id", input.connectionId)
+      .maybeSingle();
+    const expected = String(connection?.bulk_customer_id ?? "").trim();
+    if (expected && expected !== parsed.customerId) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook customer id does not match this connection.");
+    }
+  }
   const hash = payloadHash(input.rawBody);
   const storedPayload = {
     ...parsed.rawPayload,
@@ -230,7 +255,7 @@ export async function processIndiaPostInboxEvent(
       officeName: parsed.officeName,
       officeId: parsed.officeId,
       occurredAt: parsed.eventTimestamp ?? inbox.received_at ?? new Date().toISOString(),
-      raw: parsed.rawPayload,
+      raw: trackingEventRaw(parsed.rawPayload, "webhook"),
       nonDeliveryReason: parsed.nonDeliveryReason,
     }
   );

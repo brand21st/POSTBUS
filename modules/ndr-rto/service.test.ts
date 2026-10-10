@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { TenantContext } from "@/lib/api/context";
-import { indiaPostFromRow } from "@/modules/india-post/provider";
+import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
 import { ndrListQuery } from "@/modules/ndr-rto/schema";
 import { getNdrSummary, istDayBounds, listNdrShipments, syncNdrShipment } from "@/modules/ndr-rto/service";
 
-vi.mock("@/modules/india-post/provider", () => ({
-  indiaPostFromRow: vi.fn(() => ({
+vi.mock("@/modules/india-post/session", () => ({
+  ensurePersistedIndiaPostSession: vi.fn(async () => ({
     trackShipment: vi.fn(async () => {
       throw new Error("Tracking lookup failed.");
     }),
@@ -177,7 +177,7 @@ describe("NDR APIs", () => {
     });
     expect(filters).toContain("shipments.organization_id:org-a");
     expect(filters).toContain("shipments.id:ship-b");
-    expect(indiaPostFromRow).not.toHaveBeenCalled();
+    expect(ensurePersistedIndiaPostSession).not.toHaveBeenCalled();
 
     const connected = {
       from(table: string) {
@@ -192,7 +192,7 @@ describe("NDR APIs", () => {
             data:
               table === "shipments"
                 ? { id: "ship-a", barcode: "AW784699994IN", status: "IN_TRANSIT", order_id: "order-a", organization_id: "org-a" }
-                : { status: "CONNECTED" },
+                : { id: "conn-a", status: "CONNECTED" },
             error: null,
           }),
         };

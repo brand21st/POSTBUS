@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CEPT_SAMPLE_WEBHOOK_PAYLOAD } from "@/modules/india-post/webhook-parser";
 import { acceptIndiaPostWebhook, processIndiaPostInboxEvent } from "@/modules/india-post/webhook";
 
@@ -17,8 +17,9 @@ vi.mock("@/modules/india-post/tracking-effects", () => ({
 const orgId = "org-a";
 const shipmentId = "ship-a";
 
-function inboxClient(options?: { duplicate?: boolean }) {
+function inboxClient(options?: { duplicate?: boolean; customerId?: string | null }) {
   const jobs: unknown[] = [];
+  const customerId = options?.customerId === undefined ? "1000002954" : options.customerId;
   return {
     jobs,
     rpc: async (_name: string, args: Record<string, unknown>) => ({
@@ -31,7 +32,23 @@ function inboxClient(options?: { duplicate?: boolean }) {
       error: null,
       args,
     }),
-    from() {
+    from(table: string) {
+      if (table === "india_post_connections") {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  maybeSingle: async () => ({
+                    data: { id: "11111111-1111-4111-8111-111111111111", bulk_customer_id: customerId },
+                    error: null,
+                  }),
+                };
+              },
+            };
+          },
+        };
+      }
       return {
         insert(row: unknown) {
           jobs.push(row);
@@ -135,6 +152,48 @@ function processClient(input: {
 }
 
 describe("CEPT webhook accept", () => {
+  beforeEach(() => {
+    vi.stubEnv("INDIA_POST_WEBHOOK_ALLOWED_CIDRS", "10.0.0.0/8");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("quarantines when CIDRs are empty and does not persist or enqueue", async () => {
+    vi.stubEnv("INDIA_POST_WEBHOOK_ALLOWED_CIDRS", "");
+    const { createBackgroundJob } = await import("@/modules/jobs/service");
+    vi.mocked(createBackgroundJob).mockClear();
+    const supabase = inboxClient();
+    const rpc = vi.fn(supabase.rpc);
+    supabase.rpc = rpc as typeof supabase.rpc;
+    const result = await acceptIndiaPostWebhook(supabase as never, {
+      connectionId: "11111111-1111-4111-8111-111111111111",
+      channel: "events",
+      rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
+      contentType: "application/json",
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    expect(result).toEqual({ accepted: false, quarantined: true, duplicate: false, inboxEventId: null });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(createBackgroundJob).not.toHaveBeenCalled();
+  });
+
+  it("rejects a source IP outside the configured CIDRs", async () => {
+    const supabase = inboxClient();
+    const rpc = vi.fn(supabase.rpc);
+    supabase.rpc = rpc as typeof supabase.rpc;
+    await expect(
+      acceptIndiaPostWebhook(supabase as never, {
+        connectionId: "11111111-1111-4111-8111-111111111111",
+        channel: "events",
+        rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
+        contentType: "application/json",
+        headers: new Headers({ "cf-connecting-ip": "8.8.8.8" }),
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("persists a CEPT event and enqueues india-post-events", async () => {
     const { createBackgroundJob } = await import("@/modules/jobs/service");
     const supabase = inboxClient();
@@ -143,7 +202,10 @@ describe("CEPT webhook accept", () => {
       channel: "events",
       rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
       contentType: "application/json",
-      headers: new Headers({ "content-type": "application/json" }),
+      headers: new Headers({
+        "content-type": "application/json",
+        "cf-connecting-ip": "10.9.8.7",
+      }),
     });
     expect(result).toEqual({ accepted: true, duplicate: false, inboxEventId: "inbox-1" });
     expect(createBackgroundJob).toHaveBeenCalledWith(
@@ -164,10 +226,25 @@ describe("CEPT webhook accept", () => {
       channel: "events",
       rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
       contentType: "application/json",
-      headers: new Headers(),
+      headers: new Headers({ "cf-connecting-ip": "10.9.8.7" }),
     });
     expect(result.duplicate).toBe(true);
     expect(createBackgroundJob).not.toHaveBeenCalled();
+  });
+
+  it("rejects a webhook whose bulk_customer_id does not match the connection", async () => {
+    await expect(
+      acceptIndiaPostWebhook(inboxClient({ customerId: "999" }) as never, {
+        connectionId: "11111111-1111-4111-8111-111111111111",
+        channel: "events",
+        rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
+        contentType: "application/json",
+        headers: new Headers({
+          "content-type": "application/json",
+          "cf-connecting-ip": "10.9.8.7",
+        }),
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 
@@ -190,6 +267,7 @@ describe("CEPT webhook process", () => {
     expect(supabase.shipment.operational_status).toBe("NDR");
     expect(supabase.shipment.ndr_reason).toBe("Addressee cannot be located");
     expect(supabase.events[0]).toMatchObject({ classification: "NDR", event_code: "DELIVERY_ATTEMPTED" });
+    expect((supabase.events[0].raw as { _meta?: { source?: string } })._meta?.source).toBe("webhook");
     expect(supabase.updates.some((update) => update.table === "provider_webhook_inbox" && update.patch.process_status === "PROCESSED")).toBe(
       true
     );

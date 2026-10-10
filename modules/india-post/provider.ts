@@ -6,6 +6,11 @@ import { indiaPostBookingHasArticleOutcomes, indiaPostFormatBookingFailure, indi
 import { INDIA_POST_TIMEOUT_MS, indiaPostTimeoutSignal } from "@/modules/india-post/http";
 import { chunkIds } from "@/modules/india-post/booking-batch";
 import { INDIA_POST_TRACKING_BULK_LIMIT } from "@/modules/india-post/spec";
+import {
+  articlesForRequestedBarcodes,
+  parseBulkTrackingResponse,
+  retryAfterMsFromHeader,
+} from "@/modules/india-post/tracking-response";
 import type { ProviderEnvironment } from "@/types/domain";
 
 export type ShippingProvider = {
@@ -347,10 +352,30 @@ export class IndiaPostProvider implements ShippingProvider {
           continue;
         }
         const error = new Error(message);
-        (error as { status?: number }).status = response.status;
+        (error as { status?: number; code?: string; retryAfterMs?: number }).status = response.status;
+        if (response.status === 429) {
+          (error as { code?: string }).code = "HTTP_429";
+          const retryAfterMs = retryAfterMsFromHeader(response.headers.get("retry-after"));
+          if (retryAfterMs != null) {
+            (error as { retryAfterMs?: number }).retryAfterMs = retryAfterMs;
+          }
+        }
         throw error;
       }
-      if (Array.isArray(lastJson.data)) data.push(...lastJson.data);
+      const parsed = parseBulkTrackingResponse(lastJson);
+      if (parsed.success === false) {
+        const message =
+          indiaPostJoinMessages([parsed.error?.message, parsed.message != null ? String(parsed.message) : null]) ||
+          "Tracking lookup failed.";
+        const status = parsed.status_code ?? response.status;
+        const error = new Error(message) as { status?: number; code?: string };
+        error.status = status;
+        if (!(status >= 400 && status < 500 && status !== 429)) {
+          error.code = "TEMPORARY_PROVIDER_FAILURE";
+        }
+        throw error;
+      }
+      data.push(...articlesForRequestedBarcodes(parsed.data, bulk));
     }
     return { ...lastJson, data };
   }

@@ -8,13 +8,15 @@ import {
   isAutoShopifySyncEnabled,
   mapAutomationSettings,
 } from "@/modules/automation/service";
-import { indiaPostFromRow } from "@/modules/india-post/provider";
 import {
   ingestBulkTrackingArticle,
+  matchingBulkTrackingArticle,
   snapshotFromShipmentRow,
   TRACKING_POLL_STATUSES,
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
+import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
+import { enqueueOrgTrackingSyncIfIdle, trackingSyncCutoffIso, trackingSyncPageSize } from "@/modules/india-post/tracking-sync";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
@@ -166,7 +168,12 @@ export async function processJob(queue: string, payload: JobPayload) {
       .single();
     const attempt = (job?.attempt_count ?? 0) + 1;
     const retryable = classified.retryable && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
-    const retryDelayMs = retryable ? delayForAttempt(attempt) : 0;
+    const retryAfterMs = Number((error as { retryAfterMs?: number })?.retryAfterMs);
+    const retryDelayMs = retryable
+      ? Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+        ? retryAfterMs
+        : delayForAttempt(attempt)
+      : 0;
     logInfo("job.retry_decision", {
       ...timing,
       attempt,
@@ -379,12 +386,7 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
       });
     }
     if (automation.autoTrackingSync) {
-      await createBackgroundJob(supabase, {
-        organizationId: payload.organizationId,
-        jobType: "tracking-sync",
-        entityType: "shipment",
-        entityId: shipment.id,
-      });
+      await enqueueOrgTrackingSyncIfIdle(supabase, payload.organizationId);
     }
   });
 }
@@ -642,6 +644,7 @@ async function generateManifest(supabase: ReturnType<typeof createAdminClient>, 
 }
 
 async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const started = Date.now();
   const automation = await loadAutomation(supabase, payload.organizationId);
   if (!automation.autoTrackingSync) {
     return;
@@ -654,39 +657,89 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
   if (!connection) {
     throw Object.assign(new Error("India Post is not connected."), { code: "PERMANENT_AUTH_ERROR" });
   }
-  const { data: shipments } = await supabase
-    .from("shipments")
-    .select(
-      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
-    )
-    .eq("organization_id", payload.organizationId)
-    .not("barcode", "is", null)
-    .in("status", [...TRACKING_POLL_STATUSES])
-    .or("operational_status.is.null,operational_status.neq.RTO_DELIVERED");
-  const barcodes = (shipments ?? []).map((item) => item.barcode).filter(Boolean) as string[];
-  if (!barcodes.length) return;
-  const provider = indiaPostFromRow(connection);
-  const result = (await provider.trackShipment(barcodes)) as {
-    data?: BulkTrackingArticle[];
-  };
-  for (const article of result.data ?? []) {
-    const barcode = article.booking_details?.article_number;
-    const shipment = shipments?.find((item) => item.barcode === barcode);
-    if (!shipment) continue;
-    const ingested = await ingestBulkTrackingArticle(supabase, {
-      organizationId: payload.organizationId,
-      shipment: snapshotFromShipmentRow(shipment, payload.organizationId),
-      article,
-    });
-    if (ingested.whatsappEvents.length || ingested.orderStatus) {
-      await enqueueTrackingStageSideEffects(supabase, {
+  try {
+    const provider = await ensurePersistedIndiaPostSession(supabase, connection);
+    const pageSize = trackingSyncPageSize();
+    const cutoff = trackingSyncCutoffIso();
+    const maxPages = 4;
+    let page = 0;
+    let lastPageFull = false;
+    let barcodesSynced = 0;
+    while (page < maxPages) {
+      const { data: shipments } = await supabase
+        .from("shipments")
+        .select(
+          "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
+        )
+        .eq("organization_id", payload.organizationId)
+        .not("barcode", "is", null)
+        .in("status", [...TRACKING_POLL_STATUSES])
+        .or("operational_status.is.null,operational_status.neq.RTO_DELIVERED")
+        .or(`last_tracked_at.is.null,last_tracked_at.lt.${cutoff}`)
+        .order("last_tracked_at", { ascending: true, nullsFirst: true })
+        .limit(pageSize);
+      const rows = shipments ?? [];
+      lastPageFull = rows.length === pageSize;
+      const barcodes = rows.map((item) => item.barcode).filter(Boolean) as string[];
+      if (!barcodes.length) break;
+      barcodesSynced += barcodes.length;
+      const result = (await provider.trackShipment(barcodes)) as {
+        data?: BulkTrackingArticle[];
+      };
+      for (const shipment of rows) {
+        if (!shipment.barcode) continue;
+        const article = matchingBulkTrackingArticle(result.data, shipment.barcode);
+        if (!article) {
+          await supabase
+            .from("shipments")
+            .update({ last_tracked_at: new Date().toISOString() })
+            .eq("id", shipment.id)
+            .eq("organization_id", payload.organizationId);
+          continue;
+        }
+        const ingested = await ingestBulkTrackingArticle(supabase, {
+          organizationId: payload.organizationId,
+          shipment: snapshotFromShipmentRow(shipment, payload.organizationId),
+          article,
+          source: "bulk",
+        });
+        if (ingested.whatsappEvents.length || ingested.orderStatus) {
+          await enqueueTrackingStageSideEffects(supabase, {
+            organizationId: payload.organizationId,
+            shipmentId: shipment.id,
+            orderId: shipment.order_id,
+            orderStatus: ingested.orderStatus,
+            events: ingested.whatsappEvents,
+          });
+        }
+      }
+      page += 1;
+      if (rows.length < pageSize) break;
+    }
+    if (lastPageFull && page >= maxPages) {
+      const { createBackgroundJob } = await import("@/modules/jobs/service");
+      await createBackgroundJob(supabase, {
         organizationId: payload.organizationId,
-        shipmentId: shipment.id,
-        orderId: shipment.order_id,
-        orderStatus: ingested.orderStatus,
-        events: ingested.whatsappEvents,
+        jobType: "tracking-sync",
+        entityType: "organization",
+        entityId: payload.organizationId,
       });
     }
+    logInfo("india_post.tracking.sync_ok", {
+      organizationId: payload.organizationId,
+      jobId: payload.jobId,
+      durationMs: Date.now() - started,
+      pages: page,
+      barcodesSynced,
+    });
+  } catch (error) {
+    logError("india_post.tracking.sync_fail", {
+      organizationId: payload.organizationId,
+      jobId: payload.jobId,
+      durationMs: Date.now() - started,
+      message: error instanceof Error ? error.message : "tracking sync failed",
+    });
+    throw error;
   }
 }
 

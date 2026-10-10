@@ -5,6 +5,8 @@ import { authorizeCron } from "@/lib/jobs/cron-auth";
 import { DEFAULT_DRAIN_LIMIT, drainDueJobs } from "@/lib/jobs/drain";
 import { parseJobTypes } from "@/lib/jobs/job-lanes";
 import { logError } from "@/lib/logger";
+import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
+import { enqueueDueTrackingSyncJobs } from "@/modules/india-post/tracking-sync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -38,6 +40,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const shouldEnqueueTracking = !jobTypes || jobTypes.includes("tracking-sync");
+    if (shouldEnqueueTracking && hasAdminClient()) {
+      await enqueueDueTrackingSyncJobs(createAdminClient());
+    }
     return NextResponse.json({ success: true, data: await drainDueJobs(limit, jobTypes) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not drain background jobs.";
