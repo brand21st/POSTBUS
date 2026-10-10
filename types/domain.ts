@@ -338,9 +338,9 @@ export type ExchangeWorkflowStatus = (typeof EXCHANGE_WORKFLOW_STATUSES)[number]
 
 export const SUPPORT_TICKET_STATUS_LABELS: Record<SupportTicketStatus, string> = {
   open: "Open",
-  in_progress: "In Progress",
-  pending_customer: "Pending Customer",
-  pending_merchant: "Pending Merchant",
+  in_progress: "In progress",
+  pending_customer: "Waiting on customer",
+  pending_merchant: "Waiting on you",
   resolved: "Resolved",
   closed: "Closed",
   reopened: "Reopened",
@@ -354,14 +354,14 @@ export const SUPPORT_TICKET_PRIORITY_LABELS: Record<SupportTicketPriority, strin
 };
 
 export const SUPPORT_TICKET_CATEGORY_LABELS: Record<SupportTicketCategory, string> = {
-  order_cancellation: "Order Cancellation",
-  product_return: "Product Return",
-  product_exchange: "Product Exchange",
-  refund_request: "Refund Request",
-  delivery_issue: "Delivery Issue",
-  damaged_product: "Damaged Product",
-  wrong_product: "Wrong Product",
-  missing_product: "Missing Product",
-  general_inquiry: "General Inquiry",
+  order_cancellation: "Cancellation",
+  product_return: "Return",
+  product_exchange: "Exchange",
+  refund_request: "Refund",
+  delivery_issue: "Delivery",
+  damaged_product: "Damaged item",
+  wrong_product: "Wrong item",
+  missing_product: "Missing item",
+  general_inquiry: "Question",
   other: "Other",
 };
