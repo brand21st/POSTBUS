@@ -145,10 +145,10 @@ function lastScanAsEvent(
   if (!eventCode && !eventDescription) return null;
   return {
     id: "last-scan",
-    eventCode,
-    eventDescription,
-    officeName: text(shipment.lastScanOffice) ?? text(shipment.last_scan_office),
-    occurredAt: text(shipment.lastEventAt) ?? text(shipment.last_event_at),
+    eventCode: eventCode ?? undefined,
+    eventDescription: eventDescription ?? undefined,
+    officeName: text(shipment.lastScanOffice) ?? text(shipment.last_scan_office) ?? undefined,
+    occurredAt: text(shipment.lastEventAt) ?? text(shipment.last_event_at) ?? undefined,
   };
 }
 
