@@ -6,11 +6,17 @@ import { indiaPostBookingHasArticleOutcomes, indiaPostFormatBookingFailure, indi
 import { INDIA_POST_TIMEOUT_MS, indiaPostTimeoutSignal } from "@/modules/india-post/http";
 import { chunkIds } from "@/modules/india-post/booking-batch";
 import { INDIA_POST_TRACKING_BULK_LIMIT } from "@/modules/india-post/spec";
+import { retryAfterMsFromHeader } from "@/modules/india-post/tracking-response";
 import {
-  articlesForRequestedBarcodes,
-  parseBulkTrackingResponse,
-  retryAfterMsFromHeader,
-} from "@/modules/india-post/tracking-response";
+  articlesFromOutcomes,
+  isolateBulkTrackingChunk,
+  isTrackingLookupRejectStatus,
+  outcomesFromOkChunk,
+  parseOkTrackingJson,
+  trackingIsolateMaxRequests,
+  type BulkChunkResult,
+  type TrackShipmentResult,
+} from "@/modules/india-post/tracking-bulk";
 import type { ProviderEnvironment } from "@/types/domain";
 
 export type ShippingProvider = {
@@ -323,61 +329,78 @@ export class IndiaPostProvider implements ShippingProvider {
     );
   }
 
-  async trackShipment(barcodes: string[]) {
+  async trackShipment(
+    barcodes: string[],
+    options?: { isolateFailures?: boolean; isolateBudget?: { remaining: number } }
+  ): Promise<TrackShipmentResult> {
     const unique = [...new Set(barcodes.map((code) => String(code ?? "").trim()).filter(Boolean))];
-    const token = await this.token();
-    const data: unknown[] = [];
-    let lastJson: { success?: boolean; message?: string; data?: unknown[]; error?: { message?: string } } = { data: [] };
-    for (const bulk of chunkIds(unique, INDIA_POST_TRACKING_BULK_LIMIT)) {
-      const response = await fetch(this.sessionUrl("/tracking/bulk"), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ bulk }),
-        signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.track),
-      });
-      lastJson = (await response.json().catch(() => ({}))) as {
-        success?: boolean;
-        message?: string;
-        data?: unknown[];
-        error?: { message?: string };
-      };
-      if (!response.ok) {
-        const message =
-          indiaPostJoinMessages([lastJson.error?.message, lastJson.message]) || "Tracking lookup failed.";
-        // Freshly booked articles often 400/403/404 until the first office scan.
-        if (response.status === 400 || response.status === 403 || response.status === 404) {
-          continue;
-        }
-        const error = new Error(message);
-        (error as { status?: number; code?: string; retryAfterMs?: number }).status = response.status;
-        if (response.status === 429) {
-          (error as { code?: string }).code = "HTTP_429";
-          const retryAfterMs = retryAfterMsFromHeader(response.headers.get("retry-after"));
-          if (retryAfterMs != null) {
-            (error as { retryAfterMs?: number }).retryAfterMs = retryAfterMs;
-          }
-        }
-        throw error;
+    if (!options?.isolateFailures) {
+      const data: TrackShipmentResult["data"] = [];
+      for (const bulk of chunkIds(unique, INDIA_POST_TRACKING_BULK_LIMIT)) {
+        const chunk = await this.fetchTrackingChunk(bulk);
+        if (chunk.kind === "reject") continue;
+        data.push(...chunk.articles);
       }
-      const parsed = parseBulkTrackingResponse(lastJson);
-      if (parsed.success === false) {
-        const message =
-          indiaPostJoinMessages([parsed.error?.message, parsed.message != null ? String(parsed.message) : null]) ||
-          "Tracking lookup failed.";
-        const status = parsed.status_code ?? response.status;
-        const error = new Error(message) as { status?: number; code?: string };
-        error.status = status;
-        if (!(status >= 400 && status < 500 && status !== 429)) {
-          error.code = "TEMPORARY_PROVIDER_FAILURE";
-        }
-        throw error;
-      }
-      data.push(...articlesForRequestedBarcodes(parsed.data, bulk));
+      return { data, outcomes: outcomesFromOkChunk(unique, data) };
     }
-    return { ...lastJson, data };
+    const outcomes = [];
+    const budget = options.isolateBudget ?? { remaining: trackingIsolateMaxRequests() };
+    for (const bulk of chunkIds(unique, INDIA_POST_TRACKING_BULK_LIMIT)) {
+      const chunkOutcomes = await isolateBulkTrackingChunk(bulk, (batch) => this.fetchTrackingChunk(batch), budget);
+      outcomes.push(...chunkOutcomes);
+    }
+    return { data: articlesFromOutcomes(outcomes), outcomes };
+  }
+
+  private async fetchTrackingChunk(bulk: string[], retriedAuth = false): Promise<BulkChunkResult> {
+    const token = await this.token();
+    const response = await fetch(this.sessionUrl("/tracking/bulk"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ bulk }),
+      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.track),
+    });
+    const json = (await response.json().catch(() => ({}))) as {
+      success?: boolean;
+      message?: string;
+      data?: unknown[];
+      error?: { message?: string };
+      status_code?: number;
+    };
+    if (response.status === 401 && !retriedAuth) {
+      await this.login();
+      return this.fetchTrackingChunk(bulk, true);
+    }
+    const message = indiaPostJoinMessages([json.error?.message, json.message]) || "Tracking lookup failed.";
+    if (isTrackingLookupRejectStatus(response.status)) {
+      return { kind: "reject", status: response.status, message };
+    }
+    if (!response.ok) {
+      const error = new Error(message) as { status?: number; code?: string; retryAfterMs?: number };
+      error.status = response.status;
+      if (response.status === 429) {
+        error.code = "HTTP_429";
+        const retryAfterMs = retryAfterMsFromHeader(response.headers.get("retry-after"));
+        if (retryAfterMs != null) error.retryAfterMs = retryAfterMs;
+      }
+      throw error;
+    }
+    try {
+      return { kind: "ok", articles: parseOkTrackingJson(json, bulk) };
+    } catch (error) {
+      const status = Number((error as { status?: number }).status);
+      if (isTrackingLookupRejectStatus(status)) {
+        return {
+          kind: "reject",
+          status,
+          message: error instanceof Error ? error.message : message,
+        };
+      }
+      throw error;
+    }
   }
 
   async cancelShipment() {

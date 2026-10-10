@@ -37,58 +37,119 @@ describe("tracking-sync enqueue", () => {
   it("queues at most the configured number of idle connected orgs", async () => {
     const { createBackgroundJob } = await import("@/modules/jobs/service");
     vi.mocked(createBackgroundJob).mockClear();
+    const jobs = {
+      select() {
+        return jobs;
+      },
+      eq() {
+        return jobs;
+      },
+      in() {
+        return jobs;
+      },
+      gte() {
+        return jobs;
+      },
+      limit: async () => ({ data: [], error: null }),
+    };
+    const shipments = {
+      eq() {
+        return shipments;
+      },
+      not() {
+        return shipments;
+      },
+      in() {
+        return shipments;
+      },
+      or() {
+        return shipments;
+      },
+      then(resolve: (value: { count: number; error: null }) => void) {
+        resolve({ count: 1, error: null });
+      },
+    };
     const supabase = {
       from(table: string) {
-        return {
-          select() {
-            return {
-              eq(column: string) {
-                if (table === "automation_settings") {
+        if (table === "automation_settings") {
+          return {
+            select() {
+              return {
+                eq() {
                   return {
                     limit: async () => ({
                       data: [{ organization_id: "org-1" }, { organization_id: "org-2" }],
                       error: null,
                     }),
                   };
-                }
-                if (table === "india_post_connections") {
+                },
+              };
+            },
+          };
+        }
+        if (table === "india_post_connections") {
+          return {
+            select() {
+              return {
+                eq() {
                   return {
                     maybeSingle: async () => ({
                       data: { id: "c1", status: "CONNECTED", encrypted_username: "x" },
                       error: null,
                     }),
                   };
-                }
-                if (table === "background_jobs" && column === "organization_id") {
-                  return {
-                    eq() {
-                      return {
-                        in() {
-                          return {
-                            limit: async () => ({ data: [], error: null }),
-                          };
-                        },
-                      };
-                    },
-                  };
-                }
-                return {
-                  eq() {
-                    return {
-                      in() {
-                        return { limit: async () => ({ data: [], error: null }) };
-                      },
-                    };
-                  },
-                };
-              },
-            };
-          },
-        };
+                },
+              };
+            },
+          };
+        }
+        if (table === "shipments") {
+          return {
+            select() {
+              return shipments;
+            },
+          };
+        }
+        return jobs;
       },
     };
     const result = await enqueueDueTrackingSyncJobs(supabase as never);
     expect(result.enqueued).toBe(2);
     expect(createBackgroundJob).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not requeue an organization in authentication cooldown", async () => {
+    const { createBackgroundJob } = await import("@/modules/jobs/service");
+    vi.mocked(createBackgroundJob).mockClear();
+    let jobQuery = 0;
+    const jobs = {
+      select() {
+        return jobs;
+      },
+      eq() {
+        return jobs;
+      },
+      in() {
+        return jobs;
+      },
+      gte() {
+        return jobs;
+      },
+      async limit() {
+        jobQuery += 1;
+        if (jobQuery === 1) return { data: [], error: null };
+        return { data: [{ id: "failed-auth" }], error: null };
+      },
+    };
+    const result = await enqueueOrgTrackingSyncIfIdle(
+      {
+        from() {
+          return jobs;
+        },
+      } as never,
+      "org-auth"
+    );
+    expect(result).toEqual({ enqueued: false, reason: "auth-cooldown" });
+    expect(createBackgroundJob).not.toHaveBeenCalled();
   });
 });

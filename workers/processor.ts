@@ -8,16 +8,9 @@ import {
   isAutoShopifySyncEnabled,
   mapAutomationSettings,
 } from "@/modules/automation/service";
-import {
-  ingestBulkTrackingArticle,
-  matchingBulkTrackingArticle,
-  snapshotFromShipmentRow,
-  TRACKING_POLL_STATUSES,
-  type BulkTrackingArticle,
-} from "@/modules/india-post/apply-tracking";
 import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
-import { enqueueOrgTrackingSyncIfIdle, trackingSyncCutoffIso, trackingSyncPageSize } from "@/modules/india-post/tracking-sync";
-import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
+import { enqueueOrgTrackingSyncIfIdle } from "@/modules/india-post/tracking-sync";
+import { runOrganizationTrackingSync } from "@/modules/india-post/tracking-sync-run";
 import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
@@ -659,64 +652,11 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
   }
   try {
     const provider = await ensurePersistedIndiaPostSession(supabase, connection);
-    const pageSize = trackingSyncPageSize();
-    const cutoff = trackingSyncCutoffIso();
-    const maxPages = 4;
-    let page = 0;
-    let lastPageFull = false;
-    let barcodesSynced = 0;
-    while (page < maxPages) {
-      const { data: shipments } = await supabase
-        .from("shipments")
-        .select(
-          "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
-        )
-        .eq("organization_id", payload.organizationId)
-        .not("barcode", "is", null)
-        .in("status", [...TRACKING_POLL_STATUSES])
-        .or("operational_status.is.null,operational_status.neq.RTO_DELIVERED")
-        .or(`last_tracked_at.is.null,last_tracked_at.lt.${cutoff}`)
-        .order("last_tracked_at", { ascending: true, nullsFirst: true })
-        .limit(pageSize);
-      const rows = shipments ?? [];
-      lastPageFull = rows.length === pageSize;
-      const barcodes = rows.map((item) => item.barcode).filter(Boolean) as string[];
-      if (!barcodes.length) break;
-      barcodesSynced += barcodes.length;
-      const result = (await provider.trackShipment(barcodes)) as {
-        data?: BulkTrackingArticle[];
-      };
-      for (const shipment of rows) {
-        if (!shipment.barcode) continue;
-        const article = matchingBulkTrackingArticle(result.data, shipment.barcode);
-        if (!article) {
-          await supabase
-            .from("shipments")
-            .update({ last_tracked_at: new Date().toISOString() })
-            .eq("id", shipment.id)
-            .eq("organization_id", payload.organizationId);
-          continue;
-        }
-        const ingested = await ingestBulkTrackingArticle(supabase, {
-          organizationId: payload.organizationId,
-          shipment: snapshotFromShipmentRow(shipment, payload.organizationId),
-          article,
-          source: "bulk",
-        });
-        if (ingested.whatsappEvents.length || ingested.orderStatus) {
-          await enqueueTrackingStageSideEffects(supabase, {
-            organizationId: payload.organizationId,
-            shipmentId: shipment.id,
-            orderId: shipment.order_id,
-            orderStatus: ingested.orderStatus,
-            events: ingested.whatsappEvents,
-          });
-        }
-      }
-      page += 1;
-      if (rows.length < pageSize) break;
-    }
-    if (lastPageFull && page >= maxPages) {
+    const summary = await runOrganizationTrackingSync(supabase, {
+      organizationId: payload.organizationId,
+      provider,
+    });
+    if (summary.lastPageFull && summary.pages >= summary.maxPages) {
       const { createBackgroundJob } = await import("@/modules/jobs/service");
       await createBackgroundJob(supabase, {
         organizationId: payload.organizationId,
@@ -729,8 +669,7 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
       organizationId: payload.organizationId,
       jobId: payload.jobId,
       durationMs: Date.now() - started,
-      pages: page,
-      barcodesSynced,
+      ...summary,
     });
   } catch (error) {
     logError("india_post.tracking.sync_fail", {

@@ -9,6 +9,14 @@ import {
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
+import { applyBulkTrackingOutcomes } from "@/modules/india-post/tracking-ingest-page";
+import {
+  isTrackingP0CanaryAwb,
+  isTrackingP0CanaryOrganization,
+  trackingP0CanaryActive,
+  trackingP0CanarySideEffectsEnabled,
+} from "@/modules/india-post/tracking-p0-canary";
+import type { TrackShipmentResult } from "@/modules/india-post/tracking-bulk";
 import type { NdrListQuery } from "@/modules/ndr-rto/schema";
 import type { NdrSummary } from "@/types/api";
 
@@ -276,15 +284,48 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
   if (!connection) {
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post is not connected.");
   }
+  if (trackingP0CanaryActive() && isTrackingP0CanaryOrganization(ctx.organizationId) && !isTrackingP0CanaryAwb(ctx.organizationId, data.barcode)) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      "This shipment is outside the tracking canary allowlist."
+    );
+  }
+
   const { ensurePersistedIndiaPostSession } = await import("@/modules/india-post/session");
   const provider = await ensurePersistedIndiaPostSession(supabase, connection);
-  let payload: { data?: BulkTrackingArticle[] };
+  const useP0 = isTrackingP0CanaryAwb(ctx.organizationId, data.barcode);
+  let payload: TrackShipmentResult | { data?: BulkTrackingArticle[] };
   try {
-    payload = (await provider.trackShipment([data.barcode])) as { data?: BulkTrackingArticle[] };
+    payload = await provider.trackShipment([data.barcode], { isolateFailures: useP0 });
   } catch (caught) {
     if (caught instanceof AppError) throw caught;
     const message = caught instanceof Error ? caught.message : "Tracking lookup failed.";
     throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
+  }
+
+  if (useP0) {
+    const applied = await applyBulkTrackingOutcomes(supabase, {
+      organizationId: ctx.organizationId,
+      shipments: [data],
+      outcomes: "outcomes" in payload ? payload.outcomes ?? [] : [],
+      articles: payload.data,
+      skipSideEffects: !trackingP0CanarySideEffectsEnabled(),
+    });
+    if (applied.rejected && !applied.ingested && !applied.absent) {
+      throw new AppError(ERROR_CODES.PROVIDER_ERROR, "India Post rejected tracking lookup for this shipment.");
+    }
+    const { data: next } = await supabase
+      .from("shipments")
+      .select("status, operational_status, last_tracked_at")
+      .eq("id", data.id)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    return {
+      shipmentId: data.id,
+      lastTrackedAt: next?.last_tracked_at ?? null,
+      status: next?.status ?? data.status,
+      operationalStatus: next?.operational_status ?? data.operational_status,
+    };
   }
 
   const article = matchingBulkTrackingArticle(payload.data, data.barcode);
