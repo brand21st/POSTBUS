@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Copy, MoreHorizontal, PackageX, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import { IndiaPostRouting } from "@/components/dashboard/india-post-routing";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -26,12 +28,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { buildIndiaPostRoutingView } from "@/lib/dashboard/india-post-routing";
 import { asPaginated } from "@/lib/dashboard/records";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatRelative } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
 import { indiaPostPublicTrackingUrl } from "@/modules/india-post/barcode";
+import { NDR_VISIBLE_SYNC_MAX } from "@/modules/ndr-rto/schema";
 import { SHIPMENT_STATUSES, NDR_BUCKETS, type MemberRole, type NdrBucket } from "@/types/domain";
-import type { NdrSummary, Paginated, ShipmentRecord } from "@/types/api";
+import type { NdrSummary, Paginated, ShipmentRecord, TrackingEvent } from "@/types/api";
 import { cn } from "@/lib/utils";
 import { useMe } from "@/lib/hooks/use-me";
 import { hasPermission } from "@/lib/permissions/rbac";
@@ -96,6 +100,7 @@ export default function NdrRtoPage() {
   const [pincode, setPincode] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [routingId, setRoutingId] = useState<string | null>(null);
 
   useEffect(() => {
     setBucket(parseBucket(searchParams.get("bucket")));
@@ -139,6 +144,12 @@ export default function NdrRtoPage() {
     queryFn: () => api<NdrSummary>("/api/v1/ndr-rto/summary"),
   });
 
+  const routing = useQuery({
+    queryKey: ["shipment", routingId],
+    queryFn: () => api<ShipmentRecord & { events?: TrackingEvent[] }>(`/api/v1/shipments/${routingId}`),
+    enabled: Boolean(routingId),
+  });
+
   const list = useQuery({
     queryKey: ["ndr-rto", page, debounced, bucket, status, event, customer, orderId, tracking, pincode, from, to],
     queryFn: () =>
@@ -172,6 +183,46 @@ export default function NdrRtoPage() {
   });
 
   const rows = asPaginated<NdrRow>(list.data, ["items"]);
+  const visibleIds = useMemo(
+    () =>
+      rows.items
+        .filter((row) => Boolean(trackingId(row)))
+        .map((row) => String(row.id))
+        .slice(0, NDR_VISIBLE_SYNC_MAX),
+    [rows.items]
+  );
+  const autoSynced = useRef<string>("");
+
+  const syncVisible = useMutation({
+    mutationFn: (shipmentIds: string[]) =>
+      api<{ tracked: number; matched: number }>("/api/v1/ndr-rto/sync-visible", {
+        method: "POST",
+        body: JSON.stringify({ shipmentIds }),
+      }),
+    onSuccess: (result) => {
+      const tracked = result.tracked ?? visibleIds.length;
+      const matched = result.matched ?? 0;
+      toast.success(
+        matched
+          ? `Updated India Post tracking for ${matched} of ${tracked} shipment${tracked === 1 ? "" : "s"}.`
+          : `India Post responded for ${tracked} shipment${tracked === 1 ? "" : "s"}, with no new scan events.`
+      );
+      queryClient.invalidateQueries({ queryKey: ["ndr-rto"] });
+      queryClient.invalidateQueries({ queryKey: ["ndr-rto-summary"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const visibleKey = visibleIds.join(",");
+
+  useEffect(() => {
+    if (!canSync || list.isLoading || list.isError || !visibleIds.length) return;
+    if (autoSynced.current === visibleKey) return;
+    autoSynced.current = visibleKey;
+    syncVisible.mutate(visibleIds);
+    // Mutation identity is not a load trigger — only the visible AWB set is.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid CEPT loops from mutation object identity
+  }, [canSync, list.isError, list.isLoading, visibleKey]);
   const filtersActive = Boolean(
     debounced || event || customer || orderId || tracking || pincode || from || to || status !== "all" || bucket !== "all"
   );
@@ -237,20 +288,27 @@ export default function NdrRtoPage() {
     {
       id: "event",
       header: "Event",
-      cell: (row) => text(row, "lastEventDescription", "last_event_description") ?? text(row, "lastEventCode", "last_event_code") ?? "—",
+      cell: (row) =>
+        text(row, "lastEventDescription", "last_event_description") ??
+        text(row, "lastEventCode", "last_event_code") ??
+        (text(row, "lastTrackedAt", "last_tracked_at") ? "No India Post scan yet" : "Waiting for India Post"),
     },
     {
       id: "scan",
       header: "Last Scan",
       cell: (row) => {
-        const scanEvent = text(row, "lastEventDescription", "last_event_description") ?? text(row, "lastEventCode", "last_event_code");
         const office = text(row, "lastScanOffice", "last_scan_office");
         const when = formatDate(text(row, "lastEventAt", "last_event_at"), true);
-        if (!scanEvent && !office && when === "—") return "—";
+        const lookedUp = formatRelative(text(row, "lastTrackedAt", "last_tracked_at"));
+        if (!office && when === "—" && lookedUp === "—") return "—";
         return (
           <div>
-            <p>{scanEvent || "Scan"}</p>
-            <p className="text-xs text-muted">{[office, when].filter((part) => part && part !== "—").join(" · ") || "—"}</p>
+            <p>{office || (when !== "—" ? when : "No scan location")}</p>
+            <p className="text-xs text-muted">
+              {[when !== "—" ? when : null, lookedUp !== "—" ? `Looked up ${lookedUp}` : null]
+                .filter(Boolean)
+                .join(" · ") || "—"}
+            </p>
           </div>
         );
       },
@@ -291,9 +349,7 @@ export default function NdrRtoPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
               <DropdownMenuItem onClick={() => router.push(`/dashboard/shipments/${shipmentId}`)}>View</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => router.push(`/dashboard/shipments/${shipmentId}#tracking-timeline`)}>
-                View Timeline
-              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setRoutingId(shipmentId)}>View Timeline</DropdownMenuItem>
               {article ? (
                 <DropdownMenuItem onClick={() => window.open(indiaPostPublicTrackingUrl(article), "_blank", "noopener,noreferrer")}>
                   Track
@@ -331,12 +387,30 @@ export default function NdrRtoPage() {
     <div className="space-y-6">
       <PageHeader
         title="NDR & RTO"
-        description="India Post delivery attempts, non-delivery, and return-to-origin scans for this workspace. Bucket counts use stored operational status only; unclassified tracked shipments are listed separately until reconciliation."
+        description="India Post Bulk Tracking for this workspace. Event and last scan come from the CEPT tracking API; the table refreshes stored scans automatically for the visible page."
         actions={
           <div className="flex flex-wrap gap-2">
             {filtersActive ? (
               <Button type="button" variant="secondary" onClick={clearFilters}>
                 Clear filters
+              </Button>
+            ) : null}
+            {canSync ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  if (!visibleIds.length) {
+                    toast.error("No India Post tracking IDs on this page.");
+                    return;
+                  }
+                  autoSynced.current = visibleIds.join(",");
+                  syncVisible.mutate(visibleIds);
+                }}
+                disabled={syncVisible.isPending || !visibleIds.length}
+              >
+                <RefreshCw className={cn("size-4", syncVisible.isPending && "animate-spin")} />
+                {syncVisible.isPending ? "Syncing India Post…" : "Sync India Post tracking"}
               </Button>
             ) : null}
             <Button
@@ -444,7 +518,7 @@ export default function NdrRtoPage() {
         loading={list.isLoading}
         error={list.error instanceof Error ? list.error : null}
         emptyTitle="No shipments in this view"
-        emptyDescription="Booked India Post shipments appear here after a tracking scan. Unclassified historical rows are counted separately until a dry-run reconciliation is approved."
+        emptyDescription="Booked India Post shipments appear here. Sync India Post tracking to load CEPT events, last scan office, and NDR/RTO status for the visible page."
         emptyAction={
           <Link href="/dashboard/shipments">
             <Button variant="secondary">
@@ -460,6 +534,25 @@ export default function NdrRtoPage() {
         getRowId={(row) => String(row.id)}
         onRowClick={(row) => router.push(`/dashboard/shipments/${row.id}`)}
       />
+
+      <Dialog open={Boolean(routingId)} onOpenChange={(open) => { if (!open) setRoutingId(null); }}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>India Post routing steps</DialogTitle>
+          </DialogHeader>
+          {routing.isLoading ? (
+            <p className="text-sm text-muted">Loading India Post tracking…</p>
+          ) : routing.isError || !routing.data ? (
+            <p className="text-sm text-error">
+              {routing.error instanceof Error ? routing.error.message : "Could not load routing steps."}
+            </p>
+          ) : (
+            <IndiaPostRouting
+              view={buildIndiaPostRoutingView(routing.data, [...(routing.data.events ?? [])])}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

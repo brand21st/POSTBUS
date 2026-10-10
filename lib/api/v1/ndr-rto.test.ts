@@ -6,7 +6,7 @@ import { ERROR_CODES } from "@/lib/api/errors";
 import { handleCommerceRoutes } from "@/lib/api/v1/commerce";
 
 vi.mock("@/modules/india-post/session", () => ({
-  ensurePersistedIndiaPostSession: vi.fn(async () => ({
+  ensurePersistedIndiaPostTrackingSession: vi.fn(async () => ({
     trackShipment: vi.fn(async () => ({
       data: [
         {

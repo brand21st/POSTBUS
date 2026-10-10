@@ -390,7 +390,18 @@ export async function getShipment(supabase: SupabaseClient, ctx: TenantContext, 
   if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipment not found.");
   return {
     ...mapShipment(data),
-    events: data.tracking_events ?? [],
+    events: nestedRows(data.tracking_events).map((row) => ({
+      id: String(row.id ?? ""),
+      eventCode: row.event_code ?? row.eventCode ?? null,
+      event_code: row.event_code ?? row.eventCode ?? null,
+      eventDescription: row.event_description ?? row.eventDescription ?? null,
+      event_description: row.event_description ?? row.eventDescription ?? null,
+      officeName: row.office_name ?? row.officeName ?? null,
+      office_name: row.office_name ?? row.officeName ?? null,
+      occurredAt: row.occurred_at ?? row.occurredAt ?? null,
+      occurred_at: row.occurred_at ?? row.occurredAt ?? null,
+      classification: row.classification ?? null,
+    })),
   };
 }
 

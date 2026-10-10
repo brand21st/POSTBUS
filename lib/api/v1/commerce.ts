@@ -41,8 +41,8 @@ import {
   updateShipmentDimensions,
   updateShipmentDimensionsSchema,
 } from "@/modules/shipments/service";
-import { ndrListQuery } from "@/modules/ndr-rto/schema";
-import { getNdrSummary, listNdrShipments, syncNdrShipment } from "@/modules/ndr-rto/service";
+import { ndrListQuery, ndrVisibleSyncBody } from "@/modules/ndr-rto/schema";
+import { getNdrSummary, listNdrShipments, syncNdrShipment, syncNdrVisibleShipments } from "@/modules/ndr-rto/service";
 import {
   queueExcelBuffer,
   queueValidatedOrders,
@@ -282,6 +282,11 @@ export async function handleCommerceRoutes(
   if (key === "GET ndr-rto") {
     const parsed = ndrListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
     return listNdrShipments(supabase, ctx, parsed);
+  }
+
+  if (method === "POST" && slugs[0] === "ndr-rto" && slugs[1] === "sync-visible") {
+    const body = ndrVisibleSyncBody.parse(await request.json());
+    return syncNdrVisibleShipments(supabase, ctx, body.shipmentIds);
   }
 
   if (method === "POST" && slugs[0] === "ndr-rto" && slugs[1] && slugs[2] === "sync") {

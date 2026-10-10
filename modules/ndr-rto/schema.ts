@@ -23,3 +23,11 @@ export const ndrListQuery = z.object({
 });
 
 export type NdrListQuery = z.infer<typeof ndrListQuery>;
+
+export const NDR_VISIBLE_SYNC_MAX = 20;
+
+export const ndrVisibleSyncBody = z.object({
+  shipmentIds: z.array(z.string().uuid()).min(1).max(NDR_VISIBLE_SYNC_MAX),
+});
+
+export type NdrVisibleSyncBody = z.infer<typeof ndrVisibleSyncBody>;

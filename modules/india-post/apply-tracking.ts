@@ -120,9 +120,25 @@ export function isTrackingPollStatus(status: string) {
 }
 
 export function matchingBulkTrackingArticle(articles: BulkTrackingArticle[] | undefined, barcode: string) {
-  const wanted = String(barcode ?? "").trim();
+  const wanted = String(barcode ?? "").trim().toUpperCase();
   if (!wanted || !articles?.length) return null;
-  return articles.find((item) => String(item.booking_details?.article_number ?? "").trim() === wanted) ?? null;
+  const matched =
+    articles.find((item) => {
+      const number = String(
+        item.booking_details?.article_number ?? (item as { article_number?: string }).article_number ?? ""
+      )
+        .trim()
+        .toUpperCase();
+      return Boolean(number) && number === wanted;
+    }) ?? null;
+  if (matched) return matched;
+  if (articles.length !== 1) return null;
+  const only = articles[0];
+  const labeled = String(
+    only?.booking_details?.article_number ?? (only as { article_number?: string } | undefined)?.article_number ?? ""
+  ).trim();
+  if (labeled) return null;
+  return (only?.tracking_details?.length ?? 0) > 0 ? only ?? null : null;
 }
 
 function bulkEventDescription(event: { event?: string; remarks?: string }) {

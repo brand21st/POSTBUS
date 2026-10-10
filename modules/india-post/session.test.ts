@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
+import { ensurePersistedIndiaPostSession, ensurePersistedIndiaPostTrackingSession } from "@/modules/india-post/session";
 
 const ensureSession = vi.hoisted(() => vi.fn(async () => ({ tokens: null })));
 
@@ -22,6 +22,18 @@ describe("ensurePersistedIndiaPostSession", () => {
     ).rejects.toMatchObject({ code: "TEMPORARY_PROVIDER_FAILURE" });
     expect(ensureSession).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenCalled();
+  });
+
+  it("lets tracking login without the India Post booking lock", async () => {
+    ensureSession.mockClear();
+    const rpc = vi.fn();
+    const provider = await ensurePersistedIndiaPostTrackingSession(
+      { rpc } as never,
+      { id: "conn-1", organization_id: "org-1" } as never
+    );
+    expect(rpc).not.toHaveBeenCalled();
+    expect(ensureSession).toHaveBeenCalledTimes(1);
+    expect(provider.ensureSession).toBe(ensureSession);
   });
 
   it("fails closed without login when organization id is missing", async () => {

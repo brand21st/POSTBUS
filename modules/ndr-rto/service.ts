@@ -18,6 +18,7 @@ import {
 } from "@/modules/india-post/tracking-p0-canary";
 import type { TrackShipmentResult } from "@/modules/india-post/tracking-bulk";
 import type { NdrListQuery } from "@/modules/ndr-rto/schema";
+import { NDR_VISIBLE_SYNC_MAX } from "@/modules/ndr-rto/schema";
 import type { NdrSummary } from "@/types/api";
 
 export const NDR_LIST_STATUSES = [
@@ -124,6 +125,59 @@ function nestedOne<T extends Record<string, unknown>>(value: unknown): T | null 
   if (Array.isArray(value)) return (value[0] as T | undefined) ?? null;
   if (typeof value === "object") return value as T;
   return null;
+}
+
+type LatestTrackingEvent = {
+  shipment_id: string;
+  event_code: string | null;
+  event_description: string | null;
+  office_name: string | null;
+  occurred_at: string | null;
+  classification: string | null;
+};
+
+function stringField(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+async function latestTrackingByShipment(
+  supabase: SupabaseClient,
+  organizationId: string,
+  shipmentIds: string[]
+) {
+  const latest = new Map<string, LatestTrackingEvent>();
+  if (!shipmentIds.length) return latest;
+  const { data, error } = await supabase
+    .from("tracking_events")
+    .select("shipment_id, event_code, event_description, office_name, occurred_at, classification")
+    .eq("organization_id", organizationId)
+    .in("shipment_id", shipmentIds)
+    .order("occurred_at", { ascending: false });
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  for (const row of (data ?? []) as LatestTrackingEvent[]) {
+    const id = String(row.shipment_id ?? "");
+    if (!id || latest.has(id)) continue;
+    latest.set(id, row);
+  }
+  return latest;
+}
+
+function withLatestTracking(
+  row: ReturnType<typeof mapNdrRow>,
+  event: LatestTrackingEvent | undefined
+) {
+  if (!event) return row;
+  return {
+    ...row,
+    lastEventCode: stringField(row.lastEventCode) ?? stringField(event.event_code),
+    last_event_code: stringField(row.lastEventCode) ?? stringField(event.event_code),
+    lastEventDescription: stringField(row.lastEventDescription) ?? stringField(event.event_description),
+    last_event_description: stringField(row.lastEventDescription) ?? stringField(event.event_description),
+    lastScanOffice: stringField(row.lastScanOffice) ?? stringField(event.office_name),
+    last_scan_office: stringField(row.lastScanOffice) ?? stringField(event.office_name),
+    lastEventAt: stringField(row.lastEventAt) ?? stringField(event.occurred_at),
+    last_event_at: stringField(row.lastEventAt) ?? stringField(event.occurred_at),
+  };
 }
 
 function mapNdrRow(row: Record<string, unknown>) {
@@ -251,8 +305,14 @@ export async function listNdrShipments(supabase: SupabaseClient, ctx: TenantCont
 
   const { data, error, count } = await builder;
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  const mapped = (data ?? []).map((row) => mapNdrRow(row as Record<string, unknown>));
+  const latest = await latestTrackingByShipment(
+    supabase,
+    organizationId,
+    mapped.map((row) => String(row.id))
+  );
   return {
-    items: (data ?? []).map((row) => mapNdrRow(row as Record<string, unknown>)),
+    items: mapped.map((row) => withLatestTracking(row, latest.get(String(row.id)))),
     page: query.page,
     pageSize: query.pageSize,
     total: count ?? 0,
@@ -291,8 +351,8 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
     );
   }
 
-  const { ensurePersistedIndiaPostSession } = await import("@/modules/india-post/session");
-  const provider = await ensurePersistedIndiaPostSession(supabase, connection);
+  const { ensurePersistedIndiaPostTrackingSession } = await import("@/modules/india-post/session");
+  const provider = await ensurePersistedIndiaPostTrackingSession(supabase, connection);
   const useP0 = isTrackingP0CanaryAwb(ctx.organizationId, data.barcode);
   let payload: TrackShipmentResult | { data?: BulkTrackingArticle[] };
   try {
@@ -364,5 +424,147 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
     lastTrackedAt: trackedAt,
     status: ingested.snapshot.status,
     operationalStatus: ingested.snapshot.operationalStatus,
+  };
+}
+
+type NdrSyncShipment = {
+  id: string;
+  barcode: string | null;
+  status: string | null;
+  order_id: string | null;
+  operational_status: string | null;
+  last_event_at: string | null;
+  ndr_attempt_count: number | null;
+  rto_initiated_at: string | null;
+  organization_id: string;
+};
+
+async function applyTrackedShipment(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  data: NdrSyncShipment,
+  article: BulkTrackingArticle | null,
+  trackedAt: string
+) {
+  if (!article) {
+    await supabase
+      .from("shipments")
+      .update({ last_tracked_at: trackedAt })
+      .eq("id", data.id)
+      .eq("organization_id", ctx.organizationId);
+    return {
+      shipmentId: data.id,
+      barcode: data.barcode,
+      lastTrackedAt: trackedAt,
+      matched: false,
+      status: data.status,
+      operationalStatus: data.operational_status,
+    };
+  }
+
+  const ingested = await ingestBulkTrackingArticle(supabase, {
+    organizationId: ctx.organizationId,
+    shipment: snapshotFromShipmentRow(data, ctx.organizationId),
+    article,
+    source: "bulk",
+  });
+  if (ingested.whatsappEvents.length || ingested.orderStatus) {
+    await enqueueTrackingStageSideEffects(supabase, {
+      organizationId: ctx.organizationId,
+      shipmentId: data.id,
+      orderId: data.order_id,
+      orderStatus: ingested.orderStatus,
+      events: ingested.whatsappEvents,
+    });
+  }
+  return {
+    shipmentId: data.id,
+    barcode: data.barcode,
+    lastTrackedAt: trackedAt,
+    matched: true,
+    status: ingested.snapshot.status,
+    operationalStatus: ingested.snapshot.operationalStatus,
+  };
+}
+
+export async function syncNdrVisibleShipments(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentIds: string[]
+) {
+  const ids = [...new Set(shipmentIds)].slice(0, NDR_VISIBLE_SYNC_MAX);
+  const { data, error } = await supabase
+    .from("shipments")
+    .select(
+      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at, organization_id"
+    )
+    .eq("organization_id", ctx.organizationId)
+    .in("id", ids)
+    .not("barcode", "is", null);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+
+  let shipments = ((data ?? []) as NdrSyncShipment[]).filter((row) => Boolean(row.barcode));
+  if (
+    trackingP0CanaryActive() &&
+    isTrackingP0CanaryOrganization(ctx.organizationId)
+  ) {
+    shipments = shipments.filter((row) => isTrackingP0CanaryAwb(ctx.organizationId, String(row.barcode)));
+  }
+  if (!shipments.length) {
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "No India Post shipments found to track.");
+  }
+
+  const { data: connection, error: connectionError } = await supabase
+    .from("india_post_connections")
+    .select("*")
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (connectionError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, connectionError.message);
+  if (!connection) {
+    throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post is not connected.");
+  }
+
+  const { ensurePersistedIndiaPostTrackingSession } = await import("@/modules/india-post/session");
+  const provider = await ensurePersistedIndiaPostTrackingSession(supabase, connection);
+  const barcodes = shipments.map((row) => String(row.barcode));
+  const isolateFailures = barcodes.some((barcode) => isTrackingP0CanaryAwb(ctx.organizationId, barcode));
+  let payload: TrackShipmentResult | { data?: BulkTrackingArticle[] };
+  try {
+    payload = await provider.trackShipment(barcodes, { isolateFailures });
+  } catch (caught) {
+    if (caught instanceof AppError) throw caught;
+    const message = caught instanceof Error ? caught.message : "Tracking lookup failed.";
+    throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
+  }
+
+  const trackedAt = new Date().toISOString();
+  const results = [];
+  for (const shipment of shipments) {
+    const useP0 = isTrackingP0CanaryAwb(ctx.organizationId, String(shipment.barcode));
+    if (useP0) {
+      const applied = await applyBulkTrackingOutcomes(supabase, {
+        organizationId: ctx.organizationId,
+        shipments: [shipment],
+        outcomes: "outcomes" in payload ? payload.outcomes ?? [] : [],
+        articles: payload.data,
+        skipSideEffects: !trackingP0CanarySideEffectsEnabled(),
+      });
+      results.push({
+        shipmentId: shipment.id,
+        barcode: shipment.barcode,
+        lastTrackedAt: trackedAt,
+        matched: Boolean(applied.ingested),
+        status: shipment.status,
+        operationalStatus: shipment.operational_status,
+      });
+      continue;
+    }
+    const article = matchingBulkTrackingArticle(payload.data, String(shipment.barcode));
+    results.push(await applyTrackedShipment(supabase, ctx, shipment, article, trackedAt));
+  }
+  return {
+    tracked: results.length,
+    matched: results.filter((row) => row.matched).length,
+    results,
   };
 }
