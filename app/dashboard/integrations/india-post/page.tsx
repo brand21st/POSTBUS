@@ -39,7 +39,6 @@ import {
   DEFAULT_INDIA_POST_SERVICE,
   DEFAULT_PROVIDER_ENVIRONMENT,
   INDIA_POST_SERVICES,
-  PROVIDER_ENVIRONMENTS,
   indiaPostServiceLabel,
 } from "@/types/domain";
 import type { IndiaPostConfig } from "@/types/api";
@@ -124,7 +123,7 @@ export default function IndiaPostPage() {
     config?.hasPassword ?? config?.has_password ?? config?.usernameMasked ?? config?.username_masked
   );
   const prodConfigured = Boolean(config?.prodConfigured);
-  const productionBlocked = form.environment === "PRODUCTION" && !prodConfigured;
+  const productionBlocked = !prodConfigured;
   const lastError = config?.lastError || config?.last_error;
   const lastVerified = config?.lastVerifiedAt ?? config?.last_verified_at;
 
@@ -149,7 +148,7 @@ export default function IndiaPostPage() {
 
     setForm((current) => ({
       ...current,
-      environment: config.environment ?? DEFAULT_PROVIDER_ENVIRONMENT,
+      environment: DEFAULT_PROVIDER_ENVIRONMENT,
       customerId: String(config.bulkCustomerId ?? config.bulk_customer_id ?? ""),
       pickupDropoffOfficeId: String(
         config.pickupDropoffOfficeId ?? config.pickup_dropoff_office_id ?? ""
@@ -475,14 +474,14 @@ export default function IndiaPostPage() {
   const save = useMutation({
     mutationFn: (snapshot: FormState) => {
       const customerId = snapshot.customerId.trim();
-      if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
-        throw new Error("Live booking is not ready yet. Keep Sandbox / UAT selected.");
+      if (!prodConfigured) {
+        throw new Error("Live booking is not ready yet.");
       }
       return api<{ saved: boolean; status: string }>("/api/v1/integrations/india-post", {
         method: "POST",
         body: JSON.stringify({
           connect: false,
-          environment: snapshot.environment,
+          environment: DEFAULT_PROVIDER_ENVIRONMENT,
           username: replaceSecrets || !hasSecrets ? customerId || undefined : undefined,
           password: replaceSecrets || (!hasSecrets && snapshot.password.trim()) ? snapshot.password || undefined : undefined,
           bulkCustomerId: customerId || undefined,
@@ -523,8 +522,8 @@ export default function IndiaPostPage() {
     mutationFn: (snapshot: FormState) => {
       const customerId = snapshot.customerId.trim();
       const needsCredentials = replaceSecrets || !hasSecrets;
-      if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
-        throw new Error("Live booking is not ready yet. Keep Sandbox / UAT selected.");
+      if (!prodConfigured) {
+        throw new Error("Live booking is not ready yet.");
       }
       if (!customerId) {
         throw new Error("Enter your India Post customer ID.");
@@ -538,7 +537,7 @@ export default function IndiaPostPage() {
       return api("/api/v1/integrations/india-post", {
         method: "POST",
         body: JSON.stringify({
-          environment: snapshot.environment,
+          environment: DEFAULT_PROVIDER_ENVIRONMENT,
           username: customerId,
           password: snapshot.password,
           bulkCustomerId: customerId,
@@ -560,12 +559,6 @@ export default function IndiaPostPage() {
       queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
     },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const test = useMutation({
-    mutationFn: () => api("/api/v1/integrations/india-post/test", { method: "POST" }),
-    onSuccess: () => toast.success("India Post confirmed the connection."),
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -844,38 +837,6 @@ export default function IndiaPostPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <div className="space-y-2">
-            <Label>India Post Environment</Label>
-            <Select
-              value={form.environment}
-              onValueChange={(value) => {
-                if (value === "PRODUCTION" && form.environment !== "PRODUCTION") {
-                  const ok = window.confirm(
-                    "Switch to India Post Production? Bookings will be sent to live CEPT (app.indiapost.gov.in), not Sandbox/UAT."
-                  );
-                  if (!ok) return;
-                }
-                set("environment", value);
-              }}
-            >
-              <SelectTrigger
-                className={
-                  form.environment === "PRODUCTION"
-                    ? "border-error/40 bg-error/5 font-medium text-error"
-                    : "border-amber-500/40 bg-amber-50 font-medium text-amber-950"
-                }
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PROVIDER_ENVIRONMENTS.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item === "UAT" ? "Sandbox / UAT" : "Production"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
           <Field
             label="Customer ID"
             value={form.customerId}
@@ -906,18 +867,9 @@ export default function IndiaPostPage() {
               autoComplete="new-password"
             />
           )}
-          {form.environment === "UAT" ? (
-            <p className="rounded-xl border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-950 sm:col-span-2 xl:col-span-3">
-              Sandbox / UAT is selected. Authentication and bookings use <strong>test.cept.gov.in</strong> only.
-            </p>
-          ) : (
-            <p className="rounded-xl border border-error/30 bg-error/5 px-3 py-2 text-sm text-error sm:col-span-2 xl:col-span-3">
-              Production is selected. Bookings go to live India Post. Use Sandbox / UAT for the test organization.
-            </p>
-          )}
           {productionBlocked ? (
             <p className="text-sm text-muted sm:col-span-2 xl:col-span-3">
-              Live booking is not ready yet. Keep <strong>Sandbox / UAT</strong> selected.
+              Live booking is not ready yet.
             </p>
           ) : null}
           {lastError ? (
@@ -940,11 +892,6 @@ export default function IndiaPostPage() {
           >
             {login.isPending ? "Logging in…" : "Login"}
           </Button>
-          {form.environment === "UAT" ? (
-            <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
-              {test.isPending ? "Checking…" : "Test connection"}
-            </Button>
-          ) : null}
           <Button
             type="button"
             variant="secondary"
