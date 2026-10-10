@@ -331,7 +331,7 @@ export default function NdrRtoPage() {
     <div className="space-y-6">
       <PageHeader
         title="NDR & RTO"
-        description="India Post delivery attempts, non-delivery, and return-to-origin scans for this workspace."
+        description="India Post delivery attempts, non-delivery, and return-to-origin scans for this workspace. Bucket counts use stored operational status only; unclassified tracked shipments are listed separately until reconciliation."
         actions={
           <div className="flex flex-wrap gap-2">
             {filtersActive ? (
@@ -382,6 +382,17 @@ export default function NdrRtoPage() {
             </Card>
           );
         })}
+        <Card>
+          <CardHeader>
+            <CardDescription>Unclassified tracked</CardDescription>
+            <CardTitle className="text-3xl tabular-nums">
+              {summary.isLoading ? "…" : summary.isError ? "—" : summary.data?.unclassifiedTracked ?? 0}
+            </CardTitle>
+            <CardDescription>
+              Barcoded shipments without a stored operational status. Historical events are not classified in the UI.
+            </CardDescription>
+          </CardHeader>
+        </Card>
       </section>
 
       <div className="flex flex-wrap gap-2">
@@ -433,7 +444,7 @@ export default function NdrRtoPage() {
         loading={list.isLoading}
         error={list.error instanceof Error ? list.error : null}
         emptyTitle="No shipments in this view"
-        emptyDescription="Booked India Post shipments appear here after a tracking scan."
+        emptyDescription="Booked India Post shipments appear here after a tracking scan. Unclassified historical rows are counted separately until a dry-run reconciliation is approved."
         emptyAction={
           <Link href="/dashboard/shipments">
             <Button variant="secondary">

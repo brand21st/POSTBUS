@@ -83,6 +83,66 @@ describe("IndiaPostProvider in-memory session", () => {
     });
   });
 
+  it("treats tracking login 401 as a permanent authentication error", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes("/access/login")) {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ success: false, message: "invalid credentials" }),
+        };
+      }
+      throw new Error("tracking must not run after auth failure");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new IndiaPostProvider({
+      environment: "UAT",
+      status: "CONNECTED",
+      encrypted_username: encryptSecret("user"),
+      encrypted_password: encryptSecret("pass"),
+      bulk_customer_id: "cust-1",
+    });
+
+    await expect(provider.trackShipment(["AW123456789IN"])).rejects.toMatchObject({
+      code: "PERMANENT_AUTH_ERROR",
+      status: 401,
+    });
+  });
+
+  it("surfaces a CEPT tracking timeout without classifying the shipment", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes("/access/login")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: {
+              access_token: "live-token",
+              refresh_token: "refresh",
+              id_token: "id",
+              expires_in: 3600,
+              refresh_expires_in: 7200,
+            },
+          }),
+        };
+      }
+      const error = Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+      throw error;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new IndiaPostProvider({
+      environment: "UAT",
+      status: "CONNECTED",
+      encrypted_username: encryptSecret("user"),
+      encrypted_password: encryptSecret("pass"),
+      bulk_customer_id: "cust-1",
+    });
+
+    await expect(provider.trackShipment(["AW123456789IN"])).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("calls login once across ensureSession then bookShipment", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).includes("/access/login")) {

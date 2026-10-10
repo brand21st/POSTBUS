@@ -58,6 +58,9 @@ describe("NDR APIs", () => {
       lt() {
         return api;
       },
+      is() {
+        return api;
+      },
       then(resolve: (value: { count: number; error: null }) => void) {
         resolve({ count: 4, error: null });
       },
@@ -66,7 +69,8 @@ describe("NDR APIs", () => {
     expect(summary.delivered).toBe(4);
     expect(summary.ndr).toBe(4);
     expect(summary.rtoDelivered).toBe(4);
-    expect(orgs.length).toBe(7);
+    expect(summary.unclassifiedTracked).toBe(4);
+    expect(orgs.length).toBe(8);
     expect(new Set(orgs)).toEqual(new Set(["org-a"]));
   });
 

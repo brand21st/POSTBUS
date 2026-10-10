@@ -40,7 +40,7 @@ export async function enqueueTrackingStageSideEffects(
   const shopifyStage =
     events.includes("delivered") || input.orderStatus === "DELIVERED"
       ? "delivered"
-      : events.includes("in_transit") || input.orderStatus === "IN_TRANSIT"
+      : input.orderStatus === "IN_TRANSIT"
         ? "in_transit"
         : null;
   if (shopifyStage && input.orderId) {

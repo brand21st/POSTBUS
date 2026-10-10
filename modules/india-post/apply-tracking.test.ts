@@ -4,7 +4,9 @@ import {
   applyIndiaPostTracking,
   bulkEventOccurredAt,
   ingestBulkTrackingArticle,
+  isTrackingPollStatus,
   matchingBulkTrackingArticle,
+  TRACKING_POLL_STATUSES,
   type ShipmentTrackingSnapshot,
 } from "@/modules/india-post/apply-tracking";
 import { planTrackingUpdate, mapIndiaPostEventToShipmentUpdate } from "@/modules/india-post/event-mapper";
@@ -196,7 +198,20 @@ describe("bulkEventOccurredAt", () => {
 
   it("combines a civil date and time when date is not ISO", () => {
     const parsed = bulkEventOccurredAt({ date: "2026-09-27", time: "10:15:00" });
-    expect(Number.isNaN(Date.parse(parsed))).toBe(false);
+    expect(parsed).toBeTruthy();
+    expect(Number.isNaN(Date.parse(parsed ?? ""))).toBe(false);
+  });
+
+  it("does not invent a timestamp when date and time are missing", () => {
+    expect(bulkEventOccurredAt({})).toBeNull();
+  });
+});
+
+describe("tracking poll eligibility", () => {
+  it("does not poll FAILED booking shipments", () => {
+    expect(TRACKING_POLL_STATUSES).not.toContain("FAILED");
+    expect(isTrackingPollStatus("FAILED")).toBe(false);
+    expect(isTrackingPollStatus("BOOKED")).toBe(true);
   });
 });
 
@@ -214,6 +229,23 @@ describe("matchingBulkTrackingArticle", () => {
 });
 
 describe("applyIndiaPostTracking", () => {
+  it("persists operational_status for Item Delivered(Addressee)", async () => {
+    const { client, updates, events } = memorySupabase();
+    const result = await applyIndiaPostTracking(client, snapshot(), {
+      eventCode: "ITEM_DELIVERED",
+      eventDescription: "Item Delivered(Addressee)",
+      officeName: "Pandhana S.O",
+      officeId: null,
+      occurredAt: "2026-09-04T08:00:00.000Z",
+      raw: {},
+      nonDeliveryReason: null,
+      mapText: "Item Delivered(Addressee)",
+    });
+    expect(result.operationalStatus).toBe("DELIVERED");
+    expect(events[0].classification).toBe("DELIVERED");
+    expect(updates.some((update) => update.patch.operational_status === "DELIVERED")).toBe(true);
+  });
+
   it("does not increment the NDR attempt count for a duplicate event", async () => {
     const { client, updates } = memorySupabase();
     const first = await applyIndiaPostTracking(client, snapshot({ status: "OUT_FOR_DELIVERY", operationalStatus: "OUT_FOR_DELIVERY" }), {
@@ -302,6 +334,20 @@ describe("applyIndiaPostTracking", () => {
     expect(ingested.snapshot.status).toBe("RTO");
     const delivery = updates.find((update) => update.patch.status === "DELIVERED");
     expect(delivery).toBeUndefined();
+  });
+
+  it("skips events without a postal timestamp instead of applying wall-clock order", async () => {
+    const { client, events, updates } = memorySupabase();
+    const ingested = await ingestBulkTrackingArticle(client, {
+      organizationId: "org-1",
+      shipment: snapshot({ status: "IN_TRANSIT", operationalStatus: "IN_TRANSIT" }),
+      article: {
+        tracking_details: [{ event: "Item Delivered(Addressee)", event_code: "ITEM_DELIVERED" }],
+      },
+    });
+    expect(events).toHaveLength(0);
+    expect(ingested.snapshot.operationalStatus).toBe("IN_TRANSIT");
+    expect(updates.some((update) => update.patch.operational_status === "DELIVERED")).toBe(false);
   });
 });
 

@@ -535,6 +535,7 @@ export type NdrSummary = {
   rto: number;
   rtoInTransit: number;
   rtoDelivered: number;
+  unclassifiedTracked: number;
 };
 
 export type NdrShipmentRecord = ShipmentRecord & {

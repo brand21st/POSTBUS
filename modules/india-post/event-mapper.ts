@@ -72,6 +72,16 @@ function hasToken(key: string, token: string) {
   return new RegExp(`(^|_)${token}($|_)`).test(key);
 }
 
+function isExplicitNdrPhrase(key: string) {
+  return (
+    hasPhrase(key, "non_delivery") ||
+    hasPhrase(key, "undelivered") ||
+    hasPhrase(key, "delivery_attempted") ||
+    hasPhrase(key, "delivery_attempt") ||
+    hasPhrase(key, "not_delivered")
+  );
+}
+
 function classifyEvent(
   key: string,
   nonDeliveryReason: string | null,
@@ -96,7 +106,7 @@ function classifyEvent(
   }
 
   if (
-    rts ||
+    rts === true ||
     hasToken(key, "rto") ||
     hasPhrase(key, "return_to_sender") ||
     hasPhrase(key, "returned_to_sender") ||
@@ -106,15 +116,15 @@ function classifyEvent(
     return "RTO";
   }
 
-  if (
-    nonDeliveryReason ||
-    hasPhrase(key, "non_delivery") ||
-    hasPhrase(key, "undelivered") ||
-    hasPhrase(key, "delivery_attempted") ||
-    hasPhrase(key, "delivery_attempt") ||
-    hasPhrase(key, "not_delivered") ||
-    hasPhrase(key, "addressee")
-  ) {
+  if (nonDeliveryReason) {
+    return "NDR";
+  }
+
+  if (hasPhrase(key, "item_delivered")) {
+    return "DELIVERED";
+  }
+
+  if (isExplicitNdrPhrase(key)) {
     return "NDR";
   }
 
@@ -122,18 +132,15 @@ function classifyEvent(
     return "OUT_FOR_DELIVERY";
   }
 
-  if (
-    hasPhrase(key, "item_delivered") ||
-    (hasPhrase(key, "delivered") && !hasPhrase(key, "intimation"))
-  ) {
+  if (hasPhrase(key, "delivered") && !hasPhrase(key, "intimation")) {
     return "DELIVERED";
   }
 
-  if (hasPhrase(key, "bag_close") || hasPhrase(key, "dispatch")) {
+  if (hasPhrase(key, "bag_close") || hasPhrase(key, "dispatch") || hasPhrase(key, "bagged")) {
     return "DISPATCHED";
   }
 
-  if (hasPhrase(key, "in_transit") || hasPhrase(key, "item_received")) {
+  if (hasPhrase(key, "in_transit") || hasPhrase(key, "item_received") || hasPhrase(key, "bag_received")) {
     return "IN_TRANSIT";
   }
 
@@ -302,4 +309,75 @@ export function planTrackingUpdate(input: {
     orderStatus,
     whatsappEvents,
   };
+}
+
+export type ProjectionTrackingEvent = {
+  eventCode?: string | null;
+  eventDescription?: string | null;
+  nonDeliveryReason?: string | null;
+  rts?: boolean | null;
+  occurredAt: string;
+};
+
+export type ShipmentProjection = {
+  status: string;
+  operationalStatus: string | null;
+  lastEventAt: string | null;
+  ndrAttemptCount: number;
+  rtoInitiatedAt: string | null;
+  ndrReason: string | null;
+  rtoReason: string | null;
+  deliveredAt: string | null;
+  ambiguous: boolean;
+};
+
+function eventTieBreak(left: ProjectionTrackingEvent, right: ProjectionTrackingEvent) {
+  const time = left.occurredAt.localeCompare(right.occurredAt);
+  if (time !== 0) return time;
+  return String(left.eventCode ?? "").localeCompare(String(right.eventCode ?? ""));
+}
+
+export function projectShipmentFromEvents(
+  events: ProjectionTrackingEvent[],
+  initial: ShipmentProjection
+): ShipmentProjection {
+  const ordered = [...events].sort(eventTieBreak);
+  const current = { ...initial };
+  const seen = new Set<string>();
+
+  for (const event of ordered) {
+    const mapped = mapIndiaPostEventToShipmentUpdate({
+      eventCode: event.eventCode,
+      eventDescription: event.eventDescription,
+      nonDeliveryReason: event.nonDeliveryReason,
+      rts: event.rts,
+    });
+    const plan = planTrackingUpdate({
+      currentStatus: current.status,
+      currentOperational: current.operationalStatus,
+      returnStarted: Boolean(current.rtoInitiatedAt) || RETURN_OPERATIONAL.has(current.operationalStatus as OperationalStatus),
+      lastEventAt: current.lastEventAt,
+      eventAt: event.occurredAt,
+      mapped,
+    });
+    const key = `${event.eventCode ?? ""}|${event.occurredAt}`;
+    const duplicate = seen.has(key);
+    seen.add(key);
+    if (!mapped.classification) current.ambiguous = true;
+    if (plan.updateLastScan) current.lastEventAt = event.occurredAt;
+    if (!plan.applyStatus || !plan.shipmentStatus || !plan.operationalStatus) continue;
+    current.status = plan.shipmentStatus;
+    current.operationalStatus = plan.operationalStatus;
+    if (plan.operationalStatus === "NDR" && !duplicate) {
+      current.ndrAttemptCount += 1;
+      current.ndrReason = mapped.ndrReason;
+    }
+    if (RETURN_OPERATIONAL.has(plan.operationalStatus)) {
+      current.rtoReason = mapped.rtoReason;
+      if (!current.rtoInitiatedAt) current.rtoInitiatedAt = event.occurredAt;
+    }
+    if (plan.operationalStatus === "DELIVERED") current.deliveredAt = event.occurredAt;
+  }
+
+  return current;
 }

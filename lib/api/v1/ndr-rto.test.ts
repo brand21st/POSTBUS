@@ -100,6 +100,7 @@ function ndrDb() {
       api.gte = () => api;
       api.lt = () => api;
       api.lte = () => api;
+      api.is = () => api;
       api.or = () => api;
       api.order = () => api;
       api.range = () => api;
@@ -144,6 +145,7 @@ describe("NDR RTO commerce APIs", () => {
       rto: 1,
       rtoInTransit: 1,
       rtoDelivered: 1,
+      unclassifiedTracked: 1,
     });
   });
 

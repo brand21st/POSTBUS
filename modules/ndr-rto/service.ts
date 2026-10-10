@@ -73,17 +73,25 @@ async function countOperational(
   return count ?? 0;
 }
 
+async function countUnclassifiedTracked(supabase: SupabaseClient, organizationId: string) {
+  const { count, error } = await tracked(supabase, organizationId).is("operational_status", null);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return count ?? 0;
+}
+
 export async function getNdrSummary(supabase: SupabaseClient, ctx: TenantContext): Promise<NdrSummary> {
-  const [delivered, outForDelivery, deliveredToday, ndr, rto, rtoInTransit, rtoDelivered] = await Promise.all([
-    countOperational(supabase, ctx.organizationId, "DELIVERED"),
-    countOperational(supabase, ctx.organizationId, "OUT_FOR_DELIVERY"),
-    countOperational(supabase, ctx.organizationId, "DELIVERED", true),
-    countOperational(supabase, ctx.organizationId, "NDR"),
-    countOperational(supabase, ctx.organizationId, "RTO"),
-    countOperational(supabase, ctx.organizationId, "RTO_IN_TRANSIT"),
-    countOperational(supabase, ctx.organizationId, "RTO_DELIVERED"),
-  ]);
-  return { delivered, outForDelivery, deliveredToday, ndr, rto, rtoInTransit, rtoDelivered };
+  const [delivered, outForDelivery, deliveredToday, ndr, rto, rtoInTransit, rtoDelivered, unclassifiedTracked] =
+    await Promise.all([
+      countOperational(supabase, ctx.organizationId, "DELIVERED"),
+      countOperational(supabase, ctx.organizationId, "OUT_FOR_DELIVERY"),
+      countOperational(supabase, ctx.organizationId, "DELIVERED", true),
+      countOperational(supabase, ctx.organizationId, "NDR"),
+      countOperational(supabase, ctx.organizationId, "RTO"),
+      countOperational(supabase, ctx.organizationId, "RTO_IN_TRANSIT"),
+      countOperational(supabase, ctx.organizationId, "RTO_DELIVERED"),
+      countUnclassifiedTracked(supabase, ctx.organizationId),
+    ]);
+  return { delivered, outForDelivery, deliveredToday, ndr, rto, rtoInTransit, rtoDelivered, unclassifiedTracked };
 }
 
 async function matchingIds(

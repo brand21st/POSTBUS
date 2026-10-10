@@ -112,7 +112,11 @@ export function bulkEventOccurredAt(event: { date?: string; time?: string }) {
     const parsed = new Date(date);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
-  return new Date().toISOString();
+  return null;
+}
+
+export function isTrackingPollStatus(status: string) {
+  return (TRACKING_POLL_STATUSES as readonly string[]).includes(status);
 }
 
 export function matchingBulkTrackingArticle(articles: BulkTrackingArticle[] | undefined, barcode: string) {
@@ -129,7 +133,9 @@ function bulkEventDescription(event: { event?: string; remarks?: string }) {
 }
 
 function latestArticleTimestamp(article: BulkTrackingArticle, fallback: string | null) {
-  const times = (article.tracking_details ?? []).map((event) => bulkEventOccurredAt(event));
+  const times = (article.tracking_details ?? [])
+    .map((event) => bulkEventOccurredAt(event))
+    .filter((value): value is string => Boolean(value));
   const confirmed = article.booking_details?.delivery_confirmed_on;
   if (confirmed) {
     const parsed = new Date(confirmed);
@@ -270,22 +276,35 @@ export async function ingestBulkTrackingArticle(
   }
 ) {
   const details = [...(input.article.tracking_details ?? [])].sort((left, right) => {
-    return bulkEventOccurredAt(left).localeCompare(bulkEventOccurredAt(right));
+    const leftAt = bulkEventOccurredAt(left) ?? "";
+    const rightAt = bulkEventOccurredAt(right) ?? "";
+    const time = leftAt.localeCompare(rightAt);
+    if (time !== 0) return time;
+    return String(left.event_code ?? left.event ?? "").localeCompare(String(right.event_code ?? right.event ?? ""));
   });
   let snapshot = input.shipment;
   let orderStatus: "IN_TRANSIT" | "DELIVERED" | null = null;
   const whatsappEvents: TrackingWhatsAppEvent[] = [];
 
   for (const event of details) {
+    const occurredAt = bulkEventOccurredAt(event);
+    if (!occurredAt) {
+      logInfo("india_post.tracking.missing_event_time", {
+        organizationId: input.organizationId,
+        shipmentId: snapshot.id,
+        event: event.event ?? event.event_code ?? null,
+      });
+      continue;
+    }
     const result = await applyIndiaPostTracking(supabase, snapshot, {
       eventCode: event.event_code || event.event || "EVENT",
       eventDescription: bulkEventDescription(event),
       officeName: event.office ?? null,
       officeId: event.officeid ? String(event.officeid) : null,
-      occurredAt: bulkEventOccurredAt(event),
+      occurredAt,
       raw: trackingEventRaw(event as Record<string, unknown>, input.source ?? "bulk"),
       nonDeliveryReason: null,
-      rts: event.rts === true,
+      rts: event.rts === true ? true : event.rts === false ? false : null,
       mapText: event.event ?? event.event_code ?? null,
     });
     snapshot = result.snapshot;
@@ -297,13 +316,20 @@ export async function ingestBulkTrackingArticle(
 
   const deliveredFlag = input.article.del_status?.del_status?.toLowerCase() === "delivered";
   const returnish = isReturnOperational(snapshot.operationalStatus) || snapshot.status === "RTO";
-  if (deliveredFlag && !returnish && snapshot.operationalStatus !== "DELIVERED" && snapshot.status !== "DELIVERED") {
+  const deliveredAt = latestArticleTimestamp(input.article, snapshot.lastEventAt);
+  if (
+    deliveredFlag &&
+    deliveredAt &&
+    !returnish &&
+    snapshot.operationalStatus !== "DELIVERED" &&
+    snapshot.status !== "DELIVERED"
+  ) {
     const result = await applyIndiaPostTracking(supabase, snapshot, {
       eventCode: "ITEM_DELIVERED",
       eventDescription: "Delivered",
       officeName: null,
       officeId: null,
-      occurredAt: latestArticleTimestamp(input.article, snapshot.lastEventAt) ?? new Date().toISOString(),
+      occurredAt: deliveredAt,
       raw: trackingEventRaw({ del_status: input.article.del_status ?? null }, input.source ?? "bulk"),
       nonDeliveryReason: null,
     });

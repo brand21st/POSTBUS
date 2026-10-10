@@ -1,11 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
-import { enqueueDueTrackingSyncJobs, enqueueOrgTrackingSyncIfIdle } from "@/modules/india-post/tracking-sync";
+import { INDIA_POST_TRACKING_BULK_LIMIT } from "@/modules/india-post/spec";
+import {
+  enqueueDueTrackingSyncJobs,
+  enqueueOrgTrackingSyncIfIdle,
+  trackingSyncPageSize,
+} from "@/modules/india-post/tracking-sync";
 
 vi.mock("@/modules/jobs/service", () => ({
   createBackgroundJob: vi.fn(async () => ({ id: "job-1" })),
 }));
 
 describe("tracking-sync enqueue", () => {
+  it("caps page size at the CEPT bulk tracking limit of 500", () => {
+    expect(INDIA_POST_TRACKING_BULK_LIMIT).toBe(500);
+    expect(trackingSyncPageSize()).toBeLessThanOrEqual(500);
+  });
+
   it("skips an organization that already has an open tracking-sync job", async () => {
     const { createBackgroundJob } = await import("@/modules/jobs/service");
     vi.mocked(createBackgroundJob).mockClear();

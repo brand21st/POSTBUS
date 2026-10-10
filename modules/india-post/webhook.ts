@@ -257,6 +257,7 @@ export async function processIndiaPostInboxEvent(
       occurredAt: parsed.eventTimestamp ?? inbox.received_at ?? new Date().toISOString(),
       raw: trackingEventRaw(parsed.rawPayload, "webhook"),
       nonDeliveryReason: parsed.nonDeliveryReason,
+      rts: parsed.rawPayload.rts === true ? true : parsed.rawPayload.rts === false ? false : null,
     }
   );
 
