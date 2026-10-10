@@ -1063,6 +1063,8 @@ export type PublicTrackingEvent = {
 
 export type TutorialStatus = "draft" | "published";
 
+export type TutorialVideoProvider = "youtube" | "vimeo" | "facebook" | "instagram";
+
 export type TutorialCategorySummary = {
   id: string;
   name: string;
@@ -1076,6 +1078,7 @@ export type TutorialPublic = {
   slug: string;
   description: string | null;
   youtubeUrl: string;
+  provider: TutorialVideoProvider;
   thumbnailUrl: string;
   embedUrl: string;
   sortOrder: number;
@@ -1099,6 +1102,7 @@ export type AdminTutorial = {
   slug: string;
   description: string | null;
   youtubeUrl: string;
+  provider: TutorialVideoProvider;
   thumbnailUrl: string;
   embedUrl: string;
   status: TutorialStatus;

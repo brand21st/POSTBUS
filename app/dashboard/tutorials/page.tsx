@@ -6,7 +6,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Clapperboard, Search } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { YoutubeIcon } from "@/components/icons/youtube-icon";
 import { TutorialPlayerDialog } from "@/components/tutorials/player-dialog";
 import { TutorialThumbnail } from "@/components/tutorials/thumbnail";
 import { Badge } from "@/components/ui/badge";
@@ -95,8 +94,8 @@ export default function TutorialsPage() {
       <PageHeader
         title={
           <span className="inline-flex items-center gap-2">
-            <YoutubeIcon className="size-7 text-[#FF0000]" />
-            YouTube Tutorials
+            <Clapperboard className="size-7 text-brand" />
+            Tutorials
           </span>
         }
         description="Learn how to use PostBus with simple step-by-step video tutorials."

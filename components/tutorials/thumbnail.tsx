@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Play } from "lucide-react";
-import { YoutubeIcon } from "@/components/icons/youtube-icon";
 import { cn } from "@/lib/utils";
 
 export function TutorialThumbnail({
@@ -22,7 +21,7 @@ export function TutorialThumbnail({
     <div className={cn("relative overflow-hidden bg-zinc-900", className)}>
       {failed || !src ? (
         <div className="flex h-full min-h-[8rem] w-full items-center justify-center bg-zinc-800">
-          <YoutubeIcon className="size-10 text-white/70" />
+          <Play className="size-10 fill-white/70 text-white/70" />
         </div>
       ) : (
         // eslint-disable-next-line @next/next/no-img-element

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
-import { parseYoutubeUrl, YOUTUBE_URL_ERROR } from "@/modules/tutorials/youtube";
+import { parseTutorialVideo, TUTORIAL_VIDEO_URL_ERROR } from "@/modules/tutorials/video";
 import type { adminTutorialQuerySchema, customerTutorialQuerySchema } from "@/modules/tutorials/schema";
 import type { z } from "zod";
 
@@ -67,17 +67,18 @@ export function categoryDeleteBlockReason(tutorialCount: number) {
   return null;
 }
 
-export function requireYoutube(url: string) {
-  const parsed = parseYoutubeUrl(url);
+export function requireTutorialVideo(url: string) {
+  const parsed = parseTutorialVideo(url);
   if (!parsed) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, YOUTUBE_URL_ERROR);
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, TUTORIAL_VIDEO_URL_ERROR);
   }
   return parsed;
 }
 
-function youtubeMedia(url: string) {
-  const parsed = parseYoutubeUrl(url);
+function tutorialMedia(url: string) {
+  const parsed = parseTutorialVideo(url);
   return {
+    provider: parsed?.provider ?? "youtube",
     thumbnailUrl: parsed?.thumbnailUrl ?? "",
     embedUrl: parsed?.embedUrl ?? "",
   };
@@ -99,7 +100,7 @@ export function mapCategory(row: TutorialCategoryRow) {
 }
 
 export function mapTutorial(row: TutorialRow, options?: { includeStatus?: boolean }) {
-  const media = youtubeMedia(row.youtube_url);
+  const media = tutorialMedia(row.youtube_url);
   const nested = nestedCategory(row);
   const category = nested
     ? {
@@ -116,6 +117,7 @@ export function mapTutorial(row: TutorialRow, options?: { includeStatus?: boolea
     slug: row.slug,
     description: row.description,
     youtubeUrl: row.youtube_url,
+    provider: media.provider,
     status: row.status,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
@@ -138,6 +140,7 @@ export function mapPublicTutorial(row: TutorialRow) {
     slug: mapped.slug,
     description: mapped.description,
     youtubeUrl: mapped.youtubeUrl,
+    provider: mapped.provider,
     thumbnailUrl: mapped.thumbnailUrl,
     embedUrl: mapped.embedUrl,
     sortOrder: mapped.sortOrder,
@@ -332,7 +335,7 @@ export async function createTutorial(
     sortOrder?: number;
   }
 ) {
-  requireYoutube(input.youtubeUrl);
+  requireTutorialVideo(input.youtubeUrl);
   const { data: category } = await supabase
     .from("tutorial_categories")
     .select("id")
@@ -373,7 +376,7 @@ export async function updateTutorial(
 ) {
   const { data: current } = await supabase.from("tutorials").select("*").eq("id", id).maybeSingle();
   if (!current) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Tutorial not found.");
-  if (input.youtubeUrl !== undefined) requireYoutube(input.youtubeUrl);
+  if (input.youtubeUrl !== undefined) requireTutorialVideo(input.youtubeUrl);
   if (input.categoryId) {
     const { data: category } = await supabase
       .from("tutorial_categories")
