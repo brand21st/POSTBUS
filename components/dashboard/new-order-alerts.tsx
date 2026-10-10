@@ -10,6 +10,8 @@ import {
   unlockNewOrderSound,
   collectDashboardAlerts,
   isNewOrderCreatedNotification,
+  rememberDashboardAlerts,
+  DASHBOARD_ALERT_EVENT,
   LABELS_READY_NOTIFICATION,
   TRACKING_HOST_LIVE_NOTIFICATION,
 } from "@/lib/notifications/new-order";
@@ -49,6 +51,7 @@ export function NewOrderAlerts() {
     function onIncoming(event: Event) {
       const detail = (event as CustomEvent<NotificationRecord[]>).detail;
       if (!Array.isArray(detail) || !detail.length) return;
+      rememberDashboardAlerts(seen.current, detail);
       setAlerts(detail);
       void playDashboardAlertSound(detail.map((item) => item.type));
       refreshOrdersIfCreated(
@@ -56,8 +59,8 @@ export function NewOrderAlerts() {
         detail.map((item) => item.type)
       );
     }
-    window.addEventListener("postbus:new-shopify-orders", onIncoming);
-    return () => window.removeEventListener("postbus:new-shopify-orders", onIncoming);
+    window.addEventListener(DASHBOARD_ALERT_EVENT, onIncoming);
+    return () => window.removeEventListener(DASHBOARD_ALERT_EVENT, onIncoming);
   }, [queryClient]);
 
   useEffect(() => {

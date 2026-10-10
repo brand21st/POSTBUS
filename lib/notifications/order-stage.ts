@@ -15,7 +15,11 @@ export function orderStageNotificationType(event: OrderStageEvent) {
   return STAGE_COPY[event].type;
 }
 
-function defaultBody(event: OrderStageEvent, orderNumber: string) {
+export function orderStageNotificationTitle(event: OrderStageEvent) {
+  return STAGE_COPY[event].title;
+}
+
+export function orderStageNotificationBody(event: OrderStageEvent, orderNumber: string) {
   return event === "booked" ? `${orderNumber} · booked` : orderNumber;
 }
 
@@ -33,7 +37,7 @@ export async function insertOrderStageNotification(
   if (!body) {
     const { data } = await supabase.from("orders").select("order_number").eq("id", input.orderId).maybeSingle();
     const orderNumber = data?.order_number || input.orderId.slice(0, 8);
-    body = defaultBody(input.event, orderNumber);
+    body = orderStageNotificationBody(input.event, orderNumber);
   }
 
   await supabase.from("notifications").insert({

@@ -37,9 +37,18 @@ import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS, INDIAN_STATES } from "@/lib
 import type { IndiaPostDirectoryLookup } from "@/lib/india-post/pincode-directory";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
+import {
+  isIndiaPostAcceptedStatus,
+  isIndiaPostBookingInFlight,
+} from "@/modules/india-post/booking-status";
+import {
+  emitDashboardAlerts,
+  localShipmentBookedAlert,
+  unlockNewOrderSound,
+} from "@/lib/notifications/new-order";
 import { optionalDimensionCm, optionalPositiveInt } from "@/modules/orders/schema";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
-import type { IndiaPostConfig, Paginated, ProductRecord } from "@/types/api";
+import type { IndiaPostConfig, OrderRecord, Paginated, ProductRecord } from "@/types/api";
 import { catalogCodAdvancePaid } from "@/modules/products/payment";
 
 const addressSchema = z.object({
@@ -266,8 +275,9 @@ export default function NewOrderPage() {
   }, [customerFieldError]);
 
   async function onSubmit(values: FormValues) {
+    unlockNewOrderSound();
     try {
-      const created = await api<{ id: string }>("/api/v1/orders", {
+      const created = await api<OrderRecord>("/api/v1/orders", {
         method: "POST",
         body: JSON.stringify({
           orderNumber: undefined,
@@ -313,7 +323,20 @@ export default function NewOrderPage() {
           shipment: values.shipment,
         }),
       });
-      toast.success("Order saved. India Post booking started.");
+      const shipment = created.shipment;
+      const orderNumber = created.orderNumber ?? created.order_number ?? created.id.slice(0, 8);
+      if (isIndiaPostAcceptedStatus(shipment?.status)) {
+        emitDashboardAlerts([localShipmentBookedAlert({ orderId: created.id, orderNumber })]);
+        toast.success("India Post booked.");
+      } else if (isIndiaPostBookingInFlight(shipment?.status)) {
+        toast.success("Order saved. India Post booking started.");
+      } else {
+        toast.error(
+          shipment?.lastError ||
+            shipment?.last_error ||
+            (shipment ? "India Post booking failed." : "Order saved, but India Post booking did not start.")
+        );
+      }
       router.push(`/dashboard/orders/${created.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create the order.");

@@ -218,17 +218,25 @@ export async function handleCommerceRoutes(
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "WhatsApp orders must be created from the storefront.");
     }
     const order = await createManualOrder(supabase, ctx, body);
-    if (body.createShipment) {
-      try {
-        await createShipmentsForOrders(supabase, ctx, [order.id], body.shipment);
-      } catch (error) {
-        logError("orders.create_shipment_failed", {
-          orderId: order.id,
-          message: error instanceof Error ? error.message : "unknown",
-        });
-      }
+    if (!body.createShipment) return order;
+    try {
+      await createShipmentsForOrders(supabase, ctx, [order.id], body.shipment);
+    } catch (error) {
+      logError("orders.create_shipment_failed", {
+        orderId: order.id,
+        message: error instanceof Error ? error.message : "unknown",
+      });
     }
-    return order;
+    const { data: shipment } = await supabase
+      .from("shipments")
+      .select("id, order_id, status, barcode, booked_at, last_error")
+      .eq("organization_id", ctx.organizationId)
+      .eq("order_id", order.id)
+      .not("status", "eq", "CANCELLED")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return { ...order, shipment: shipment ?? null };
   }
 
   if (key === "POST orders/bulk/status") {
