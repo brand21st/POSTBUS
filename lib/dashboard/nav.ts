@@ -16,8 +16,8 @@ import {
   CreditCard,
   Settings,
   LifeBuoy,
+  Clapperboard,
 } from "lucide-react";
-import { YoutubeIcon } from "@/components/icons/youtube-icon";
 
 export type NavItem = {
   label: string;
@@ -45,9 +45,9 @@ export const sidebarNav: NavItem[] = [
 ];
 
 export const tutorialsNav: NavItem = {
-  label: "YouTube Tutorials",
+  label: "Tutorials",
   href: "/dashboard/tutorials",
-  icon: YoutubeIcon,
+  icon: Clapperboard,
 };
 
 export const helpNav: NavItem = {
@@ -83,7 +83,7 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
       continue;
     }
     if (segment === "tutorials") {
-      crumbs.push({ label: "YouTube Tutorials", href });
+      crumbs.push({ label: "Tutorials", href });
       continue;
     }
     if (isResourceIdSegment(segment)) {

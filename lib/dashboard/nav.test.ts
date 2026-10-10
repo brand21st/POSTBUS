@@ -41,9 +41,9 @@ describe("breadcrumb resource ids", () => {
   });
 });
 
-describe("YouTube Tutorials navigation", () => {
+describe("Tutorials navigation", () => {
   it("adds a help-cluster item pointing at the merchant tutorials page", () => {
-    expect(tutorialsNav.label).toBe("YouTube Tutorials");
+    expect(tutorialsNav.label).toBe("Tutorials");
     expect(tutorialsNav.href).toBe("/dashboard/tutorials");
     expect(isNavItemActive("/dashboard/tutorials", "/dashboard/tutorials")).toBe(true);
     expect(isNavItemActive("/dashboard/tutorials", "/dashboard/orders")).toBe(false);
