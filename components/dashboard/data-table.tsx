@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   createColumnHelper,
   rowSelectionFeature,
@@ -19,6 +19,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  applyHeaderSelectionChange,
+  toggleRowSelection,
+  visibleHeaderState,
+} from "@/lib/dashboard/row-selection";
 import { displayValue } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -238,6 +243,11 @@ export function DataTable<TData extends Record<string, unknown>>({
   const cellPad = compact ? "px-2.5 py-1.5" : "px-4 py-3";
   const stacked = stackDisplay(stackBelow);
   const [widths, setWidths] = useState<Record<string, number>>(columnWidths ?? {});
+  const selectedIdsRef = useRef(selectedIds);
+  const fetchingRef = useRef(fetching);
+  const liveVisibleIdsRef = useRef<string[]>([]);
+  selectedIdsRef.current = selectedIds;
+  fetchingRef.current = fetching;
 
   useEffect(() => {
     if (columnWidths) setWidths(columnWidths);
@@ -293,26 +303,37 @@ export function DataTable<TData extends Record<string, unknown>>({
         id: "_select",
         header: ({ table }) => {
           const visibleIds = table.getRowModel().rows.map((row) => row.id);
-          const selectedVisible = selectedIds
-            ? visibleIds.filter((id) => selectedIds.includes(id)).length
-            : table.getIsAllRowsSelected()
-              ? visibleIds.length
-              : 0;
-          const allVisibleSelected = visibleIds.length > 0 && selectedVisible === visibleIds.length;
+          liveVisibleIdsRef.current = visibleIds;
+          const current = selectedIds ?? [];
+          const headerState = selectedIds
+            ? visibleHeaderState(selectedIds, visibleIds)
+            : visibleHeaderState(
+                table.getRowModel().rows.filter((row) => row.getIsSelected()).map((row) => row.id),
+                visibleIds
+              );
           return (
             <Checkbox
               aria-label="Select all visible orders"
-              checked={
-                allVisibleSelected ? true : selectedVisible > 0 ? "indeterminate" : false
-              }
+              checked={headerState}
+              disabled={visibleIds.length === 0}
               onCheckedChange={(value) => {
-                if (selectedIds) {
-                  onSelectionChange?.(value ? visibleIds : []);
+                if (liveVisibleIdsRef.current.length === 0) return;
+                const checked = value === true;
+                const live = liveVisibleIdsRef.current;
+                const selected = selectedIdsRef.current ?? [];
+                const next = applyHeaderSelectionChange(
+                  selected,
+                  live,
+                  checked,
+                  Boolean(fetchingRef.current)
+                );
+                if (selectedIdsRef.current) {
+                  onSelectionChange?.(next);
                   return;
                 }
-                table.toggleAllRowsSelected(!!value);
+                table.toggleAllRowsSelected(checked);
                 if (!onSelectionChange) return;
-                onSelectionChange(value ? visibleIds : []);
+                onSelectionChange(next);
               }}
             />
           );
@@ -322,22 +343,15 @@ export function DataTable<TData extends Record<string, unknown>>({
             aria-label="Select row"
             checked={selectedIds ? selectedIds.includes(row.id) : row.getIsSelected()}
             onCheckedChange={(value) => {
+              const checked = value === true;
               if (selectedIds) {
-                onSelectionChange?.(
-                  value
-                    ? Array.from(new Set([...selectedIds, row.id]))
-                    : selectedIds.filter((id) => id !== row.id)
-                );
+                onSelectionChange?.(toggleRowSelection(selectedIds, row.id, checked));
                 return;
               }
-              row.toggleSelected(!!value);
+              row.toggleSelected(checked);
               if (!onSelectionChange) return;
               const current = table.getSelectedRowModel().rows.map((selected) => selected.id);
-              onSelectionChange(
-                value
-                  ? Array.from(new Set([...current, row.id]))
-                  : current.filter((id) => id !== row.id)
-              );
+              onSelectionChange(toggleRowSelection(current, row.id, checked));
             }}
             onClick={(event) => event.stopPropagation()}
           />

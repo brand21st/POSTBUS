@@ -552,6 +552,7 @@ export default function LabelsPage() {
         total={list.total}
         onPageChange={setPage}
         selectable
+        selectedIds={selected}
         onSelectionChange={setSelected}
         getRowId={rowKey}
       />

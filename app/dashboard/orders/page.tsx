@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -60,6 +60,13 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
+  committedSearchChanged,
+  ordersListHref,
+  parseOrdersPageParam,
+  patchOrdersListSearchParams,
+  selectionAfterFilterChange,
+} from "@/lib/dashboard/orders-list-query";
+import {
   asPaginated,
   customerName,
   customerPhone,
@@ -70,6 +77,7 @@ import {
   orderNumber,
   orderStageMenu,
 } from "@/lib/dashboard/records";
+import { toggleRowSelection } from "@/lib/dashboard/row-selection";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
 import {
@@ -123,10 +131,12 @@ export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
+  const urlQ = searchParams.get("q") ?? "";
+  const page = parseOrdersPageParam(searchParams.get("page"));
   const [pageSize, setPageSize] = useState(20);
-  const [search, setSearch] = useState(searchParams.get("q") ?? "");
-  const [debounced, setDebounced] = useState("");
+  const [search, setSearch] = useState(urlQ);
+  const [debounced, setDebounced] = useState(urlQ.trim());
+  const committedSearchRef = useRef(urlQ.trim());
   const [status, setStatus] = useState("all");
   const [source, setSource] = useState("all");
   const [payment, setPayment] = useState("all");
@@ -158,19 +168,38 @@ export default function OrdersPage() {
     };
   }, []);
 
+  const replaceListParams = useCallback(
+    (patch: { page?: number; q?: string | null }) => {
+      const next = patchOrdersListSearchParams(searchParams, patch);
+      router.replace(ordersListHref(next), { scroll: false });
+    },
+    [router, searchParams]
+  );
+
+  const applyFilterChange = useCallback(() => {
+    setSelected(selectionAfterFilterChange());
+    replaceListParams({ page: 1 });
+  }, [replaceListParams]);
+
   useEffect(() => {
-    const q = searchParams.get("q") ?? "";
-    const timer = window.setTimeout(() => setSearch(q), 0);
+    const timer = window.setTimeout(() => setSearch(urlQ), 0);
     return () => window.clearTimeout(timer);
-  }, [searchParams]);
+  }, [urlQ]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setDebounced(search.trim());
-      setPage(1);
+      const next = search.trim();
+      setDebounced(next);
+      if (committedSearchChanged(committedSearchRef.current, next)) {
+        committedSearchRef.current = next;
+        setSelected(selectionAfterFilterChange());
+        replaceListParams({ page: 1, q: next });
+        return;
+      }
+      committedSearchRef.current = next;
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [replaceListParams, search]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -397,11 +426,13 @@ export default function OrdersPage() {
   function resetFilters() {
     setSearch("");
     setDebounced("");
+    committedSearchRef.current = "";
     setStatus("all");
     setSource("all");
     setPayment("all");
     setDateFilter({ kind: "all" });
-    setPage(1);
+    setSelected(selectionAfterFilterChange());
+    replaceListParams({ page: 1, q: "" });
   }
 
   function toggleColumn(key: OptionalColumn, next: boolean) {
@@ -616,7 +647,7 @@ export default function OrdersPage() {
 
   const filterSelects = (
     <>
-      <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}>
+      <Select value={status} onValueChange={(value) => { setStatus(value); applyFilterChange(); }}>
         <SelectTrigger className={FILTER_SELECT_CLASS}><SelectValue placeholder="Status" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All statuses</SelectItem>
@@ -625,7 +656,7 @@ export default function OrdersPage() {
           ))}
         </SelectContent>
       </Select>
-      <Select value={source} onValueChange={(value) => { setSource(value); setPage(1); }}>
+      <Select value={source} onValueChange={(value) => { setSource(value); applyFilterChange(); }}>
         <SelectTrigger className={FILTER_SELECT_CLASS}><SelectValue placeholder="Source" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All sources</SelectItem>
@@ -634,7 +665,7 @@ export default function OrdersPage() {
           ))}
         </SelectContent>
       </Select>
-      <Select value={payment} onValueChange={(value) => { setPayment(value); setPage(1); }}>
+      <Select value={payment} onValueChange={(value) => { setPayment(value); applyFilterChange(); }}>
         <SelectTrigger className={FILTER_SELECT_CLASS}><SelectValue placeholder="Payment" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All payments</SelectItem>
@@ -742,7 +773,7 @@ export default function OrdersPage() {
         activeStatus={status}
         onSelect={(next) => {
           setStatus(next);
-          setPage(1);
+          applyFilterChange();
         }}
       />
 
@@ -756,7 +787,7 @@ export default function OrdersPage() {
           }}
           onChange={(next) => {
             setDateFilter(next);
-            setPage(1);
+            applyFilterChange();
           }}
         />
         <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
@@ -809,26 +840,32 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {selected.length >= 2 ? (
+      {selected.length > 0 ? (
         <div className="sticky top-2 z-20 rounded-xl border border-border bg-card px-3 py-2 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm font-medium text-ink">{selected.length} selected</p>
+            <p className="text-sm font-medium text-ink">
+              {selected.length === 1 ? "1 selected" : `${selected.length} selected`}
+            </p>
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                disabled={bulkFulfill.isPending}
-                className={orderActionButtonClass("PROCESSING")}
-                onClick={() => setConfirmFulfill(true)}
-              >
-                <Truck className="size-4" />
-                {bulkFulfill.isPending ? "Processing…" : "Fulfill · Booked / packed"}
-              </Button>
-              <BulkIndiaPostBooking
-                selectedIds={selected}
-                size="sm"
-                onQueued={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
-              />
+              {selected.length >= 2 ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={bulkFulfill.isPending}
+                    className={orderActionButtonClass("PROCESSING")}
+                    onClick={() => setConfirmFulfill(true)}
+                  >
+                    <Truck className="size-4" />
+                    {bulkFulfill.isPending ? "Processing…" : "Fulfill · Booked / packed"}
+                  </Button>
+                  <BulkIndiaPostBooking
+                    selectedIds={selected}
+                    size="sm"
+                    onQueued={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
+                  />
+                </>
+              ) : null}
               <Button
                 type="button"
                 variant="secondary"
@@ -848,7 +885,7 @@ export default function OrdersPage() {
         data={list.items}
         density="compact"
         paginationStyle="numbered"
-        fetching={query.isFetching && !query.isLoading}
+        fetching={(query.isFetching && !query.isLoading) || query.isPlaceholderData}
         loading={query.isLoading && !query.data}
         error={query.error instanceof Error ? query.error : null}
         emptyTitle={shopifyReady ? "No unfulfilled Shopify orders yet" : "No orders match these filters"}
@@ -868,14 +905,14 @@ export default function OrdersPage() {
             </Link>
           )
         }
-        page={list.page}
+        page={page}
         pageSize={pageSize}
         total={list.total}
-        onPageChange={setPage}
+        onPageChange={(next) => replaceListParams({ page: next })}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         onPageSizeChange={(size) => {
           setPageSize(size);
-          setPage(1);
+          replaceListParams({ page: 1 });
         }}
         selectable
         selectedIds={selected}
@@ -907,9 +944,7 @@ export default function OrdersPage() {
                       checked={checked}
                       aria-label={`Select ${orderNumber(row)}`}
                       onCheckedChange={(value) => {
-                        setSelected((current) =>
-                          value ? Array.from(new Set([...current, row.id])) : current.filter((id) => id !== row.id)
-                        );
+                        setSelected((current) => toggleRowSelection(current, row.id, value === true));
                       }}
                     />
                   </div>
