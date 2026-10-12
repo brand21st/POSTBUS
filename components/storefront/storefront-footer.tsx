@@ -51,7 +51,7 @@ function FooterLink({
     <Link
       href={item.href}
       className={cn(
-        "inline-flex min-h-11 min-w-0 items-center rounded-lg text-sm transition-colors duration-200 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 motion-reduce:transition-none",
+        "inline-flex min-h-8 min-w-0 items-center rounded-md py-1 text-sm leading-5 transition-colors duration-150 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 motion-reduce:transition-none",
         className
       )}
       {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
@@ -64,7 +64,7 @@ function FooterLink({
 function FooterColumn({ title, children, headingColor }: { title: string; children: ReactNode; headingColor: string }) {
   return (
     <div className="min-w-0">
-      <h2 className="text-sm font-semibold tracking-wide" style={{ color: headingColor }}>
+      <h2 className="text-sm font-semibold" style={{ color: headingColor }}>
         {title}
       </h2>
       <div className="mt-2 flex flex-col items-start">{children}</div>
@@ -72,7 +72,7 @@ function FooterColumn({ title, children, headingColor }: { title: string; childr
   );
 }
 
-export function StorefrontFooter({ footer }: { footer: StoreFooter | null | undefined }) {
+export function StorefrontFooter({ footer, clearance = false }: { footer: StoreFooter | null | undefined; clearance?: boolean }) {
   if (!footer) return null;
   const { appearance } = footer;
   const year = new Date().getFullYear();
@@ -100,7 +100,7 @@ export function StorefrontFooter({ footer }: { footer: StoreFooter | null | unde
       title: "Business information",
       show: Boolean(footer.business),
       content: footer.business ? (
-        <div className="min-w-0 space-y-1 py-2 text-sm leading-relaxed">
+        <div className="min-w-0 space-y-0.5 text-sm leading-5">
           <p className="break-words font-medium" style={{ color: appearance.headingColor }}>
             {footer.business.name}
           </p>
@@ -118,18 +118,18 @@ export function StorefrontFooter({ footer }: { footer: StoreFooter | null | unde
 
   return (
     <footer
-      className="mt-8 w-full min-w-0 border-t"
+      className={cn("mt-6 w-full min-w-0 border-t", clearance && "max-lg:pb-[calc(4.75rem+env(safe-area-inset-bottom))]")}
       style={{
         backgroundColor: appearance.backgroundColor,
         color: appearance.textColor,
         borderColor: appearance.borderColor,
       }}
     >
-      <div className="mx-auto w-full max-w-7xl min-w-0 px-3 py-8 sm:px-5 lg:py-12">
+      <div className="mx-auto w-full max-w-7xl min-w-0 px-4 py-5 sm:px-5 lg:py-6">
         <div
           className={cn(
-            "grid min-w-0 gap-8",
-            stacked ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5"
+            "grid min-w-0 gap-x-8 gap-y-5",
+            stacked ? "grid-cols-1" : "grid-cols-1 md:grid-cols-4 xl:grid-cols-5"
           )}
         >
           {footer.brand ? (
@@ -219,7 +219,7 @@ export function StorefrontFooter({ footer }: { footer: StoreFooter | null | unde
         </div>
 
         {footer.trust.length ? (
-          <ul className="mt-8 flex min-w-0 flex-wrap gap-2">
+          <ul className="mt-5 flex min-w-0 flex-wrap gap-2">
             {footer.trust.map((item) => (
               <li key={item.label}>
                 {item.href ? (
@@ -242,7 +242,7 @@ export function StorefrontFooter({ footer }: { footer: StoreFooter | null | unde
       </div>
 
       <div className="border-t" style={{ borderColor: appearance.borderColor }}>
-        <div className="mx-auto flex w-full max-w-7xl min-w-0 flex-col gap-2 px-3 py-4 text-xs sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div className="mx-auto flex w-full max-w-7xl min-w-0 flex-col gap-1 px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <p className="min-w-0 break-words">
             © {year} {footer.copyrightName}. All rights reserved.
           </p>

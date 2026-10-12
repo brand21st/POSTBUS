@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ProductCard } from "@/components/storefront/product-card";
 import { StoreHeader } from "@/components/storefront/store-header";
 import { StorefrontFooter } from "@/components/storefront/storefront-footer";
+import { CoverHero } from "@/components/storefront/cover-hero";
 import { StoreImage } from "@/components/storefront/store-image";
 import type {
   CartLine,
@@ -13,19 +14,19 @@ import type {
   StoreSlide,
 } from "@/components/storefront/store-types";
 import { cn } from "@/lib/utils";
+import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
 
-function safeCtaHref(value?: string | null) {
-  if (!value) return null;
-  if (value.startsWith("/") || value.startsWith("#")) return value;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function HeroSlider({ slides }: { slides: StoreSlide[] }) {
+function HeroSlider({
+  slides,
+  autoplay = false,
+  onImpression,
+  onClick,
+}: {
+  slides: StoreSlide[];
+  autoplay?: boolean;
+  onImpression?: (id: string) => void;
+  onClick?: (id: string) => void;
+}) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const indexRef = useRef(0);
   const pausedRef = useRef(false);
@@ -53,8 +54,10 @@ function HeroSlider({ slides }: { slides: StoreSlide[] }) {
     scroller?.scrollTo({ left: target * scroller.clientWidth, behavior: "smooth" });
   }, [slides.length]);
 
+  const [playing, setPlaying] = useState(autoplay);
+
   useEffect(() => {
-    if (slides.length < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (!playing || slides.length < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const timer = window.setInterval(() => {
       if (!pausedRef.current && !document.hidden) goTo(indexRef.current + 1);
     }, 4500);
@@ -62,10 +65,14 @@ function HeroSlider({ slides }: { slides: StoreSlide[] }) {
       window.clearInterval(timer);
       if (resumeTimer.current) window.clearTimeout(resumeTimer.current);
     };
-  }, [goTo, slides.length]);
+  }, [goTo, playing, slides.length]);
 
   return (
-    <section className="relative mt-3 overflow-hidden rounded-2xl bg-zinc-100 shadow-sm sm:rounded-3xl" aria-label="Store offers">
+    <section
+      className="relative mt-3 overflow-hidden rounded-2xl bg-zinc-100 shadow-sm sm:rounded-3xl"
+      aria-label="Store offers"
+      aria-roledescription="carousel"
+    >
       <div className="relative aspect-[16/9] max-h-[128px] w-full sm:max-h-[200px] lg:aspect-[2.6/1] lg:max-h-[240px]">
       <div
         ref={scrollerRef}
@@ -86,53 +93,55 @@ function HeroSlider({ slides }: { slides: StoreSlide[] }) {
           }
         }}
       >
-        {slides.map((slide, slideIndex) => {
-          const ctaHref = safeCtaHref(slide.ctaHref);
-          return (
-          <article key={slide.id} className="relative h-full w-full min-w-full shrink-0 snap-center snap-always">
-            <StoreImage
-              src={slide.imageUrl}
-              alt={slide.title || `Offer ${slideIndex + 1}`}
-              sizes="(max-width: 768px) 100vw, 1152px"
-              preload={slideIndex === 0}
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent sm:bg-gradient-to-r sm:from-black/60 sm:via-black/20 sm:to-transparent">
-              <div className="absolute inset-x-4 bottom-7 max-w-[88%] text-white sm:inset-x-5 sm:bottom-8 sm:max-w-[60%]">
-                {slide.title ? (
-                  <h2 className="text-lg font-bold leading-tight drop-shadow sm:text-3xl">{slide.title}</h2>
-                ) : null}
-                {slide.subtitle ? (
-                  <p className="mt-1 line-clamp-2 text-[11px] text-white/90 drop-shadow sm:text-sm">{slide.subtitle}</p>
-                ) : null}
-                {slide.ctaLabel && ctaHref ? (
-                  <a
-                    href={ctaHref}
-                    className="mt-3 inline-flex min-h-10 items-center rounded-full bg-white px-4 py-2 text-xs font-bold text-zinc-900 shadow transition active:scale-95"
-                  >
-                    {slide.ctaLabel}
-                  </a>
-                ) : slide.ctaLabel ? (
-                  <span className="mt-3 inline-flex min-h-10 items-center rounded-full bg-white px-4 py-2 text-xs font-bold text-zinc-900 shadow">
-                    {slide.ctaLabel}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </article>
-          );
-        })}
-      </div>
+        {slides.map((slide, slideIndex) => (
+          <CoverHero
+            key={slide.id}
+            slide={slide}
+            preload={slideIndex === 0}
+            onCtaClick={() => onClick?.(slide.id)}
+            onVisible={() => onImpression?.(slide.id)}
+          />
+        ))}
       </div>
       {slides.length > 1 ? (
-        <div className="absolute inset-x-0 bottom-3 flex justify-center">
+        <>
+          <button
+            type="button"
+            className="absolute left-2 top-1/2 z-10 flex size-8 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-white"
+            aria-label="Previous cover"
+            onClick={() => {
+              pause();
+              goTo(index - 1);
+              resumeSoon();
+            }}
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+          <button
+            type="button"
+            className="absolute right-2 top-1/2 z-10 flex size-8 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-white"
+            aria-label="Next cover"
+            onClick={() => {
+              pause();
+              goTo(index + 1);
+              resumeSoon();
+            }}
+          >
+            <ChevronRight className="size-4" />
+          </button>
+        </>
+      ) : null}
+      </div>
+      {slides.length > 1 ? (
+        <div className="absolute inset-x-0 bottom-3 flex justify-center gap-2">
           <div className="flex gap-1.5 rounded-full bg-black/35 px-2 py-1.5 backdrop-blur">
             {slides.map((slide, slideIndex) => (
               <button
                 key={slide.id}
                 type="button"
                 className={cn(
-                  "h-1.5 rounded-full transition-all duration-300",
-                  slideIndex === index ? "w-5 bg-white" : "w-1.5 bg-white/55"
+                  "min-h-6 min-w-6 rounded-full transition-all duration-300",
+                  slideIndex === index ? "bg-white" : "bg-white/55"
                 )}
                 aria-label={`Show offer ${slideIndex + 1}`}
                 aria-current={slideIndex === index ? true : undefined}
@@ -144,6 +153,16 @@ function HeroSlider({ slides }: { slides: StoreSlide[] }) {
               />
             ))}
           </div>
+          {autoplay ? (
+            <button
+              type="button"
+              className="flex size-8 items-center justify-center rounded-full bg-black/35 text-white"
+              aria-label={playing ? "Pause covers" : "Play covers"}
+              onClick={() => setPlaying((current) => !current)}
+            >
+              {playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -266,6 +285,7 @@ export function StoreHome({
   onAdd,
   onDecrease,
   onLoadMore,
+  onCoverEvent,
 }: {
   store: StorePayload;
   cart: CartLine[];
@@ -279,6 +299,7 @@ export function StoreHome({
   onAdd: (product: StoreProduct) => void;
   onDecrease: (productId: string) => void;
   onLoadMore: () => void;
+  onCoverEvent?: (type: "COVER_IMPRESSION" | "COVER_CLICK", slideId: string) => void;
 }) {
   const count = cart.reduce((sum, line) => sum + line.quantity, 0);
   const featuredPool = store.products.featured ?? store.products.items;
@@ -291,23 +312,27 @@ export function StoreHome({
   const showSections = !query.trim() && categoryId === "all";
 
   return (
-    <div
-      className={cn(
-        "min-h-dvh w-full min-w-0 bg-zinc-50 text-zinc-950",
-        count > 0 ? "pb-[calc(7.5rem+env(safe-area-inset-bottom))] lg:pb-8" : "pb-8"
-      )}
-    >
+    <div className="flex min-h-dvh w-full min-w-0 flex-col bg-zinc-50 text-zinc-950">
       <StoreHeader
         store={store}
         query={query}
         count={count}
+        products={[...(store.products.bestSellers ?? []), ...(store.products.featured ?? []), ...store.products.items]}
         onQueryChange={onQueryChange}
         onOpenCart={onOpenCart}
+        onOpenProduct={onOpenProduct}
       />
 
-      <div className="mx-auto w-full max-w-7xl px-3 sm:px-5">
+      <div className="mx-auto w-full max-w-7xl flex-1 px-3 sm:px-5">
 
-        {showSections && store.slides.length ? <HeroSlider slides={store.slides} /> : null}
+        {showSections && store.slides.length ? (
+          <HeroSlider
+            slides={store.slides}
+            autoplay={store.coverAutoplay === true}
+            onImpression={(id) => onCoverEvent?.("COVER_IMPRESSION", id)}
+            onClick={(id) => onCoverEvent?.("COVER_CLICK", id)}
+          />
+        ) : null}
         <CategoryScroller
           categories={store.categories}
           selected={categoryId}
@@ -393,7 +418,7 @@ export function StoreHome({
           ) : null}
         </section>
       </div>
-      <StorefrontFooter footer={store.footer} />
+      <StorefrontFooter footer={store.footer} clearance={count > 0} />
     </div>
   );
 }

@@ -68,6 +68,8 @@ export const env = {
   coolifyBaseUrl: optional(process.env.COOLIFY_BASE_URL),
   coolifyApplicationUuid: optional(process.env.COOLIFY_APPLICATION_UUID),
   coolifyApiToken: optional(process.env.COOLIFY_API_TOKEN),
+  // Reversible storefront rollout. Leave unset until the marketplace migration is verified.
+  storefrontMarketplaceEnabled: optional(process.env.STOREFRONT_MARKETPLACE_ENABLED).toLowerCase() === "true",
 };
 
 export function usesDatabaseJobRunner() {

@@ -1,4 +1,7 @@
 import type { NextRequest } from "next/server";
+import { z } from "zod";
+import { bundleInputSchema } from "@/modules/storefront/bundle-pricing";
+import { listStoreBundles, saveStoreBundle } from "@/modules/storefront/bundles";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
@@ -56,6 +59,17 @@ export async function handleInventoryRoutes(
   method: string,
   slugs: string[]
 ) {
+  if (key === "GET inventory/bundles") return listStoreBundles(supabase, ctx.organizationId);
+  if (key === "POST inventory/bundles") return saveStoreBundle(supabase, ctx, null, bundleInputSchema.parse(await request.json()));
+  if (slugs[0] === "inventory" && slugs[1] === "bundles" && slugs[2] && slugs.length === 3) {
+    const id = z.string().uuid().parse(slugs[2]);
+    if (method === "PATCH") return saveStoreBundle(supabase, ctx, id, bundleInputSchema.parse(await request.json()));
+    if (method === "DELETE") {
+      const { error } = await supabase.from("storefront_bundles").delete().eq("organization_id", ctx.organizationId).eq("id", id);
+      if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Could not delete bundle.");
+      return { deleted: true };
+    }
+  }
   if (key === "GET products") {
     const parsed = productListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
     return listProducts(supabase, ctx, parsed);
