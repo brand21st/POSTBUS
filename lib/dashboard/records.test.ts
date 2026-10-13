@@ -13,6 +13,7 @@ import {
   itemSummary,
   orderActionLabel,
   orderStageMenu,
+  shopifyPendingBookingBlocked,
 } from "@/lib/dashboard/records";
 
 describe("itemSummary", () => {
@@ -56,7 +57,12 @@ describe("canShipOrder", () => {
     expect(canShipOrder({ status: "PROCESSING", source: "WHATSAPP", payment_status: "PENDING" })).toBe(false);
     expect(canShipOrder({ status: "READY", source: "WHATSAPP" })).toBe(true);
     expect(canFulfillOrder({ status: "PROCESSING", source: "MANUAL", payment_status: "PENDING" })).toBe(true);
+    expect(canFulfillOrder({ status: "PROCESSING", source: "SHOPIFY", payment_status: "PENDING" })).toBe(false);
+    expect(canFulfillOrder({ status: "PROCESSING", source: "SHOPIFY", payment_status: "PAID" })).toBe(true);
+    expect(canFulfillOrder({ status: "PROCESSING", source: "SHOPIFY", payment_status: "COD" })).toBe(true);
+    expect(canProcessOrder({ status: "READY", source: "SHOPIFY", payment_status: "PENDING" })).toBe(true);
     expect(canFulfillOrder({ status: "FAILED" })).toBe(true);
+    expect(shopifyPendingBookingBlocked({ source: "SHOPIFY", payment_status: "PENDING" })).toBe(true);
   });
 
   it("allows processing only before a shipment is booked", () => {
@@ -83,6 +89,8 @@ describe("canShipOrder", () => {
     expect(orderStageMenu("PROCESSING").completed.map((step) => step.label)).toEqual(["Processing"]);
     expect(orderStageMenu("PROCESSING").completed.map((step) => step.action)).toEqual(["processing"]);
     expect(orderStageMenu("PROCESSING").next?.action).toBe("fulfill");
+    expect(orderStageMenu("PROCESSING", "SHOPIFY", "PENDING").next).toBeNull();
+    expect(orderStageMenu("READY", "SHOPIFY", "PENDING").next?.action).toBe("processing");
     expect(orderStageMenu("BOOKED").completed.map((step) => step.action)).toEqual(["processing", "fulfill"]);
     expect(orderStageMenu("IN_TRANSIT").next?.action).toBe("delivered");
     expect(orderStageMenu("DELIVERED").hideActions).toBe(true);
@@ -103,6 +111,14 @@ describe("canShipOrder", () => {
 
   it("explains why Booked / packed cannot run", () => {
     expect(fulfillSkipReason({ status: "PROCESSING", order_number: "1020" })).toBeNull();
+    expect(
+      fulfillSkipReason({
+        status: "PROCESSING",
+        source: "SHOPIFY",
+        payment_status: "PENDING",
+        order_number: "1042",
+      })
+    ).toContain("Prepaid or COD");
     expect(
       fulfillSkipReason({
         status: "PROCESSING",

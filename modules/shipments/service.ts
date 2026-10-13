@@ -11,7 +11,7 @@ import {
   isIndiaPostAcceptedStatus,
 } from "@/modules/india-post/booking-status";
 import { resolveDefaultServiceCode, savedParcelContracts } from "@/modules/india-post/contracts";
-import { whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { shopifyPendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { INDIA_POST_SERVICES } from "@/types/domain";
@@ -157,6 +157,7 @@ export async function createShipmentsForOrders(
   const created = [];
   const skipped = [];
   const whatsappBlocked: string[] = [];
+  const shopifyPendingBlocked: string[] = [];
   for (const order of orders) {
     if (
       whatsappShipmentBlocked({
@@ -166,6 +167,11 @@ export async function createShipmentsForOrders(
       })
     ) {
       whatsappBlocked.push(String(order.order_number ?? order.id));
+      skipped.push(order.id);
+      continue;
+    }
+    if (enqueueBooking && shopifyPendingBookingBlocked(order)) {
+      shopifyPendingBlocked.push(String(order.order_number ?? order.id));
       skipped.push(order.id);
       continue;
     }
@@ -310,6 +316,8 @@ export async function createShipmentsForOrders(
       ERROR_CODES.CONFLICT,
       whatsappBlocked.length
         ? `${whatsappBlocked[0]} cannot be booked until the WhatsApp order is READY.`
+        : shopifyPendingBlocked.length
+          ? `${shopifyPendingBlocked[0]} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`
         : skipped.length === 1
           ? "This order already has a shipment. Open the shipment to retry or cancel it."
           : "Every selected order already has a shipment."
@@ -417,16 +425,29 @@ export async function retryShipment(
   }
 ) {
   const shipment = await getShipment(supabase, ctx, id);
-  const { checkQuota } = await import("@/modules/billing/usage");
-  await checkQuota(supabase, ctx.organizationId, 1);
   const orderId = shipment.orderId ?? shipment.order_id ?? "";
-  let serviceCode: string | undefined;
-  if (orderId && !shipmentServiceLocked(String(shipment.status ?? ""))) {
+  let linkedOrder: { india_post_service?: string | null; source?: string | null; payment_status?: string | null } | null =
+    null;
+  if (orderId) {
     const { data: order } = await supabase
       .from("orders")
-      .select("india_post_service")
+      .select("india_post_service, source, payment_status")
       .eq("id", orderId)
+      .eq("organization_id", ctx.organizationId)
       .maybeSingle();
+    linkedOrder = order;
+    if (shopifyPendingBookingBlocked(order ?? {})) {
+      throw new AppError(
+        ERROR_CODES.CONFLICT,
+        `${shipment.orderNumber ?? shipment.order_number ?? "This order"} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`
+      );
+    }
+  }
+  const { checkQuota } = await import("@/modules/billing/usage");
+  await checkQuota(supabase, ctx.organizationId, 1);
+  let serviceCode: string | undefined;
+  if (orderId && !shipmentServiceLocked(String(shipment.status ?? ""))) {
+    const order = linkedOrder;
     const choice = await workspaceBookingChoice(supabase, ctx.organizationId);
     serviceCode = resolveOrderBookingService({
       orderService: order?.india_post_service,
@@ -448,7 +469,8 @@ export async function retryShipment(
       ...(extras?.widthCm != null && extras.widthCm > 0 ? { width_cm: extras.widthCm } : {}),
       ...(extras?.heightCm != null && extras.heightCm > 0 ? { height_cm: extras.heightCm } : {}),
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", ctx.organizationId);
   const job = await createBackgroundJob(supabase, {
     organizationId: ctx.organizationId,
     jobType: "shipment-booking",

@@ -6,7 +6,12 @@ import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
 import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
-import { settleOrderPayment } from "@/modules/orders/payment";
+import { settleOrderPayment, shipmentCollectFromOrder } from "@/modules/orders/payment";
+import {
+  applyShopifyPaymentOverrideStatus,
+  mergeShopifyPaymentMetadata,
+  shopifyPaymentSnapshotFromMetadata,
+} from "@/modules/shopify/payment";
 import {
   mapCatalogRows,
   resolveLineFromCatalog,
@@ -790,4 +795,88 @@ export async function confirmWhatsAppOrder(
   });
 
   return updated;
+}
+
+export async function confirmShopifyPayment(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  paymentType: "PREPAID" | "COD"
+) {
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, source, payment_status, total_amount, metadata")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+  if (order.source !== "SHOPIFY") {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This is not a Shopify order.");
+  }
+  if (String(order.payment_status).toUpperCase() !== "PENDING") {
+    throw new AppError(ERROR_CODES.CONFLICT, "This Shopify order is not waiting for payment confirmation.");
+  }
+
+  const total = Number(order.total_amount ?? 0);
+  const settled = settleOrderPayment({
+    paymentStatus: applyShopifyPaymentOverrideStatus(paymentType),
+    totalAmount: total,
+  });
+  const stored = shopifyPaymentSnapshotFromMetadata(order.metadata);
+  const override = { kind: paymentType, actorId: ctx.userId || null, at: new Date().toISOString() };
+  const metadata = mergeShopifyPaymentMetadata(order.metadata, {
+    financialStatus: stored?.financialStatus ?? "pending",
+    gateways: stored?.gateways ?? [],
+    sourceName: stored?.sourceName ?? null,
+    outstanding: stored?.outstanding ?? null,
+    updatedAt: stored?.updatedAt ?? new Date().toISOString(),
+    reason: `merchant_override:${paymentType.toLowerCase()}`,
+    collectionMode: paymentType,
+    override,
+    bookingConflict: stored?.bookingConflict ?? null,
+  });
+
+  const { data: updatedOrder, error: updateError } = await supabase
+    .from("orders")
+    .update({
+      payment_status: settled.paymentStatus,
+      amount_paid: settled.amountPaid,
+      cod_amount: settled.codAmount,
+      metadata,
+    })
+    .eq("id", orderId)
+    .eq("organization_id", ctx.organizationId)
+    .eq("source", "SHOPIFY")
+    .eq("payment_status", "PENDING")
+    .select()
+    .maybeSingle();
+  if (updateError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError.message);
+  if (!updatedOrder) throw new AppError(ERROR_CODES.CONFLICT, "This Shopify order is not waiting for payment confirmation.");
+
+  const collect = shipmentCollectFromOrder(updatedOrder);
+  const { error: shipmentError } = await supabase
+    .from("shipments")
+    .update({ payment_mode: collect.payment_mode, cod_amount: collect.cod_amount })
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId)
+    .in("status", ["DRAFT", "FAILED"])
+    .is("booked_at", null);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId || null,
+    action: "order.shopify_payment_confirmed",
+    entity_type: "order",
+    entity_id: orderId,
+    after: {
+      paymentType,
+      paymentStatus: settled.paymentStatus,
+      collectionMode: paymentType,
+      capturedPayment: false,
+    },
+  });
+
+  return getOrder(supabase, ctx, orderId);
 }

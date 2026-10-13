@@ -9,7 +9,7 @@ import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
-import { bulkOrderStatusSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import { bulkOrderStatusSchema, confirmShopifyPaymentSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import {
   confirmCustomerOrderLinkSchema,
 } from "@/modules/customer-order-links/schema";
@@ -20,7 +20,7 @@ import {
   listLegacySubmissions,
   listWhatsAppPendingOrders,
 } from "@/modules/customer-order-links/service";
-import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
+import { confirmShopifyPayment, createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { renderCustomShippingLabel } from "@/modules/labels/custom-label-service";
@@ -159,6 +159,11 @@ export async function handleCommerceRoutes(
   if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "whatsapp-confirm") {
     const body = confirmCustomerOrderLinkSchema.parse(await request.json());
     return confirmWhatsAppCollectionOrder(supabase, ctx, slugs[1], body);
+  }
+
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "shopify-payment") {
+    const body = confirmShopifyPaymentSchema.parse(await request.json());
+    return confirmShopifyPayment(supabase, ctx, slugs[1], body.paymentType);
   }
 
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "service") {

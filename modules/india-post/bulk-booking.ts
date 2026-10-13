@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { shopifyPendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapExcelRowToArticle, mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import type { DraftArticle, DraftPickup, ValidationIssue } from "@/modules/india-post/article-types";
@@ -226,6 +226,29 @@ export async function validateOrdersForBooking(
         field: "order",
         value: order.order_number,
         error: "WhatsApp orders cannot be booked until they are READY.",
+        status: "Failed",
+        category: "BOOKING",
+      };
+      issues.push(issue);
+      rows.push({
+        orderId: order.id,
+        orderNumber: order.order_number,
+        shipmentId: "",
+        barcode: "",
+        valid: false,
+        issues: [issue],
+        status: String((order as { status?: string }).status ?? ""),
+      });
+      continue;
+    }
+    if (shopifyPendingBookingBlocked(order)) {
+      const issue: ValidationIssue = {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        barcode: "",
+        field: "payment_status",
+        value: (order as { payment_status?: string }).payment_status,
+        error: "Shopify payment is pending. Confirm Prepaid or COD before India Post booking.",
         status: "Failed",
         category: "BOOKING",
       };

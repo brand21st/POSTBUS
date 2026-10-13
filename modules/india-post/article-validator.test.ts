@@ -85,6 +85,27 @@ describe("India Post article validation", () => {
     expect(issues.some((issue) => issue.field === "value_for_codr_cod")).toBe(true);
   });
 
+  it("rejects NaN and negative COD amounts", () => {
+    expect(
+      validateIndiaPostArticle(baseDraft({ paymentMode: "COD", codAmount: Number.NaN })).some(
+        (issue) => issue.field === "value_for_codr_cod"
+      )
+    ).toBe(true);
+    expect(
+      validateIndiaPostArticle(baseDraft({ paymentMode: "COD", codAmount: -25 })).some(
+        (issue) => issue.field === "value_for_codr_cod"
+      )
+    ).toBe(true);
+  });
+
+  it("keeps prepaid CEPT COD fields empty even if a stray collect amount is present", () => {
+    const payload = serializeIndiaPostBookingArticle(
+      assertValidatedArticle(baseDraft({ paymentMode: "PREPAID", codAmount: 499 }))
+    );
+    expect(payload.codr_cod).toBe("");
+    expect(payload.value_for_codr_cod).toBe("");
+  });
+
   it("fails missing parcel dimensions instead of inventing them", () => {
     const issues = validateIndiaPostArticle(baseDraft({ lengthCm: 0, widthCm: 0, heightCm: 0, strictDimensions: true }));
     expect(issues.some((issue) => issue.field === "length")).toBe(true);

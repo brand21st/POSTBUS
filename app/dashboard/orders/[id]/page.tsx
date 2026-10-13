@@ -17,7 +17,15 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { addressLine, customerName, lineItemImageUrl, lineItems, orderNumber } from "@/lib/dashboard/records";
+import {
+  addressLine,
+  canFulfillOrder,
+  customerName,
+  lineItemImageUrl,
+  lineItems,
+  orderNumber,
+  shopifyPendingBookingBlocked,
+} from "@/lib/dashboard/records";
 import { formatCurrency, formatDate, formatWeightGrams } from "@/lib/format";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
@@ -75,6 +83,20 @@ export default function OrderDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["order", params.id] });
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const confirmShopify = useMutation({
+    mutationFn: (paymentType: "PREPAID" | "COD") =>
+      api(`/api/v1/orders/${params.id}/shopify-payment`, {
+        method: "POST",
+        body: JSON.stringify({ paymentType }),
+      }),
+    onSuccess: () => {
+      toast.success("Shopify payment confirmed.");
+      queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -157,6 +179,7 @@ export default function OrderDetailPage() {
   const weightsLocked = related.some(
     (shipment) => !WEIGHT_EDIT_STATUSES.has(String(shipment.status ?? "").toUpperCase())
   );
+  const shopifyNeedsPayment = shopifyPendingBookingBlocked(record);
   const draftItemGrams = (item: LineItem, index: number) => {
     const raw = draftWeights[item.id ?? String(index)];
     const grams = raw == null || raw === "" ? 0 : Number(raw);
@@ -184,7 +207,12 @@ export default function OrderDetailPage() {
             </Link>
           }
           actions={
-            <Button type="button" size="sm" onClick={() => ship.mutate()} disabled={ship.isPending}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => ship.mutate()}
+              disabled={ship.isPending || !canFulfillOrder(record) || shopifyNeedsPayment}
+            >
               <Truck className="size-4" />
               Ship order
             </Button>
@@ -199,7 +227,40 @@ export default function OrderDetailPage() {
           </CardHeader>
           <CardContent className="space-y-2 p-4 pt-0 text-sm">
             <Row label="Order" value={<StatusBadge value={orderStatusBadgeValue(record.status)} />} />
-            <Row label="Payment" value={<StatusBadge value={record.paymentStatus ?? record.payment_status} />} />
+            <Row
+              label="Payment"
+              value={
+                <div className="flex flex-col items-end gap-2">
+                  <StatusBadge value={record.paymentStatus ?? record.payment_status} />
+                  {shopifyNeedsPayment ? (
+                    <div className="flex flex-wrap justify-end gap-1">
+                      <p className="w-full text-right text-xs text-muted">
+                        Confirm India Post collection: Prepaid means no COD
+                        collect on delivery (not proof Shopify captured funds).
+                        COD means India Post collects the order total.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={confirmShopify.isPending}
+                        onClick={() => confirmShopify.mutate("PREPAID")}
+                      >
+                        Confirm prepaid
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={confirmShopify.isPending}
+                        onClick={() => confirmShopify.mutate("COD")}
+                      >
+                        Confirm COD
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              }
+            />
             <Row
               label="Fulfillment"
               value={<StatusBadge value={record.fulfillmentStatus ?? record.fulfillment_status} />}

@@ -147,3 +147,7 @@ export const bulkOrderStatusSchema = z.object({
   orderIds: z.array(z.string().min(1)).min(1).max(100),
   action: z.literal("fulfill"),
 });
+
+export const confirmShopifyPaymentSchema = z.object({
+  paymentType: z.enum(["PREPAID", "COD"]),
+});

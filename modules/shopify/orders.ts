@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptSecret } from "@/lib/security/crypto";
 import { AUTOMATION_DEFAULTS, getAutomationSettings } from "@/modules/automation/service";
+import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
 import { parcelDefaultsFromConnection, type WorkspaceParcelDefaults } from "@/modules/india-post/parcel-defaults";
 import {
   normalizeShopDomain,
@@ -11,15 +12,35 @@ import {
 import { buildPostBusTrackingUrl } from "@/modules/tracking-pages/host";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
-import { settleOrderPayment } from "@/modules/orders/payment";
+import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { fetchWithShopifyTimeout, shopifyHttpError } from "@/modules/shopify/http";
-import type { FulfillmentStatus, PaymentStatus } from "@/types/domain";
+import {
+  bookedShipmentCollectConflict,
+  classifyShopifyRemotePayment,
+  isShopifyPaymentPayloadStale,
+  mergeShopifyPaymentMetadata,
+  shopifyPaymentNeedsRefresh,
+  shopifyPaymentSnapshotFromMetadata,
+  type ShopifyBookingConflict,
+  type ShopifyCollectionMode,
+  type ShopifyPaymentSnapshot,
+  type ShopifyPaymentTransaction,
+} from "@/modules/shopify/payment";
+import type { FulfillmentStatus } from "@/types/domain";
+
+export {
+  isShopifyCodGateway,
+  mapShopifyCollectable,
+  mapShopifyPaymentStatus,
+  normalizeShopifyPaymentFields,
+} from "@/modules/shopify/payment";
 
 export const SHOPIFY_API_VERSION = "2025-01";
 export const SHOPIFY_GRAPHQL_API_VERSION = "2026-04";
 export const ORDER_WEBHOOK_TOPICS = [
   "orders/create",
   "orders/updated",
+  "orders/paid",
   "orders/cancelled",
   "fulfillment_orders/progress_reported",
 ] as const;
@@ -118,6 +139,7 @@ export type ShopifyRemoteOrder = {
   email?: string | null;
   cancelled_at?: string | null;
   financial_status?: string | null;
+  displayFinancialStatus?: string | null;
   fulfillment_status?: string | null;
   currency?: string | null;
   subtotal_price?: string | number | null;
@@ -126,11 +148,18 @@ export type ShopifyRemoteOrder = {
   total_tax?: string | number | null;
   total_price?: string | number | null;
   total_outstanding?: string | number | null;
+  totalOutstandingSet?: { shop_money?: { amount?: string | number | null } } | null;
   shipping_address?: Record<string, string | null> | null;
   billing_address?: Record<string, string | null> | null;
   customer?: { first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null } | null;
   payment_gateway_names?: string[] | null;
+  paymentGatewayNames?: string[] | null;
   gateway?: string | null;
+  source_name?: string | null;
+  sourceName?: string | null;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+  transactions?: ShopifyPaymentTransaction[] | null;
   tags?: string | string[] | null;
   line_items?: ShopifyRemoteLineItem[];
 };
@@ -494,61 +523,6 @@ export type ShopifySyncResult = {
 
 export function shopifyReadyToSync(row?: ShopifyConnectionRow | null) {
   return Boolean(row?.shop_domain && resolveShopifyAppCredentials(row));
-}
-
-const COD_GATEWAY = /cash[_\s-]*on[_\s-]*delivery|\bcod\b/i;
-
-export function isShopifyCodGateway(gateways?: string[] | string | null) {
-  const list = Array.isArray(gateways) ? gateways : gateways ? [gateways] : [];
-  return list.some((gateway) => COD_GATEWAY.test(gateway));
-}
-
-export function mapShopifyPaymentStatus(
-  value?: string | null,
-  gateways?: string[] | string | null
-): PaymentStatus {
-  switch ((value || "").toLowerCase()) {
-    case "paid":
-      return "PAID";
-    case "partially_paid":
-      return "PARTIAL";
-    case "refunded":
-    case "partially_refunded":
-      return "REFUNDED";
-    case "voided":
-      return "FAILED";
-    case "pending":
-    case "authorized":
-    default:
-      if (isShopifyCodGateway(gateways)) return "COD";
-      return "PENDING";
-  }
-}
-
-export function mapShopifyCollectable(
-  remote: Pick<ShopifyRemoteOrder, "total_price" | "total_outstanding">,
-  paymentStatus: PaymentStatus
-) {
-  const total = Number(remote.total_price ?? 0);
-  if (paymentStatus === "PARTIAL") {
-    const outstanding =
-      remote.total_outstanding == null || remote.total_outstanding === ""
-        ? null
-        : Number(remote.total_outstanding);
-    const amountPaid =
-      outstanding == null || Number.isNaN(outstanding) ? 0 : Math.max(0, total - outstanding);
-    return settleOrderPayment({
-      paymentStatus: "PARTIAL",
-      totalAmount: total,
-      amountPaid,
-      strict: false,
-    });
-  }
-  return settleOrderPayment({
-    paymentStatus,
-    totalAmount: total,
-    strict: false,
-  });
 }
 
 export function nextShopifyOrderStatus(input: {
@@ -1231,6 +1205,89 @@ async function shopifyRequest(shop: string, token: string, path: string, init?: 
       ...(init?.headers ?? {}),
     },
   });
+}
+
+export async function fetchShopifyOrderPayment(
+  shop: string,
+  token: string,
+  sourceOrderId: string
+): Promise<ShopifyRemoteOrder | null> {
+  const numericId = shopifyNumericId(sourceOrderId) ?? sourceOrderId;
+  const orderRes = await shopifyRequest(shop, token, `/orders/${encodeURIComponent(String(numericId))}.json`);
+  if (!orderRes.ok) return null;
+  const json = (await orderRes.json()) as { order?: ShopifyRemoteOrder };
+  const order = json.order;
+  if (!order) return null;
+  try {
+    const txRes = await shopifyRequest(
+      shop,
+      token,
+      `/orders/${encodeURIComponent(String(numericId))}/transactions.json`
+    );
+    if (txRes.ok) {
+      const txJson = (await txRes.json()) as { transactions?: ShopifyPaymentTransaction[] };
+      order.transactions = txJson.transactions ?? [];
+    }
+  } catch {
+    // Keep the order body if transactions cannot be loaded.
+  }
+  return order;
+}
+
+function mergeShopifyRemoteOrder(base: ShopifyRemoteOrder, fresh: ShopifyRemoteOrder): ShopifyRemoteOrder {
+  return {
+    ...base,
+    ...fresh,
+    line_items: fresh.line_items?.length ? fresh.line_items : base.line_items,
+    shipping_address: fresh.shipping_address ?? base.shipping_address,
+    billing_address: fresh.billing_address ?? base.billing_address,
+    customer: fresh.customer ?? base.customer,
+    transactions: fresh.transactions ?? base.transactions,
+  };
+}
+
+async function refreshUnbookedShopifyShipmentCollect(
+  supabase: SupabaseClient,
+  organizationId: string,
+  orderId: string,
+  collect: { payment_mode: "COD" | "PREPAID"; cod_amount: number },
+  classifiedStatus: string,
+  updateUnbookedCollect: boolean
+): Promise<ShopifyBookingConflict | null> {
+  const { data: rows } = await supabase
+    .from("shipments")
+    .select("id, status, booked_at, payment_mode")
+    .eq("organization_id", organizationId)
+    .eq("order_id", orderId);
+  const list = Array.isArray(rows) ? rows : [];
+  let conflict: ShopifyBookingConflict | null = null;
+  for (const row of list) {
+    const status = String(row.status ?? "").toUpperCase();
+    const booked = Boolean(row.booked_at) || isIndiaPostAcceptedStatus(status);
+    if (booked) {
+      if (
+        !conflict &&
+        bookedShipmentCollectConflict(row.payment_mode, classifiedStatus as "PAID" | "COD" | "PARTIAL" | "PENDING")
+      ) {
+        conflict = {
+          shipmentId: String(row.id ?? ""),
+          bookedPaymentMode: String(row.payment_mode).toUpperCase() as ShopifyCollectionMode,
+          classifiedCollectMode: collect.payment_mode,
+          at: new Date().toISOString(),
+        };
+      }
+      continue;
+    }
+    if (!updateUnbookedCollect || (status !== "DRAFT" && status !== "FAILED")) continue;
+    await supabase
+      .from("shipments")
+      .update({ payment_mode: collect.payment_mode, cod_amount: collect.cod_amount })
+      .eq("id", row.id)
+      .eq("organization_id", organizationId)
+      .in("status", ["DRAFT", "FAILED"])
+      .is("booked_at", null);
+  }
+  return conflict;
 }
 
 async function shopifyGraphql<T>(
@@ -2010,7 +2067,8 @@ export async function upsertShopifyOrder(
     autoShopifyProcessing?: boolean;
   }
 ) {
-  const sourceId = String(input.remote.id || "");
+  const remote = input.remote;
+  const sourceId = String(remote.id || "");
   if (!sourceId) return { imported: false, updated: false, skipped: true, orderId: null as string | null };
 
   const { data: existing } = await supabase
@@ -2021,48 +2079,88 @@ export async function upsertShopifyOrder(
     .eq("source_order_id", sourceId)
     .maybeSingle();
 
-  const fulfillmentStatus = mapShopifyFulfillmentStatus(
-    input.remote.fulfillment_status,
-    input.remote.cancelled_at
-  );
-  const paymentStatus = mapShopifyPaymentStatus(
-    input.remote.financial_status,
-    input.remote.payment_gateway_names ?? input.remote.gateway
-  );
+  const fulfillmentStatus = mapShopifyFulfillmentStatus(remote.fulfillment_status, remote.cancelled_at);
   const { data: existingOrder } = existing?.order_id
-    ? await supabase.from("orders").select("status").eq("id", existing.order_id).maybeSingle()
+    ? await supabase
+        .from("orders")
+        .select("status, payment_status, metadata, total_amount")
+        .eq("id", existing.order_id)
+        .eq("organization_id", input.organizationId)
+        .maybeSingle()
     : { data: null };
+  const storedSnapshot = shopifyPaymentSnapshotFromMetadata(existingOrder?.metadata);
+  const classified = classifyShopifyRemotePayment(remote, storedSnapshot?.override ?? null);
+  const stalePayment = isShopifyPaymentPayloadStale(classified.snapshot.updatedAt, storedSnapshot?.updatedAt);
   let orderStatus = nextShopifyOrderStatus({
-    cancelledAt: input.remote.cancelled_at,
+    cancelledAt: remote.cancelled_at,
     fulfillmentStatus,
     currentStatus: existingOrder?.status,
   });
   const autoShopifyProcessing = Boolean(input.autoShopifyProcessing);
-  if (
-    autoShopifyProcessing &&
-    shopifyRemoteSignalsProcessing(input.remote) &&
-    orderStatus === "READY"
-  ) {
+  if (autoShopifyProcessing && shopifyRemoteSignalsProcessing(remote) && orderStatus === "READY") {
     orderStatus = "PROCESSING";
   }
-  const collect = mapShopifyCollectable(input.remote, paymentStatus);
-  const totals = {
-    currency: input.remote.currency || "INR",
-    subtotal: Number(input.remote.subtotal_price ?? 0),
-    discount: Number(input.remote.total_discounts ?? 0),
-    shipping_amount: Number(input.remote.total_shipping_price_set?.shop_money?.amount ?? 0),
-    tax_amount: Number(input.remote.total_tax ?? 0),
-    total_amount: Number(input.remote.total_price ?? 0),
+  const collect = classified.collect;
+  const shipmentCollect = shipmentCollectFromOrder({
     payment_status: collect.paymentStatus,
+    total_amount: Number(remote.total_price ?? 0),
     amount_paid: collect.amountPaid,
     cod_amount: collect.codAmount,
+  });
+  let snapshot: ShopifyPaymentSnapshot = classified.snapshot;
+  if (existing?.order_id && !stalePayment) {
+    const bookingConflict = await refreshUnbookedShopifyShipmentCollect(
+      supabase,
+      input.organizationId,
+      existing.order_id as string,
+      shipmentCollect,
+      collect.paymentStatus,
+      existingOrder?.payment_status !== collect.paymentStatus
+    );
+    if (bookingConflict) snapshot = { ...snapshot, bookingConflict };
+  }
+  const paymentFields = stalePayment
+    ? {}
+    : {
+        payment_status: collect.paymentStatus,
+        amount_paid: collect.amountPaid,
+        cod_amount: collect.codAmount,
+        metadata: mergeShopifyPaymentMetadata(existingOrder?.metadata, snapshot),
+      };
+  const totals = {
+    currency: remote.currency || "INR",
+    subtotal: Number(remote.subtotal_price ?? 0),
+    discount: Number(remote.total_discounts ?? 0),
+    shipping_amount: Number(remote.total_shipping_price_set?.shop_money?.amount ?? 0),
+    tax_amount: Number(remote.total_tax ?? 0),
+    total_amount: Number(remote.total_price ?? 0),
     fulfillment_status: fulfillmentStatus,
     status: orderStatus,
+    ...paymentFields,
   };
-  const lineItems = (input.remote.line_items ?? []).filter((item) => Number(item.quantity ?? 0) > 0);
+  const resolvedPaymentStatus = String(
+    ("payment_status" in paymentFields ? paymentFields.payment_status : existingOrder?.payment_status) ??
+      collect.paymentStatus
+  ).toUpperCase();
+  const lineItems = (remote.line_items ?? []).filter((item) => Number(item.quantity ?? 0) > 0);
 
   if (existing?.order_id) {
-    await supabase.from("orders").update(totals).eq("id", existing.order_id);
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update(totals)
+      .eq("id", existing.order_id)
+      .eq("organization_id", input.organizationId);
+    if (updateError) throw new Error(updateError.message);
+    if (snapshot.bookingConflict) {
+      await supabase.from("audit_logs").insert({
+        organization_id: input.organizationId,
+        actor_id: input.userId || null,
+        action: "order.shopify_booking_conflict",
+        entity_type: "order",
+        entity_id: existing.order_id,
+        after: snapshot.bookingConflict,
+      });
+    }
     await refreshShopifyLineItems(supabase, {
       organizationId: input.organizationId,
       orderId: existing.order_id as string,
@@ -2233,7 +2331,7 @@ export async function upsertShopifyOrder(
     try {
       const { createShipmentsForOrders } = await import("@/modules/shipments/service");
       await createShipmentsForOrders(supabase, shipmentCtx, [order.id], {
-        enqueueBooking: input.enqueueBooking !== false,
+        enqueueBooking: input.enqueueBooking !== false && resolvedPaymentStatus !== "PENDING",
         runBookingNow: false,
         setOrderProcessing: false,
         ...parcelExtras,
@@ -2337,12 +2435,16 @@ export async function importShopifyWebhookOrder(
       const token = await resolveShopifyAdminToken(connection);
       const shop = connection.shop_domain || input.shopDomain;
       if (token && shop) {
+        if (shopifyPaymentNeedsRefresh(remote)) {
+          const fresh = await fetchShopifyOrderPayment(shop, token, String(remote.id ?? ""));
+          if (fresh) remote = mergeShopifyRemoteOrder(remote, fresh);
+        }
         const [enriched] = await withShopifyProductShippingData(shop, token, [remote]);
         if (enriched) remote = enriched;
       }
     }
   } catch {
-    // Keep the webhook import even if product weight/size cannot be loaded.
+    // Keep the webhook import even if product weight/size or payment refresh cannot be loaded.
   }
   return upsertShopifyOrder(supabase, {
     organizationId: input.organizationId,
