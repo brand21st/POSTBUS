@@ -31,7 +31,7 @@ import {
 import { OrderKpiStrip } from "@/components/dashboard/order-kpi-strip";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
-import { orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
+import { orderStatusBadgeValue, orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -592,8 +592,8 @@ export default function OrdersPage() {
     {
       id: "status",
       header: "Status",
-      className: "w-[5.75rem] whitespace-nowrap",
-      cell: (row) => <StatusBadge value={row.status} />,
+      className: "w-[6.75rem] whitespace-nowrap",
+      cell: (row) => <StatusBadge value={orderStatusBadgeValue(row.status)} />,
     },
     ...(visibleColumns.dimensions
       ? [
@@ -652,7 +652,9 @@ export default function OrdersPage() {
         <SelectContent>
           <SelectItem value="all">All statuses</SelectItem>
           {ORDER_STATUSES.map((item) => (
-            <SelectItem key={item} value={item}>{item}</SelectItem>
+            <SelectItem key={item} value={item}>
+              {item === "READY" ? "Unfulfilled" : item}
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>
@@ -957,7 +959,7 @@ export default function OrdersPage() {
                           <p className="truncate text-xs text-muted">{customerPhone(row)}</p>
                         ) : null}
                       </div>
-                      <StatusBadge value={row.status} />
+                      <StatusBadge value={orderStatusBadgeValue(row.status)} />
                     </div>
                     <div
                       className="flex flex-wrap items-center gap-1.5"

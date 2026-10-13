@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
 import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
-import { StatusBadge } from "@/components/dashboard/status-badge";
+import { orderStatusBadgeValue, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -198,7 +198,7 @@ export default function OrderDetailPage() {
             <CardTitle>Status</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 p-4 pt-0 text-sm">
-            <Row label="Order" value={<StatusBadge value={record.status} />} />
+            <Row label="Order" value={<StatusBadge value={orderStatusBadgeValue(record.status)} />} />
             <Row label="Payment" value={<StatusBadge value={record.paymentStatus ?? record.payment_status} />} />
             <Row
               label="Fulfillment"
