@@ -247,7 +247,7 @@ export async function validateOrdersForBooking(
         orderNumber: order.order_number,
         barcode: "",
         field: "payment_status",
-        value: (order as { payment_status?: string }).payment_status,
+        value: String((order as { payment_status?: string }).payment_status ?? ""),
         error: "Shopify payment is pending. Confirm Prepaid or COD before India Post booking.",
         status: "Failed",
         category: "BOOKING",
