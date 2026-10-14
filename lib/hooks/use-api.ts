@@ -37,8 +37,11 @@ export function isConfirmedSessionLoss(error: unknown) {
 export function isTransientApiAuthError(error: unknown) {
   if (!(error instanceof ApiError)) return false;
   return (
-    error.status === 503 ||
     error.status === 429 ||
+    error.status === 500 ||
+    error.status === 502 ||
+    error.status === 503 ||
+    error.status === 504 ||
     error.code === "AUTH_UNAVAILABLE" ||
     error.code === "RATE_LIMITED" ||
     error.code === "PROFILE_UNAVAILABLE"

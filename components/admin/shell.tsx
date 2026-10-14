@@ -20,6 +20,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       if (isTransientApiAuthError(error)) return failureCount < 2;
       return false;
     },
+    retryDelay: (failureCount) => Math.min(1000 * 2 ** failureCount, 4000),
   });
 
   useEffect(() => {
@@ -43,8 +44,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   if (isTransientApiAuthError(query.error)) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-surface px-6">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface px-6">
         <p className="text-sm text-muted">Connection issue. Retrying your session without signing you out…</p>
+        {query.isFetching ? null : (
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-1 text-sm text-ink"
+            onClick={() => void query.refetch()}
+          >
+            Retry
+          </button>
+        )}
       </div>
     );
   }

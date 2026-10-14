@@ -13,6 +13,7 @@ export function useMe() {
       if (isTransientApiAuthError(error)) return failureCount < 2;
       return failureCount < 1;
     },
+    retryDelay: (failureCount) => Math.min(1000 * 2 ** failureCount, 4000),
   });
 }
 

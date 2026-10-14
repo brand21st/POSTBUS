@@ -50,6 +50,13 @@ vi.mock("@supabase/ssr", () => ({
 
 import { updateSession } from "@/lib/supabase/proxy";
 
+function encodedSessionCookie(expiresAt: number) {
+  const payload = Buffer.from(JSON.stringify({ exp: expiresAt })).toString("base64url");
+  const access_token = `eyJhbGciOiJub25lIn0.${payload}.x`;
+  const json = JSON.stringify({ access_token, refresh_token: "refresh", expires_at: expiresAt });
+  return `base64-${Buffer.from(json).toString("base64url")}`;
+}
+
 describe("updateSession", () => {
   beforeEach(() => {
     getUser.mockReset();
@@ -62,12 +69,24 @@ describe("updateSession", () => {
     expect(response.status).toBe(200);
   });
 
-  it("redirects to login when the session is missing", async () => {
-    getUser.mockReturnValue({ user: null, error: null });
+  it("redirects to login when the session is missing without calling getUser", async () => {
     const request = new NextRequest("https://www.postbus.in/dashboard/orders");
     const response = await updateSession(request);
+    expect(getUser).not.toHaveBeenCalled();
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toContain("/login?next=%2Fdashboard%2Forders");
+  });
+
+  it("does not call getUser on dashboard HTML when the access token is still valid", async () => {
+    const request = new NextRequest("https://www.postbus.in/dashboard/orders", {
+      headers: {
+        cookie: `sb-abc123-auth-token=${encodedSessionCookie(Math.floor(Date.now() / 1000) + 3600)}`,
+      },
+    });
+    const response = await updateSession(request);
+    expect(getUser).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
   });
 
   it("does not redirect to login on a transient refresh failure", async () => {
@@ -75,9 +94,11 @@ describe("updateSession", () => {
       user: null,
       error: { code: "refresh_token_already_used", status: 400 },
     });
-    const request = new NextRequest("https://www.postbus.in/dashboard/orders");
-    request.headers.set("cookie", "sb-abc123-auth-token=chunk");
+    const request = new NextRequest("https://www.postbus.in/dashboard/orders", {
+      headers: { cookie: "sb-abc123-auth-token=chunk" },
+    });
     const response = await updateSession(request);
+    expect(getUser).toHaveBeenCalled();
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBeNull();
   });
@@ -87,7 +108,11 @@ describe("updateSession", () => {
       user: { id: "user-1", email: "a@example.com" },
       sessionCookie: "refreshed",
     });
-    const request = new NextRequest("https://www.postbus.in/dashboard/orders");
+    const request = new NextRequest("https://www.postbus.in/dashboard/orders", {
+      headers: {
+        cookie: `sb-abc123-auth-token=${encodedSessionCookie(Math.floor(Date.now() / 1000) - 10)}`,
+      },
+    });
     const response = await updateSession(request);
     expect(response.cookies.get("sb-abc123-auth-token")?.value).toBe("refreshed");
     const setCookie = response.headers.getSetCookie();
