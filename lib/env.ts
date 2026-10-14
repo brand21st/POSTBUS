@@ -1,4 +1,5 @@
 import { indiaPostResolvedBaseUrl } from "@/modules/india-post/environment";
+import { assertStagingAuthIsolation } from "@/lib/env/staging-isolation";
 
 function optional(value: string | undefined) {
   return value?.trim() || "";
@@ -71,6 +72,12 @@ export const env = {
   // Reversible storefront rollout. Leave unset until the marketplace migration is verified.
   storefrontMarketplaceEnabled: optional(process.env.STOREFRONT_MARKETPLACE_ENABLED).toLowerCase() === "true",
 };
+
+assertStagingAuthIsolation({
+  mode: optional(process.env.POSTBUS_ENV),
+  supabaseUrl: env.supabaseUrl,
+  appUrl: env.appUrl,
+});
 
 export function usesDatabaseJobRunner() {
   return env.jobRunner === "database";
