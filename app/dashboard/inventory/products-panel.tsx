@@ -27,6 +27,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -395,6 +396,38 @@ export function InventoryProducts({
     onError: (error: Error) => toast.error(error.message),
   });
 
+  function refreshAfterProductDelete() {
+    queryClient.invalidateQueries({ queryKey: ["products"] });
+    queryClient.invalidateQueries({ queryKey: ["inventory-analytics"] });
+    queryClient.invalidateQueries({ queryKey: ["product-categories"] });
+  }
+
+  async function deleteProductRow(row: ProductRow) {
+    if (!window.confirm(`Delete ${row.name}? It will leave the catalog. Past orders keep their line items.`)) return;
+    try {
+      await api(`/api/v1/products/${row.id}`, { method: "DELETE" });
+      toast.success("Product deleted.");
+      setSelectedIds((current) => current.filter((id) => id !== row.id));
+      refreshAfterProductDelete();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete product.");
+    }
+  }
+
+  async function deleteSelectedProducts() {
+    if (!selectedIds.length) return;
+    if (!window.confirm(`Delete ${selectedIds.length} product${selectedIds.length === 1 ? "" : "s"}? They will leave the catalog. Past orders keep their line items.`)) return;
+    try {
+      await Promise.all(selectedIds.map((id) => api(`/api/v1/products/${id}`, { method: "DELETE" })));
+      toast.success(selectedIds.length === 1 ? "Product deleted." : "Products deleted.");
+      setSelectedIds([]);
+      refreshAfterProductDelete();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete products.");
+      refreshAfterProductDelete();
+    }
+  }
+
   function openEdit(product: ProductRecord) {
     setEditProduct(product);
     setEditUrls(padPhotoSlots(product.imageUrls));
@@ -565,6 +598,12 @@ export function InventoryProducts({
                   {row.active ? "Deactivate" : "Activate"}
                 </DropdownMenuItem>
               ) : null}
+              {canWrite ? <DropdownMenuSeparator /> : null}
+              {canWrite ? (
+                <DropdownMenuItem className="text-red-600 focus:text-red-600" onClick={() => void deleteProductRow(row)}>
+                  Delete
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         ),
@@ -730,6 +769,9 @@ export function InventoryProducts({
           >
             Deactivate
           </Button>
+          <Button size="sm" variant="secondary" className="text-red-600" onClick={() => void deleteSelectedProducts()}>
+            Delete
+          </Button>
         </div>
       ) : null}
 
@@ -783,6 +825,11 @@ export function InventoryProducts({
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" variant="secondary" onClick={() => openEdit(row)}>Edit</Button>
                   <Button size="sm" variant="secondary" onClick={() => setAdjustProduct(row)}>Adjust</Button>
+                  {canWrite ? (
+                    <Button size="sm" variant="secondary" className="text-red-600" onClick={() => void deleteProductRow(row)}>
+                      Delete
+                    </Button>
+                  ) : null}
                 </div>
               </article>
             ))}

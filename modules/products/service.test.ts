@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TenantContext } from "@/lib/api/context";
-import { adjustProductStock, createProduct, getProduct, listProducts, updateProduct } from "@/modules/products/service";
+import { adjustProductStock, createProduct, deleteProduct, getProduct, listProducts, updateProduct } from "@/modules/products/service";
 
 const ctx: TenantContext = {
   userId: "user-1",
@@ -42,6 +42,8 @@ function chain(result: { data: unknown; error: unknown; count?: number | null })
   query.in = self;
   query.or = self;
   query.order = self;
+  query.delete = self;
+  query.upsert = self;
   query.range = self;
   query.maybeSingle = () => {
     const filters = query.filters as Record<string, unknown>;
@@ -65,6 +67,7 @@ function mockClient(overrides?: { rpcError?: { code?: string; message: string } 
   return {
     rpcs,
     updates,
+    storage: { from: () => ({ remove: async () => ({ data: null, error: null }) }) },
     rpc: async (name: string, args: Record<string, unknown>) => {
       rpcs.push({ name, args });
       if (overrides?.rpcError) return { data: null, error: overrides.rpcError };
@@ -194,5 +197,16 @@ describe("product service", () => {
     const client = mockClient();
     const other = { ...ctx, organizationId: "org-b" };
     await expect(getProduct(client as never, other, "prod-1")).rejects.toThrow(/not found/i);
+  });
+
+  it("deletes a product in the current organization", async () => {
+    const client = mockClient();
+    await expect(deleteProduct(client as never, ctx, "prod-1")).resolves.toEqual({ id: "prod-1" });
+  });
+
+  it("does not delete another organization's product", async () => {
+    const client = mockClient();
+    const other = { ...ctx, organizationId: "org-b" };
+    await expect(deleteProduct(client as never, other, "prod-1")).rejects.toThrow(/not found/i);
   });
 });

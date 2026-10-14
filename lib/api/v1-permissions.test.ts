@@ -42,6 +42,7 @@ describe("permissionForTenantRoute", () => {
       "products.write"
     );
     expect(permissionForTenantRoute("PATCH", "products/abc", ["products", "abc"])).toBe("products.write");
+    expect(permissionForTenantRoute("DELETE", "products/abc", ["products", "abc"])).toBe("products.write");
     expect(permissionForTenantRoute("POST", "products/abc/adjustments", ["products", "abc", "adjustments"])).toBe(
       "products.write"
     );

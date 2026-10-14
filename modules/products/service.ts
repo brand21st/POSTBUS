@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { z } from "zod";
-import { mapProductImageUrls } from "@/modules/products/images";
+import { mapProductImageUrls, PRODUCT_IMAGE_BUCKET } from "@/modules/products/images";
 import {
   listProductRecommendations,
   replaceProductRecommendations,
@@ -47,6 +47,12 @@ function rpcError(error: { code?: string; message?: string } | null): never {
   }
   if (code === "P0002" || /not found/i.test(message)) {
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Product not found.");
+  }
+  if (code === "23503") {
+    throw new AppError(
+      ERROR_CODES.CONFLICT,
+      "This product is still used by a store bundle. Remove it from the bundle, then delete it."
+    );
   }
   if (/below zero|reserved stock/i.test(message)) {
     throw new AppError(ERROR_CODES.CONFLICT, message);
@@ -496,6 +502,27 @@ export async function bulkUpdateProducts(
     .select("id");
   if (error) rpcError(error);
   return { updated: data?.length ?? 0 };
+}
+
+export async function deleteProduct(supabase: SupabaseClient, ctx: TenantContext, id: string) {
+  const current = await getProduct(supabase, ctx, id);
+  await setFeaturedProduct(supabase, ctx, id, false);
+
+  const { data, error } = await supabase
+    .from("products")
+    .delete()
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
+  if (error) rpcError(error);
+  if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Product not found.");
+
+  const paths = (current.imagePaths ?? []).filter((path) => path.startsWith(`${ctx.organizationId}/${id}/`));
+  if (paths.length) {
+    await supabase.storage.from(PRODUCT_IMAGE_BUCKET).remove(paths);
+  }
+  return { id };
 }
 
 export async function duplicateProduct(supabase: SupabaseClient, ctx: TenantContext, id: string) {

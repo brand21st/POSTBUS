@@ -35,6 +35,7 @@ import {
   adjustProductStock,
   bulkUpdateProducts,
   createProduct,
+  deleteProduct,
   duplicateProduct,
   getProduct,
   listInventoryMovements,
@@ -92,6 +93,10 @@ export async function handleInventoryRoutes(
   if (method === "PATCH" && slugs[0] === "products" && slugs[1] && !slugs[2]) {
     const body = updateProductSchema.parse(await request.json());
     return updateProduct(supabase, ctx, slugs[1], body);
+  }
+
+  if (method === "DELETE" && slugs[0] === "products" && slugs[1] && !slugs[2]) {
+    return deleteProduct(supabase, ctx, slugs[1]);
   }
 
   if (method === "POST" && slugs[0] === "products" && slugs[1] && slugs[2] === "images") {
