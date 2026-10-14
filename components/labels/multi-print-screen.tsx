@@ -662,6 +662,16 @@ export function MultiPrintScreen() {
     setItems((current) => [...current, ...added.map((id) => ({ orderId: id, copies: 1 }))]);
   }
 
+  function removeChipOrder(orderId: string) {
+    setItems((current) => current.filter((item) => item.orderId !== orderId));
+    if (!displayLayout?.ok) return;
+    const dropIndexes = new Set(
+      displayLayout.placements.filter((item) => item.orderId === orderId).map((item) => item.index)
+    );
+    if (!dropIndexes.size) return;
+    setSelectedSlots((current) => current.filter((index) => !dropIndexes.has(index)));
+  }
+
   function addItem(orderId: string, copies = Number(draftCopies) || 1) {
     const key = orderId.trim();
     if (!key) return;
@@ -1137,21 +1147,42 @@ export function MultiPrintScreen() {
                     <div className="flex flex-wrap gap-1.5">
                       {labeledOrders.map((number) => {
                         const active = selectedOrderIds.has(number);
+                        if (!active) {
+                          return (
+                            <button
+                              key={number}
+                              type="button"
+                              aria-pressed={false}
+                              onClick={() => onChipClick(number)}
+                              className="rounded-full border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-all duration-200 hover:border-zinc-300 hover:bg-surface-soft"
+                            >
+                              {number}
+                            </button>
+                          );
+                        }
                         return (
-                          <button
+                          <div
                             key={number}
-                            type="button"
-                            aria-pressed={active}
-                            onClick={() => onChipClick(number)}
-                            className={cn(
-                              "rounded-full border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
-                              active
-                                ? "border-brand/30 bg-rose-50 text-brand-dark shadow-sm"
-                                : "border-border bg-card text-foreground hover:border-zinc-300 hover:bg-surface-soft"
-                            )}
+                            className="inline-flex h-[29px] items-center overflow-hidden rounded-full border border-brand/30 bg-rose-50 text-brand-dark shadow-sm"
                           >
-                            {number}
-                          </button>
+                            <button
+                              type="button"
+                              aria-pressed="true"
+                              onClick={() => onChipClick(number)}
+                              className="px-2.5 py-1.5 text-xs font-medium transition-all duration-200"
+                            >
+                              {number}
+                            </button>
+                            <button
+                              type="button"
+                              className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-full text-brand-dark/70 transition-colors hover:bg-red-100 hover:text-red-700"
+                              onClick={() => removeChipOrder(number)}
+                              aria-label={`Remove ${number} from print order`}
+                              title="Remove"
+                            >
+                              <X className="size-3" />
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
