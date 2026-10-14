@@ -1,13 +1,18 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/hooks/use-api";
+import { api, isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use-api";
 import type { MeMembership, MeResponse } from "@/types/api";
 
 export function useMe() {
   return useQuery({
     queryKey: ["me"],
     queryFn: () => api<MeResponse>("/api/v1/me"),
+    retry: (failureCount, error) => {
+      if (isConfirmedSessionLoss(error)) return false;
+      if (isTransientApiAuthError(error)) return failureCount < 2;
+      return failureCount < 1;
+    },
   });
 }
 

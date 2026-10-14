@@ -8,6 +8,7 @@ import {
 } from "@/modules/organizations/service";
 import { getOrganizationEntitlements } from "@/modules/billing/entitlements";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isTransientAuthClass } from "@/lib/auth/session/classify";
 import { getRequestAuthUser } from "@/lib/supabase/request-auth";
 
 export async function handleSessionRoutes(
@@ -18,6 +19,9 @@ export async function handleSessionRoutes(
   if (key === "GET me") {
     const auth = await getRequestAuthUser();
     const user = auth.user;
+    if (auth.classification && isTransientAuthClass(auth.classification)) {
+      throw new AppError(ERROR_CODES.AUTH_UNAVAILABLE, "Authentication is temporarily unavailable. Try again shortly.");
+    }
     if (!user) throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
     const { data: profile } = await supabase
       .from("profiles")
@@ -58,7 +62,10 @@ export async function handleSessionRoutes(
   }
 
   if (key === "POST organizations") {
-    const { user } = await getRequestAuthUser();
+    const { user, classification } = await getRequestAuthUser();
+    if (classification && isTransientAuthClass(classification)) {
+      throw new AppError(ERROR_CODES.AUTH_UNAVAILABLE, "Authentication is temporarily unavailable. Try again shortly.");
+    }
     if (!user) throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
     const existing = await listMemberships(supabase, user.id);
     if (existing[0]) {

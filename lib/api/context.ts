@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { isTransientAuthClass } from "@/lib/auth/session/classify";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { hasPermission, permissionsFor } from "@/lib/permissions/rbac";
 import { getRequestAuthUser } from "@/lib/supabase/request-auth";
@@ -15,7 +16,11 @@ export type TenantContext = {
 };
 
 const resolveRequestTenant = cache(async (): Promise<TenantContext> => {
-  const { supabase, user } = await getRequestAuthUser();
+  const { supabase, user, classification } = await getRequestAuthUser();
+
+  if (classification && isTransientAuthClass(classification)) {
+    throw new AppError(ERROR_CODES.AUTH_UNAVAILABLE, "Authentication is temporarily unavailable. Try again shortly.");
+  }
 
   if (!user) {
     throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
@@ -28,7 +33,7 @@ const resolveRequestTenant = cache(async (): Promise<TenantContext> => {
     .maybeSingle();
 
   if (profileError) {
-    throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Unable to load your profile.");
+    throw new AppError(ERROR_CODES.PROFILE_UNAVAILABLE, "Unable to load your profile.");
   }
 
   const organizationId = profile?.active_organization_id as string | null;

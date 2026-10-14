@@ -2,6 +2,7 @@ import { cache } from "react";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { env } from "@/lib/env";
+import { supabaseAuthCookieOptions } from "@/lib/supabase/auth-cookies";
 
 async function createServerSupabaseUncached() {
   if (!env.supabaseUrl || !env.supabaseAnonKey) {
@@ -9,17 +10,17 @@ async function createServerSupabaseUncached() {
   }
 
   const cookieStore = await cookies();
+  const cookieOptions = supabaseAuthCookieOptions({ secure: true });
 
   return createServerClient(env.supabaseUrl, env.supabaseAnonKey, {
+    cookieOptions,
     cookies: {
       getAll() {
         return cookieStore.getAll();
       },
       setAll(cookiesToSet) {
         try {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
+          cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
         } catch {
           // Called from a Server Component — session refresh happens in proxy.
         }

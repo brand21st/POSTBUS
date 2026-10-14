@@ -19,6 +19,30 @@ export class ApiError extends Error {
     this.errors = errors;
     this.requestId = requestId;
   }
+
+  get code(): string | null {
+    const first = this.errors[0];
+    if (first && typeof first === "object" && first !== null && "code" in first) {
+      const value = (first as { code?: unknown }).code;
+      return typeof value === "string" ? value : null;
+    }
+    return null;
+  }
+}
+
+export function isConfirmedSessionLoss(error: unknown) {
+  return error instanceof ApiError && error.status === 401 && error.code === "AUTH_REQUIRED";
+}
+
+export function isTransientApiAuthError(error: unknown) {
+  if (!(error instanceof ApiError)) return false;
+  return (
+    error.status === 503 ||
+    error.status === 429 ||
+    error.code === "AUTH_UNAVAILABLE" ||
+    error.code === "RATE_LIMITED" ||
+    error.code === "PROFILE_UNAVAILABLE"
+  );
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {

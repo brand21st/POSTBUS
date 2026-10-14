@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AdminSidebar } from "@/components/admin/sidebar";
 import { AdminAccountMenu } from "@/components/admin/account-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, ApiError } from "@/lib/hooks/use-api";
+import { api, ApiError, isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use-api";
 import { useEffect } from "react";
 
 export function AdminShell({ children }: { children: ReactNode }) {
@@ -15,11 +15,15 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const query = useQuery({
     queryKey: ["admin", "session"],
     queryFn: () => api<{ totals?: Record<string, number> }>("/api/admin/overview"),
-    retry: false,
+    retry: (failureCount, error) => {
+      if (isConfirmedSessionLoss(error)) return false;
+      if (isTransientApiAuthError(error)) return failureCount < 2;
+      return false;
+    },
   });
 
   useEffect(() => {
-    if (query.error instanceof ApiError && query.error.status === 401) {
+    if (isConfirmedSessionLoss(query.error)) {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
     }
   }, [pathname, query.error, router]);
@@ -33,6 +37,14 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <div className="flex-1 p-8">
           <Skeleton className="h-10 w-64" />
         </div>
+      </div>
+    );
+  }
+
+  if (isTransientApiAuthError(query.error)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface px-6">
+        <p className="text-sm text-muted">Connection issue. Retrying your session without signing you out…</p>
       </div>
     );
   }
