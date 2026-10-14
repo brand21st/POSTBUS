@@ -54,6 +54,11 @@ describe("GET /auth/callback", () => {
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("https://www.postbus.in/dashboard");
     expect(response.cookies.get("sb-access-token")?.value).toBe("session");
+    const setCookie = response.headers.getSetCookie().join("\n");
+    expect(setCookie).toContain("sb-access-token=session");
+    expect(setCookie).not.toMatch(/sb-access-token=session;.*Domain=\.postbus\.in/);
+    expect(setCookie).toContain("Domain=.postbus.in");
+    expect(setCookie).toContain("Max-Age=0");
   });
 
   it("verifies token_hash confirmation emails", async () => {

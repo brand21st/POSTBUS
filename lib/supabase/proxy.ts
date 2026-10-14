@@ -5,7 +5,15 @@ import {
   matchesPlatformAdminEmail,
   signedInHomePath,
 } from "@/lib/admin/access";
+import { classifyAuthSession, shouldRedirectToLogin } from "@/lib/auth/session/classify";
 import { env } from "@/lib/env";
+import { logInfo } from "@/lib/logger";
+import {
+  appendLegacyDomainExpiryHeaders,
+  authStorageKeyFromSupabaseUrl,
+  requestHasAuthCookie,
+  supabaseAuthCookieOptions,
+} from "@/lib/supabase/auth-cookies";
 
 const AUTH_PATHS = ["/login", "/register", "/forgot-password", "/reset-password"];
 
@@ -13,6 +21,15 @@ type SessionOptions = {
   extraHeaders?: Headers;
   rewriteUrl?: URL;
 };
+
+function needsProxyGetUser(pathname: string) {
+  return (
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/onboarding") ||
+    AUTH_PATHS.some((path) => pathname.startsWith(path))
+  );
+}
 
 export async function updateSession(request: NextRequest, options?: SessionOptions) {
   const requestHeaders = options?.extraHeaders ?? request.headers;
@@ -26,25 +43,6 @@ export async function updateSession(request: NextRequest, options?: SessionOptio
     return supabaseResponse;
   }
 
-  const supabase = createServerClient(env.supabaseUrl, env.supabaseAnonKey, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        supabaseResponse = nextResponse();
-        cookiesToSet.forEach(({ name, value, options }) =>
-          supabaseResponse.cookies.set(name, value, options)
-        );
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   const pathname = request.nextUrl.pathname;
   const isDashboard = pathname.startsWith("/dashboard");
   const isAdmin = pathname.startsWith("/admin");
@@ -52,14 +50,67 @@ export async function updateSession(request: NextRequest, options?: SessionOptio
   const isAuthPage = AUTH_PATHS.some((path) => pathname.startsWith(path));
   const isTrackingHost = Boolean(requestHeaders.get("x-tracking-subdomain"));
 
-  if (!user && (isDashboard || isAdmin || isOnboarding) && !isTrackingHost) {
+  if (!needsProxyGetUser(pathname) || isTrackingHost) {
+    return supabaseResponse;
+  }
+
+  const cookieOptions = supabaseAuthCookieOptions({ secure: true });
+  const storageKey = authStorageKeyFromSupabaseUrl(env.supabaseUrl);
+
+  const supabase = createServerClient(env.supabaseUrl, env.supabaseAnonKey, {
+    cookieOptions,
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        supabaseResponse = nextResponse();
+        cookiesToSet.forEach(({ name, value, options: setOptions }) =>
+          supabaseResponse.cookies.set(name, value, setOptions)
+        );
+        appendLegacyDomainExpiryHeaders(supabaseResponse.headers, storageKey, true);
+      },
+    },
+  });
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+  const hasAuthCookie = requestHasAuthCookie(request.cookies.getAll());
+  const classification = classifyAuthSession({ user, error, hasAuthCookie });
+
+  if (error || classification !== "AUTH_VALID") {
+    logInfo("auth.session_classified", {
+      classification,
+      code: error?.code ?? null,
+      status: error?.status ?? null,
+      path: pathname,
+    });
+  }
+
+  function finish(response: NextResponse) {
+    appendLegacyDomainExpiryHeaders(response.headers, storageKey, true);
+    return response;
+  }
+
+  if (
+    shouldRedirectToLogin(classification) &&
+    (isDashboard || isAdmin || isOnboarding) &&
+    !isTrackingHost
+  ) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", pathname);
-    return NextResponse.redirect(url);
+    const redirect = NextResponse.redirect(url);
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
+      redirect.cookies.set(cookie.name, cookie.value);
+    });
+    return finish(redirect);
   }
 
-  if (user && (isAuthPage || isDashboard) && !isTrackingHost) {
+  if (user && classification === "AUTH_VALID" && (isAuthPage || isDashboard) && !isTrackingHost) {
     const email = (user.email ?? "").trim().toLowerCase();
     const isPlatformAdmin =
       matchesPlatformAdminEmail(email, env.platformAdminEmail) ||
@@ -68,9 +119,13 @@ export async function updateSession(request: NextRequest, options?: SessionOptio
       const url = request.nextUrl.clone();
       url.pathname = signedInHomePath(isPlatformAdmin);
       url.search = "";
-      return NextResponse.redirect(url);
+      const redirect = NextResponse.redirect(url);
+      supabaseResponse.cookies.getAll().forEach((cookie) => {
+        redirect.cookies.set(cookie.name, cookie.value);
+      });
+      return finish(redirect);
     }
   }
 
-  return supabaseResponse;
+  return finish(supabaseResponse);
 }

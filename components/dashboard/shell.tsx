@@ -9,11 +9,11 @@ import { WebusbJobListener } from "@/components/dashboard/webusb-job-listener";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError } from "@/lib/hooks/use-api";
+import { isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use-api";
 import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { PlanLock } from "@/components/billing/plan-lock";
-import { shouldMountDashboardChildren } from "@/lib/dashboard/shell-gate";
+import { shouldMountDashboardChildren, shouldRedirectToLoginFromMe } from "@/lib/dashboard/shell-gate";
 
 function DashboardPlanGate({ pathname, children }: { pathname: string; children: ReactNode }) {
   const entitlements = usePlanEntitlements();
@@ -72,22 +72,31 @@ export function DashboardShell({
     if (mobileOpen) setMobileOpen(false);
   }
 
+  const confirmedLoss = isConfirmedSessionLoss(me.error);
+  const transientAuth = isTransientApiAuthError(me.error);
+
   useEffect(() => {
-    if (me.isLoading) return;
-    if (me.error instanceof ApiError && me.error.status === 401) {
+    if (
+      shouldRedirectToLoginFromMe({
+        isLoading: me.isLoading,
+        isConfirmedSessionLoss: confirmedLoss,
+        isTransient: transientAuth,
+      })
+    ) {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
       return;
     }
+    if (me.isLoading || confirmedLoss || transientAuth) return;
     if (!me.data?.organization && membershipsFromMe(me.data).length === 0) {
       router.replace("/onboarding");
     }
-  }, [me.data, me.error, me.isLoading, pathname, router]);
+  }, [confirmedLoss, me.data, me.error, me.isLoading, pathname, router, transientAuth]);
 
-  const unauthorized = me.error instanceof ApiError && me.error.status === 401;
   const mountChildren = shouldMountDashboardChildren({
-    isUnauthorized: unauthorized,
+    isUnauthorized: confirmedLoss,
     hydrated,
     hasMe: Boolean(me.data),
+    isTransient: transientAuth,
   });
 
   return (
@@ -120,6 +129,11 @@ export function DashboardShell({
                 : "mx-auto w-full min-w-0 max-w-[1280px]"
             }
           >
+            {transientAuth ? (
+              <p className="mb-4 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted">
+                Connection issue. Retrying your session without signing you out…
+              </p>
+            ) : null}
             {mountChildren ? (
               <DashboardPlanGate pathname={pathname}>{children}</DashboardPlanGate>
             ) : (
