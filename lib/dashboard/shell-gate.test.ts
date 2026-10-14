@@ -3,6 +3,7 @@ import {
   shouldMountDashboardChildren,
   overlayDashboardUntilMeReady,
   shouldRedirectToLoginFromMe,
+  shouldRedirectToOnboardingFromMe,
 } from "@/lib/dashboard/shell-gate";
 
 describe("dashboard shell gating", () => {
@@ -19,7 +20,7 @@ describe("dashboard shell gating", () => {
     ).toBe(false);
   });
 
-  it("keeps the dashboard mounted during a transient auth failure", () => {
+  it("does not mount new protected pages during a transient auth failure without /me", () => {
     expect(
       shouldMountDashboardChildren({
         isUnauthorized: false,
@@ -27,7 +28,31 @@ describe("dashboard shell gating", () => {
         hasMe: false,
         isTransient: true,
       })
+    ).toBe(false);
+  });
+
+  it("keeps already-loaded dashboard pages during a transient auth failure", () => {
+    expect(
+      shouldMountDashboardChildren({
+        isUnauthorized: false,
+        hydrated: true,
+        hasMe: true,
+        isTransient: true,
+      })
     ).toBe(true);
+  });
+
+  it("does not send the merchant to onboarding on a 5xx /me error", () => {
+    expect(
+      shouldRedirectToOnboardingFromMe({
+        isLoading: false,
+        hasError: true,
+        isConfirmedSessionLoss: false,
+        isTransient: true,
+        hasOrganization: false,
+        membershipCount: 0,
+      })
+    ).toBe(false);
   });
 
   it("does not SSR page trees before hydration", () => {

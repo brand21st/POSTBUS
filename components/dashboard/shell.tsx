@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { MobileNav } from "@/components/dashboard/mobile-nav";
 import { ProductTour } from "@/components/dashboard/product-tour";
@@ -13,7 +13,15 @@ import { isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use
 import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { PlanLock } from "@/components/billing/plan-lock";
-import { shouldMountDashboardChildren, shouldRedirectToLoginFromMe } from "@/lib/dashboard/shell-gate";
+import {
+  shouldMountDashboardChildren,
+  shouldRedirectToLoginFromMe,
+  shouldRedirectToOnboardingFromMe,
+} from "@/lib/dashboard/shell-gate";
+
+function subscribeNever() {
+  return () => {};
+}
 
 function DashboardPlanGate({ pathname, children }: { pathname: string; children: ReactNode }) {
   const entitlements = usePlanEntitlements();
@@ -49,7 +57,7 @@ export function DashboardShell({
   const router = useRouter();
   const pathname = usePathname();
   const me = useMe();
-  const [hydrated, setHydrated] = useState(false);
+  const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
   const [collapsed, setCollapsed] = useState(false);
   const [tablet, setTablet] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -60,10 +68,6 @@ export function DashboardShell({
     sync();
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
-  }, []);
-
-  useEffect(() => {
-    setHydrated(true);
   }, []);
 
   const [navPath, setNavPath] = useState(pathname);
@@ -86,8 +90,16 @@ export function DashboardShell({
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
       return;
     }
-    if (me.isLoading || confirmedLoss || transientAuth) return;
-    if (!me.data?.organization && membershipsFromMe(me.data).length === 0) {
+    if (
+      shouldRedirectToOnboardingFromMe({
+        isLoading: me.isLoading,
+        hasError: Boolean(me.error),
+        isConfirmedSessionLoss: confirmedLoss,
+        isTransient: transientAuth,
+        hasOrganization: Boolean(me.data?.organization),
+        membershipCount: membershipsFromMe(me.data).length,
+      })
+    ) {
       router.replace("/onboarding");
     }
   }, [confirmedLoss, me.data, me.error, me.isLoading, pathname, router, transientAuth]);
@@ -112,8 +124,8 @@ export function DashboardShell({
           {announcement}
           <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
         </div>
-        <NewOrderAlerts />
-        <WebusbJobListener />
+        {me.data && !confirmedLoss ? <NewOrderAlerts /> : null}
+        {me.data && !confirmedLoss ? <WebusbJobListener /> : null}
         <main
           id="main-content"
           className={
@@ -130,9 +142,18 @@ export function DashboardShell({
             }
           >
             {transientAuth ? (
-              <p className="mb-4 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted">
-                Connection issue. Retrying your session without signing you out…
-              </p>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted">
+                <p>Connection issue. Retrying your session without signing you out…</p>
+                {me.isFetching ? null : (
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1 text-ink"
+                    onClick={() => void me.refetch()}
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
             ) : null}
             {mountChildren ? (
               <DashboardPlanGate pathname={pathname}>{children}</DashboardPlanGate>

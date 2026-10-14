@@ -9,6 +9,7 @@ import { classifyAuthSession, shouldRedirectToLogin } from "@/lib/auth/session/c
 import { env } from "@/lib/env";
 import { logInfo } from "@/lib/logger";
 import {
+  accessTokenNeedsServerRefresh,
   appendLegacyDomainExpiryHeaders,
   authStorageKeyFromSupabaseUrl,
   requestHasAuthCookie,
@@ -56,6 +57,27 @@ export async function updateSession(request: NextRequest, options?: SessionOptio
 
   const cookieOptions = supabaseAuthCookieOptions({ secure: true });
   const storageKey = authStorageKeyFromSupabaseUrl(env.supabaseUrl);
+  const requestCookies = request.cookies.getAll();
+  const hasAuthCookie = requestHasAuthCookie(requestCookies);
+
+  function finish(response: NextResponse) {
+    appendLegacyDomainExpiryHeaders(response.headers, storageKey, true);
+    return response;
+  }
+
+  if (!hasAuthCookie) {
+    if ((isDashboard || isAdmin || isOnboarding) && !isTrackingHost) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.searchParams.set("next", pathname);
+      return finish(NextResponse.redirect(url));
+    }
+    return finish(supabaseResponse);
+  }
+
+  if (!isAuthPage && !accessTokenNeedsServerRefresh(requestCookies, storageKey)) {
+    return finish(supabaseResponse);
+  }
 
   const supabase = createServerClient(env.supabaseUrl, env.supabaseAnonKey, {
     cookieOptions,
@@ -78,7 +100,6 @@ export async function updateSession(request: NextRequest, options?: SessionOptio
     data: { user },
     error,
   } = await supabase.auth.getUser();
-  const hasAuthCookie = requestHasAuthCookie(request.cookies.getAll());
   const classification = classifyAuthSession({ user, error, hasAuthCookie });
 
   if (error || classification !== "AUTH_VALID") {
@@ -88,11 +109,6 @@ export async function updateSession(request: NextRequest, options?: SessionOptio
       status: error?.status ?? null,
       path: pathname,
     });
-  }
-
-  function finish(response: NextResponse) {
-    appendLegacyDomainExpiryHeaders(response.headers, storageKey, true);
-    return response;
   }
 
   if (
