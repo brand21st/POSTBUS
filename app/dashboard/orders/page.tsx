@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
+import { ShopifyPaymentConfirm } from "@/components/orders/shopify-payment-confirm";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import {
@@ -610,8 +611,8 @@ export default function OrdersPage() {
           {
             id: "payment",
             header: "Payment",
-            className: "w-[4.25rem] whitespace-nowrap",
-            cell: (row: OrderRecord) => <StatusBadge value={row.paymentStatus ?? row.payment_status} />,
+            className: "w-[6.25rem] overflow-visible whitespace-nowrap",
+            cell: (row: OrderRecord) => <ShopifyPaymentConfirm order={row} />,
           } satisfies DataTableColumn<OrderRecord>,
         ]
       : []),
@@ -968,7 +969,7 @@ export default function OrdersPage() {
                     >
                       <StatusBadge value={row.source} />
                       <OrderDimensionBadge order={row} />
-                      <StatusBadge value={row.paymentStatus ?? row.payment_status} />
+                      <ShopifyPaymentConfirm order={row} />
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium tabular-nums">
