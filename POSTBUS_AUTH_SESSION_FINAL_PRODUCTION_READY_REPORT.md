@@ -64,7 +64,9 @@ Browser / multi-tab / Domain-cookie live tests remain **NOT EXECUTED** (no isola
 
 ## 5. Git branch and SHA
 
-Recorded at commit time on `fix/auth-session-stability`. Parent auth fix: `42383c4c174fcc92b67e83c2a9e2eb0f9b9c7470`. Gate report: `a76480edbd3299385bb1cfdd61ec3b92f5cef1bf`. Unrelated dirty files remain unstaged.
+**Release candidate SHA:** `ab8690e8a3f753b828910df91b70506b6106d00b`  
+Branch: `fix/auth-session-stability`  
+Parents: `42383c4c174fcc92b67e83c2a9e2eb0f9b9c7470` (Phase 2), `a76480edbd3299385bb1cfdd61ec3b92f5cef1bf` (2.5 gate report). Unrelated dirty files remain unstaged.
 
 ---
 
@@ -160,13 +162,30 @@ Code + unit tests **PASS**. Live Merchant A vs B **NOT EXECUTED**. Super Admin s
 
 Auth-focused vitest (Phase 2.6): **7 files, 39 passed**.
 
-Full `npm test` / lint / typecheck / build: run in isolated worktree on the release commit (see section 16). Previous baseline: 1590 pass / 5 fail (xlsx/PDF/canvas, not auth); eslint 31 errors.
+Isolated worktree at `ab8690e` (see §16).
 
 ---
 
 ## 16. Build and lint results
 
-Filled after isolated worktree run on the release SHA.
+Isolated worktree `D:\POST BUS APP\.worktrees\auth-session-gate` at `ab8690e8a3f753b828910df91b70506b6106d00b` (`npm ci` already present; `.env.local` copied for prerender only, not committed).
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | **PASS** |
+| `npm run build` | **PASS** (Next 16.3.8, 91 pages, Proxy) |
+| Auth-touched eslint | **PASS** (dashboard/admin shell, cookies, proxy, hooks, shell-gate) |
+| `npm run lint` (full repo) | **FAIL** `30 errors, 35 warnings` — pre-existing; dashboard `setHydrated` error **gone** |
+| `npm test` | **FAIL** `2 failed \| 1600 passed \| 1 skipped` |
+
+Unrelated failures:
+
+- `modules/india-post/excel-ingest.test.ts:8` — missing untracked `bulkdomesticone_28042026.xlsx`
+- `modules/labels/unicode/unicode-paint.test.ts:68` — timeout 5000ms loading `@napi-rs/canvas`
+
+Not caused by authentication changes.
+
+- [ ] Isolated typecheck/build recorded in §16 → **done: PASS**
 
 ---
 
