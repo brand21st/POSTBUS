@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { ok } from "@/lib/api/response";
@@ -6,6 +7,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import {
   approveDevicePairing,
+  authenticatePrintDevice,
   disconnectCurrentDevice,
   exchangeDevicePairing,
   heartbeatPrintDevice,
@@ -15,6 +17,7 @@ import {
   revokePrintDevice,
   startDevicePairing,
 } from "@/modules/print/device-pairing-db";
+import { claimNextPrintJob, completePrintJob, loadPrintJobPdf } from "@/modules/print/service";
 
 const PUBLIC_PATHS = new Set([
   "print-devices/pair/start",
@@ -26,7 +29,7 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 export function isPrintDevicePublicPath(path: string) {
-  return PUBLIC_PATHS.has(path);
+  return PUBLIC_PATHS.has(path) || /^print-devices\/jobs\/(claim|[^/]+(\/pdf)?)$/.test(path);
 }
 
 function admin() {
@@ -41,11 +44,51 @@ function clientAddress(request: NextRequest) {
 }
 
 export async function handlePrintDevicePublicRoutes(request: NextRequest, path: string) {
+  const supabase = admin();
+  const jobPath = path.startsWith("print-devices/jobs") || path === "print-devices/heartbeat" || path === "print-devices/refresh";
+  const limited = rateLimit(
+    `print-device:${clientAddress(request)}:${path}`,
+    path.endsWith("start") ? 8 : jobPath ? 180 : 30,
+    jobPath ? 60_000 : 10 * 60 * 1000
+  );
+  if (!limited.ok) throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
+
+  if (path === "print-devices/jobs/claim" && request.method === "POST") {
+    const device = await authenticatePrintDevice(supabase, request.headers.get("authorization"));
+    return claimNextPrintJob(supabase, device, { printers: device.printers });
+  }
+  const jobMatch = path.match(/^print-devices\/jobs\/([^/]+)(\/pdf)?$/);
+  if (jobMatch) {
+    const device = await authenticatePrintDevice(supabase, request.headers.get("authorization"));
+    const jobId = jobMatch[1];
+    if (jobMatch[2] && request.method === "GET") {
+      const { bytes, filename } = await loadPrintJobPdf(supabase, device, jobId);
+      return new NextResponse(new Uint8Array(bytes), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `inline; filename="${filename}"`,
+        },
+      });
+    }
+    if (!jobMatch[2] && request.method === "PATCH") {
+      const body = (await request.json().catch(() => ({}))) as {
+        status?: string;
+        error?: string;
+        errorMessage?: string;
+      };
+      if (body.status !== "PRINTED" && body.status !== "FAILED" && body.status !== "PENDING") {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Print status must be PRINTED, FAILED, or PENDING.");
+      }
+      return completePrintJob(supabase, device, jobId, {
+        status: body.status,
+        errorMessage: body.errorMessage ?? body.error,
+      });
+    }
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
+  }
+
   if (request.method !== "POST") throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-  const supabase = admin();
-  const limited = rateLimit(`print-device:${clientAddress(request)}:${path}`, path.endsWith("start") ? 8 : 30, 10 * 60 * 1000);
-  if (!limited.ok) throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
 
   if (path === "print-devices/pair/start") {
     const data = await startDevicePairing(supabase, {
@@ -71,6 +114,7 @@ export async function handlePrintDevicePublicRoutes(request: NextRequest, path: 
         accessToken,
         agentVersion: typeof body.agentVersion === "string" ? body.agentVersion : undefined,
         printers: Array.isArray(body.printers) ? body.printers : undefined,
+        selectedPrinter: typeof body.selectedPrinter === "string" ? body.selectedPrinter : undefined,
       })
     );
   }

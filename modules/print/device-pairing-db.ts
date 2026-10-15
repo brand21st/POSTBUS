@@ -205,19 +205,45 @@ export async function exchangeDevicePairing(supabase: SupabaseClient, verifier: 
   };
 }
 
+function printerNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item).trim())
+    .filter((name) => name.length > 0 && name.length <= 120)
+    .slice(0, 50);
+}
+
 export async function heartbeatPrintDevice(
   supabase: SupabaseClient,
-  input: { accessToken: string; agentVersion?: string; printers?: unknown[] }
+  input: { accessToken: string; agentVersion?: string; printers?: unknown[]; selectedPrinter?: string }
 ) {
   const device = await deviceForAccess(supabase, input.accessToken);
+  const names = printerNames(input.printers);
+  const selected = input.selectedPrinter?.trim() || "";
   const patch: Record<string, unknown> = { last_seen_at: new Date().toISOString(), updated_at: new Date().toISOString() };
   if (input.agentVersion?.trim()) patch.agent_version = input.agentVersion.trim();
-  if (Array.isArray(input.printers)) patch.last_printers = input.printers;
+  if (Array.isArray(input.printers)) patch.last_printers = names;
   await supabase.from("print_devices").update(patch).eq("id", device.id).eq("status", "active");
+  if (selected && names.includes(selected) && device.organization_id) {
+    const { data: settings } = await supabase
+      .from("print_settings")
+      .select("selected_printer_name")
+      .eq("organization_id", device.organization_id)
+      .maybeSingle();
+    const current = String(settings?.selected_printer_name ?? "").trim();
+    if (!current || !names.includes(current)) {
+      await supabase
+        .from("print_settings")
+        .update({ selected_printer_name: selected })
+        .eq("organization_id", device.organization_id);
+    }
+  }
   return {
     deviceId: device.id,
+    organizationId: device.organization_id,
     organizationName: device.organization_name,
     deviceName: device.device_name,
+    printers: names,
     authorization: "active" as const,
     connection: "online" as const,
   };
@@ -366,18 +392,47 @@ async function deviceForAccess(supabase: SupabaseClient, accessToken: string) {
   if (!session) throw new AppError(ERROR_CODES.AUTH_REQUIRED, UNAUTHORIZED);
   const { data: device, error: deviceError } = await supabase
     .from("print_devices")
-    .select("id, device_name, status, organizations(name)")
+    .select("id, organization_id, device_name, status, last_printers, organizations(name)")
     .eq("id", session.device_id)
     .maybeSingle();
   if (deviceError) unavailable(deviceError);
-  const row = device as { id: string; device_name: string; status: string; organizations: { name: string } | { name: string }[] | null } | null;
+  const row = device as {
+    id: string;
+    organization_id: string;
+    device_name: string;
+    status: string;
+    last_printers: unknown;
+    organizations: { name: string } | { name: string }[] | null;
+  } | null;
   if (!row) throw new AppError(ERROR_CODES.AUTH_REQUIRED, UNAUTHORIZED);
   if (row.status === "revoked") throw new AppError(ERROR_CODES.AUTH_REQUIRED, REVOKED);
   if (new Date(session.access_expires_at).getTime() <= Date.now()) {
     throw new AppError(ERROR_CODES.AUTH_REQUIRED, UNAUTHORIZED);
   }
   const organization = Array.isArray(row.organizations) ? row.organizations[0] : row.organizations;
-  return { id: row.id, device_name: row.device_name, organization_name: organization?.name ?? "" };
+  return {
+    id: row.id,
+    organization_id: row.organization_id,
+    device_name: row.device_name,
+    organization_name: organization?.name ?? "",
+    printers: printerNames(row.last_printers),
+  };
+}
+
+export async function authenticatePrintDevice(
+  supabase: SupabaseClient,
+  authorization: string | null
+) {
+  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!token.startsWith("pb_pdev_")) {
+    throw new AppError(ERROR_CODES.AUTH_REQUIRED, UNAUTHORIZED);
+  }
+  const device = await deviceForAccess(supabase, token);
+  return {
+    agentId: device.id,
+    organizationId: device.organization_id,
+    printers: device.printers,
+  };
 }
 
 async function issueSession(supabase: SupabaseClient, deviceId: string) {

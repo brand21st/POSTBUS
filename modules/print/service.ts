@@ -7,6 +7,7 @@ import { isPrintPaperSize, agentPaperSize, printMediaForPage } from "@/modules/l
 import { mmFromPt } from "@/modules/labels/layout/units";
 import { paperSizeForLabelKind } from "@/modules/labels/print-targets";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
+import { DEVICE_ONLINE_MS } from "@/modules/print/device-pairing";
 import { getDefaultWebusbPrinter, type PrintDelivery } from "@/modules/print/printers";
 
 export const PRINT_AGENT_ONLINE_MS = 30_000;
@@ -86,11 +87,53 @@ function jobDelivery(job: { delivery?: string | null }): PrintDelivery {
   return job.delivery === "webusb" ? "webusb" : "agent";
 }
 
+export function isPrintDeviceOnline(lastSeenAt: string | null | undefined, now = Date.now()) {
+  if (!lastSeenAt) return false;
+  const seen = new Date(lastSeenAt).getTime();
+  if (Number.isNaN(seen)) return false;
+  return now - seen <= DEVICE_ONLINE_MS;
+}
+
+async function onlineDevicePrinters(supabase: SupabaseClient, organizationId: string) {
+  const empty = { names: [] as string[], online: false, lastSeenAt: null as string | null, agentName: null as string | null };
+  let data: unknown = null;
+  let error: { code?: string } | null = null;
+  try {
+    const result = await supabase
+      .from("print_devices")
+      .select("device_name, last_seen_at, last_printers, status")
+      .eq("organization_id", organizationId)
+      .eq("status", "active");
+    data = result.data;
+    error = result.error;
+  } catch {
+    return empty;
+  }
+  if (error) return empty;
+  const now = Date.now();
+  const live = ((data ?? []) as Array<{
+    device_name: string;
+    last_seen_at: string | null;
+    last_printers: unknown;
+    status: string;
+  }>).filter((row) => isPrintDeviceOnline(row.last_seen_at, now));
+  const names = [...new Set(live.flatMap((row) => asPrinterList(row.last_printers)))];
+  const newest = live.sort((left, right) => new Date(right.last_seen_at ?? 0).getTime() - new Date(left.last_seen_at ?? 0).getTime())[0];
+  return {
+    names,
+    online: names.length > 0,
+    lastSeenAt: newest?.last_seen_at ?? null,
+    agentName: newest?.device_name ?? null,
+  };
+}
+
 async function printTarget(
   supabase: SupabaseClient,
   organizationId: string,
   selectedPrinterName: string | null
 ): Promise<{ delivery: PrintDelivery; printerName: string | null }> {
+  const windows = await onlineDevicePrinters(supabase, organizationId);
+  if (windows.online) return { delivery: "agent", printerName: selectedPrinterName };
   const usb = await getDefaultWebusbPrinter(supabase, organizationId);
   if (usb) return { delivery: "webusb", printerName: usb.displayName };
   return { delivery: "agent", printerName: selectedPrinterName };
@@ -260,20 +303,25 @@ export async function getPrintStation(
     .maybeSingle();
 
   const usbDefault = await getDefaultWebusbPrinter(supabase, organizationId);
-  const printerNames = asPrinterList(agent?.printers);
-  const connected = isPrintAgentOnline(agent?.last_seen_at) && printerNames.length > 0;
+  const windows = await onlineDevicePrinters(supabase, organizationId);
+  const agentPrinters = asPrinterList(agent?.printers);
+  const printerNames = [...new Set([...windows.names, ...agentPrinters])];
+  const agentOnline = isPrintAgentOnline(agent?.last_seen_at) && agentPrinters.length > 0;
+  const connected = (windows.online || agentOnline) && printerNames.length > 0;
   const selected = settings.selectedPrinterName;
   const selectedOnline = Boolean(selected && printerNames.includes(selected));
   let offlineMessage: string | null = null;
-  if (!agent?.token_prefix) {
-    offlineMessage = "Install the PostBus print agent on the packing computer, then connect it here.";
-  } else if (!isPrintAgentOnline(agent.last_seen_at)) {
+  if (windows.online || agentOnline) {
+    if (selected && !selectedOnline) {
+      offlineMessage = `Printer unavailable (${selected}). Label jobs stay waiting until that printer reconnects.`;
+    }
+  } else if (!agent?.token_prefix && !windows.lastSeenAt) {
+    offlineMessage = "Install PostBus Print Agent on the packing computer, then pair it in Settings → Printing.";
+  } else if (!windows.online && !isPrintAgentOnline(agent?.last_seen_at)) {
     offlineMessage =
-      "No printer detected. Start the print agent on the packing computer. Labels will print when it reconnects.";
+      "No printer detected. Open PostBus Print Agent on the packing computer. Labels will print when it reconnects.";
   } else if (printerNames.length === 0) {
     offlineMessage = "The print agent is online, but no printers were reported. Check the computer's printers.";
-  } else if (selected && !selectedOnline) {
-    offlineMessage = `Printer unavailable (${selected}). Label jobs stay waiting until that printer reconnects.`;
   }
 
   return {
@@ -284,13 +332,13 @@ export async function getPrintStation(
     autoPrintMerchant: settings.autoPrintMerchant,
     connected: connected && (!selected || selectedOnline),
     printerNames,
-    agentName: agent?.name ?? null,
+    agentName: windows.agentName ?? agent?.name ?? null,
     tokenPrefix: agent?.token_prefix ?? null,
-    lastSeenAt: agent?.last_seen_at ?? null,
-    offlineMessage: usbDefault
+    lastSeenAt: windows.lastSeenAt ?? agent?.last_seen_at ?? null,
+    offlineMessage: usbDefault && !windows.online
       ? "Direct USB printing is the default. Manage it in Settings → Printing."
       : offlineMessage,
-    defaultDelivery: usbDefault ? "webusb" : "agent",
+    defaultDelivery: windows.online || !usbDefault ? "agent" : "webusb",
   };
 }
 
@@ -496,15 +544,22 @@ export async function enqueueManualPrintJob(
   return data as PrintJobRow;
 }
 
-export async function claimNextPrintJob(supabase: SupabaseClient, agent: PrintAgentContext) {
+export async function claimNextPrintJob(
+  supabase: SupabaseClient,
+  agent: PrintAgentContext,
+  options?: { printers?: string[] }
+) {
   await recoverStalePrintJobs(supabase, agent.organizationId);
   const settings = await getPrintSettings(supabase, agent.organizationId);
-  const { data: agentRow } = await supabase
-    .from("print_agents")
-    .select("printers")
-    .eq("id", agent.agentId)
-    .maybeSingle();
-  const printers = asPrinterList(agentRow?.printers);
+  let printers = options?.printers?.map((name) => name.trim()).filter(Boolean) ?? [];
+  if (printers.length === 0) {
+    const { data: agentRow } = await supabase
+      .from("print_agents")
+      .select("printers")
+      .eq("id", agent.agentId)
+      .maybeSingle();
+    printers = asPrinterList(agentRow?.printers);
+  }
   if (printers.length === 0) return null;
 
   const targetPrinter = settings.selectedPrinterName;

@@ -77,16 +77,16 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
     <>
       <CardContent className="space-y-4 pt-0 text-sm">
         <p className="text-xs text-muted">
-          USB label printers are connected in{" "}
+          Pair PostBus Print Agent for Windows in{" "}
           <Link href="/dashboard/settings?tab=printing" className="font-medium text-foreground underline">
             Settings → Printing
           </Link>
-          .
+          , then pick the label printer below. Keep this switch on so new labels print automatically.
         </p>
         {enabled ? (
           usbDefault ? (
             <p className="text-xs text-muted">
-              Direct USB printing is the default. A connected browser prints new labels on that printer.
+              Direct USB printing is the default unless PostBus Print Agent is online. A connected browser can still print on that USB printer.
             </p>
           ) : connected && selected ? (
             <div className="space-y-1">

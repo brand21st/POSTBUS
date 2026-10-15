@@ -30,9 +30,10 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   const indiaPostWebhook = parseIndiaPostWebhookPath(path);
   const watiWebhook = parseWatiWebhookPath(path);
   const printAgentPath = isPrintAgentApiPath(path);
+  const printDevicePath = isPrintDevicePublicPath(path);
   const limited = rateLimit(
     `${request.headers.get("x-forwarded-for") ?? "local"}:${path}`,
-    indiaPostWebhook || watiWebhook || printAgentPath ? 180 : 60
+    indiaPostWebhook || watiWebhook || printAgentPath || printDevicePath ? 180 : 60
   );
   if (!limited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
