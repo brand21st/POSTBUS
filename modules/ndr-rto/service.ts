@@ -184,6 +184,7 @@ function mapNdrRow(row: Record<string, unknown>) {
   const pickup = nestedOne<{ city?: string }>(row.pickup_locations);
   return {
     ...row,
+    id: String(row.id ?? ""),
     orderId: row.order_id,
     orderNumber: order?.order_number,
     order_number: order?.order_number,
@@ -338,7 +339,10 @@ async function indiaPostConnection(supabase: SupabaseClient, organizationId: str
 
 async function trackArticles(supabase: SupabaseClient, connection: Record<string, unknown>, barcodes: string[]) {
   const { ensurePersistedIndiaPostTrackingSession } = await import("@/modules/india-post/session");
-  const provider = await ensurePersistedIndiaPostTrackingSession(supabase, connection);
+  const provider = await ensurePersistedIndiaPostTrackingSession(
+    supabase,
+    connection as Parameters<typeof ensurePersistedIndiaPostTrackingSession>[1]
+  );
   try {
     return (await provider.trackShipment(barcodes)) as { data?: BulkTrackingArticle[] };
   } catch (caught) {
