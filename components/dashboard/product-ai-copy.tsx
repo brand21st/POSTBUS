@@ -49,7 +49,7 @@ export function ProductAiCopyBox({
   const included = credits.data?.included ?? 500;
   const remaining = credits.isSuccess ? credits.data.remaining : included;
   const outOfCredits = credits.isSuccess && remaining === 0;
-  const hasPhotos = files.some(Boolean) || urls.some((url) => Boolean(url) && !url.startsWith("blob:"));
+  const hasPhotos = files.some(Boolean) || urls.some((url) => typeof url === "string" && url.length > 0 && !url.startsWith("blob:"));
   const canGenerate = Boolean(prompt.trim() || hasPhotos || files.some(Boolean));
 
   async function generate() {

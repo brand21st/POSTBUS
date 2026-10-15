@@ -1,4 +1,3 @@
-import { env } from "@/lib/env";
 import { articlesForRequestedBarcodes, parseBulkTrackingResponse } from "@/modules/india-post/tracking-response";
 import type { BulkTrackingArticle } from "@/modules/india-post/apply-tracking";
 
@@ -19,7 +18,7 @@ export type TrackShipmentResult = {
 };
 
 export function trackingIsolateMaxRequests() {
-  const parsed = Number(env.indiaPostTrackingIsolateMaxRequests);
+  const parsed = Number(process.env.INDIA_POST_TRACKING_ISOLATE_MAX_REQUESTS ?? "");
   if (!Number.isFinite(parsed) || parsed < 1) return 32;
   return Math.min(64, Math.trunc(parsed));
 }
