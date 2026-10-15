@@ -51,6 +51,23 @@ describe("articlesForRequestedBarcodes", () => {
     expect(kept).toHaveLength(1);
     expect(kept[0]?.booking_details?.article_number).toBe("AW1");
   });
+
+  it("keeps a single article with scans when the article number is omitted", () => {
+    const kept = articlesForRequestedBarcodes(
+      [{ tracking_details: [{ event: "Item Booked", date: "2026-10-09", time: "11:33:44" }] }],
+      ["CX075250656IN"]
+    );
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.tracking_details?.[0]?.event).toBe("Item Booked");
+  });
+
+  it("matches a top-level article_number case-insensitively", () => {
+    const kept = articlesForRequestedBarcodes(
+      [{ article_number: "cx075250656in", tracking_details: [{ event: "Item Dispatched" }] }],
+      ["CX075250656IN"]
+    );
+    expect(kept).toHaveLength(1);
+  });
 });
 
 describe("retryAfterMsFromHeader", () => {

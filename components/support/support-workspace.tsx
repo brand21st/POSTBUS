@@ -81,11 +81,66 @@ type Message = {
 
 const FILTERS = ["all", "unread", "open", "pending", "resolved", "closed", "unassigned", "mine"] as const;
 
+const FILTER_LABELS: Record<(typeof FILTERS)[number], string> = {
+  all: "All",
+  unread: "Unread",
+  open: "Open",
+  pending: "Waiting",
+  resolved: "Resolved",
+  closed: "Closed",
+  unassigned: "Unassigned",
+  mine: "Assigned to me",
+};
+
+const WORKFLOW_ACTIONS = [
+  { status: "under_review", label: "Review" },
+  { status: "needs_info", label: "Need info" },
+  { status: "approved", label: "Approve" },
+  { status: "rejected", label: "Reject" },
+] as const;
+
 function remainingLabel(ms: number) {
   const hours = Math.floor(ms / 3_600_000);
   const minutes = Math.floor((ms % 3_600_000) / 60_000);
-  return `${hours} hours ${minutes} minutes remaining`;
+  if (hours <= 0 && minutes <= 0) return "less than 1 min left";
+  if (hours <= 0) return `${minutes} min left to reply`;
+  return `${hours}h ${minutes}m left to reply`;
 }
+
+function SupportTips({
+  tips,
+}: {
+  tips: Array<{ title: string; text: string }>;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-3">
+      {tips.map((tip) => (
+        <div key={tip.title} className="rounded-xl border border-border bg-card px-3 py-2.5">
+          <p className="text-xs font-semibold text-ink">{tip.title}</p>
+          <p className="mt-0.5 text-xs leading-snug text-muted">{tip.text}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const INBOX_TIPS = [
+  { title: "Reply", text: "Type a message while the 24-hour window is open." },
+  { title: "After 24 hours", text: "Send an approved WhatsApp template to reach the customer again." },
+  { title: "Details", text: "Open a chat to see the order, shipment, and ticket." },
+];
+
+const SETTINGS_TIPS = [
+  { title: "Inbox", text: "Customer WhatsApp chats appear here. Open one to reply." },
+  { title: "Tickets", text: "Each request gets a ticket: cancel, return, refund, or delivery." },
+  { title: "WhatsApp number", text: "Use PostBus or your own number. Shipping alerts stay separate." },
+];
+
+const OFF_TIPS = [
+  { title: "Turn it on", text: "Open Settings, then enable Support. Chats start after a customer writes." },
+  { title: "Reply window", text: "Free-text replies work for 24 hours after the customer’s last message." },
+  { title: "Team notes", text: "Internal notes stay in PostBus. They are not sent to the customer." },
+];
 
 export function SupportWorkspace() {
   const me = useMe();
@@ -182,9 +237,9 @@ export function SupportWorkspace() {
     onSuccess: (data, variables) => {
       queryClient.setQueryData(["support", "settings"], data);
       if (variables.mode && variables.mode !== settingsQuery.data?.mode) {
-        toast.success("Future customer messages will come from a different WhatsApp number.");
+        toast.success("Customers will now write to a different WhatsApp number.");
       } else {
-        toast.success(data.enabled ? "Support Center is on." : "Support Center is off.");
+        toast.success(data.enabled ? "Support is on. New chats will appear in Inbox." : "Support is off. New chats will not appear.");
       }
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not update settings."),
@@ -204,19 +259,19 @@ export function SupportWorkspace() {
     },
     onSuccess: (data) => {
       queryClient.setQueryData(["support", "settings"], data);
-      toast.success("My Vachat API is connected. Future customer messages will come from a different WhatsApp number.");
+      toast.success("Your WhatsApp is connected. New customer chats will use that number.");
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not connect Vachat."),
   });
   const vachatTest = useMutation({
     mutationFn: () => api("/api/v1/integrations/vachat/test", { method: "POST" }),
-    onSuccess: () => toast.success("Merchant Vachat API key verified."),
+    onSuccess: () => toast.success("Your WhatsApp key works."),
     onError: (error) => toast.error(error instanceof Error ? error.message : "Test failed."),
   });
   const vachatDisconnect = useMutation({
     mutationFn: () => api("/api/v1/integrations/vachat", { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("Merchant Vachat disconnected. Support Center will not fall back to PostBus WhatsApp until you switch.");
+      toast.success("Your WhatsApp is disconnected. Switch to PostBus WhatsApp in Settings if you still need chats.");
       void queryClient.invalidateQueries({ queryKey: ["support", "settings"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not disconnect."),
@@ -243,7 +298,7 @@ export function SupportWorkspace() {
       }),
     onSuccess: () => {
       setTemplateName("");
-      toast.success("Template queued.");
+      toast.success("Template sent.");
       void queryClient.invalidateQueries({ queryKey: ["support"] });
     },
     onError: (error) => toast.error(error instanceof ApiError ? error.message : "Could not send template."),
@@ -274,7 +329,7 @@ export function SupportWorkspace() {
 
   const contextPanel = useMemo(() => {
     if (!context) {
-      return <p className="p-4 text-sm text-muted">Select a conversation to see customer and order context.</p>;
+      return <p className="p-4 text-sm text-muted">Open a chat to see the customer, order, and ticket.</p>;
     }
     return (
       <div className="space-y-5 p-4 text-sm">
@@ -287,6 +342,11 @@ export function SupportWorkspace() {
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Ticket</h3>
             <p className="font-medium">{context.ticket.publicNumber}</p>
+            <p className="text-xs text-muted">
+              {SUPPORT_TICKET_CATEGORY_LABELS[context.ticket.category] ?? context.ticket.category}
+              {" · "}
+              {SUPPORT_TICKET_PRIORITY_LABELS[context.ticket.priority as keyof typeof SUPPORT_TICKET_PRIORITY_LABELS] ?? context.ticket.priority}
+            </p>
             <Badge>{SUPPORT_TICKET_STATUS_LABELS[context.ticket.status]}</Badge>
             {canManage ? (
               <Select
@@ -297,7 +357,7 @@ export function SupportWorkspace() {
                       method: "PATCH",
                       body: JSON.stringify({
                         status,
-                        resolutionNote: status === "resolved" ? "Resolved from Support Center." : undefined,
+                        resolutionNote: status === "resolved" ? "Resolved from Support." : undefined,
                       }),
                     });
                     void queryClient.invalidateQueries({ queryKey: ["support"] });
@@ -352,7 +412,7 @@ export function SupportWorkspace() {
         ) : context.orderMatches && context.orderMatches.length > 1 ? (
           <section>
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Matching orders</h3>
-            <p className="text-muted">Choose the correct order before approving a request.</p>
+            <p className="text-muted">More than one order matches this number. Pick the right one before you approve.</p>
             {context.orderMatches.map((match) => (
               <Button
                 key={match.id}
@@ -373,7 +433,7 @@ export function SupportWorkspace() {
             ))}
           </section>
         ) : (
-          <p className="text-muted">No order is linked yet.</p>
+          <p className="text-muted">No order linked yet. Link one if this chat is about a purchase.</p>
         )}
         {context.shipment ? (
           <section>
@@ -387,9 +447,9 @@ export function SupportWorkspace() {
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Request</h3>
             <p className="capitalize">{context.timeline.workflow.kind} · {context.timeline.workflow.status.replaceAll("_", " ")}</p>
-            {["approved", "rejected", "needs_info", "under_review"].map((status) => (
+            {WORKFLOW_ACTIONS.map((action) => (
               <Button
-                key={status}
+                key={action.status}
                 size="sm"
                 variant="secondary"
                 className="mr-1"
@@ -397,23 +457,24 @@ export function SupportWorkspace() {
                   try {
                     await api(`/api/v1/support/tickets/${context.ticket!.id}/workflow`, {
                       method: "PATCH",
-                      body: JSON.stringify({ status }),
+                      body: JSON.stringify({ status: action.status }),
                     });
                     void queryClient.invalidateQueries({ queryKey: ["support"] });
                   } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "Workflow update failed.");
+                    toast.error(error instanceof Error ? error.message : "Could not update this request.");
                   }
                 }}
               >
-                {status.replaceAll("_", " ")}
+                {action.label}
               </Button>
             ))}
           </section>
         ) : null}
         {canReply && context.ticket ? (
           <section className="space-y-2">
-            <Label htmlFor="internal-note">Internal note</Label>
-            <Textarea id="internal-note" value={note} onChange={(event) => setNote(event.target.value)} />
+            <Label htmlFor="internal-note">Team note</Label>
+            <p className="text-xs text-muted">Only your team sees this. It is not sent on WhatsApp.</p>
+            <Textarea id="internal-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add a private note" />
             <Button
               size="sm"
               variant="secondary"
@@ -424,7 +485,7 @@ export function SupportWorkspace() {
                   body: JSON.stringify({ body: note }),
                 });
                 setNote("");
-                toast.success("Note saved. It was not sent to the customer.");
+                toast.success("Team note saved. The customer cannot see it.");
               }}
             >
               Add note
@@ -439,7 +500,7 @@ export function SupportWorkspace() {
     <div className="flex min-h-[calc(100svh-6rem)] flex-col gap-3">
       <PageHeader
         title="Support Center"
-        description="WhatsApp conversations, tickets, and customer requests. Powered by Vachat."
+        description="Reply to customer WhatsApp chats and track tickets."
         icon={<Headphones className="size-6 text-brand" />}
         actions={
           <div className="flex gap-1">
@@ -455,15 +516,16 @@ export function SupportWorkspace() {
       />
 
       {settingsQuery.isLoading ? (
-        <p className="text-sm text-muted">Loading Support Center…</p>
+        <p className="text-sm text-muted">Loading Support…</p>
       ) : view === "settings" ? (
         <div className="max-w-2xl space-y-4">
+          <SupportTips tips={SETTINGS_TIPS} />
           <div className="rounded-2xl border border-border bg-card p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="font-semibold">Enable Support Center</h2>
+                <h2 className="font-semibold">Turn on Support</h2>
                 <p className="text-sm text-muted">
-                  Shipping WhatsApp notices stay independent of this inbox.
+                  Customer chats appear in Inbox. Shipment WhatsApp alerts keep sending as usual.
                 </p>
               </div>
               <Switch
@@ -480,10 +542,12 @@ export function SupportWorkspace() {
                 {settingsQuery.data?.mode === "postbus_global" ? <Badge variant="brand">Active</Badge> : null}
               </div>
               <p className="mt-1 text-sm text-muted">
-                Default. No merchant API key. Super Admin must enable support messaging on the PostBus number.
+                Customers write to the PostBus number. No API key. PostBus must allow support on this number.
               </p>
               <p className="mt-2 text-xs text-muted">
-                {settingsQuery.data?.globalSupport ? "PostBus support messaging is available." : "PostBus support messaging is off."}
+                {settingsQuery.data?.globalSupport
+                  ? "Ready. You can use this number for chats."
+                  : "Not available yet. Ask PostBus to turn it on, or use your own number."}
               </p>
               <Button
                 className="mt-3"
@@ -498,7 +562,7 @@ export function SupportWorkspace() {
                 onClick={() => {
                   if (
                     !window.confirm(
-                      "Future customer messages will come from a different WhatsApp number. Continue?"
+                      "Customers will start writing to a different WhatsApp number. Continue?"
                     )
                   ) {
                     return;
@@ -511,18 +575,20 @@ export function SupportWorkspace() {
             </div>
             <div className="rounded-2xl border border-border bg-card p-5">
               <div className="flex items-center justify-between gap-2">
-                <h3 className="font-semibold">My Vachat API</h3>
+                <h3 className="font-semibold">Your WhatsApp</h3>
                 {settingsQuery.data?.mode === "merchant_vachat" ? <Badge variant="brand">Active</Badge> : null}
               </div>
               <p className="mt-1 text-sm text-muted">
-                Optional. Send from your own WhatsApp number. Failed connections never fall back to PostBus WhatsApp.
+                Optional. Customers write to your number. If this connection fails, chats do not switch to PostBus on their own.
               </p>
-              <p className="mt-2 text-xs text-muted">Status: {settingsQuery.data?.vachatStatus ?? "NOT_CONNECTED"}</p>
+              <p className="mt-2 text-xs text-muted">
+                Status: {settingsQuery.data?.vachatStatus ?? "NOT_CONNECTED"}
+              </p>
               <Input
                 className="mt-3"
                 type="password"
                 autoComplete="new-password"
-                placeholder="Merchant API key"
+                placeholder="Your Vachat API key"
                 value={merchantKey}
                 onChange={(event) => setMerchantKey(event.target.value)}
               />
@@ -534,7 +600,7 @@ export function SupportWorkspace() {
                     if (
                       settingsQuery.data?.mode !== "merchant_vachat" &&
                       !window.confirm(
-                        "Future customer messages will come from a different WhatsApp number. Continue?"
+                        "Customers will start writing to a different WhatsApp number. Continue?"
                       )
                     ) {
                       return;
@@ -542,7 +608,7 @@ export function SupportWorkspace() {
                     vachatConnect.mutate();
                   }}
                 >
-                  Connect and activate
+                  Connect & use
                 </Button>
                 <Button
                   size="sm"
@@ -559,7 +625,7 @@ export function SupportWorkspace() {
                   onClick={() => {
                     if (
                       !window.confirm(
-                        "Future customer messages will come from a different WhatsApp number. Continue?"
+                        "Customers will start writing to a different WhatsApp number. Continue?"
                       )
                     ) {
                       return;
@@ -567,7 +633,7 @@ export function SupportWorkspace() {
                     enableMutation.mutate({ mode: "merchant_vachat" });
                   }}
                 >
-                  Activate
+                  Use this number
                 </Button>
                 <Button
                   size="sm"
@@ -582,23 +648,34 @@ export function SupportWorkspace() {
           </div>
         </div>
       ) : !settingsQuery.data?.enabled ? (
-        <EmptyState
-          icon={Headphones}
-          title="Support Center is off"
-          description={
-            settingsQuery.data?.mode === "merchant_vachat" && !settingsQuery.data?.vachatReady
-              ? "Connect My Vachat API, or switch to PostBus WhatsApp in Settings."
-              : settingsQuery.data?.globalSupport || settingsQuery.data?.vachatReady
-                ? "Turn it on in Settings to receive customer WhatsApp messages in this workspace."
-                : "Ask PostBus to enable PostBus WhatsApp support, or connect My Vachat API."
-          }
-          action={
-            canSettings ? (
-              <Button onClick={() => setView("settings")}>Open settings</Button>
-            ) : null
-          }
-        />
+        <div className="space-y-3">
+          <SupportTips tips={OFF_TIPS} />
+          <EmptyState
+            icon={Headphones}
+            title="Support is off"
+            description={
+              settingsQuery.data?.mode === "merchant_vachat" && !settingsQuery.data?.vachatReady
+                ? "Connect your WhatsApp key, or switch to PostBus WhatsApp in Settings."
+                : settingsQuery.data?.globalSupport || settingsQuery.data?.vachatReady
+                  ? "Turn it on in Settings. New customer WhatsApp messages will show in Inbox."
+                  : "Ask PostBus to enable PostBus WhatsApp, or connect your own WhatsApp in Settings."
+            }
+            action={
+              canSettings ? (
+                <Button onClick={() => setView("settings")}>Open settings</Button>
+              ) : null
+            }
+          />
+        </div>
       ) : view === "tickets" ? (
+        <div className="space-y-3">
+        <SupportTips
+          tips={[
+            { title: "What a ticket is", text: "One customer request — cancel, return, refund, or delivery." },
+            { title: "Status", text: "Open, in progress, waiting on the customer, or waiting on you." },
+            { title: "Next step", text: "Reply in Inbox. Change status in the chat Details panel." },
+          ]}
+        />
         <div className="rounded-2xl border border-border bg-card">
           {(ticketsQuery.data?.items ?? []).map((ticket) => (
             <button
@@ -610,12 +687,24 @@ export function SupportWorkspace() {
               }}
             >
               <span className="font-medium">{ticket.publicNumber}</span>
-              <Badge>{ticket.status}</Badge>
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted">
+                  {SUPPORT_TICKET_CATEGORY_LABELS[ticket.category as SupportTicketCategory] ?? ticket.category}
+                </span>
+                <Badge>
+                  {SUPPORT_TICKET_STATUS_LABELS[ticket.status as SupportTicketStatus] ?? ticket.status}
+                </Badge>
+              </span>
             </button>
           ))}
-          {!ticketsQuery.data?.items?.length ? <p className="p-6 text-sm text-muted">No tickets yet.</p> : null}
+          {!ticketsQuery.data?.items?.length ? (
+            <p className="p-6 text-sm text-muted">No tickets yet. A ticket is created when a customer starts a chat or makes a request.</p>
+          ) : null}
+        </div>
         </div>
       ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+        {!items.length ? <SupportTips tips={INBOX_TIPS} /> : null}
         <div className="grid min-h-0 flex-1 overflow-hidden rounded-2xl border border-border bg-card lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_300px]">
           <div className={cn("border-r border-border", mobilePane === "chat" && "hidden lg:block")}>
             <div className="space-y-2 border-b border-border p-3">
@@ -623,7 +712,7 @@ export function SupportWorkspace() {
                 <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted" />
                 <Input
                   value={searchInput}
-                  placeholder="Search name, phone, ticket, or order"
+                  placeholder="Name, phone, ticket, or order"
                   className="pl-8 pr-8"
                   aria-label="Search conversations"
                   onChange={(event) => {
@@ -648,8 +737,8 @@ export function SupportWorkspace() {
               </div>
               <div className="flex flex-wrap gap-1">
                 {FILTERS.map((item) => (
-                  <Button key={item} size="sm" variant={filter === item ? "primary" : "secondary"} className="h-7 capitalize" onClick={() => setFilter(item)}>
-                    {item}
+                  <Button key={item} size="sm" variant={filter === item ? "primary" : "secondary"} className="h-7" onClick={() => setFilter(item)}>
+                    {FILTER_LABELS[item]}
                   </Button>
                 ))}
               </div>
@@ -698,7 +787,9 @@ export function SupportWorkspace() {
                 </p>
               ) : !items.length ? (
                 <p className="p-6 text-sm text-muted">
-                  {searchQuery ? "No conversations match that search." : "No conversations yet."}
+                  {searchQuery
+                    ? "No chats match that search. Try a name, phone, ticket, or order number."
+                    : "No chats yet. They appear here when a customer messages WhatsApp."}
                 </p>
               ) : null}
             </div>
@@ -715,8 +806,8 @@ export function SupportWorkspace() {
                       {selected.channelKind === "merchant_vachat" ? "Your number" : "PostBus WhatsApp"}
                       {" · "}
                       {windowOpen
-                        ? `Customer service window open · ${remainingLabel(context?.conversation?.windowRemainingMs ?? 0)}`
-                        : "Customer service window closed · Send an approved template"}
+                        ? `You can reply now · ${remainingLabel(context?.conversation?.windowRemainingMs ?? 0)}`
+                        : "24-hour window closed · Send an approved template"}
                     </p>
                   </div>
                   <Button variant="secondary" size="sm" className="xl:hidden" onClick={() => setContextOpen(true)}>Details</Button>
@@ -739,7 +830,7 @@ export function SupportWorkspace() {
                     <div className="flex gap-2">
                       <Textarea
                         className="min-h-[72px]"
-                        placeholder={canReply ? "Reply on WhatsApp" : "You have read-only access."}
+                        placeholder={canReply ? "Write a WhatsApp reply" : "You can view chats, not reply."}
                         value={draft}
                         disabled={!canReply || sendMutation.isPending}
                         onChange={(event) => setDraft(event.target.value)}
@@ -750,10 +841,10 @@ export function SupportWorkspace() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <p className="text-sm text-muted">Use an approved WhatsApp template to contact this customer.</p>
+                      <p className="text-sm text-muted">The 24-hour reply window is closed. Send an approved template to reach this customer again.</p>
                       <div className="flex gap-2">
                         <Select value={templateName} onValueChange={setTemplateName}>
-                          <SelectTrigger><SelectValue placeholder="Approved template" /></SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder="Choose a template" /></SelectTrigger>
                           <SelectContent>
                             {(templatesQuery.data?.items ?? []).map((item) => (
                               <SelectItem key={item.name} value={item.name}>{item.name}</SelectItem>
@@ -769,17 +860,22 @@ export function SupportWorkspace() {
                 </div>
               </>
             ) : (
-              <EmptyState icon={Paperclip} title="Select a conversation" description="Customer WhatsApp threads appear here after Vachat delivers an inbound message." />
+              <EmptyState
+                icon={Paperclip}
+                title="Open a chat"
+                description="Pick a customer on the left. You will see their messages, order, and ticket here."
+              />
             )}
           </div>
 
           <aside className="hidden overflow-y-auto border-l border-border xl:block">{contextPanel}</aside>
         </div>
+        </div>
       )}
 
       <Dialog open={contextOpen} onOpenChange={setContextOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Customer context</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Customer, order & ticket</DialogTitle></DialogHeader>
           {contextPanel}
         </DialogContent>
       </Dialog>

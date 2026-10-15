@@ -340,7 +340,10 @@ export function toCustomerTrackView(result: PublicTrackResult): CustomerTrackVie
     statusKey,
     statusLabel: titleCase(statusKey.replace(/_/g, " ")),
     statusTone: statusToneFor(statusKey),
-    statusSupport: STATUS_SUPPORT[statusKey] ?? "Latest carrier update is shown below.",
+    statusSupport:
+      result.liveTracking === "cached" && result.liveMessage
+        ? result.liveMessage
+        : (STATUS_SUPPORT[statusKey] ?? "Latest carrier update is shown below."),
     serviceLabel: shipment.serviceLabel ?? null,
     lastUpdatedAt,
     expectedDeliveryAt: null,

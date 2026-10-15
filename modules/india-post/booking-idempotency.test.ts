@@ -252,6 +252,17 @@ describe("booking idempotency helpers", () => {
 });
 
 describe("runIndiaPostBooking idempotency", () => {
+  it("does not POST to CEPT when the Shopify order is still PENDING", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([
+      baseShipment({ orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY", payment_status: "PENDING" } }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(outcome.failedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("FAILED");
+  });
+
   it("TEST 1 normal booking makes one CEPT call", async () => {
     bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
     trackShipmentMock.mockReset();

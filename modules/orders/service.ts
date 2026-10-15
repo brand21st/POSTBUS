@@ -4,9 +4,14 @@ import { orIlike } from "@/lib/api/filters";
 import type { OrderStatus } from "@/types/domain";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
-import type { createOrderSchema, orderListQuery, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
-import { settleOrderPayment } from "@/modules/orders/payment";
+import { settleOrderPayment, shipmentCollectFromOrder } from "@/modules/orders/payment";
+import {
+  applyShopifyPaymentOverrideStatus,
+  mergeShopifyPaymentMetadata,
+  shopifyPaymentSnapshotFromMetadata,
+} from "@/modules/shopify/payment";
 import {
   mapCatalogRows,
   resolveLineFromCatalog,
@@ -188,7 +193,8 @@ export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id:
 export async function createManualOrder(
   supabase: SupabaseClient,
   ctx: OrderActor,
-  input: CreateInput
+  input: CreateInput,
+  serverResolvedLines?: ResolvedOrderLine[]
 ) {
   const { data: customer, error: customerError } = await supabase
     .from("customers")
@@ -225,7 +231,7 @@ export async function createManualOrder(
       image_urls?: unknown;
     }>
   );
-  const resolvedLines: ResolvedOrderLine[] = input.lineItems.map((item) => {
+  const resolvedLines: ResolvedOrderLine[] = serverResolvedLines ?? input.lineItems.map((item) => {
     if (!item.productId) return resolveManualLine(item);
     const product = catalog.get(item.productId);
     if (!product) {
@@ -334,7 +340,7 @@ export async function createManualOrder(
 function insertAddress(
   supabase: SupabaseClient,
   organizationId: string,
-  customerId: string,
+  customerId: string | null,
   address: CreateInput["shippingAddress"]
 ) {
   return supabase
@@ -483,6 +489,79 @@ export async function updateOrderWeights(
       .in("id", openIds);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   }
+
+  return getOrder(supabase, ctx, orderId);
+}
+
+export async function updateOrderShippingAddress(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  input: z.infer<typeof updateOrderAddressSchema>
+) {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, customer_id, shipping_address_id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, orderError.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+
+  const { data: shipments, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("id, status")
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+  const locked = ((shipments ?? []) as Array<{ status?: string | null }>).some(
+    (row) => !OPEN_WEIGHT_SHIPMENT_STATUSES.has((row.status ?? "").toUpperCase())
+  );
+  if (locked) {
+    throw new AppError(ERROR_CODES.CONFLICT, "Address is locked after India Post booking.");
+  }
+
+  const fields = {
+    name: input.name ?? null,
+    phone: input.phone ?? null,
+    line1: input.line1,
+    line2: input.line2 ?? null,
+    city: input.city,
+    state: input.state,
+    pincode: input.pincode,
+    country: input.country ?? "IN",
+  };
+
+  if (order.shipping_address_id) {
+    const { error } = await supabase
+      .from("addresses")
+      .update(fields)
+      .eq("id", order.shipping_address_id)
+      .eq("organization_id", ctx.organizationId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  } else {
+    const shipping = await insertAddress(
+      supabase,
+      ctx.organizationId,
+      (order.customer_id as string | null) ?? null,
+      input
+    );
+    const { error } = await supabase
+      .from("orders")
+      .update({ shipping_address_id: shipping.id })
+      .eq("id", orderId)
+      .eq("organization_id", ctx.organizationId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId || null,
+    action: "order.shipping_address_updated",
+    entity_type: "order",
+    entity_id: orderId,
+    after: { pincode: input.pincode, city: input.city, state: input.state },
+  });
 
   return getOrder(supabase, ctx, orderId);
 }
@@ -717,4 +796,88 @@ export async function confirmWhatsAppOrder(
   });
 
   return updated;
+}
+
+export async function confirmShopifyPayment(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  paymentType: "PREPAID" | "COD"
+) {
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, source, payment_status, total_amount, metadata")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+  if (order.source !== "SHOPIFY") {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This is not a Shopify order.");
+  }
+  if (String(order.payment_status).toUpperCase() !== "PENDING") {
+    throw new AppError(ERROR_CODES.CONFLICT, "This Shopify order is not waiting for payment confirmation.");
+  }
+
+  const total = Number(order.total_amount ?? 0);
+  const settled = settleOrderPayment({
+    paymentStatus: applyShopifyPaymentOverrideStatus(paymentType),
+    totalAmount: total,
+  });
+  const stored = shopifyPaymentSnapshotFromMetadata(order.metadata);
+  const override = { kind: paymentType, actorId: ctx.userId || null, at: new Date().toISOString() };
+  const metadata = mergeShopifyPaymentMetadata(order.metadata, {
+    financialStatus: stored?.financialStatus ?? "pending",
+    gateways: stored?.gateways ?? [],
+    sourceName: stored?.sourceName ?? null,
+    outstanding: stored?.outstanding ?? null,
+    updatedAt: stored?.updatedAt ?? new Date().toISOString(),
+    reason: `merchant_override:${paymentType.toLowerCase()}`,
+    collectionMode: paymentType,
+    override,
+    bookingConflict: stored?.bookingConflict ?? null,
+  });
+
+  const { data: updated, error: updateError } = await supabase
+    .from("orders")
+    .update({
+      payment_status: settled.paymentStatus,
+      amount_paid: settled.amountPaid,
+      cod_amount: settled.codAmount,
+      metadata,
+    })
+    .eq("id", orderId)
+    .eq("organization_id", ctx.organizationId)
+    .eq("source", "SHOPIFY")
+    .eq("payment_status", "PENDING")
+    .select()
+    .maybeSingle();
+  if (updateError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError.message);
+  if (!updated) throw new AppError(ERROR_CODES.CONFLICT, "This Shopify order is not waiting for payment confirmation.");
+
+  const collect = shipmentCollectFromOrder(updated);
+  const { error: shipmentError } = await supabase
+    .from("shipments")
+    .update({ payment_mode: collect.payment_mode, cod_amount: collect.cod_amount })
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId)
+    .in("status", ["DRAFT", "FAILED"])
+    .is("booked_at", null);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId || null,
+    action: "order.shopify_payment_confirmed",
+    entity_type: "order",
+    entity_id: orderId,
+    after: {
+      paymentType,
+      paymentStatus: settled.paymentStatus,
+      collectionMode: paymentType,
+      capturedPayment: false,
+    },
+  });
+
+  return getOrder(supabase, ctx, orderId);
 }

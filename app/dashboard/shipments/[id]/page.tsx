@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { IndiaPostRouting } from "@/components/dashboard/india-post-routing";
+import { buildIndiaPostRoutingView } from "@/lib/dashboard/india-post-routing";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
@@ -48,6 +50,7 @@ export default function ShipmentDetailPage() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+  const autoSynced = useRef<string | null>(null);
 
   const retry = useMutation({
     mutationFn: () => api(`/api/v1/shipments/${params.id}/retry`, { method: "POST" }),
@@ -110,6 +113,17 @@ export default function ShipmentDetailPage() {
     if (!id) return;
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [recordForHash]);
+
+  useEffect(() => {
+    if (!canSync || !params.id || shipment.isLoading || !shipment.data) return;
+    const article = shipment.data.trackingNumber ?? shipment.data.tracking_number ?? shipment.data.barcode;
+    const events = shipment.data.events ?? [];
+    if (!article || events.length > 0) return;
+    if (autoSynced.current === params.id) return;
+    autoSynced.current = params.id;
+    sync.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync once per shipment when no scans exist
+  }, [canSync, params.id, shipment.data, shipment.isLoading]);
 
   if (shipment.isLoading) {
     return (
@@ -341,6 +355,15 @@ export default function ShipmentDetailPage() {
         </Card>
       ) : null}
 
+      <Card id="tracking-timeline">
+        <CardHeader>
+          <CardTitle>Routing Steps</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <IndiaPostRouting view={buildIndiaPostRoutingView(record, events)} />
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Invoice</CardTitle>
@@ -359,34 +382,6 @@ export default function ShipmentDetailPage() {
               }
             />
           </PlanLock>
-        </CardContent>
-      </Card>
-
-      <Card id="tracking-timeline">
-        <CardHeader>
-          <CardTitle>Tracking timeline</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {events.length === 0 ? (
-            <p className="text-sm text-muted">
-              No provider events yet. Tracking only appears after India Post reports a scan.
-            </p>
-          ) : (
-            <ol className="space-y-4">
-              {events.map((event, index) => (
-                <li key={event.id ?? index} className="border-l border-border pl-4">
-                  <p className="text-sm font-medium text-ink">
-                    {event.eventDescription ?? event.event_description ?? event.eventCode ?? event.event_code}
-                  </p>
-                  <p className="text-xs text-muted">
-                    {[event.officeName ?? event.office_name, formatDate(event.occurredAt ?? event.occurred_at, true)]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          )}
         </CardContent>
       </Card>
     </div>

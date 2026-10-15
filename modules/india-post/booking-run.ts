@@ -22,6 +22,7 @@ import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { persistIndiaPostTokens } from "@/modules/india-post/session";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
+import { shopifyPendingBookingBlocked } from "@/lib/dashboard/records";
 import { withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
 import { classifyProviderError } from "@/lib/jobs/retry";
 import { logInfo, logError } from "@/lib/logger";
@@ -390,6 +391,18 @@ export async function runIndiaPostBooking(
     }
     barcode = shipmentBarcode(claimed.barcode) || barcode;
 
+    const linkedOrder = shipment.orders as {
+      source?: string | null;
+      payment_status?: string | null;
+      paymentStatus?: string | null;
+    } | null;
+    if (shopifyPendingBookingBlocked(linkedOrder ?? {})) {
+      const message = "Shopify payment is pending. Confirm Prepaid or COD before India Post booking.";
+      await markShipmentBookingFailed(supabase, shipment.id, message, "VALIDATION_ERROR", input.organizationId);
+      failedIds.push(shipment.id);
+      continue;
+    }
+
     const address = shipment.addresses as {
       name?: string;
       line1?: string;
@@ -474,7 +487,7 @@ export async function runIndiaPostBooking(
   }
 
   if (!prepared.length) {
-    if (bookedIds.length) {
+    if (bookedIds.length || failedIds.length) {
       return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result: null };
     }
     throw Object.assign(new Error("No articles passed validation."), { code: "VALIDATION_ERROR" });

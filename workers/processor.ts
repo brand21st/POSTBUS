@@ -137,6 +137,21 @@ export async function processJob(queue: string, payload: JobPayload) {
         );
       }
     }
+    else if (queue === "ai-image") {
+      const { data: job } = await supabase
+        .from("background_jobs")
+        .select("progress, entity_id")
+        .eq("id", jobId)
+        .maybeSingle();
+      const aiImageJobId = String(
+        (job?.progress as { aiImageJobId?: string } | null)?.aiImageJobId || job?.entity_id || payload.entityId || ""
+      );
+      if (!aiImageJobId) {
+        throw Object.assign(new Error("AI image job id is missing."), { code: "VALIDATION_ERROR" });
+      }
+      const { processAiImageJob } = await import("@/modules/ai-image/process");
+      await processAiImageJob(supabase, payload.organizationId, aiImageJobId);
+    }
     else if (queue === "india-post-events") {
       const { processIndiaPostInboxEvent } = await import("@/modules/india-post/webhook");
       if (!payload.entityId) {

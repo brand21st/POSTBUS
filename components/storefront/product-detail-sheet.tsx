@@ -100,6 +100,39 @@ function ProductGallery({ product }: { product: StoreProduct }) {
   );
 }
 
+function OfferRail({ title, note, products, cart, accent, onOpenProduct, onAdd, onDecrease }: {
+  title: string;
+  note?: string;
+  products: StoreProduct[];
+  cart: CartLine[];
+  accent: string;
+  onOpenProduct: (product: StoreProduct) => void;
+  onAdd: (product: StoreProduct) => void;
+  onDecrease: (productId: string) => void;
+}) {
+  if (!products.length) return null;
+  return (
+    <div className="border-t border-zinc-100 pt-4">
+      <h3 className="font-bold">{title}</h3>
+      {note ? <p className="mb-3 mt-0.5 text-xs text-zinc-500">{note}</p> : <div className="mb-3" />}
+      <div className="-mx-1 flex gap-2.5 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {products.slice(0, 4).map((item) => (
+          <ProductCard
+            key={item.id}
+            product={item}
+            quantity={cart.find((line) => line.product.id === item.id)?.quantity ?? 0}
+            accent={accent}
+            compact
+            onOpen={() => onOpenProduct(item)}
+            onAdd={() => onAdd(item)}
+            onDecrease={() => onDecrease(item.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ProductDetailSheet({
   product,
   quantity,
@@ -187,25 +220,9 @@ export function ProductDetailSheet({
             <p className="mt-1">{product.returnAvailable === false ? "No Return" : "Return Available"}</p>
           </div>
         </div>
-        {related.length ? (
-          <div className="border-t border-zinc-100 pt-4">
-            <h3 className="mb-3 font-bold">You may also like</h3>
-            <div className="-mx-1 flex gap-2.5 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {related.slice(0, 4).map((item) => (
-                <ProductCard
-                  key={item.id}
-                  product={item}
-                  quantity={cart.find((line) => line.product.id === item.id)?.quantity ?? 0}
-                  accent={accent}
-                  compact
-                  onOpen={() => onOpenProduct(item)}
-                  onAdd={() => onAdd(item)}
-                  onDecrease={() => onDecrease(item.id)}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
+        <OfferRail title="Upgrade this order" note="Upsells chosen for this product." products={related.filter((item) => product.upsellIds?.includes(item.id))} cart={cart} accent={accent} onOpenProduct={onOpenProduct} onAdd={onAdd} onDecrease={onDecrease} />
+        <OfferRail title="Frequently bought together" note="Cross-sells at their current price." products={related.filter((item) => product.crossSellIds?.includes(item.id) && !product.upsellIds?.includes(item.id))} cart={cart} accent={accent} onOpenProduct={onOpenProduct} onAdd={onAdd} onDecrease={onDecrease} />
+        <OfferRail title="You may also like" products={related.filter((item) => !product.upsellIds?.includes(item.id) && !product.crossSellIds?.includes(item.id))} cart={cart} accent={accent} onOpenProduct={onOpenProduct} onAdd={onAdd} onDecrease={onDecrease} />
         </div>
         <div className="flex shrink-0 gap-3 border-t border-zinc-100 bg-white p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:p-4">
             {quantity > 0 ? (

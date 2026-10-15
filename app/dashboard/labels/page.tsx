@@ -245,6 +245,7 @@ export default function LabelsPage() {
   const entitlements = usePlanEntitlements();
   const canBulk = entitlements.allows(FEATURE.bulk);
   const canPacking = entitlements.allows(FEATURE.packing);
+  const canOfficialIndiaPostLabel = !entitlements.loading && entitlements.showsOfficialIndiaPostLabel;
 
   const query = useQuery({
     queryKey: ["labels", page, kind],
@@ -376,29 +377,33 @@ export default function LabelsPage() {
           String(row.barcodeStatus ?? row.barcode_status ?? (indiaId ? row.status : "")).toUpperCase() === "READY";
         return (
           <div className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!canGenerateOfficial || labelBusy}
-              onClick={() =>
-                canGenerateOfficial &&
-                previewLatestLabel.mutate({ shipmentId, labelId, tab: openPreviewTab() })
-              }
-            >
-              {indiaId ? <Check className="size-4 text-emerald-600" /> : <QrCode className="size-4" />}
-              {labelPreviewBusy ? "Generating…" : "India Post Label"}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!canGenerateOfficial || labelBusy}
-              onClick={() => canGenerateOfficial && downloadLatestLabel.mutate({ shipmentId, labelId })}
-            >
-              <Download className="size-4" />
-              {labelDownloadBusy ? "Generating…" : "Download Label PDF"}
-            </Button>
+            {canOfficialIndiaPostLabel ? (
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!canGenerateOfficial || labelBusy}
+                  onClick={() =>
+                    canGenerateOfficial &&
+                    previewLatestLabel.mutate({ shipmentId, labelId, tab: openPreviewTab() })
+                  }
+                >
+                  {indiaId ? <Check className="size-4 text-emerald-600" /> : <QrCode className="size-4" />}
+                  {labelPreviewBusy ? "Generating…" : "India Post Label"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={!canGenerateOfficial || labelBusy}
+                  onClick={() => canGenerateOfficial && downloadLatestLabel.mutate({ shipmentId, labelId })}
+                >
+                  <Download className="size-4" />
+                  {labelDownloadBusy ? "Generating…" : "Download Label PDF"}
+                </Button>
+              </>
+            ) : null}
             <Button
               type="button"
               variant="secondary"
@@ -552,6 +557,7 @@ export default function LabelsPage() {
         total={list.total}
         onPageChange={setPage}
         selectable
+        selectedIds={selected}
         onSelectionChange={setSelected}
         getRowId={rowKey}
       />

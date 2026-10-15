@@ -11,16 +11,25 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
 import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
-import { StatusBadge } from "@/components/dashboard/status-badge";
+import { orderStatusBadgeValue, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { addressLine, customerName, lineItemImageUrl, lineItems, orderNumber } from "@/lib/dashboard/records";
+import {
+  addressLine,
+  canFulfillOrder,
+  customerName,
+  lineItemImageUrl,
+  lineItems,
+  orderNumber,
+  shopifyPendingBookingBlocked,
+} from "@/lib/dashboard/records";
 import { formatCurrency, formatDate, formatWeightGrams } from "@/lib/format";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
+import { EditShippingAddressDialog } from "@/components/orders/edit-shipping-address-dialog";
 import { api } from "@/lib/hooks/use-api";
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
@@ -38,6 +47,7 @@ export default function OrderDetailPage() {
   const [itemModes, setItemModes] = useState<Record<string, "auto" | "manual">>({});
   const [draftWeights, setDraftWeights] = useState<Record<string, string>>({});
   const [manualBox, setManualBox] = useState("");
+  const [addressOpen, setAddressOpen] = useState(false);
 
   const order = useQuery({
     queryKey: ["order", params.id],
@@ -60,6 +70,20 @@ export default function OrderDetailPage() {
       const rows = current.state.data?.items ?? [];
       return rows.some((row) => isIndiaPostBookingInFlight(row.status)) ? 3_000 : false;
     },
+  });
+
+  const confirmShopify = useMutation({
+    mutationFn: (paymentType: "PREPAID" | "COD") =>
+      api(`/api/v1/orders/${params.id}/shopify-payment`, {
+        method: "POST",
+        body: JSON.stringify({ paymentType }),
+      }),
+    onSuccess: () => {
+      toast.success("Shopify payment confirmed.");
+      queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const ship = useMutation({
@@ -150,6 +174,7 @@ export default function OrderDetailPage() {
   }
 
   const record = order.data;
+  const shopifyNeedsPayment = shopifyPendingBookingBlocked(record);
   const items = lineItems(record);
   const related = shipments.data?.items ?? [];
   const weightsLocked = related.some(
@@ -182,7 +207,12 @@ export default function OrderDetailPage() {
             </Link>
           }
           actions={
-            <Button type="button" size="sm" onClick={() => ship.mutate()} disabled={ship.isPending}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => ship.mutate()}
+              disabled={ship.isPending || !canFulfillOrder(record) || shopifyNeedsPayment}
+            >
               <Truck className="size-4" />
               Ship order
             </Button>
@@ -196,8 +226,41 @@ export default function OrderDetailPage() {
             <CardTitle>Status</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 p-4 pt-0 text-sm">
-            <Row label="Order" value={<StatusBadge value={record.status} />} />
-            <Row label="Payment" value={<StatusBadge value={record.paymentStatus ?? record.payment_status} />} />
+            <Row label="Order" value={<StatusBadge value={orderStatusBadgeValue(record.status)} />} />
+            <Row
+              label="Payment"
+              value={
+                <div className="flex flex-col items-end gap-2">
+                  <StatusBadge value={record.paymentStatus ?? record.payment_status} />
+                  {shopifyNeedsPayment ? (
+                    <div className="flex flex-wrap justify-end gap-1">
+                      <p className="w-full text-right text-xs text-muted">
+                        Confirm India Post collection: Prepaid means no COD
+                        collect on delivery (not proof Shopify captured funds).
+                        COD means India Post collects the order total.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={confirmShopify.isPending}
+                        onClick={() => confirmShopify.mutate("PREPAID")}
+                      >
+                        Confirm prepaid
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={confirmShopify.isPending}
+                        onClick={() => confirmShopify.mutate("COD")}
+                      >
+                        Confirm COD
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              }
+            />
             <Row
               label="Fulfillment"
               value={<StatusBadge value={record.fulfillmentStatus ?? record.fulfillment_status} />}
@@ -250,14 +313,37 @@ export default function OrderDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader className="p-4">
+          <CardHeader className="flex-row items-start justify-between gap-2 p-4">
             <CardTitle>Shipping address</CardTitle>
+            {weightsLocked ? null : (
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto px-0 font-medium"
+                onClick={() => setAddressOpen(true)}
+              >
+                Edit address
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="p-4 pt-0 text-sm text-muted">
             {addressLine(record.shippingAddress)}
+            {weightsLocked ? (
+              <p className="mt-2 text-xs">Address is locked after India Post booking.</p>
+            ) : null}
           </CardContent>
         </Card>
       </div>
+      <EditShippingAddressDialog
+        open={addressOpen}
+        onOpenChange={setAddressOpen}
+        orderId={record.id}
+        address={record.shippingAddress}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+        }}
+      />
 
       <Card>
         <CardHeader className="p-4">

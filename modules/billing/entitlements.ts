@@ -98,6 +98,12 @@ export function hasPlanFeature(features: string[] | null | undefined, feature: s
   return (features ?? []).includes(feature);
 }
 
+/** Official India Post Label / Download Label PDF is Starter-only (hidden on Pro and Business). */
+export function showsStarterOfficialIndiaPostLabel(input?: { slug?: string | null; trial?: boolean }) {
+  if (input?.trial) return false;
+  return (input?.slug ?? "").toLowerCase() === "starter";
+}
+
 export function automationToggleLock(camel: string, allows: (feature: string) => boolean): string | null {
   if (!allows(FEATURE.automation)) return FEATURE.automation;
   if (camel.startsWith("autoWati") && !allows(FEATURE.wati)) return FEATURE.wati;

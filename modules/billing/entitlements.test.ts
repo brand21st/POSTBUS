@@ -8,6 +8,7 @@ import {
   expandPlanFeatures,
   lockedFeatureForApi,
   lockedFeatureForPath,
+  showsStarterOfficialIndiaPostLabel,
 } from "@/modules/billing/entitlements";
 
 describe("plan entitlements", () => {
@@ -21,6 +22,13 @@ describe("plan entitlements", () => {
 
   it("unlocks every catalog feature during trial", () => {
     expect(expandPlanFeatures([], { trial: true, slug: "starter" })).toEqual(BUSINESS_FEATURES);
+  });
+
+  it("shows official India Post label buttons only on Starter", () => {
+    expect(showsStarterOfficialIndiaPostLabel({ slug: "starter" })).toBe(true);
+    expect(showsStarterOfficialIndiaPostLabel({ slug: "pro" })).toBe(false);
+    expect(showsStarterOfficialIndiaPostLabel({ slug: "business" })).toBe(false);
+    expect(showsStarterOfficialIndiaPostLabel({ slug: "starter", trial: true })).toBe(false);
   });
 
   it("expands Everything in Pro for custom slugs", () => {

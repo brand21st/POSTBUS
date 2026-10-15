@@ -15,8 +15,16 @@ const trackingDetailSchema = z
   })
   .passthrough();
 
+function asArray<T>(value: unknown): T[] | undefined {
+  if (value == null) return undefined;
+  if (Array.isArray(value)) return value as T[];
+  if (typeof value === "object") return [value as T];
+  return undefined;
+}
+
 const bulkArticleSchema = z
   .object({
+    article_number: optionalText,
     booking_details: z
       .object({
         article_number: optionalText,
@@ -24,7 +32,7 @@ const bulkArticleSchema = z
       })
       .passthrough()
       .optional(),
-    tracking_details: z.array(trackingDetailSchema).optional(),
+    tracking_details: z.preprocess(asArray, z.array(trackingDetailSchema).optional()),
     del_status: z.object({ del_status: optionalText }).passthrough().optional(),
   })
   .passthrough();
@@ -34,7 +42,7 @@ export const bulkTrackingResponseSchema = z
     success: z.boolean().optional(),
     status_code: z.number().optional(),
     message: optionalText,
-    data: z.array(bulkArticleSchema).optional(),
+    data: z.preprocess(asArray, z.array(bulkArticleSchema).optional()),
     error: z.object({ message: z.string().optional() }).passthrough().optional(),
   })
   .passthrough();
@@ -61,13 +69,25 @@ export function retryAfterMsFromHeader(value: string | null) {
   return Math.max(0, date - Date.now());
 }
 
+export function bulkArticleNumber(article: {
+  article_number?: unknown;
+  booking_details?: { article_number?: unknown } | null;
+} | null | undefined) {
+  return String(article?.booking_details?.article_number ?? article?.article_number ?? "").trim();
+}
+
 export function articlesForRequestedBarcodes(
   articles: ParsedBulkTrackingResponse["data"],
   requested: string[]
 ) {
-  const wanted = new Set(requested.map((code) => code.trim()).filter(Boolean));
-  return (articles ?? []).filter((article) => {
-    const number = String(article.booking_details?.article_number ?? "").trim();
-    return Boolean(number) && wanted.has(number);
-  });
+  const wanted = requested.map((code) => code.trim()).filter(Boolean);
+  const wantedSet = new Set(wanted.map((code) => code.toUpperCase()));
+  const list = articles ?? [];
+  const matched = list.filter((article) => wantedSet.has(bulkArticleNumber(article).toUpperCase()));
+  if (matched.length) return matched;
+  if (wanted.length === 1 && list.length === 1 && !bulkArticleNumber(list[0])) {
+    const details = list[0]?.tracking_details;
+    if (Array.isArray(details) && details.length) return list;
+  }
+  return [];
 }

@@ -29,18 +29,28 @@ function createAiCreditsStore() {
   };
 
   const db = {
-    from() {
-      return {
+    from(table: string) {
+      const filters: Record<string, unknown> = {};
+      const query = {
         select() {
-          return this;
+          return query;
         },
-        eq() {
-          return this;
+        eq(column: string, value: unknown) {
+          filters[column] = value;
+          return query;
         },
         not() {
-          return this;
+          return query;
         },
         async maybeSingle() {
+          if (table === "payments") {
+            const payment = state.payments.find((row) => {
+              if (filters.razorpay_order_id) return row.razorpay_order_id === filters.razorpay_order_id;
+              if (filters.razorpay_payment_id) return row.id === filters.razorpay_payment_id;
+              return false;
+            });
+            return { data: payment ?? null, error: null };
+          }
           return { data: null, error: null };
         },
         async insert() {
@@ -54,6 +64,7 @@ function createAiCreditsStore() {
           };
         },
       };
+      return query;
     },
     async rpc(name: string, args: Record<string, unknown>) {
       if (name !== "fulfill_ai_credit_purchase") return { data: null, error: { message: "unknown rpc" } };
@@ -135,5 +146,22 @@ describe("AI credit Razorpay webhooks", () => {
     });
     expect(missing.handled).toBe(false);
     expect(missing.granted).toBe(false);
+  });
+
+  it("does not grant credits for an unmatched payment.captured order", async () => {
+    const { state, db } = createAiCreditsStore();
+    const result = await processRazorpayEvent(
+      db,
+      {
+        event: "payment.captured",
+        payload: {
+          payment: { entity: { id: "pay_other", amount: 39900, order_id: "order_missing" } },
+        },
+      },
+      "evt_unmatched_ai"
+    );
+    expect(result).toEqual({ ignored: true });
+    expect(state.balance).toBe(0);
+    expect(state.payments[0]?.status).toBe("PENDING");
   });
 });

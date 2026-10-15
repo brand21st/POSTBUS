@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clipboard, Sparkles, Trash2 } from "lucide-react";
+import { Clipboard, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/hooks/use-api";
@@ -201,32 +201,37 @@ export function WhatsAppPasteParser({
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-2 sm:mt-4">
+      <div className="mt-2 flex items-center gap-1.5 sm:mt-3">
         <Button
           type="button"
-          size="default"
+          size="xs"
           className={cn(
-            "h-11 min-w-0 flex-1 text-white shadow-sm sm:h-12 sm:flex-none sm:px-6 sm:text-base",
-            "!bg-[#25D366] hover:!bg-[#20bd5a] hover:shadow-md"
+            "group min-w-0 flex-1 text-white shadow-sm transition-all duration-300 ease-out sm:flex-none sm:px-3 [&_svg]:size-3.5",
+            "!bg-[#25D366] hover:!bg-[#20bd5a] hover:shadow-md active:scale-[0.98]",
+            parsing && "shadow-md"
           )}
           disabled={!text.trim() || parsing || outOfCredits}
           aria-busy={parsing}
           onClick={() => void parse()}
         >
-          <Sparkles className="size-4 shrink-0" aria-hidden />
-          {parsing ? "Extracting..." : "Extract with AI"}
+          {parsing ? (
+            <Loader2 className="animate-spin" aria-hidden />
+          ) : (
+            <Sparkles className="transition-transform duration-300 group-hover:rotate-12 group-hover:scale-110" aria-hidden />
+          )}
+          <span className="truncate">{parsing ? "Extracting…" : "Extract with AI"}</span>
         </Button>
         <Button
           type="button"
           variant="secondary"
-          size="default"
-          className="h-11 w-11 shrink-0 px-0 sm:h-12 sm:w-auto sm:px-5 sm:text-base"
+          size="xs"
+          className="shrink-0 px-2.5 transition-all duration-200 ease-out active:scale-[0.96] [&_svg]:size-3.5 sm:px-3"
           disabled={parsing || !text}
           aria-label="Clear pasted details"
           title="Clear"
           onClick={clear}
         >
-          <Trash2 className="size-4" aria-hidden />
+          <Trash2 aria-hidden />
           <span className="hidden sm:inline">Clear</span>
         </Button>
       </div>

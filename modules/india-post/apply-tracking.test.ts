@@ -226,6 +226,14 @@ describe("matchingBulkTrackingArticle", () => {
     );
     expect(match).toBeNull();
   });
+
+  it("uses the only unlabeled article when the requested AWB has scans", () => {
+    const match = matchingBulkTrackingArticle(
+      [{ tracking_details: [{ event: "Item Booked", date: "2026-10-09", time: "11:33:44" }] }],
+      "CX075250656IN"
+    );
+    expect(match?.tracking_details?.[0]?.event).toBe("Item Booked");
+  });
 });
 
 describe("applyIndiaPostTracking", () => {

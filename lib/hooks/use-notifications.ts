@@ -9,7 +9,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { NotificationRecord } from "@/types/api";
 
 export const NOTIFICATIONS_QUERY_KEY = ["notifications"] as const;
-export const NOTIFICATIONS_REFETCH_INTERVAL_MS = 45_000;
+export const NOTIFICATIONS_REFETCH_INTERVAL_MS = 12_000;
 
 export function useNotifications() {
   const me = useMe();
@@ -44,7 +44,7 @@ export function useNotifications() {
         )
         .subscribe();
     } catch {
-      // 45s polling still refreshes if Realtime is unavailable.
+      // Polling still refreshes if Realtime is unavailable.
     }
     return () => {
       if (channel) void channel.unsubscribe();

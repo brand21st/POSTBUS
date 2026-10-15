@@ -56,6 +56,18 @@ export async function withProcessSessionLock<T>(connectionId: string, work: () =
 
 export const INDIA_POST_TRACKING_SESSION_LOCK_WAIT_MS = 200;
 
+async function persistSessionFromConnection(
+  supabase: SupabaseClient,
+  connection: NonNullable<Parameters<typeof indiaPostFromRow>[0]> & { id: string }
+) {
+  const provider = indiaPostFromRow(connection);
+  const session = await provider.ensureSession();
+  if (session.tokens) {
+    await persistIndiaPostTokens(supabase, connection, session.tokens);
+  }
+  return provider;
+}
+
 export async function ensurePersistedIndiaPostSession(
   supabase: SupabaseClient,
   connection: NonNullable<Parameters<typeof indiaPostFromRow>[0]> & {
@@ -76,14 +88,22 @@ export async function ensurePersistedIndiaPostSession(
         skipProcessLock: true,
         waitMs: INDIA_POST_TRACKING_SESSION_LOCK_WAIT_MS,
       },
-      async () => {
-        const provider = indiaPostFromRow(connection);
-        const session = await provider.ensureSession();
-        if (session.tokens) {
-          await persistIndiaPostTokens(supabase, connection, session.tokens);
-        }
-        return provider;
-      }
+      () => persistSessionFromConnection(supabase, connection)
     )
   );
+}
+
+/** Tracking lookups must not take the India Post booking lock. */
+export async function ensurePersistedIndiaPostTrackingSession(
+  supabase: SupabaseClient,
+  connection: NonNullable<Parameters<typeof indiaPostFromRow>[0]> & {
+    id: string;
+    organization_id?: string | null;
+  }
+) {
+  const organizationId = String(connection.organization_id ?? "").trim();
+  if (!organizationId) {
+    throw bookingLockUnavailableError("missing_organization");
+  }
+  return withProcessSessionLock(connection.id, () => persistSessionFromConnection(supabase, connection));
 }

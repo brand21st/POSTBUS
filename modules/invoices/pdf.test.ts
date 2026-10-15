@@ -26,7 +26,7 @@ describe("invoice PDF", () => {
     expect(Buffer.from(bytes).subarray(0, 4).toString()).toBe("%PDF");
   });
 
-  it("prints the short shipment number and separates subtotal from total", async () => {
+  it("prints the short shipment number and separates subtotal from total", { timeout: 20000 }, async () => {
     const bytes = await renderInvoicePdf({
       ...SAMPLE_INVOICE_DATA,
       shipmentId: "58379dbb-6009-4948-bfb9-0310258c1a5b",

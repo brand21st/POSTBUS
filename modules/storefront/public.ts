@@ -5,11 +5,15 @@ import { mapProductImageUrls } from "@/modules/products/images";
 import { discountPercent } from "@/modules/storefront/pricing";
 import { mapCategory } from "@/modules/products/categories";
 import { listProductRecommendations } from "@/modules/products/recommendations";
+import { eligibleCovers } from "@/modules/storefront/cover-model";
 import { getStorefrontSettings } from "@/modules/storefront/service";
 import type { PublicLinkRef } from "@/modules/customer-order-links/public";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { policyBodyForSlug, STORE_POLICY_SLUGS, STORE_POLICY_TITLES, type StorePolicySlug } from "@/modules/storefront/footer";
 import { loadOrganizationPolicies } from "@/modules/vachat/policies";
+import { env } from "@/lib/env";
+import { listStoreBundles } from "./bundles";
+import { allocateBundlePrices } from "./bundle-pricing";
 
 export function publicStoreClient() {
   if (!hasAdminClient()) {
@@ -114,16 +118,34 @@ export async function loadPublicStorefront(supabase: SupabaseClient, ref: Public
     ? await listPublicProducts(supabase, organizationId, { page: 1, pageSize: 12 })
     : { items: [], page: 1, pageSize: 12, total: 0 };
   const featured = settings.published
-    ? await loadRelatedPublicProducts(supabase, organizationId, settings.featuredProductIds)
+    ? await loadPublicProductsByIds(supabase, organizationId, settings.featuredProductIds)
     : [];
+  const marketplace = env.storefrontMarketplaceEnabled;
+  const bundleRows = settings.published && marketplace ? await listStoreBundles(supabase, organizationId, true) : [];
+  const bundleProducts = await loadPublicProductsByIds(supabase, organizationId, bundleRows.flatMap((bundle) => bundle.items.map((item) => item.productId)), 800);
+  const bundles = bundleRows.flatMap((bundle) => {
+    const components = bundle.items.map((item) => ({ ...item, product: bundleProducts.find((product) => product.id === item.productId) }));
+    if (components.length < 2 || components.length > 8 || components.some((item) => !item.product || !item.product.inStock || item.product.onHand < item.quantity)) return [];
+    try {
+      const pricing = allocateBundlePrices(components.map((item) => ({ ...item, price: item.product!.price })), bundle.pricingMode, bundle.priceValue);
+      return [{ ...bundle, ...pricing, components: components.map((item) => ({ product: item.product!, quantity: item.quantity })) }];
+    } catch { return []; }
+  });
   return {
+    marketplace,
+    theme: settings.theme,
+    tracking: settings.published && marketplace ? settings.tracking : undefined,
+    bundles,
     published: settings.published,
     storeName: settings.storeName,
     logoUrl: settings.logoUrl,
     accentColor: settings.accentColor,
     seoTitle: settings.seoTitle,
     seoDescription: settings.seoDescription,
-    slides: settings.published ? settings.slides.filter((slide) => slide.enabled && slide.imageUrl) : [],
+    slides: settings.published
+      ? eligibleCovers(settings.slides.filter((slide) => slide.status !== "ARCHIVED"))
+      : [],
+    coverAutoplay: settings.coverAutoplay === true,
     categories: settings.published
       ? (categories ?? []).map((row) => mapCategory(row as Record<string, unknown>))
       : [],
@@ -137,18 +159,22 @@ export async function loadPublicStorefront(supabase: SupabaseClient, ref: Public
 export async function listPublicProducts(
   supabase: SupabaseClient,
   organizationId: string,
-  query: { page: number; pageSize: number; q?: string; categoryId?: string }
+  query: { page: number; pageSize: number; q?: string; categoryId?: string; sort?: string; priceMin?: number; priceMax?: number; inStock?: string }
 ) {
   const from = (query.page - 1) * query.pageSize;
   const to = from + query.pageSize - 1;
   let builder = supabase
     .from("products")
-    .select(PUBLIC_PRODUCT_SELECT, { count: "exact" })
+    .select(query.inStock === "true" ? PUBLIC_PRODUCT_SELECT.replace("inventory_balances(", "inventory_balances!inner(") : PUBLIC_PRODUCT_SELECT, { count: "exact" })
     .eq("organization_id", organizationId)
     .eq("active", true)
     .eq("store_visible", true)
-    .order("created_at", { ascending: false })
+    .order(query.sort === "priceAsc" || query.sort === "priceDesc" ? "price" : query.sort === "name" ? "name" : "created_at", { ascending: query.sort === "priceAsc" || query.sort === "name" })
+    .order("id")
     .range(from, to);
+  if (query.priceMin !== undefined) builder = builder.gte("price", query.priceMin);
+  if (query.priceMax !== undefined) builder = builder.lte("price", query.priceMax);
+  if (query.inStock === "true") builder = builder.gt("inventory_balances.on_hand", 0);
   if (query.q) {
     const filter = orIlike(["name", "sku"], query.q);
     const { data: matchingCategories } = await supabase
@@ -183,7 +209,7 @@ export async function listPublicProducts(
   }
   const { data, error, count } = await builder;
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-  const items = (data ?? []).map((row) => mapPublicProduct(row as Record<string, unknown>));
+  const items = (data ?? []).map((row) => mapPublicProduct(row as unknown as Record<string, unknown>));
   const recs = await listProductRecommendations(
     supabase,
     organizationId,
@@ -209,8 +235,8 @@ export async function listPublicProducts(
   ];
   const bestSellerIds = await publicBestSellerIds(supabase, organizationId);
   const [related, bestSellerProducts] = await Promise.all([
-    loadRelatedPublicProducts(supabase, organizationId, relatedIds),
-    loadRelatedPublicProducts(supabase, organizationId, bestSellerIds),
+    loadPublicProductsByIds(supabase, organizationId, relatedIds),
+    loadPublicProductsByIds(supabase, organizationId, bestSellerIds),
   ]);
   const bestSellerSet = new Set(bestSellerIds);
   return {
@@ -229,8 +255,8 @@ export async function listPublicProducts(
   };
 }
 
-async function loadRelatedPublicProducts(supabase: SupabaseClient, organizationId: string, ids: string[]) {
-  const unique = [...new Set(ids)].slice(0, 24);
+export async function loadPublicProductsByIds(supabase: SupabaseClient, organizationId: string, ids: string[], limit = 24) {
+  const unique = [...new Set(ids)].slice(0, limit);
   if (!unique.length) return [] as ReturnType<typeof mapPublicProduct>[];
   const { data } = await supabase
     .from("products")
@@ -275,7 +301,7 @@ export async function getPublicProductBySlug(
 ) {
   const { data, error } = await supabase
     .from("products")
-    .select(PUBLIC_PRODUCT_SELECT)
+    .select("id")
     .eq("organization_id", organizationId)
     .eq("public_slug", slug)
     .eq("active", true)
@@ -283,7 +309,7 @@ export async function getPublicProductBySlug(
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Product not found.");
-  return mapPublicProduct(data as Record<string, unknown>);
+  return getPublicProduct(supabase, organizationId, String(data.id));
 }
 
 export function isStorePolicySlug(value: string): value is StorePolicySlug {

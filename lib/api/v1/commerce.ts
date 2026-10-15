@@ -9,7 +9,7 @@ import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
-import { bulkOrderStatusSchema, createOrderSchema, orderListQuery, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import { bulkOrderStatusSchema, confirmShopifyPaymentSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import {
   confirmCustomerOrderLinkSchema,
 } from "@/modules/customer-order-links/schema";
@@ -20,7 +20,7 @@ import {
   listLegacySubmissions,
   listWhatsAppPendingOrders,
 } from "@/modules/customer-order-links/service";
-import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderWeights } from "@/modules/orders/service";
+import { confirmShopifyPayment, createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { renderCustomShippingLabel } from "@/modules/labels/custom-label-service";
@@ -41,8 +41,8 @@ import {
   updateShipmentDimensions,
   updateShipmentDimensionsSchema,
 } from "@/modules/shipments/service";
-import { ndrListQuery } from "@/modules/ndr-rto/schema";
-import { getNdrSummary, listNdrShipments, syncNdrShipment } from "@/modules/ndr-rto/service";
+import { ndrListQuery, ndrVisibleSyncBody } from "@/modules/ndr-rto/schema";
+import { getNdrSummary, listNdrShipments, syncNdrShipment, syncNdrVisibleShipments } from "@/modules/ndr-rto/service";
 import {
   queueExcelBuffer,
   queueValidatedOrders,
@@ -161,6 +161,11 @@ export async function handleCommerceRoutes(
     return confirmWhatsAppCollectionOrder(supabase, ctx, slugs[1], body);
   }
 
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "shopify-payment") {
+    const body = confirmShopifyPaymentSchema.parse(await request.json());
+    return confirmShopifyPayment(supabase, ctx, slugs[1], body.paymentType);
+  }
+
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "service") {
     const body = await request.json();
     return setOrderBookingService(supabase, ctx, slugs[1], String(body.service ?? ""));
@@ -169,6 +174,11 @@ export async function handleCommerceRoutes(
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "weights") {
     const body = updateOrderWeightsSchema.parse(await request.json());
     return updateOrderWeights(supabase, ctx, slugs[1], body);
+  }
+
+  if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address") {
+    const body = updateOrderAddressSchema.parse(await request.json());
+    return updateOrderShippingAddress(supabase, ctx, slugs[1], body);
   }
 
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "dimensions") {
@@ -277,6 +287,11 @@ export async function handleCommerceRoutes(
   if (key === "GET ndr-rto") {
     const parsed = ndrListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
     return listNdrShipments(supabase, ctx, parsed);
+  }
+
+  if (method === "POST" && slugs[0] === "ndr-rto" && slugs[1] === "sync-visible") {
+    const body = ndrVisibleSyncBody.parse(await request.json());
+    return syncNdrVisibleShipments(supabase, ctx, body.shipmentIds);
   }
 
   if (method === "POST" && slugs[0] === "ndr-rto" && slugs[1] && slugs[2] === "sync") {

@@ -18,7 +18,31 @@ describe("permissionForTenantRoute", () => {
     ).toBe("orders.write");
     expect(permissionForTenantRoute("GET", "products", ["products"])).toBe("products.read");
     expect(permissionForTenantRoute("POST", "products", ["products"])).toBe("products.write");
+    expect(permissionForTenantRoute("POST", "products/ai-copy", ["products", "ai-copy"])).toBe("products.write");
+    expect(permissionForTenantRoute("GET", "products/ai-image/quote", ["products", "ai-image", "quote"])).toBe(
+      "products.read"
+    );
+    expect(permissionForTenantRoute("POST", "products/ai-image/jobs", ["products", "ai-image", "jobs"])).toBe(
+      "products.write"
+    );
+    expect(
+      permissionForTenantRoute("POST", "products/ai-image/enhance-prompt", ["products", "ai-image", "enhance-prompt"])
+    ).toBe("products.write");
+    expect(permissionForTenantRoute("GET", "inventory/covers", ["inventory", "covers"])).toBe("products.read");
+    expect(permissionForTenantRoute("POST", "inventory/covers/jobs", ["inventory", "covers", "jobs"])).toBe(
+      "products.write"
+    );
+    expect(permissionForTenantRoute("POST", "inventory/covers/ai-copy", ["inventory", "covers", "ai-copy"])).toBe(
+      "products.write"
+    );
+    expect(permissionForTenantRoute("GET", "inventory/covers/analytics", ["inventory", "covers", "analytics"])).toBe(
+      "products.read"
+    );
+    expect(permissionForTenantRoute("PATCH", "inventory/storefront/slides/abc", ["inventory", "storefront", "slides", "abc"])).toBe(
+      "products.write"
+    );
     expect(permissionForTenantRoute("PATCH", "products/abc", ["products", "abc"])).toBe("products.write");
+    expect(permissionForTenantRoute("DELETE", "products/abc", ["products", "abc"])).toBe("products.write");
     expect(permissionForTenantRoute("POST", "products/abc/adjustments", ["products", "abc", "adjustments"])).toBe(
       "products.write"
     );
@@ -30,12 +54,18 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("PATCH", "inventory/storefront", ["inventory", "storefront"])).toBe(
       "products.write"
     );
+    expect(permissionForTenantRoute("POST", "orders/abc/shopify-payment", ["orders", "abc", "shopify-payment"])).toBe(
+      "orders.write"
+    );
     expect(permissionForTenantRoute("POST", "orders/bulk/status", ["orders", "bulk", "status"])).toBe(
       "shipments.write"
     );
     expect(permissionForTenantRoute("POST", "bookings/validate", ["bookings", "validate"])).toBe("shipments.write");
     expect(permissionForTenantRoute("GET", "bookings/summary", ["bookings", "summary"])).toBe("shipments.read");
     expect(permissionForTenantRoute("PATCH", "orders/abc/service", ["orders", "abc", "service"])).toBe(
+      "orders.write"
+    );
+    expect(permissionForTenantRoute("PATCH", "orders/abc/address", ["orders", "abc", "address"])).toBe(
       "orders.write"
     );
     expect(
@@ -78,6 +108,9 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("GET", "ndr-rto", ["ndr-rto"])).toBe("shipments.read");
     expect(permissionForTenantRoute("GET", "ndr-rto/summary", ["ndr-rto", "summary"])).toBe("shipments.read");
     expect(permissionForTenantRoute("POST", "ndr-rto/abc/sync", ["ndr-rto", "abc", "sync"])).toBe(
+      "shipments.write"
+    );
+    expect(permissionForTenantRoute("POST", "ndr-rto/sync-visible", ["ndr-rto", "sync-visible"])).toBe(
       "shipments.write"
     );
     expect(permissionForTenantRoute("POST", "manifests", ["manifests"])).toBe("manifests.write");

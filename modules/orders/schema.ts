@@ -22,6 +22,8 @@ export const addressInput = z.object({
   country: z.string().min(2).default("IN"),
 });
 
+export const updateOrderAddressSchema = addressInput;
+
 /** HTML number inputs send "" or 0; treat those as “not set”. */
 export const optionalPositiveInt = z.preprocess((value) => {
   if (value === "" || value === null || value === undefined) return undefined;
@@ -144,4 +146,8 @@ export const orderListQuery = z.object({
 export const bulkOrderStatusSchema = z.object({
   orderIds: z.array(z.string().min(1)).min(1).max(100),
   action: z.literal("fulfill"),
+});
+
+export const confirmShopifyPaymentSchema = z.object({
+  paymentType: z.enum(["PREPAID", "COD"]),
 });

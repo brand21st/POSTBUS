@@ -8,6 +8,7 @@ import { handleIntegrationRoutes } from "@/lib/api/v1/integrations";
 import { handleInvoiceRoutes } from "@/lib/api/v1/invoices";
 import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
 import { handlePrintAgentRoutes, handlePrintStationRoutes, isPrintAgentApiPath } from "@/lib/api/v1/print";
+import { handlePrintDevicePublicRoutes, handlePrintDeviceTenantRoutes, isPrintDevicePublicPath } from "@/lib/api/v1/print-devices";
 import { handleSessionRoutes } from "@/lib/api/v1/session";
 import { handleBillingRoutes } from "@/lib/api/v1/billing";
 import { handleMerchantTutorials } from "@/lib/api/v1/tutorials";
@@ -29,9 +30,10 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   const indiaPostWebhook = parseIndiaPostWebhookPath(path);
   const watiWebhook = parseWatiWebhookPath(path);
   const printAgentPath = isPrintAgentApiPath(path);
+  const printDevicePath = isPrintDevicePublicPath(path);
   const limited = rateLimit(
     `${request.headers.get("x-forwarded-for") ?? "local"}:${path}`,
-    indiaPostWebhook || watiWebhook || printAgentPath ? 180 : 60
+    indiaPostWebhook || watiWebhook || printAgentPath || printDevicePath ? 180 : 60
   );
   if (!limited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
@@ -50,6 +52,10 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   if (isPrintAgentApiPath(path)) {
     const printAgent = await handlePrintAgentRoutes(request, path, slugs);
     if (printAgent !== null) return printAgent;
+  }
+
+  if (isPrintDevicePublicPath(path)) {
+    return handlePrintDevicePublicRoutes(request, path);
   }
 
   const supabase = await createServerSupabase();
@@ -71,6 +77,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
     (await handleUiRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleShipmentPresetRoutes(request, supabase, ctx, method, slugs)) ??
     (await handlePrintStationRoutes(request, supabase, ctx, key, method, slugs)) ??
+    (await handlePrintDeviceTenantRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleLabelTemplateRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleInvoiceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleInventoryRoutes(request, supabase, ctx, key, method, slugs)) ??

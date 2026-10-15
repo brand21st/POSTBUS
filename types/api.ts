@@ -635,6 +635,8 @@ export type PrintingConfiguration = {
   printers: SavedPrinter[];
   autoLabelPrinting?: boolean;
   auto_label_printing?: boolean;
+  paperSize?: string;
+  paper_size?: string;
   labelSizeLabel?: string;
   label_size_label?: string;
 };

@@ -1,4 +1,4 @@
-import { logInfo } from "@/lib/logger";
+import { logError, logInfo } from "@/lib/logger";
 
 export type BulkMetricName =
   | "bulk_batches_started"
@@ -20,9 +20,17 @@ export type BulkMetricName =
   | "bulk_queue_backlog"
   | "bulk_worker_health";
 
+const CRITICAL_BULK_METRICS = new Set<BulkMetricName>([
+  "bulk_batches_recovery_required",
+  "bulk_409",
+  "bulk_5xx",
+  "bulk_timeouts",
+]);
+
 export function recordIndiaPostBulkMetric(
   name: BulkMetricName,
   fields: Record<string, string | number | boolean | null | undefined>
 ) {
   logInfo(name, fields);
+  if (CRITICAL_BULK_METRICS.has(name)) logError(name, fields);
 }

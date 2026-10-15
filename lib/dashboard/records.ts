@@ -148,6 +148,16 @@ export function itemSummary(order: {
 const WHATSAPP_SETTLED_PAYMENTS = new Set(["COD", "PAID", "PARTIAL"]);
 const WHATSAPP_POST_READY_STATUSES = new Set(["BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"]);
 
+export function shopifyPendingBookingBlocked(order: {
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  if ((order.source ?? "").toUpperCase() !== "SHOPIFY") return false;
+  const payment = (order.payment_status ?? order.paymentStatus ?? "").toUpperCase();
+  return payment === "PENDING";
+}
+
 export function whatsappShipmentBlocked(order: {
   status?: string | null;
   source?: string | null;
@@ -180,6 +190,7 @@ export function canFulfillOrder(order: {
   paymentStatus?: string | null;
 }) {
   if (whatsappShipmentBlocked(order)) return false;
+  if (shopifyPendingBookingBlocked(order)) return false;
   return !BLOCKED_FULFILL_STATUSES.has((order.status ?? "").toUpperCase());
 }
 
@@ -199,6 +210,14 @@ export function fulfillSkipReason(order: {
       order_number: order.order_number,
     });
     return `Order #${number} cannot be booked until the WhatsApp order is READY.`;
+  }
+  if (shopifyPendingBookingBlocked(order)) {
+    const number = orderNumber({
+      id: order.id ?? "",
+      orderNumber: order.orderNumber,
+      order_number: order.order_number,
+    });
+    return `Order #${number} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`;
   }
   if (canFulfillOrder(order)) return null;
   const status = (order.status ?? "").toUpperCase();
@@ -263,6 +282,7 @@ export function canFulfillOrderAction(
   const status = (order.status ?? "").toUpperCase();
   if (status === "CANCELLED") return false;
   if (whatsappShipmentBlocked(order)) return false;
+  if (shopifyPendingBookingBlocked(order)) return false;
   return extrasConnected || canFulfillOrder(order);
 }
 
@@ -320,6 +340,9 @@ export function orderStageMenu(
   const next = nextStep
     ? { action: nextStep.action, label: nextStep.nextLabel ?? nextStep.label }
     : null;
+  if (next?.action === "fulfill" && shopifyPendingBookingBlocked({ source, payment_status: paymentStatus })) {
+    return { hideActions, completed, next: null };
+  }
   return { hideActions, completed, next };
 }
 

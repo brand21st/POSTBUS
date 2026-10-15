@@ -319,13 +319,15 @@ export default function NewOrderPage() {
                   weightGrams: item.weightGrams,
                 }
           ),
-          createShipment: true,
-          shipment: values.shipment,
+          createShipment: values.createShipment,
+          shipment: values.createShipment ? values.shipment : undefined,
         }),
       });
       const shipment = created.shipment;
       const orderNumber = created.orderNumber ?? created.order_number ?? created.id.slice(0, 8);
-      if (isIndiaPostAcceptedStatus(shipment?.status)) {
+      if (!values.createShipment) {
+        toast.success("Order saved.");
+      } else if (isIndiaPostAcceptedStatus(shipment?.status)) {
         emitDashboardAlerts([localShipmentBookedAlert({ orderId: created.id, orderNumber })]);
         toast.success("India Post booked.");
       } else if (isIndiaPostBookingInFlight(shipment?.status)) {
@@ -343,25 +345,33 @@ export default function NewOrderPage() {
     }
   }
 
+  const submitLabel = form.formState.isSubmitting
+    ? createShipment
+      ? "Booking…"
+      : "Saving…"
+    : createShipment
+      ? "Book now"
+      : "Save order";
+
   return (
     <form
-      className="space-y-4 pb-20 xl:pb-0"
+      className="space-y-3 pb-16 xl:pb-0"
       onSubmit={form.handleSubmit(onSubmit, () => {
         toast.error("Please check the highlighted fields.");
       })}
     >
       <PageHeader
         title="Add order"
-        description="Create a manual order with customer, address, and line items."
+        description="Customer, address, items, then book."
         actions={
-          <Button type="submit" size="sm" className="hidden xl:inline-flex" disabled={form.formState.isSubmitting}>
-            {form.formState.isSubmitting ? "Booking…" : "Book now"}
+          <Button type="submit" size="xs" className="hidden xl:inline-flex" disabled={form.formState.isSubmitting}>
+            {submitLabel}
           </Button>
         }
       />
 
       <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_17rem] xl:items-start xl:gap-6">
-      <div className="space-y-4">
+      <div className="space-y-3">
 
       <WhatsAppPasteParser
         getCurrent={() => ({
@@ -399,14 +409,14 @@ export default function NewOrderPage() {
       />
 
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader className="p-3">
           <CardTitle>Order</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
+        <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
           <Field label="Order number" hint="A unique PB number is assigned when you book.">
             <div className="relative">
               <Input
-                className="h-9 cursor-not-allowed bg-surface-soft pr-9"
+                className="h-8 cursor-not-allowed bg-surface-soft pr-9"
                 value=""
                 readOnly
                 disabled
@@ -426,7 +436,7 @@ export default function NewOrderPage() {
                 form.setValue("paymentStatus", value as FormValues["paymentStatus"])
               }
             >
-              <SelectTrigger className="h-9">
+              <SelectTrigger className="h-8">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -444,7 +454,7 @@ export default function NewOrderPage() {
               hint="The rest is collected on delivery."
               error={form.formState.errors.amountPaid?.message}
             >
-              <Input className="h-9" type="number" min={0} step="0.01" {...form.register("amountPaid")} />
+              <Input className="h-8" type="number" min={0} step="0.01" {...form.register("amountPaid")} />
             </Field>
           ) : null}
           {paymentStatus === "COD" || paymentStatus === "PARTIAL" ? (
@@ -460,7 +470,7 @@ export default function NewOrderPage() {
         ref={customerPanel}
         className="group rounded-2xl border border-border bg-card text-foreground shadow-[0_1px_2px_rgb(9_9_11/0.04),0_8px_24px_rgb(9_9_11/0.04)]"
       >
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3 [&::-webkit-details-marker]:hidden">
           <div>
             <CardTitle>Create customer account</CardTitle>
             <p className="mt-0.5 text-xs text-muted">
@@ -469,9 +479,9 @@ export default function NewOrderPage() {
           </div>
           <ChevronDown className="size-4 shrink-0 text-muted transition-transform group-open:rotate-180" />
         </summary>
-        <div className="grid gap-3 px-4 pb-4 pt-0 md:grid-cols-3">
+        <div className="grid gap-2.5 px-3 pb-3 pt-0 md:grid-cols-3">
           <Field label="Name" hint="Optional." error={form.formState.errors.customerName?.message}>
-            <Input className="h-9" autoComplete="name" {...form.register("customerName")} />
+            <Input className="h-8" autoComplete="name" {...form.register("customerName")} />
           </Field>
           <Field label="Phone" hint="Optional." error={form.formState.errors.customerPhone?.message}>
             <IndiaWhatsappField
@@ -487,7 +497,7 @@ export default function NewOrderPage() {
           </Field>
           <Field label="Email" hint="Optional." error={form.formState.errors.customerEmail?.message}>
             <Input
-              className="h-9"
+              className="h-8"
               type="email"
               autoComplete="email"
               placeholder="name@example.com (optional)"
@@ -498,10 +508,10 @@ export default function NewOrderPage() {
       </details>
 
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader className="p-3">
           <CardTitle>Shipping address</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
+        <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
           <AddressFields
             prefix="shippingAddress"
             form={{
@@ -521,12 +531,12 @@ export default function NewOrderPage() {
         </CardContent>
       </Card>
 
-      {!billingSame ? (
+      <Expand open={!billingSame}>
         <Card>
-          <CardHeader className="p-4">
+          <CardHeader className="p-3">
             <CardTitle>Billing address</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
+          <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
             <AddressFields
               prefix="billingAddress"
               form={{
@@ -538,10 +548,10 @@ export default function NewOrderPage() {
             />
           </CardContent>
         </Card>
-      ) : null}
+      </Expand>
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-3 p-4">
+        <CardHeader className="flex-row items-center justify-between gap-3 p-3">
           <div>
             <CardTitle>Line items</CardTitle>
             <p className="mt-0.5 text-xs text-muted">
@@ -555,7 +565,7 @@ export default function NewOrderPage() {
             Add inventory
           </Link>
         </CardHeader>
-        <CardContent className="p-4 pt-0">
+        <CardContent className="p-3 pt-0">
           <div
             aria-hidden
             className={cn(
@@ -589,7 +599,7 @@ export default function NewOrderPage() {
                     <LineLabel htmlFor={`item-${field.id}-title`}>Product</LineLabel>
                     {catalogItems.length ? (
                       <Combobox
-                        className="mb-1.5 h-9"
+                        className="mb-1 h-8 [&_input]:h-8"
                         placeholder="Inventory product (optional)"
                         emptyText="No matching products"
                         options={[
@@ -605,7 +615,7 @@ export default function NewOrderPage() {
                     ) : null}
                     <Input
                       id={`item-${field.id}-title`}
-                      className="h-9"
+                      className="h-8"
                       placeholder="e.g. Cotton saree"
                       aria-invalid={Boolean(titleError)}
                       disabled={Boolean(row?.productId)}
@@ -618,7 +628,7 @@ export default function NewOrderPage() {
                     <LineLabel htmlFor={`item-${field.id}-sku`}>SKU</LineLabel>
                     <Input
                       id={`item-${field.id}-sku`}
-                      className="h-9"
+                      className="h-8"
                       placeholder="Optional"
                       disabled={Boolean(row?.productId)}
                       {...form.register(`lineItems.${index}.sku`)}
@@ -627,7 +637,7 @@ export default function NewOrderPage() {
 
                   <div>
                     <LineLabel htmlFor={`item-${field.id}-qty`}>Qty</LineLabel>
-                    <div className="flex h-9 items-stretch overflow-hidden rounded-[var(--radius-input)] border border-border bg-card shadow-sm focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/30">
+                    <div className="flex h-8 items-stretch overflow-hidden rounded-[var(--radius-input)] border border-border bg-card shadow-sm focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/30">
                       <button
                         type="button"
                         aria-label="Decrease quantity"
@@ -665,7 +675,7 @@ export default function NewOrderPage() {
                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">₹</span>
                       <Input
                         id={`item-${field.id}-price`}
-                        className={cn("h-9 pl-7 tabular-nums", NO_SPINNER)}
+                        className={cn("h-8 pl-7 tabular-nums", NO_SPINNER)}
                         type="number"
                         inputMode="decimal"
                         min={0}
@@ -683,7 +693,7 @@ export default function NewOrderPage() {
                     <div className="relative">
                       <Input
                         id={`item-${field.id}-weight`}
-                        className={cn("h-9 pr-7 tabular-nums", NO_SPINNER)}
+                        className={cn("h-8 pr-7 tabular-nums", NO_SPINNER)}
                         type="number"
                         inputMode="numeric"
                         min={0}
@@ -696,12 +706,12 @@ export default function NewOrderPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 sm:col-span-3 lg:col-span-1 lg:h-9 lg:justify-end">
+                  <div className="flex items-center gap-2 sm:col-span-3 lg:col-span-1 lg:h-8 lg:justify-end">
                     <span className="text-xs text-muted lg:hidden">Line total</span>
                     <span className="text-sm font-medium tabular-nums text-ink">{formatCurrency(lineTotal)}</span>
                   </div>
 
-                  <div className="flex justify-end lg:h-9 lg:items-center">
+                  <div className="flex justify-end lg:h-8 lg:items-center">
                     <Button
                       type="button"
                       variant="ghost"
@@ -724,7 +734,7 @@ export default function NewOrderPage() {
             <Button
               type="button"
               variant="ghost"
-              size="sm"
+              size="xs"
               className="justify-center border border-dashed border-border text-muted hover:border-brand hover:text-brand sm:justify-start"
               onClick={addLineItem}
             >
@@ -746,10 +756,10 @@ export default function NewOrderPage() {
       </Card>
 
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader className="p-3">
           <CardTitle>Shipment</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 p-4 pt-0">
+        <CardContent className="space-y-2.5 p-3 pt-0">
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
               checked={createShipment}
@@ -757,9 +767,9 @@ export default function NewOrderPage() {
             />
             Book with India Post
           </label>
-          {createShipment ? <IndiaPostBookingGuide selectedService={selectedService} /> : null}
-          {createShipment ? (
-            <div className="space-y-3">
+          <Expand open={createShipment}>
+            <div className="space-y-2.5">
+          <IndiaPostBookingGuide selectedService={selectedService} />
             <ShipmentPackPresets
               weightGrams={Number(shipmentWeight) || undefined}
               lengthCm={Number(shipmentLength) || undefined}
@@ -775,18 +785,18 @@ export default function NewOrderPage() {
                 form.setValue("shipment.serviceCode", pack.serviceCode, { shouldDirty: true });
               }}
             />
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-2.5 md:grid-cols-5">
               <Field label="Weight (g)" error={form.formState.errors.shipment?.weightGrams?.message}>
-                <Input className="h-9" type="number" min={1} {...form.register("shipment.weightGrams")} />
+                <Input className="h-8" type="number" min={1} {...form.register("shipment.weightGrams")} />
               </Field>
               <Field label="Length (cm)" error={form.formState.errors.shipment?.lengthCm?.message}>
-                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.lengthCm")} />
+                <Input className="h-8" type="number" min={0} max={150} step="0.1" {...form.register("shipment.lengthCm")} />
               </Field>
               <Field label="Width (cm)" error={form.formState.errors.shipment?.widthCm?.message}>
-                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.widthCm")} />
+                <Input className="h-8" type="number" min={0} max={150} step="0.1" {...form.register("shipment.widthCm")} />
               </Field>
               <Field label="Height (cm)" error={form.formState.errors.shipment?.heightCm?.message}>
-                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.heightCm")} />
+                <Input className="h-8" type="number" min={0} max={150} step="0.1" {...form.register("shipment.heightCm")} />
               </Field>
               <Field
                 label="Service"
@@ -808,7 +818,7 @@ export default function NewOrderPage() {
                     form.setValue("shipment.serviceCode", value);
                   }}
                 >
-                  <SelectTrigger className="h-9">
+                  <SelectTrigger className="h-8">
                     <SelectValue placeholder="Choose a service" />
                   </SelectTrigger>
                   <SelectContent>
@@ -831,13 +841,13 @@ export default function NewOrderPage() {
               </Field>
             </div>
             </div>
-          ) : null}
+            </Expand>
         </CardContent>
       </Card>
       </div>
 
       <aside className="hidden xl:block">
-        <div className="sticky top-4 space-y-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <div className="sticky top-4 space-y-2.5 rounded-2xl border border-border bg-card p-3 shadow-sm">
           <h2 className="text-sm font-semibold text-ink">Summary</h2>
           <p className="flex justify-between text-sm">
             <span className="text-muted">Items</span>
@@ -857,9 +867,9 @@ export default function NewOrderPage() {
       </aside>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 p-3 backdrop-blur-sm xl:hidden">
-        <Button type="submit" className="w-full" size="sm" disabled={form.formState.isSubmitting}>
-          {form.formState.isSubmitting ? "Booking…" : "Book now"}
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 p-2 backdrop-blur-sm xl:hidden">
+        <Button type="submit" className="w-full" size="xs" disabled={form.formState.isSubmitting}>
+          {submitLabel}
         </Button>
       </div>
     </form>
@@ -869,6 +879,19 @@ export default function NewOrderPage() {
 const LINE_ITEM_GRID = "lg:grid-cols-[minmax(0,1fr)_6.5rem_7rem_7rem_5.5rem_5.5rem_2rem]";
 const NO_SPINNER =
   "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
+
+function Expand({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+      )}
+    >
+      <div className={cn("min-h-0 overflow-hidden", !open && "pointer-events-none")}>{children}</div>
+    </div>
+  );
+}
 
 function formatWeight(grams: number) {
   if (!grams) return "—";
@@ -954,9 +977,9 @@ function Field({
   return (
     <div className={className}>
       <Label>{label}</Label>
-      <div className="mt-1.5">{children}</div>
-      {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
-      {error ? <p className="mt-1 text-sm text-error">{error}</p> : null}
+      <div className="mt-1">{children}</div>
+      {hint ? <p className="mt-0.5 text-[11px] text-muted">{hint}</p> : null}
+      {error ? <p className="mt-0.5 text-xs text-error">{error}</p> : null}
     </div>
   );
 }
@@ -975,7 +998,7 @@ function AddressFields({
         label={prefix === "billingAddress" ? "Name" : "Customer name"}
         error={form.formState.errors[prefix]?.name?.message}
       >
-        <Input className="h-9" autoComplete="name" placeholder="Customer name" {...form.register(`${prefix}.name`)} />
+        <Input className="h-8" autoComplete="name" placeholder="Customer name" {...form.register(`${prefix}.name`)} />
       </Field>
       <Field label="Phone" error={phoneError}>
         <IndiaWhatsappField
@@ -996,7 +1019,7 @@ function AddressFields({
         error={form.formState.errors[prefix]?.line1?.message}
       >
         <Input
-          className="h-9"
+          className="h-8"
           autoComplete="address-line1"
           placeholder="House / building, street"
           {...form.register(`${prefix}.line1`)}
@@ -1008,7 +1031,7 @@ function AddressFields({
         hint="Optional. Landmark or extra address — not required for India Post booking."
       >
         <Input
-          className="h-9"
+          className="h-8"
           autoComplete="address-line2"
           placeholder="Landmark, area (optional)"
           {...form.register(`${prefix}.line2`)}
@@ -1016,7 +1039,7 @@ function AddressFields({
       </Field>
       <Field label="Pincode" error={form.formState.errors[prefix]?.pincode?.message}>
         <Input
-          className="h-9 tabular-nums tracking-wide"
+          className="h-8 tabular-nums tracking-wide"
           inputMode="numeric"
           maxLength={6}
           autoComplete="postal-code"
@@ -1026,7 +1049,7 @@ function AddressFields({
         <PincodeLookup control={form.control} setValue={form.setValue} prefix={prefix} />
       </Field>
       <Field label="City" error={form.formState.errors[prefix]?.city?.message}>
-        <Input className="h-9" {...form.register(`${prefix}.city`)} />
+        <Input className="h-8" {...form.register(`${prefix}.city`)} />
       </Field>
       <Field label="State" error={form.formState.errors[prefix]?.state?.message}>
         <Controller
@@ -1044,6 +1067,7 @@ function AddressFields({
               placeholder="Search state"
               emptyText="No state matches your search"
               aria-invalid={Boolean(fieldState.error)}
+              className="[&_input]:h-8"
             />
           )}
         />
@@ -1053,7 +1077,7 @@ function AddressFields({
         <div
           aria-readonly="true"
           title="Shipping is available within India only"
-          className="flex h-9 w-full cursor-not-allowed select-none items-center gap-2.5 rounded-[var(--radius-input)] border border-border bg-surface-soft px-3.5 text-sm text-foreground"
+          className="flex h-8 w-full cursor-not-allowed select-none items-center gap-2.5 rounded-[var(--radius-input)] border border-border bg-surface-soft px-3.5 text-sm text-foreground"
         >
           <IndiaFlag className="h-3.5 w-5 shrink-0 rounded-[2px] shadow-[0_0_0_1px_rgb(9_9_11/0.08)]" />
           <span className="font-medium">India</span>

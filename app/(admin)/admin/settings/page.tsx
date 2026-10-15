@@ -90,6 +90,12 @@ type OpenRouterSettings = {
   packSize?: number;
   packPaise?: number;
   models?: Array<{ id: string; name: string }>;
+  imageStudioEnabled?: boolean;
+  imageModel?: string;
+  imageCreditCost?: number;
+  coverCreditCost?: number;
+  imageMaxVariations?: number;
+  imageModels?: Array<{ id: string; name: string }>;
 };
 
 type VachatLogRow = {
@@ -157,6 +163,10 @@ export default function AdminSettingsPage() {
   const [openrouterKey, setOpenrouterKey] = useState("");
   const [openrouterModel, setOpenrouterModel] = useState("");
   const [openrouterEnabled, setOpenrouterEnabled] = useState<boolean | null>(null);
+  const [imageStudioEnabled, setImageStudioEnabled] = useState<boolean | null>(null);
+  const [imageModel, setImageModel] = useState("");
+  const [imageCreditCost, setImageCreditCost] = useState("");
+  const [coverCreditCost, setCoverCreditCost] = useState("");
   const [vachatKey, setVachatKey] = useState("");
   const [vachatUrl, setVachatUrl] = useState("");
   const [vachatEnabled, setVachatEnabled] = useState<boolean | null>(null);
@@ -169,6 +179,10 @@ export default function AdminSettingsPage() {
   const resolvedOpenrouterEnabled = openrouterEnabled ?? openrouter?.enabled ?? false;
   const chatgptModels = openrouterModelsQuery.data?.models ?? openrouter?.models ?? [];
   const resolvedOpenrouterModel = openrouterModel || openrouter?.model || "openai/gpt-4o-mini";
+  const resolvedImageStudioEnabled = imageStudioEnabled ?? openrouter?.imageStudioEnabled ?? false;
+  const resolvedImageModel = imageModel || openrouter?.imageModel || "google/gemini-2.5-flash-image";
+  const resolvedImageCreditCost = imageCreditCost || String(openrouter?.imageCreditCost ?? 10);
+  const resolvedCoverCreditCost = coverCreditCost || String(openrouter?.coverCreditCost ?? openrouter?.imageCreditCost ?? 10);
   const resolvedVachatEnabled = vachatEnabled ?? vachat?.enabled ?? false;
   const resolvedTestPhone = vachatTestPhone || vachat?.lastTestPhone || "";
   const templateCol: Record<VachatEventKey, string> = {
@@ -235,6 +249,10 @@ export default function AdminSettingsPage() {
           enabled: resolvedOpenrouterEnabled,
           model: resolvedOpenrouterModel,
           apiKey: openrouterKey || undefined,
+          imageStudioEnabled: resolvedImageStudioEnabled,
+          imageModel: resolvedImageModel,
+          imageCreditCost: Number(resolvedImageCreditCost) || 10,
+          coverCreditCost: Number(resolvedCoverCreditCost) || 10,
         }),
       }),
     onSuccess: () => {
@@ -523,6 +541,50 @@ export default function AdminSettingsPage() {
               }
             />
             <p className="text-xs text-muted">OpenAI ChatGPT models via OpenRouter. Save after changing the model.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="image-studio-enabled"
+              type="checkbox"
+              checked={resolvedImageStudioEnabled}
+              onChange={(event) => setImageStudioEnabled(event.target.checked)}
+            />
+            <Label htmlFor="image-studio-enabled">Enable AI Image Studio on Add / Edit product</Label>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="openrouter-image-model">Image model</Label>
+            <Combobox
+              id="openrouter-image-model"
+              placeholder="Select an image model"
+              emptyText="No image models"
+              value={resolvedImageModel}
+              onChange={(value) => setImageModel(value)}
+              options={(openrouter?.imageModels ?? [{ id: resolvedImageModel, name: resolvedImageModel }]).map(
+                (item) => ({ value: item.id, label: `${item.name} · ${item.id}` })
+              )}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="image-credit-cost">Credits per product variation</Label>
+            <Input
+              id="image-credit-cost"
+              type="number"
+              min={1}
+              max={500}
+              value={resolvedImageCreditCost}
+              onChange={(event) => setImageCreditCost(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="cover-credit-cost">Credits per cover variation</Label>
+            <Input
+              id="cover-credit-cost"
+              type="number"
+              min={1}
+              max={500}
+              value={resolvedCoverCreditCost}
+              onChange={(event) => setCoverCreditCost(event.target.value)}
+            />
           </div>
           <p className="text-xs text-muted">
             Package prices live on{" "}

@@ -2,13 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Printer } from "lucide-react";
+import { CheckCircle2, Loader2, Printer, Usb, Zap } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/lib/hooks/use-api";
+import { PRINT_STATION_QUERY_KEY } from "@/lib/hooks/use-print-station";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
@@ -20,12 +29,18 @@ import {
   WEBUSB_UNAVAILABLE,
   customerPrintError,
 } from "@/modules/print/webusb-messages";
+import { PAGE_PRESETS, SHEET_PRESETS } from "@/modules/labels/page-presets";
 import type { PrintingStatus } from "@/modules/print/provider";
 import type { AutomationSettings, PrintingConfiguration, SavedPrinter } from "@/types/api";
 import type { MemberRole } from "@/types/domain";
 import { cn } from "@/lib/utils";
 
 export const PRINTERS_QUERY_KEY = ["printers"] as const;
+
+const PAPER_PRESETS = [
+  ...PAGE_PRESETS,
+  ...SHEET_PRESETS.filter((item) => item.id === "A3"),
+];
 
 function printerName(printer: SavedPrinter) {
   return printer.displayName || printer.display_name || "USB printer";
@@ -68,7 +83,7 @@ export function PrintingSettings() {
   const autoPrint = Boolean(
     printersQuery.data?.autoLabelPrinting ?? printersQuery.data?.auto_label_printing
   );
-  const labelSize = printersQuery.data?.labelSizeLabel || printersQuery.data?.label_size_label || "105 × 148 mm (A6)";
+  const paperSize = printersQuery.data?.paperSize || printersQuery.data?.paper_size || "A6";
 
   useEffect(() => {
     if (!available) return;
@@ -83,6 +98,20 @@ export function PrintingSettings() {
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: PRINTERS_QUERY_KEY });
   };
+
+  const savePaper = useMutation({
+    mutationFn: (next: string) =>
+      api("/api/v1/print-station", {
+        method: "PATCH",
+        body: JSON.stringify({ paperSize: next }),
+      }),
+    onSuccess: async () => {
+      await refresh();
+      await queryClient.invalidateQueries({ queryKey: PRINT_STATION_QUERY_KEY });
+      toast.success("Paper size saved.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const saveAuto = useMutation({
     mutationFn: (enabled: boolean) =>
@@ -154,60 +183,134 @@ export function PrintingSettings() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Printing</CardTitle>
-        <CardDescription>Connect a USB label printer in this browser. The saved default stays with your workspace.</CardDescription>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b border-border bg-surface-soft/50 p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+            <Printer className="size-4.5" aria-hidden />
+          </span>
+          <div>
+            <CardTitle>Print defaults</CardTitle>
+            <CardDescription className="mt-0.5">
+              Paper and automation settings for new labels.
+            </CardDescription>
+          </div>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 p-4 sm:p-5">
         {!available ? (
-          <p className="rounded-xl border border-border bg-surface-soft px-3 py-2 text-sm text-muted">{WEBUSB_UNAVAILABLE}</p>
+          <p className="rounded-lg border border-border bg-surface-soft px-3 py-2 text-xs text-muted">{WEBUSB_UNAVAILABLE}</p>
         ) : null}
 
         {printersQuery.isError ? (
-          <p className="text-sm text-error">Printer settings could not be loaded. Refresh and try again.</p>
+          <p className="rounded-lg bg-red-50 p-2.5 text-xs text-error">Printer settings could not be loaded. Refresh and try again.</p>
         ) : null}
 
-        <div className="space-y-3">
+        <section
+          className={cn(
+            "flex items-center justify-between gap-3 rounded-xl border p-3 transition-colors duration-200",
+            autoPrint ? "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/20" : "border-border"
+          )}
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <span className={cn(
+              "flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors",
+              autoPrint ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : "bg-surface-soft text-muted"
+            )}>
+              <Zap className="size-4" aria-hidden />
+            </span>
+            <div>
+              <Label htmlFor="automatic-label-printing" className="font-semibold">Automatic printing</Label>
+              <p className="text-xs text-muted">{autoPrint ? "New labels print when the agent is online." : "New labels stay queued until enabled."}</p>
+            </div>
+          </div>
+          <Switch
+            id="automatic-label-printing"
+            checked={autoPrint}
+            disabled={!canManage || saveAuto.isPending}
+            onCheckedChange={(checked) => {
+              const feature = automationToggleLock("autoLabelPrinting", entitlements.allows);
+              if (feature) {
+                toast.error("Automatic printing is not included in the current plan.");
+                return;
+              }
+              saveAuto.mutate(checked);
+            }}
+          />
+        </section>
+
+        <section className="space-y-2 rounded-xl border border-border p-3 transition-colors duration-200 hover:border-brand/25">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="print-paper-size" className="font-semibold">Paper preset</Label>
+            {savePaper.isPending ? (
+              <span className="flex items-center gap-1 text-[11px] text-muted">
+                <Loader2 className="size-3 animate-spin" aria-hidden />
+                Saving
+              </span>
+            ) : null}
+          </div>
+          <Select
+            value={paperSize}
+            disabled={!canManage || savePaper.isPending}
+            onValueChange={(value) => savePaper.mutate(value)}
+          >
+            <SelectTrigger id="print-paper-size" className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAPER_PRESETS.map((preset) => (
+                <SelectItem key={preset.id} value={preset.id}>
+                  {preset.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted">Applied to shipping labels sent through the Windows agent.</p>
+        </section>
+
+        <section className="border-t border-border pt-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Usb className="size-4 text-muted" aria-hidden />
+              <div>
+                <h2 className="text-sm font-semibold">Browser USB</h2>
+                <p className="text-xs text-muted">Optional direct connection for this browser.</p>
+              </div>
+            </div>
+            {defaultPrinter ? <Badge variant="outline">{printers.length} saved</Badge> : null}
+          </div>
+
+          <div className="space-y-2">
           {printers.map((printer) => {
             const live = status.deviceKey === printer.deviceKey ? status.state : "disconnected";
             const connecting = busy === "connect" && live === "connecting";
             const state = live === "connecting" || connecting ? "connecting" : live;
             return (
-              <div key={printer.id} className="rounded-xl border border-border p-4">
-                <div className="flex items-center gap-2">
-                  <Printer
-                    className={cn("size-4", state === "connected" && "animate-pulse-soft text-success")}
-                    aria-hidden
-                  />
-                  <p className="font-medium text-foreground">{printerName(printer)}</p>
+              <div key={printer.id} className="rounded-xl border border-border p-3 transition-all duration-200 hover:bg-surface-soft/60">
+                <div className="flex items-center gap-2.5">
+                  <span className={cn(
+                    "flex size-8 shrink-0 items-center justify-center rounded-lg",
+                    state === "connected" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : "bg-surface-soft text-muted"
+                  )}>
+                    {state === "connected" ? <CheckCircle2 className="size-4" aria-hidden /> : <Printer className="size-4" aria-hidden />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">{printerName(printer)}</p>
+                    <p className={cn("text-xs", state === "connected" ? "text-success" : state === "error" ? "text-error" : "text-muted")}>
+                      {state === "connected" ? "Connected" : state === "connecting" ? "Connecting…" : state === "error" ? "Printer error" : "Disconnected"}
+                      {isDefaultPrinter(printer) ? " · Default" : ""}
+                    </p>
+                  </div>
                 </div>
-                <p
-                  className={cn(
-                    "mt-2 text-sm",
-                    state === "connected" && "text-success",
-                    state === "error" && "text-error",
-                    state !== "connected" && state !== "error" && "text-muted"
-                  )}
-                >
-                  {state === "connected"
-                    ? "Connected"
-                    : state === "connecting"
-                      ? "Connecting..."
-                      : state === "error"
-                        ? "Printer error"
-                        : "Disconnected"}
-                </p>
                 {state === "error" && status.deviceKey === printer.deviceKey && status.message ? (
                   <p className="mt-1 text-xs text-muted">{status.message}</p>
                 ) : null}
-                {isDefaultPrinter(printer) ? <p className="mt-3 text-sm text-foreground">Default printer</p> : null}
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-2.5 flex flex-wrap gap-1">
                   {!isDefaultPrinter(printer) ? (
                     <Button
                       type="button"
-                      variant="secondary"
-                      size="sm"
+                      variant="ghost"
+                      size="xs"
                       disabled={!canManage || busy !== null}
                       onClick={() => {
                         setBusy(`default:${printer.id}`);
@@ -225,8 +328,8 @@ export function PrintingSettings() {
                   ) : null}
                   <Button
                     type="button"
-                    variant="secondary"
-                    size="sm"
+                    variant="ghost"
+                    size="xs"
                     disabled={!canManage || !available || busy !== null || state !== "connected"}
                     onClick={() => void testPrint(printer)}
                   >
@@ -235,7 +338,7 @@ export function PrintingSettings() {
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
+                    size="xs"
                     disabled={!available || busy !== null || state !== "connected"}
                     onClick={() => void disconnect(printer)}
                   >
@@ -244,7 +347,7 @@ export function PrintingSettings() {
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
+                    size="xs"
                     disabled={!canManage || busy !== null}
                     onClick={() => {
                       setBusy(`remove:${printer.id}`);
@@ -268,37 +371,19 @@ export function PrintingSettings() {
               </div>
             );
           })}
-        </div>
-
-        <Button type="button" variant="secondary" disabled={!canManage || !available || busy !== null} onClick={() => void connect()}>
-          <Printer className="size-4" />
-          Connect USB printer
-        </Button>
-
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2">
-          <div>
-            <Label>Automatic label printing</Label>
-            <p className="text-xs text-muted">Print the India Post label after it is generated.</p>
           </div>
-          <Switch
-            checked={autoPrint}
-            disabled={!canManage || saveAuto.isPending}
-            onCheckedChange={(checked) => {
-              const feature = automationToggleLock("autoLabelPrinting", entitlements.allows);
-              if (feature) {
-                toast.error("Automatic printing is not included in the current plan.");
-                return;
-              }
-              saveAuto.mutate(checked);
-            }}
-          />
-        </div>
-
-        <div className="rounded-xl border border-border px-3 py-2 text-sm">
-          <p className="text-muted">Label size</p>
-          <p className="font-medium text-foreground">{labelSize}</p>
-          <p className="mt-1 text-xs text-muted">The India Post PDF is printed at its own page size and is not resized.</p>
-        </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="mt-3 w-full"
+            disabled={!canManage || !available || busy !== null}
+            onClick={() => void connect()}
+          >
+            {busy === "connect" ? <Loader2 className="animate-spin" aria-hidden /> : <Usb aria-hidden />}
+            {busy === "connect" ? "Connecting…" : "Connect USB printer"}
+          </Button>
+        </section>
       </CardContent>
     </Card>
   );

@@ -1,11 +1,13 @@
 "use client";
 
+import { Check } from "lucide-react";
 import { Controller, type UseFormReturn } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { formatCurrency } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { discountPercent } from "@/modules/storefront/pricing";
 
 export type ProductFormCategory = { id: string; name: string; active: boolean };
@@ -49,37 +51,58 @@ export function ProductEditorFields({
         </div>
         {categories.length ? (
           <fieldset>
-            <legend className="text-sm font-medium">Category</legend>
+            <legend className="sr-only">Category</legend>
             <Controller
               control={form.control}
               name="categoryIds"
-              render={({ field }) => (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {categories
-                    .filter((category) => category.active)
-                    .map((category) => {
-                      const selected = ((field.value as string[] | undefined) ?? []).includes(category.id);
-                      return (
-                        <label
-                          key={category.id}
-                          className="inline-flex min-h-11 items-center gap-2 rounded-full border border-border px-3 text-sm"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={(event) => {
-                              const current = new Set((field.value as string[] | undefined) ?? []);
-                              if (event.target.checked) current.add(category.id);
-                              else current.delete(category.id);
+              render={({ field }) => {
+                const selectedIds = (field.value as string[] | undefined) ?? [];
+                const activeCategories = categories.filter((category) => category.active);
+                return (
+                  <div>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-sm font-medium text-ink">Category</p>
+                      <p className="text-xs text-muted">
+                        {selectedIds.length
+                          ? `${selectedIds.length} selected`
+                          : "Optional"}
+                      </p>
+                    </div>
+                    <div
+                      role="group"
+                      aria-label="Product categories"
+                      className="mt-2 flex flex-wrap gap-1.5"
+                    >
+                      {activeCategories.map((category) => {
+                        const selected = selectedIds.includes(category.id);
+                        return (
+                          <button
+                            key={category.id}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => {
+                              const current = new Set(selectedIds);
+                              if (selected) current.delete(category.id);
+                              else current.add(category.id);
                               field.onChange([...current]);
                             }}
-                          />
-                          {category.name}
-                        </label>
-                      );
-                    })}
-                </div>
-              )}
+                            className={cn(
+                              "inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors",
+                              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30",
+                              selected
+                                ? "border-brand bg-brand text-white"
+                                : "border-border bg-surface-soft text-ink hover:border-brand/40 hover:bg-card"
+                            )}
+                          >
+                            {selected ? <Check className="size-3.5 shrink-0" aria-hidden /> : null}
+                            {category.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }}
             />
           </fieldset>
         ) : null}

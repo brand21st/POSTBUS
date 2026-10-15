@@ -1,4 +1,5 @@
 import type { StoreFooter } from "@/modules/storefront/footer";
+import type { StoreTheme, StoreTrackingConfig } from "@/modules/storefront/config";
 
 export type { StoreFooter };
 export type StoreProduct = {
@@ -37,13 +38,25 @@ export type StoreCategory = {
 export type StoreSlide = {
   id: string;
   imageUrl: string;
+  mobileImageUrl?: string | null;
   title: string | null;
   subtitle: string | null;
+  hook?: string | null;
   ctaLabel: string | null;
   ctaHref?: string | null;
+  offerBadge?: string | null;
+  textPosition?: "left" | "center" | "right";
+  overlayStrength?: number;
+  textColor?: string;
+  desktopFocal?: { x: number; y: number };
+  mobileFocal?: { x: number; y: number };
 };
 
 export type StorePayload = {
+  marketplace?: boolean;
+  theme?: StoreTheme;
+  tracking?: StoreTrackingConfig;
+  bundles?: StoreBundle[];
   published: boolean;
   storeName: string;
   logoUrl: string | null;
@@ -51,6 +64,7 @@ export type StorePayload = {
   seoTitle?: string | null;
   seoDescription?: string | null;
   slides: StoreSlide[];
+  coverAutoplay?: boolean;
   categories: StoreCategory[];
   featuredProductIds: string[];
   products: {
@@ -69,4 +83,11 @@ export type StorePayload = {
 export type CartLine = {
   product: StoreProduct;
   quantity: number;
+  bundle?: StoreBundle;
+};
+
+export type StoreBundle = {
+  id: string; name: string; pricingMode: "FIXED" | "PERCENT"; priceValue: number;
+  total: number; subtotal: number; savings: number;
+  components: Array<{ product: StoreProduct; quantity: number }>;
 };

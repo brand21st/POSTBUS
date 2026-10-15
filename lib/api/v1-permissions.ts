@@ -27,6 +27,7 @@ export function permissionForTenantRoute(
     if (method === "POST" && slugs[1] === "bulk" && slugs[2] === "status") return "shipments.write";
     if (method === "PATCH" && slugs[2] === "service") return "orders.write";
     if (method === "PATCH" && slugs[2] === "weights") return "orders.write";
+    if (method === "PATCH" && slugs[2] === "address") return "orders.write";
     return method === "POST" ? "orders.write" : "orders.read";
   }
 
@@ -72,6 +73,11 @@ export function permissionForTenantRoute(
 
   if (root === "print-station") {
     if (method === "GET") return undefined;
+    return "automation.manage";
+  }
+
+  if (root === "print-devices") {
+    if (method === "GET" && slugs.length === 1) return undefined;
     return "automation.manage";
   }
 

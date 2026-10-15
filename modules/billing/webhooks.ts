@@ -9,7 +9,31 @@ import {
   unixToDateOrNull,
   type SubscriptionRow,
 } from "@/modules/billing/subscriptions";
+import { AI_CREDITS_BILLING_CYCLE } from "@/modules/ai-credits/constants";
 import { fetchRazorpaySubscription } from "@/modules/razorpay/client";
+
+export type PlatformPaymentDomain = "AI_CREDITS" | "SUBSCRIPTION" | "UNMATCHED_PLATFORM";
+
+export async function classifyPlatformRazorpayPayment(
+  supabase: SupabaseClient,
+  input: {
+    razorpayOrderId?: string | null;
+    subscriptionMatched?: boolean;
+  }
+): Promise<PlatformPaymentDomain> {
+  if (input.razorpayOrderId) {
+    const { data } = await supabase
+      .from("payments")
+      .select("billing_cycle")
+      .eq("razorpay_order_id", input.razorpayOrderId)
+      .maybeSingle();
+    if (String(data?.billing_cycle ?? "") === AI_CREDITS_BILLING_CYCLE) {
+      return "AI_CREDITS";
+    }
+  }
+  if (input.subscriptionMatched) return "SUBSCRIPTION";
+  return "UNMATCHED_PLATFORM";
+}
 
 export function razorpayWebhookEventId(headerId: string, event: string | undefined, rawBody: string) {
   return headerId || `${event ?? "event"}:${Buffer.from(rawBody).toString("base64").slice(0, 40)}`;
@@ -436,70 +460,84 @@ export async function processRazorpayEvent(
 
   if (event === "payment.captured") {
     const orderId = paymentEntity.order_id ? String(paymentEntity.order_id) : razorpayOrderId || null;
-    let aiCreditsHandled = false;
-    if (orderId) {
+    const paid =
+      subscription ?? (orderId ? await loadSubscriptionByOrderId(supabase, orderId) : null);
+    const domain = await classifyPlatformRazorpayPayment(supabase, {
+      razorpayOrderId: orderId,
+      subscriptionMatched: Boolean(paid),
+    });
+    if (domain === "AI_CREDITS") {
+      if (!orderId) return { ignored: true };
       const { fulfillCapturedAiCreditPayment } = await import("@/modules/ai-credits/service");
-      const credits = await fulfillCapturedAiCreditPayment(supabase, {
+      await fulfillCapturedAiCreditPayment(supabase, {
         razorpayOrderId: orderId,
         razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
         amountPaise: paymentEntity.amount != null ? Number(paymentEntity.amount) : null,
         method: paymentEntity.method ? String(paymentEntity.method) : null,
       });
-      aiCreditsHandled = credits.handled;
-    }
-    const paid = aiCreditsHandled
-      ? null
-      : subscription ?? (await loadSubscriptionByOrderId(supabase, orderId));
-    if (
-      paid &&
-      paymentEntity.amount != null &&
-      Number(paid.amount_paise) !== Number(paymentEntity.amount)
-    ) {
-      logError("razorpay.webhook_amount_mismatch", {
-        event,
-        expected: paid.amount_paise,
-        received: paymentEntity.amount,
-        orderId,
-      });
+    } else if (domain === "SUBSCRIPTION") {
+      if (
+        paid &&
+        paymentEntity.amount != null &&
+        Number(paid.amount_paise) !== Number(paymentEntity.amount)
+      ) {
+        logError("razorpay.webhook_amount_mismatch", {
+          event,
+          expected: paid.amount_paise,
+          received: paymentEntity.amount,
+          orderId,
+        });
+        return { ignored: true };
+      }
+      if (paid && paymentEntity.id) {
+        await activateSubscription(supabase, {
+          subscription: paid,
+          paymentId: String(paymentEntity.id),
+          amountPaise: paymentEntity.amount ? Number(paymentEntity.amount) : null,
+          method: paymentEntity.method ? String(paymentEntity.method) : null,
+          razorpayOrderId: orderId,
+          razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
+          actor: "WEBHOOK",
+          reason: "payment.captured",
+        });
+      } else if (paid) {
+        await upsertPayment(supabase, {
+          organizationId: paid.organization_id,
+          subscriptionId: paid.id,
+          planId: paid.plan_id,
+          amountPaise: Number(paymentEntity.amount ?? 0),
+          status: "CAPTURED",
+          razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
+          razorpayOrderId: orderId,
+          razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
+          razorpaySubscriptionId,
+          billingCycle: paid.billing_cycle,
+          method: paymentEntity.method ? String(paymentEntity.method) : null,
+          paidAt: new Date().toISOString(),
+        });
+      }
+    } else {
+      logError("razorpay.webhook_unmatched_payment", { event, eventId, orderId });
       return { ignored: true };
-    }
-    if (paid && paymentEntity.id) {
-      await activateSubscription(supabase, {
-        subscription: paid,
-        paymentId: String(paymentEntity.id),
-        amountPaise: paymentEntity.amount ? Number(paymentEntity.amount) : null,
-        method: paymentEntity.method ? String(paymentEntity.method) : null,
-        razorpayOrderId: orderId,
-        razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
-        actor: "WEBHOOK",
-        reason: "payment.captured",
-      });
-    } else if (paid) {
-      await upsertPayment(supabase, {
-        organizationId: paid.organization_id,
-        subscriptionId: paid.id,
-        planId: paid.plan_id,
-        amountPaise: Number(paymentEntity.amount ?? 0),
-        status: "CAPTURED",
-        razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
-        razorpayOrderId: orderId,
-        razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
-        razorpaySubscriptionId,
-        billingCycle: paid.billing_cycle,
-        method: paymentEntity.method ? String(paymentEntity.method) : null,
-        paidAt: new Date().toISOString(),
-      });
     }
   }
 
   if (event === "refund.processed") {
     const paymentId = String(refundEntity.payment_id ?? paymentEntity.id ?? "");
-    if (paymentId) {
-      await supabase
-        .from("payments")
-        .update({ status: "REFUNDED", refunded_at: new Date().toISOString() })
-        .eq("razorpay_payment_id", paymentId);
+    if (!paymentId) return { ignored: true };
+    const { data: existing } = await supabase
+      .from("payments")
+      .select("id")
+      .eq("razorpay_payment_id", paymentId)
+      .maybeSingle();
+    if (!existing) {
+      logError("razorpay.webhook_unmatched_refund", { event, eventId, paymentId });
+      return { ignored: true };
     }
+    await supabase
+      .from("payments")
+      .update({ status: "REFUNDED", refunded_at: new Date().toISOString() })
+      .eq("razorpay_payment_id", paymentId);
   }
 
   await writeBillingAudit(supabase, {

@@ -3,6 +3,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logInfo } from "@/lib/logger";
 import { getAutomationSettings } from "@/modules/automation/service";
+import { isPrintPaperSize, MULTI_PRINT_PAPERS } from "@/modules/labels/page-presets";
 
 export type PrinterConnectionType = "webusb" | "agent";
 export type PrinterProtocol = "tspl" | "zpl" | "escpos" | "unknown";
@@ -86,22 +87,26 @@ async function audit(
 }
 
 export async function listPrinters(supabase: SupabaseClient, organizationId: string) {
-  const [{ data, error }, automation] = await Promise.all([
+  const [{ data, error }, automation, settings] = await Promise.all([
     supabase
       .from("printers")
       .select(PRINTER_COLUMNS)
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: true }),
     getAutomationSettings(supabase, organizationId),
+    supabase.from("print_settings").select("paper_size").eq("organization_id", organizationId).maybeSingle(),
   ]);
   if (error) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Could not load printers.");
   }
   const printers = ((data ?? []) as PrinterRow[]).map(mapPrinter);
+  const paperSize = isPrintPaperSize(settings.data?.paper_size) ? settings.data.paper_size : "A6";
+  const preset = MULTI_PRINT_PAPERS.find((item) => item.id === paperSize);
   return {
     printers,
     autoLabelPrinting: Boolean(automation.autoLabelPrinting),
-    labelSizeLabel: "105 × 148 mm (A6)",
+    paperSize,
+    labelSizeLabel: preset?.label ?? "A6 (105 × 148 mm)",
   };
 }
 

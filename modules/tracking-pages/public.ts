@@ -3,8 +3,14 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orExact } from "@/lib/api/filters";
 import { titleCase } from "@/lib/format";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
-import { indiaPostFromRow } from "@/modules/india-post/provider";
-import { ingestBulkTrackingArticle, snapshotFromShipmentRow } from "@/modules/india-post/apply-tracking";
+import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
+import {
+  bulkEventOccurredAt,
+  ingestBulkTrackingArticle,
+  matchingBulkTrackingArticle,
+  snapshotFromShipmentRow,
+  type BulkTrackingArticle,
+} from "@/modules/india-post/apply-tracking";
 import type { PublicTrackResult, PublicTrackingEvent } from "@/types/api";
 import { indiaPostServiceLabel } from "@/types/domain";
 import { parseTrackingSubdomain } from "./host";
@@ -14,6 +20,7 @@ type LiveState = PublicTrackResult["liveTracking"];
 
 type CachedLive = {
   expiresAt: number;
+  fetchedAt: number;
   events: PublicTrackingEvent[];
   status?: string | null;
 };
@@ -26,18 +33,6 @@ const SHIPMENT_DETAIL_COLUMNS =
 
 const ORG_SHIPMENT_DETAIL_COLUMNS =
   "id, barcode, tracking_number, status, operational_status, order_id, shipping_address_id, pickup_location_id, service_code, payment_mode, cod_amount, weight_grams, booked_at, last_event_at";
-
-type ProviderArticle = {
-  booking_details?: { article_number?: string };
-  tracking_details?: Array<{
-    event?: string;
-    office?: string;
-    date?: string;
-    time?: string;
-    event_code?: string;
-  }>;
-  del_status?: { del_status?: string };
-};
 
 type StoredShipmentRow = {
   organizationId?: string;
@@ -74,17 +69,7 @@ function cacheKey(organizationId: string, barcode: string) {
 }
 
 function eventOccurredAt(event: { date?: string; time?: string }) {
-  if (event.date && event.time) {
-    const combined = `${event.date}T${event.time}`;
-    const parsed = new Date(combined);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-  }
-  if (event.date) {
-    const parsed = new Date(event.date);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-    return event.date;
-  }
-  return new Date().toISOString();
+  return bulkEventOccurredAt(event);
 }
 
 function customerServiceLabel(code?: string | null) {
@@ -293,7 +278,11 @@ async function refreshLiveTracking(
 
   const cached = liveCache.get(cacheKey(organizationId, barcode));
   if (cached && cached.expiresAt > Date.now()) {
-    return { liveTracking: "ok", liveMessage: null, status: cached.status };
+    return {
+      liveTracking: "cached",
+      liveMessage: `Last updated at ${new Date(cached.fetchedAt).toISOString()}`,
+      status: cached.status,
+    };
   }
 
   if (!hasAdminClient()) {
@@ -318,10 +307,9 @@ async function refreshLiveTracking(
   }
 
   try {
-    const provider = indiaPostFromRow(connection);
-    const result = (await provider.trackShipment([barcode])) as { data?: ProviderArticle[] };
-    const article =
-      result.data?.find((item) => item.booking_details?.article_number === barcode) ?? result.data?.[0];
+    const provider = await ensurePersistedIndiaPostSession(admin, connection);
+    const result = (await provider.trackShipment([barcode])) as { data?: BulkTrackingArticle[] };
+    const article = matchingBulkTrackingArticle(result.data, barcode);
     const { data: row } = await admin
       .from("shipments")
       .select(
@@ -336,6 +324,7 @@ async function refreshLiveTracking(
             organizationId,
             shipment: snapshotFromShipmentRow(row, organizationId),
             article,
+            source: "public",
           })
         : null;
     const incoming = (article?.tracking_details ?? []).map((event) => ({
@@ -347,6 +336,7 @@ async function refreshLiveTracking(
 
     liveCache.set(cacheKey(organizationId, barcode), {
       expiresAt: Date.now() + LIVE_TTL_MS,
+      fetchedAt: Date.now(),
       events: incoming,
       status: ingested?.snapshot.status ?? shipment.status,
     });

@@ -6,7 +6,7 @@ import { ERROR_CODES } from "@/lib/api/errors";
 import { handleCommerceRoutes } from "@/lib/api/v1/commerce";
 
 vi.mock("@/modules/india-post/session", () => ({
-  ensurePersistedIndiaPostSession: vi.fn(async () => ({
+  ensurePersistedIndiaPostTrackingSession: vi.fn(async () => ({
     trackShipment: vi.fn(async () => ({
       data: [
         {
@@ -208,5 +208,22 @@ describe("NDR RTO commerce APIs", () => {
       status: "NDR",
       operationalStatus: "NDR",
     });
+  });
+
+  it("POST /api/v1/ndr-rto/sync-visible tracks the visible page in one CEPT bulk call", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const result = await handleCommerceRoutes(
+      new NextRequest("http://localhost:3000/api/v1/ndr-rto/sync-visible", {
+        method: "POST",
+        body: JSON.stringify({ shipmentIds: [id] }),
+        headers: { "Content-Type": "application/json" },
+      }),
+      ndrDb() as never,
+      ctx,
+      "POST ndr-rto/sync-visible",
+      "POST",
+      ["ndr-rto", "sync-visible"]
+    );
+    expect(result).toMatchObject({ tracked: 1, matched: 1 });
   });
 });

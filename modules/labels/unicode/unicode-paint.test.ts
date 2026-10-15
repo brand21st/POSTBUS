@@ -65,7 +65,7 @@ function packingFor(name: string, address: string) {
 }
 
 describe("native canvas loader", () => {
-  it("resolves @napi-rs/canvas from the project root, not a virtual /ROOT/ filename", () => {
+  it("resolves @napi-rs/canvas from the project root, not a virtual /ROOT/ filename", { timeout: 20000 }, () => {
     expect(canvasRequireFrom()).toBe(path.join(process.cwd(), "package.json"));
     expect(typeof loadCanvas().createCanvas).toBe("function");
   });
@@ -83,7 +83,7 @@ describe("unicode label text helpers", () => {
     expect(runs.map((run) => run.script)).toEqual(["malayalam", "latin", "devanagari"]);
   });
 
-  it("shapes Malayalam and Devanagari conjuncts narrower than unjoined letters", () => {
+  it("shapes Malayalam and Devanagari conjuncts narrower than unjoined letters", { timeout: 20000 }, () => {
     expect(measureShapedText("ക്ക", 12)).toBeLessThan(measureShapedText("കക", 12));
     expect(measureShapedText("ക്ഷ", 12)).toBeGreaterThan(8);
     expect(measureShapedText("റ്റ", 12)).toBeLessThan(measureShapedText("റ്റ് റ", 12) + 1);

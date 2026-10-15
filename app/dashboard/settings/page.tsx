@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { PrintAgentDevices } from "@/components/dashboard/print-agent-devices";
 import { PrintingSettings } from "@/components/dashboard/printing-settings";
 import { PoliciesSettings } from "@/components/dashboard/policies-settings";
 import { IndiaPostParcelDefaultsSettings } from "@/components/dashboard/india-post-parcel-defaults-settings";
@@ -72,7 +73,11 @@ export default function SettingsPage() {
         <TabsContent value="notifications">
           <NotificationsSection />
         </TabsContent>
-        <TabsContent value="printing">
+        <TabsContent
+          value="printing"
+          className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]"
+        >
+          <PrintAgentDevices />
           <PrintingSettings />
         </TabsContent>
         <TabsContent value="shipping">

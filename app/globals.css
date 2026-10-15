@@ -231,6 +231,19 @@ body {
   animation: pulse-soft 2.4s ease-in-out infinite;
 }
 
+@keyframes studio-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+.animate-studio-shimmer {
+  animation: studio-shimmer 1.4s ease-in-out infinite;
+}
+
 .animate-dash-flow {
   animation: dash-flow 1.2s linear infinite;
 }
