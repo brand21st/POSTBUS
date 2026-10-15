@@ -64,7 +64,7 @@ const addressSchema = z.object({
   country: z.string().min(2),
 });
 
-const schema = z.object({
+export const newOrderFormSchema = z.object({
   orderNumber: z.string().optional(),
   customerName: z
     .string()
@@ -85,7 +85,6 @@ const schema = z.object({
   amountPaid: z.coerce.number().min(0).optional(),
   shippingAddress: addressSchema,
   billingSameAsShipping: z.boolean(),
-  billingAddress: addressSchema.optional(),
   lineItems: z
     .array(
       z.object({
@@ -111,7 +110,31 @@ const schema = z.object({
       serviceCode: z.string().optional(),
     })
     .optional(),
+  billingAddress: z
+    .object({
+      name: z.string().optional(),
+      phone: z.string().optional(),
+      line1: z.string().optional(),
+      line2: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      pincode: z.string().optional(),
+      country: z.string().optional(),
+    })
+    .optional(),
 }).superRefine((value, ctx) => {
+  if (!value.billingSameAsShipping) {
+    const parsed = addressSchema.safeParse(value.billingAddress ?? {});
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["billingAddress", ...issue.path],
+          message: issue.message,
+        });
+      }
+    }
+  }
   if (value.paymentStatus !== "PARTIAL") return;
   const total = value.lineItems.reduce(
     (sum, item) => sum + Number(item.unitPrice || 0) * Number(item.quantity || 0),
@@ -133,7 +156,7 @@ const schema = z.object({
   }
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormValues = z.infer<typeof newOrderFormSchema>;
 
 export default function NewOrderPage() {
   const router = useRouter();
@@ -151,7 +174,7 @@ export default function NewOrderPage() {
     [indiaPost.data]
   );
   const form = useForm<FormValues>({
-    resolver: zodResolver(schema) as never,
+    resolver: zodResolver(newOrderFormSchema) as never,
     defaultValues: {
       orderNumber: "",
       customerName: "",
@@ -356,8 +379,8 @@ export default function NewOrderPage() {
   return (
     <form
       className="space-y-3 pb-16 xl:pb-0"
-      onSubmit={form.handleSubmit(onSubmit, () => {
-        toast.error("Please check the highlighted fields.");
+      onSubmit={form.handleSubmit(onSubmit, (errors) => {
+        toast.error(firstFormError(errors) ?? "Please check the highlighted fields.");
       })}
     >
       <PageHeader
@@ -874,6 +897,18 @@ export default function NewOrderPage() {
       </div>
     </form>
   );
+}
+
+function firstFormError(errors: unknown): string | undefined {
+  if (!errors || typeof errors !== "object") return undefined;
+  if ("message" in errors && typeof errors.message === "string" && errors.message) {
+    return errors.message;
+  }
+  for (const value of Object.values(errors)) {
+    const found = firstFormError(value);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 const LINE_ITEM_GRID = "lg:grid-cols-[minmax(0,1fr)_6.5rem_7rem_7rem_5.5rem_5.5rem_2rem]";
