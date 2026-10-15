@@ -27,6 +27,7 @@ import {
   shopifyPendingBookingBlocked,
 } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate, formatWeightGrams } from "@/lib/format";
+import { savedOrderCodBreakdown } from "@/modules/orders/extra-cod";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { EditShippingAddressDialog } from "@/components/orders/edit-shipping-address-dialog";
@@ -174,6 +175,8 @@ export default function OrderDetailPage() {
   }
 
   const record = order.data;
+  const codBreakdown = savedOrderCodBreakdown(record);
+  const showExtraCod = codBreakdown.extraCodCharge > 0;
   const shopifyNeedsPayment = shopifyPendingBookingBlocked(record);
   const items = lineItems(record);
   const related = shipments.data?.items ?? [];
@@ -279,24 +282,22 @@ export default function OrderDetailPage() {
               }
             />
             <Row
-              label="Total"
-              value={formatCurrency(record.totalAmount ?? record.total_amount, record.currency)}
+              label={showExtraCod ? "Product / base amount" : "Total"}
+              value={formatCurrency(codBreakdown.baseOrderAmount, record.currency)}
             />
             <Row
               label="Amount received"
               value={formatCurrency(record.amountPaid ?? record.amount_paid, record.currency)}
             />
+            {showExtraCod ? (
+              <Row
+                label="Extra COD charge"
+                value={formatCurrency(codBreakdown.extraCodCharge, record.currency)}
+              />
+            ) : null}
             <Row
-              label="Remaining / COD"
-              value={formatCurrency(
-                Number(record.codAmount ?? record.cod_amount) ||
-                  Math.max(
-                    0,
-                    Number(record.totalAmount ?? record.total_amount ?? 0) -
-                      Number(record.amountPaid ?? record.amount_paid ?? 0)
-                  ),
-                record.currency
-              )}
+              label={showExtraCod ? "Final COD amount" : "Remaining / COD"}
+              value={formatCurrency(codBreakdown.finalCodAmount, record.currency)}
             />
           </CardContent>
         </Card>

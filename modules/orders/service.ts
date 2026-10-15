@@ -6,6 +6,7 @@ import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
 import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
+import { applyManualExtraCodCharge } from "@/modules/orders/extra-cod";
 import { settleOrderPayment, shipmentCollectFromOrder } from "@/modules/orders/payment";
 import {
   applyShopifyPaymentOverrideStatus,
@@ -240,10 +241,14 @@ export async function createManualOrder(
     return resolveLineFromCatalog(product, item.quantity);
   });
   const subtotal = resolvedLines.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const payment = settleResolvedOrderPayment({
-    lines: resolvedLines,
-    paymentStatus: input.paymentStatus,
-    amountPaid: input.amountPaid,
+  const payment = applyManualExtraCodCharge({
+    requestedPaymentStatus: input.paymentStatus,
+    settled: settleResolvedOrderPayment({
+      lines: resolvedLines,
+      paymentStatus: input.paymentStatus,
+      amountPaid: input.amountPaid,
+    }),
+    extraCodCharge: input.extraCodCharge,
   });
   const requestedNumber = input.orderNumber?.trim() || "";
   const keepRequested = Boolean(requestedNumber) && !isAllocatedSequenceNumber(requestedNumber);
@@ -266,6 +271,7 @@ export async function createManualOrder(
         payment_status: payment.paymentStatus,
         amount_paid: payment.amountPaid,
         cod_amount: payment.codAmount,
+        extra_cod_charge: payment.extraCodCharge,
         fulfillment_status: "UNFULFILLED",
         status: input.status ?? "READY",
         metadata: input.metadata ?? {},
@@ -324,6 +330,7 @@ export async function createManualOrder(
       paymentStatus: payment.paymentStatus,
       amountPaid: payment.amountPaid,
       codAmount: payment.codAmount,
+      extraCodCharge: payment.extraCodCharge,
     },
   });
 
@@ -586,6 +593,8 @@ function mapOrder(row: Record<string, unknown>) {
     amount_paid: row.amount_paid,
     codAmount: row.cod_amount,
     cod_amount: row.cod_amount,
+    extraCodCharge: row.extra_cod_charge ?? 0,
+    extra_cod_charge: row.extra_cod_charge ?? 0,
     createdAt: row.created_at,
     indiaPostService: row.india_post_service ?? null,
     parcelWeightMode: row.parcel_weight_mode ?? "auto",

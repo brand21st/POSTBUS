@@ -270,6 +270,8 @@ export type OrderRecord = {
   amount_paid?: number | string;
   codAmount?: number | string;
   cod_amount?: number | string;
+  extraCodCharge?: number | string;
+  extra_cod_charge?: number | string;
   currency?: string;
   customer?: CustomerSummary | null;
   customerName?: string | null;

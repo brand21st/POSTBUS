@@ -45,6 +45,33 @@ describe("new order form", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("accepts an empty extra COD charge as zero on a cash-on-delivery order", () => {
+    const parsed = newOrderFormSchema.safeParse({
+      ...filledOrder,
+      paymentStatus: "COD",
+      extraCodCharge: "",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects a negative extra COD charge", () => {
+    const parsed = newOrderFormSchema.safeParse({
+      ...filledOrder,
+      paymentStatus: "COD",
+      extraCodCharge: -50,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("does not reject a prepaid order because of a stale extra COD value", () => {
+    const parsed = newOrderFormSchema.safeParse({
+      ...filledOrder,
+      paymentStatus: "PAID",
+      extraCodCharge: -50,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it("still requires a billing address when it is different from shipping", () => {
     const parsed = newOrderFormSchema.safeParse({
       ...filledOrder,

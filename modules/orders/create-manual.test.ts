@@ -240,6 +240,87 @@ describe("createManualOrder", () => {
     });
   });
 
+  it("adds a manual extra COD charge once without changing the product total", async () => {
+    const client = mockClient();
+    await createManualOrder(
+      client as never,
+      ctx,
+      createOrderSchema.parse({
+        ...payload,
+        paymentStatus: "COD",
+        extraCodCharge: 50,
+        lineItems: [{ title: "Cotton kurta", sku: "KURTA-1", quantity: 1, unitPrice: 1000, weightGrams: 350 }],
+      })
+    );
+    expect(client.inserts.orders).toMatchObject({
+      organization_id: "org-1",
+      subtotal: 1000,
+      total_amount: 1000,
+      payment_status: "COD",
+      amount_paid: 0,
+      cod_amount: 1050,
+      extra_cod_charge: 50,
+    });
+    expect(client.inserts.orders).not.toHaveProperty("discount");
+  });
+
+  it("keeps a partial payment free of a stale extra COD charge", async () => {
+    const client = mockClient();
+    await createManualOrder(
+      client as never,
+      ctx,
+      createOrderSchema.parse({
+        ...payload,
+        paymentStatus: "PARTIAL",
+        amountPaid: 300,
+        extraCodCharge: 80,
+      })
+    );
+    expect(client.inserts.orders).toMatchObject({
+      payment_status: "PARTIAL",
+      amount_paid: 300,
+      cod_amount: 698,
+      extra_cod_charge: 0,
+      total_amount: 998,
+    });
+  });
+
+  it("ignores an extra COD charge on a prepaid order", async () => {
+    const client = mockClient();
+    await createManualOrder(
+      client as never,
+      ctx,
+      createOrderSchema.parse({ ...payload, paymentStatus: "PAID", extraCodCharge: 80 })
+    );
+    expect(client.inserts.orders).toMatchObject({
+      payment_status: "PAID",
+      cod_amount: 0,
+      extra_cod_charge: 0,
+      total_amount: 998,
+    });
+  });
+
+  it("writes the extra charge once when the order number insert is retried", async () => {
+    const client = mockClient({ failFirstOrderInsert: true });
+    await createManualOrder(
+      client as never,
+      ctx,
+      createOrderSchema.parse({
+        ...payload,
+        orderNumber: undefined,
+        paymentStatus: "COD",
+        extraCodCharge: 50,
+        lineItems: [{ title: "Cotton kurta", quantity: 1, unitPrice: 1000 }],
+      })
+    );
+    expect(client.inserts.orders).toMatchObject({
+      order_number: "PB-10001",
+      subtotal: 1000,
+      cod_amount: 1050,
+      extra_cod_charge: 50,
+    });
+  });
+
   it("stores full COD as the collect-on-delivery amount", async () => {
     const client = mockClient();
     await createManualOrder(
