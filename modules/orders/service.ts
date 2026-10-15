@@ -193,7 +193,8 @@ export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id:
 export async function createManualOrder(
   supabase: SupabaseClient,
   ctx: OrderActor,
-  input: CreateInput
+  input: CreateInput,
+  serverResolvedLines?: ResolvedOrderLine[]
 ) {
   const { data: customer, error: customerError } = await supabase
     .from("customers")
@@ -230,7 +231,7 @@ export async function createManualOrder(
       image_urls?: unknown;
     }>
   );
-  const resolvedLines: ResolvedOrderLine[] = input.lineItems.map((item) => {
+  const resolvedLines: ResolvedOrderLine[] = serverResolvedLines ?? input.lineItems.map((item) => {
     if (!item.productId) return resolveManualLine(item);
     const product = catalog.get(item.productId);
     if (!product) {
@@ -837,7 +838,7 @@ export async function confirmShopifyPayment(
     bookingConflict: stored?.bookingConflict ?? null,
   });
 
-  const { data: updatedOrder, error: updateError } = await supabase
+  const { data: updated, error: updateError } = await supabase
     .from("orders")
     .update({
       payment_status: settled.paymentStatus,
@@ -852,9 +853,9 @@ export async function confirmShopifyPayment(
     .select()
     .maybeSingle();
   if (updateError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError.message);
-  if (!updatedOrder) throw new AppError(ERROR_CODES.CONFLICT, "This Shopify order is not waiting for payment confirmation.");
+  if (!updated) throw new AppError(ERROR_CODES.CONFLICT, "This Shopify order is not waiting for payment confirmation.");
 
-  const collect = shipmentCollectFromOrder(updatedOrder);
+  const collect = shipmentCollectFromOrder(updated);
   const { error: shipmentError } = await supabase
     .from("shipments")
     .update({ payment_mode: collect.payment_mode, cod_amount: collect.cod_amount })

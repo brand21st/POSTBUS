@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -47,7 +48,6 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
   );
   const offlineMessage = String(stationField(station, "offlineMessage", "offline_message") ?? "");
   const usbDefault = stationField(station, "defaultDelivery", "default_delivery") === "webusb";
-  const [token, setToken] = useState<string | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
 
   const saveStation = useMutation({
@@ -59,16 +59,6 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
     onSuccess: (data) => {
       queryClient.setQueryData(PRINT_STATION_QUERY_KEY, data);
       toast.success("Printer settings saved.");
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const connect = useMutation({
-    mutationFn: () => api<{ token: string }>("/api/v1/print-station/token", { method: "POST" }),
-    onSuccess: async (data) => {
-      setToken(data.token);
-      setConnectOpen(true);
-      await queryClient.invalidateQueries({ queryKey: PRINT_STATION_QUERY_KEY });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -216,28 +206,14 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
               Change Printer
             </Button>
           ) : (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!canManage || connect.isPending}
-              onClick={() => connect.mutate()}
+            <Link
+              href="/dashboard/settings?tab=printing"
+              className={cn(buttonVariants({ variant: "secondary", size: "sm" }), !canManage && "pointer-events-none opacity-50")}
             >
               <Printer className="size-4" />
               Connect Printer
-            </Button>
+            </Link>
           )}
-          {printerNames.length > 0 ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={!canManage || connect.isPending}
-              onClick={() => connect.mutate()}
-            >
-              New agent token
-            </Button>
-          ) : null}
         </div>
       </CardContent>
 
@@ -250,44 +226,24 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
               Wi-Fi printer on your desk.
             </DialogDescription>
           </DialogHeader>
-          {printerNames.length > 0 ? (
-            <div className="space-y-1.5">
-              <Label>Choose printer</Label>
-              <Select
-                value={selected || undefined}
-                onValueChange={(value) => saveStation.mutate({ selectedPrinterName: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a printer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {printerNames.map((name) => (
-                    <SelectItem key={name} value={name}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : (
-            <p className="text-sm text-muted">
-              After the agent starts, this page lists the printers on that computer so you can pick
-              the label printer. The first printer is never chosen automatically.
-            </p>
-          )}
-          {token ? (
-            <div className="space-y-2 rounded-xl border border-border bg-surface-soft p-3 text-xs">
-              <p className="font-medium text-foreground">Save this token now. It is shown once.</p>
-              <code className="block break-all text-foreground">{token}</code>
-              <pre className="overflow-x-auto whitespace-pre-wrap text-muted">{`cd print-agent
-npm install
-node index.mjs --url ${typeof window !== "undefined" ? window.location.origin : "https://your-postbus-domain"} --token ${token}`}</pre>
-            </div>
-          ) : (
-            <Button type="button" disabled={!canManage || connect.isPending} onClick={() => connect.mutate()}>
-              Generate agent token
-            </Button>
-          )}
+          <div className="space-y-1.5">
+            <Label>Choose printer</Label>
+            <Select
+              value={selected || undefined}
+              onValueChange={(value) => saveStation.mutate({ selectedPrinterName: value })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select a printer" />
+              </SelectTrigger>
+              <SelectContent>
+                {printerNames.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </DialogContent>
       </Dialog>
     </>

@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, MonitorCog, RefreshCw, ShieldCheck, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { hasPermission } from "@/lib/permissions/rbac";
+import { cn } from "@/lib/utils";
 import type { MemberRole } from "@/types/domain";
 
 type PrintDevice = {
@@ -32,6 +35,14 @@ type PairingPreview = {
 };
 
 const DEVICES_KEY = ["print-devices"] as const;
+
+function lastSeen(value: string | null) {
+  if (!value) return "Never connected";
+  return `Last seen ${new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value))}`;
+}
 
 export function PrintAgentDevices() {
   const me = useMe();
@@ -69,72 +80,155 @@ export function PrintAgentDevices() {
   });
 
   const rows = devices.data ?? [];
+  const activeCount = rows.filter((device) => device.authorization === "active").length;
+  const onlineCount = rows.filter(
+    (device) => device.authorization === "active" && device.connection === "online"
+  ).length;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>PostBus Print Agent</CardTitle>
-        <CardDescription>Connect a Windows computer to this organization. This step does not print shipping labels.</CardDescription>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b border-border bg-surface-soft/50 p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+              <MonitorCog className="size-4.5" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <CardTitle>Windows Print Agent</CardTitle>
+              <CardDescription className="mt-0.5">
+                Pair a trusted packing computer for automatic printing.
+              </CardDescription>
+            </div>
+          </div>
+          <Badge variant={onlineCount > 0 ? "success" : "outline"} className="shrink-0">
+            {onlineCount > 0 ? `${onlineCount} online` : `${activeCount} paired`}
+          </Badge>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-6">
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium">Download</h2>
-          <p className="text-sm text-muted">PostBus Print Agent for Windows. Use the installer built for your organization. A public download is not published from this screen.</p>
-        </section>
-        <section className="space-y-3">
-          <h2 className="text-sm font-medium">Connect a device</h2>
-          <Label htmlFor="pairing-code">Pairing code</Label>
-          <div className="flex flex-wrap gap-2">
+      <CardContent className="space-y-4 p-4 sm:p-5">
+        <section className="rounded-xl border border-border bg-card p-3.5 transition-colors duration-200 hover:border-brand/25">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <Label htmlFor="pairing-code" className="text-sm font-semibold">Pair a new computer</Label>
+              <p className="mt-0.5 text-xs text-muted">Enter the 8-character code shown in the Windows app.</p>
+            </div>
+            <ShieldCheck className="size-4 shrink-0 text-muted" aria-hidden />
+          </div>
+          <div className="flex gap-2">
             <Input
               id="pairing-code"
               value={code}
-              onChange={(event) => setCode(event.target.value.toUpperCase())}
+              onChange={(event) => setCode(event.target.value.toUpperCase().slice(0, 9))}
               placeholder="XXXX-XXXX"
               autoComplete="off"
               spellCheck={false}
-              className="max-w-48"
+              className="h-9 min-w-0 flex-1 font-mono tracking-[0.18em]"
               disabled={!canManage}
             />
-            <Button type="button" disabled={!canManage || code.trim().length < 8 || connect.isPending} onClick={() => connect.mutate()}>
-              Connect device
+            <Button
+              type="button"
+              size="sm"
+              className="shrink-0"
+              disabled={!canManage || code.trim().length < 8 || connect.isPending}
+              onClick={() => connect.mutate()}
+            >
+              {connect.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+              Pair
             </Button>
           </div>
           {preview ? (
-            <div className="rounded-xl border border-border p-3 text-sm">
-              <p>Device: {preview.deviceName}</p>
-              <p>System: {preview.platform} {preview.osVersion}</p>
-              <p>Access requested: connect this computer to {preview.organizationName || me.data?.organization?.name || "your organization"}.</p>
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-transparent bg-emerald-100 p-2.5 text-xs text-emerald-800 animate-in fade-in slide-in-from-top-1 duration-200">
+              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-800" aria-hidden />
+              <p className="text-emerald-800">
+                <span className="font-semibold">{preview.deviceName}</span> paired with{" "}
+                {preview.organizationName || me.data?.organization?.name || "your organization"}.
+              </p>
             </div>
           ) : null}
         </section>
-        <section className="space-y-3">
+        <section>
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-medium">Connected devices</h2>
-            <Button type="button" variant="secondary" onClick={() => void devices.refetch()}>Refresh</Button>
+            <div>
+              <h2 className="text-sm font-semibold">Computers</h2>
+              <p className="text-xs text-muted">{activeCount} active device{activeCount === 1 ? "" : "s"}</p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={devices.isFetching}
+              onClick={() => void devices.refetch()}
+            >
+              <RefreshCw className={devices.isFetching ? "animate-spin" : ""} aria-hidden />
+              Refresh
+            </Button>
           </div>
-          {devices.isError ? <p className="text-sm text-error">Device pairing is not available on this server yet.</p> : null}
-          {!devices.isError && rows.length === 0 ? <p className="text-sm text-muted">No Windows print agents are connected.</p> : null}
-          <div className="space-y-2">
+          {devices.isError ? (
+            <p className="mt-3 rounded-lg bg-red-50 p-2.5 text-xs text-error">Device pairing is unavailable. Refresh and try again.</p>
+          ) : null}
+          {!devices.isError && rows.length === 0 ? (
+            <p className="mt-3 rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted">
+              No Windows computers paired yet.
+            </p>
+          ) : null}
+          <div className="mt-3 space-y-2">
             {rows.map((device) => (
-              <div key={device.id} className="grid gap-2 rounded-xl border border-border p-3 text-sm md:grid-cols-[1.4fr_1fr_auto] md:items-center">
-                <div>
-                  <p className="font-medium">{device.deviceName}</p>
-                  <p className="text-muted">{device.platform} {device.osVersion} · agent {device.agentVersion || "unknown"}</p>
+              <div
+                key={device.id}
+                className="group flex items-center gap-3 rounded-xl border border-border p-3 transition-all duration-200 hover:border-zinc-300 hover:bg-surface-soft/60 dark:hover:border-zinc-700"
+              >
+                <span
+                  className={cn(
+                    "flex size-8 shrink-0 items-center justify-center rounded-lg",
+                    device.authorization === "active" && device.connection === "online"
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                      : "bg-surface-soft text-muted"
+                  )}
+                >
+                  {device.authorization === "active" && device.connection === "online"
+                    ? <Wifi className="size-4" aria-hidden />
+                    : <WifiOff className="size-4" aria-hidden />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-semibold">{device.deviceName}</p>
+                    <Badge
+                      variant={
+                        device.authorization === "revoked"
+                          ? "error"
+                          : device.connection === "online"
+                            ? "success"
+                            : "outline"
+                      }
+                      className="px-2 py-0 text-[10px]"
+                    >
+                      {device.authorization === "revoked" ? "Revoked" : device.connection === "online" ? "Online" : "Offline"}
+                    </Badge>
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-muted">
+                    {device.platform} {device.osVersion} · v{device.agentVersion || "unknown"} · {lastSeen(device.lastSeenAt)}
+                  </p>
                 </div>
-                <p>
-                  {device.authorization === "revoked" ? "Revoked" : device.connection === "online" ? "Online" : "Offline"}
-                  {device.lastSeenAt ? ` · last seen ${new Date(device.lastSeenAt).toLocaleString()}` : ""}
-                </p>
                 {canManage && device.authorization === "active" ? (
-                  <Button type="button" variant="secondary" disabled={revoke.isPending} onClick={() => revoke.mutate(device.id)}>
-                    Revoke access
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="shrink-0 text-muted opacity-70 transition-opacity group-hover:opacity-100"
+                    disabled={revoke.isPending}
+                    onClick={() => revoke.mutate(device.id)}
+                  >
+                    Revoke
                   </Button>
-                ) : <span />}
+                ) : null}
               </div>
             ))}
           </div>
         </section>
-        <p className="text-sm text-muted">Only connect computers you trust. A paired device will eventually be able to receive shipping labels for this organization. It cannot do that in this version.</p>
+        <p className="flex items-center gap-2 border-t border-border pt-3 text-xs text-muted">
+          <ShieldCheck className="size-3.5 shrink-0" aria-hidden />
+          Pair only trusted packing computers. Access can be revoked at any time.
+        </p>
       </CardContent>
     </Card>
   );

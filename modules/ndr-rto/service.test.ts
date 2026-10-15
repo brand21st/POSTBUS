@@ -354,7 +354,7 @@ describe("NDR APIs", () => {
 
     const result = await syncNdrVisibleShipments(supabase as never, ctx, ["ship-a", "ship-b"]);
     expect(trackShipment).toHaveBeenCalledTimes(1);
-    expect(trackShipment).toHaveBeenCalledWith(["CL214330016IN", "CL556973995IN"], { isolateFailures: false });
+    expect(trackShipment).toHaveBeenCalledWith(["CL214330016IN", "CL556973995IN"]);
     expect(result).toMatchObject({ tracked: 2, matched: 2 });
     expect(ingested).toEqual(["ship-a", "ship-b"]);
     ingest.mockRestore();

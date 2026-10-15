@@ -219,6 +219,7 @@ export const JOB_TYPES = [
   "vachat-notify",
   "invoice-generation",
   "support-ingest",
+  "ai-image",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

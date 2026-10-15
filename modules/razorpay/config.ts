@@ -3,6 +3,8 @@ import { logError } from "@/lib/logger";
 import { decryptSecret } from "@/lib/security/crypto";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 
+/** PLATFORM BILLING ONLY (Domain A). Do not reuse these credentials for merchant store payments. */
+
 export const RAZORPAY_BILLING_WEBHOOK_EVENTS = [
   "subscription.authenticated",
   "subscription.activated",

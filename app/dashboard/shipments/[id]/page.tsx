@@ -33,7 +33,6 @@ export default function ShipmentDetailPage() {
   const entitlements = usePlanEntitlements();
   const invoicesLocked = !entitlements.loading && !entitlements.allows(FEATURE.invoices);
   const canSync = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "shipments.write");
-  const autoSynced = useRef<string | null>(null);
 
   const shipment = useQuery({
     queryKey: ["shipment", params.id],
@@ -51,6 +50,7 @@ export default function ShipmentDetailPage() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+  const autoSynced = useRef<string | null>(null);
 
   const retry = useMutation({
     mutationFn: () => api(`/api/v1/shipments/${params.id}/retry`, { method: "POST" }),
@@ -355,6 +355,15 @@ export default function ShipmentDetailPage() {
         </Card>
       ) : null}
 
+      <Card id="tracking-timeline">
+        <CardHeader>
+          <CardTitle>Routing Steps</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <IndiaPostRouting view={buildIndiaPostRoutingView(record, events)} />
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Invoice</CardTitle>
@@ -373,15 +382,6 @@ export default function ShipmentDetailPage() {
               }
             />
           </PlanLock>
-        </CardContent>
-      </Card>
-
-      <Card id="tracking-timeline">
-        <CardHeader>
-          <CardTitle>Routing Steps</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <IndiaPostRouting view={buildIndiaPostRoutingView(record, events)} />
         </CardContent>
       </Card>
     </div>

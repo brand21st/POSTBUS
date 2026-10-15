@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import type { TenantContext } from "@/lib/api/context";
 import { handleCommerceRoutes } from "@/lib/api/v1/commerce";
@@ -63,6 +63,11 @@ function shipmentClient(row: Record<string, unknown> | null) {
 }
 
 describe("POST /api/v1/orders Book now shipment status", () => {
+  beforeEach(() => {
+    createManualOrder.mockReset();
+    createShipmentsForOrders.mockReset();
+  });
+
   it("returns the reloaded shipment after India Post booking", async () => {
     createManualOrder.mockResolvedValueOnce({ id: "ord-1", order_number: "1001" });
     createShipmentsForOrders.mockResolvedValueOnce({ queued: 1, skipped: [], shipments: [] });
@@ -95,6 +100,23 @@ describe("POST /api/v1/orders Book now shipment status", () => {
       order_number: "1001",
       shipment,
     });
+  });
+
+  it("skips India Post booking when createShipment is false", async () => {
+    createManualOrder.mockResolvedValueOnce({ id: "ord-3", order_number: "1003" });
+
+    const result = await handleCommerceRoutes(
+      postOrders({ ...orderBody, createShipment: false }),
+      shipmentClient(null) as never,
+      ctx,
+      "POST orders",
+      "POST",
+      ["orders"]
+    );
+
+    expect(createShipmentsForOrders).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ id: "ord-3", order_number: "1003" });
+    expect(result).not.toHaveProperty("shipment");
   });
 
   it("still returns the order with a null shipment when booking did not create one", async () => {

@@ -107,6 +107,9 @@ function mockClient(overrides?: { rpcError?: { code?: string; message: string } 
       if (table === "storefront_settings") {
         return chain({ data: { featured_product_ids: [] }, error: null, count: 0 });
       }
+      if (table === "storefront_bundle_items") {
+        return chain({ data: null, error: null, count: 0 });
+      }
       throw new Error(table);
     },
   };

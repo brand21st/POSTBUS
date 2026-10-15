@@ -73,7 +73,10 @@ export default function SettingsPage() {
         <TabsContent value="notifications">
           <NotificationsSection />
         </TabsContent>
-        <TabsContent value="printing" className="space-y-6">
+        <TabsContent
+          value="printing"
+          className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]"
+        >
           <PrintAgentDevices />
           <PrintingSettings />
         </TabsContent>

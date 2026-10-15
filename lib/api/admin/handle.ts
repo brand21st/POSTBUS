@@ -93,7 +93,11 @@ export async function handleAdminRoutes(
   if (key === "GET settings/vachat/unassigned") return loadSupportUnassigned(supabase);
   if (key === "POST settings/vachat/unassigned/assign") return assignSupportUnassigned(request, supabase, ctx);
   if (key === "GET trial-settings" || (key === "GET settings" && slugs[0] === "trial-settings")) {
-    const { data } = await supabase.from("platform_settings").select("*").eq("id", 1).maybeSingle();
+    const { data } = await supabase
+      .from("platform_settings")
+      .select("trial_enabled, trial_days")
+      .eq("id", 1)
+      .maybeSingle();
     return data ?? { trial_enabled: true, trial_days: 3 };
   }
   if (key === "PATCH trial-settings") {
@@ -107,7 +111,7 @@ export async function handleAdminRoutes(
         trial_days: body.trialDays,
       })
       .eq("id", 1)
-      .select()
+      .select("trial_enabled, trial_days")
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
     await writeBillingAudit(supabase, {

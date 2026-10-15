@@ -92,6 +92,21 @@ describe("order stage dashboard alerts", () => {
     expect(seen.has("tracking")).toBe(true);
   });
 
+  it("alerts a new Shopify order that arrived after the dashboard tab opened", () => {
+    const startedAt = Date.parse("2026-10-10T16:00:00.000Z");
+    const seen = new Set<string>();
+    const incoming = collectDashboardAlerts(
+      [
+        { id: "old", type: SHOPIFY_ORDER_NOTIFICATION, createdAt: "2026-10-10T15:59:00.000Z" },
+        { id: "live", type: SHOPIFY_ORDER_NOTIFICATION, createdAt: "2026-10-10T16:00:01.000Z" },
+      ],
+      seen,
+      startedAt
+    );
+    expect(incoming.map((item) => item.id)).toEqual(["live"]);
+    expect(seen.has("old")).toBe(true);
+  });
+
   it("alerts on unseen labels-ready items after the listener is primed", () => {
     const seen = new Set<string>(["old"]);
     const incoming = collectDashboardAlerts(

@@ -16,6 +16,18 @@ vi.mock("@/modules/openrouter/chatgpt-models", async (importOriginal) => {
   return { ...actual, fetchOpenRouterChatGptModels };
 });
 
+vi.mock("@/modules/ai-image/config", () => ({
+  getImageStudioConfig: vi.fn(async () => ({
+    enabled: false,
+    flagEnabled: false,
+    apiKey: "",
+    model: "google/gemini-2.5-flash-image",
+    creditCost: 10,
+    coverCreditCost: 10,
+    maxVariations: 3,
+  })),
+}));
+
 const ctx: AdminContext = { userId: "admin-1", email: "admin@example.com" };
 
 function jsonRequest(url: string, method: string, body?: unknown) {

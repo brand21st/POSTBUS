@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  classifyPlatformRazorpayPayment,
   isUniqueViolation,
   processRazorpayEvent,
   razorpayWebhookEventId,
 } from "@/modules/billing/webhooks";
 import { periodsMatch } from "@/modules/billing/subscriptions";
 
-type PaymentRow = { razorpay_payment_id: string; status: string };
+type PaymentRow = {
+  razorpay_payment_id?: string;
+  razorpay_order_id?: string;
+  billing_cycle?: string;
+  status: string;
+};
 
 const PERIOD_START = 1_700_000_000;
 const PERIOD_END = 1_702_592_000;
@@ -26,6 +32,9 @@ function fakeSupabase(state: {
         },
         eq(column: string, value: unknown) {
           filters[column] = value;
+          return query;
+        },
+        not() {
           return query;
         },
         order() {
@@ -48,8 +57,25 @@ function fakeSupabase(state: {
             return { data: null };
           }
           if (table === "payments") {
-            const found = state.payments.find((row) => row.razorpay_payment_id === filters.razorpay_payment_id);
-            return { data: found ? { id: found.razorpay_payment_id } : null };
+            const found = state.payments.find((row) => {
+              if (filters.razorpay_payment_id) {
+                return row.razorpay_payment_id === filters.razorpay_payment_id;
+              }
+              if (filters.razorpay_order_id) {
+                return row.razorpay_order_id === filters.razorpay_order_id;
+              }
+              return false;
+            });
+            return {
+              data: found
+                ? {
+                    id: found.razorpay_payment_id ?? found.razorpay_order_id,
+                    billing_cycle: found.billing_cycle ?? null,
+                    razorpay_payment_id: found.razorpay_payment_id ?? null,
+                    razorpay_order_id: found.razorpay_order_id ?? null,
+                  }
+                : null,
+            };
           }
           return { data: null };
         },
@@ -219,5 +245,109 @@ describe("razorpay webhook idempotency", () => {
     );
     expect(result).toEqual({ ignored: true });
     expect(state.activations).toBe(0);
+  });
+
+  it("classifies AI credit, subscription, and unmatched platform payments", async () => {
+    const state = {
+      subscription: liveSubscription({ razorpay_order_id: "order_sub" }),
+      payments: [
+        { razorpay_order_id: "order_ai", billing_cycle: "ai_credits", status: "PENDING" },
+      ] as PaymentRow[],
+      activations: 0,
+    };
+    const db = fakeSupabase(state);
+    expect(
+      await classifyPlatformRazorpayPayment(db, { razorpayOrderId: "order_ai", subscriptionMatched: false })
+    ).toBe("AI_CREDITS");
+    expect(
+      await classifyPlatformRazorpayPayment(db, { razorpayOrderId: "order_sub", subscriptionMatched: true })
+    ).toBe("SUBSCRIPTION");
+    expect(
+      await classifyPlatformRazorpayPayment(db, { razorpayOrderId: "order_unknown", subscriptionMatched: false })
+    ).toBe("UNMATCHED_PLATFORM");
+  });
+
+  it("ignores payment.captured when the paid amount does not match the subscription", async () => {
+    const state = {
+      subscription: liveSubscription({
+        status: "TRIAL",
+        razorpay_subscription_id: null,
+        razorpay_order_id: "order_pay",
+        amount_paise: 49900,
+      }),
+      payments: [] as PaymentRow[],
+      activations: 0,
+    };
+    const result = await processRazorpayEvent(
+      fakeSupabase(state),
+      {
+        event: "payment.captured",
+        payload: {
+          payment: { entity: { id: "pay_wrong", amount: 100, order_id: "order_pay" } },
+        },
+      },
+      "evt_mismatch"
+    );
+    expect(result).toEqual({ ignored: true });
+    expect(state.activations).toBe(0);
+    expect(state.subscription?.status).toBe("TRIAL");
+  });
+
+  it("ignores payment.captured for an unknown Razorpay order", async () => {
+    const state = {
+      subscription: liveSubscription(),
+      payments: [] as PaymentRow[],
+      activations: 0,
+    };
+    const result = await processRazorpayEvent(
+      fakeSupabase(state),
+      {
+        event: "payment.captured",
+        payload: {
+          payment: { entity: { id: "pay_unknown", amount: 100, order_id: "order_unknown" } },
+        },
+      },
+      "evt_unmatched"
+    );
+    expect(result).toEqual({ ignored: true });
+    expect(state.activations).toBe(0);
+    expect(state.payments).toHaveLength(0);
+    expect(state.subscription?.status).toBe("ACTIVE");
+  });
+
+  it("ignores refund.processed when the payment id is not a platform payment", async () => {
+    const state = {
+      subscription: liveSubscription(),
+      payments: [{ razorpay_payment_id: "pay_known", status: "CAPTURED" }] as PaymentRow[],
+      activations: 0,
+    };
+    const result = await processRazorpayEvent(
+      fakeSupabase(state),
+      {
+        event: "refund.processed",
+        payload: { refund: { entity: { payment_id: "pay_missing" } } },
+      },
+      "evt_refund_miss"
+    );
+    expect(result).toEqual({ ignored: true });
+    expect(state.payments[0]?.status).toBe("CAPTURED");
+  });
+
+  it("marks a matching platform payment refunded", async () => {
+    const state = {
+      subscription: liveSubscription(),
+      payments: [{ razorpay_payment_id: "pay_known", status: "CAPTURED" }] as PaymentRow[],
+      activations: 0,
+    };
+    const result = await processRazorpayEvent(
+      fakeSupabase(state),
+      {
+        event: "refund.processed",
+        payload: { refund: { entity: { payment_id: "pay_known" } } },
+      },
+      "evt_refund"
+    );
+    expect(result).toEqual({ processed: true });
+    expect(state.payments[0]?.status).toBe("REFUNDED");
   });
 });

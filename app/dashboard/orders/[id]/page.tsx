@@ -72,6 +72,20 @@ export default function OrderDetailPage() {
     },
   });
 
+  const confirmShopify = useMutation({
+    mutationFn: (paymentType: "PREPAID" | "COD") =>
+      api(`/api/v1/orders/${params.id}/shopify-payment`, {
+        method: "POST",
+        body: JSON.stringify({ paymentType }),
+      }),
+    onSuccess: () => {
+      toast.success("Shopify payment confirmed.");
+      queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const ship = useMutation({
     mutationFn: () =>
       api("/api/v1/shipments", {
@@ -83,20 +97,6 @@ export default function OrderDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["order", params.id] });
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const confirmShopify = useMutation({
-    mutationFn: (paymentType: "PREPAID" | "COD") =>
-      api(`/api/v1/orders/${params.id}/shopify-payment`, {
-        method: "POST",
-        body: JSON.stringify({ paymentType }),
-      }),
-    onSuccess: () => {
-      toast.success("Shopify payment confirmed.");
-      queryClient.invalidateQueries({ queryKey: ["order", params.id] });
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -174,12 +174,12 @@ export default function OrderDetailPage() {
   }
 
   const record = order.data;
+  const shopifyNeedsPayment = shopifyPendingBookingBlocked(record);
   const items = lineItems(record);
   const related = shipments.data?.items ?? [];
   const weightsLocked = related.some(
     (shipment) => !WEIGHT_EDIT_STATUSES.has(String(shipment.status ?? "").toUpperCase())
   );
-  const shopifyNeedsPayment = shopifyPendingBookingBlocked(record);
   const draftItemGrams = (item: LineItem, index: number) => {
     const raw = draftWeights[item.id ?? String(index)];
     const grams = raw == null || raw === "" ? 0 : Number(raw);

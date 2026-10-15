@@ -55,14 +55,17 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await processRazorpayEvent(supabase, payload, id);
+    const result = await processRazorpayEvent(supabase, payload, id);
     if (inserted?.id) {
       await supabase
         .from("razorpay_webhook_events")
-        .update({ status: "processed", processed_at: new Date().toISOString() })
+        .update({
+          status: result && "ignored" in result && result.ignored ? "ignored" : "processed",
+          processed_at: new Date().toISOString(),
+        })
         .eq("id", inserted.id);
     }
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, ignored: Boolean(result && "ignored" in result && result.ignored) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Webhook processing failed.";
     logError("razorpay.webhook_failed", { message, event: payload.event, eventId: id });

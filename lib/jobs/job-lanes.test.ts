@@ -33,6 +33,12 @@ describe("drain lanes", () => {
     expect(drainLaneName(OTHER_JOB_TYPES)).toBe("other");
   });
 
+  it("includes support-ingest in the other drain lane", () => {
+    expect(OTHER_JOB_TYPES).toContain("support-ingest");
+    expect(parseJobTypes("support-ingest")).toEqual(["support-ingest"]);
+    expect(drainLaneName(["support-ingest"])).toBe("other");
+  });
+
   it("uses concurrency 4 when no bookings are in the batch", () => {
     expect(restDrainConcurrency(0)).toBe(4);
     expect(restDrainConcurrency(2)).toBe(2);

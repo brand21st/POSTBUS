@@ -508,6 +508,13 @@ export async function deleteProduct(supabase: SupabaseClient, ctx: TenantContext
   const current = await getProduct(supabase, ctx, id);
   await setFeaturedProduct(supabase, ctx, id, false);
 
+  const { error: bundleError } = await supabase
+    .from("storefront_bundle_items")
+    .delete()
+    .eq("organization_id", ctx.organizationId)
+    .eq("product_id", id);
+  if (bundleError) rpcError(bundleError);
+
   const { data, error } = await supabase
     .from("products")
     .delete()

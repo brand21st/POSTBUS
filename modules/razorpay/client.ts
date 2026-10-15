@@ -2,6 +2,8 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import { getRazorpayCredentials } from "@/modules/razorpay/config";
 
+/** PLATFORM BILLING ONLY (Domain A). Do not reuse these credentials for merchant store payments. */
+
 const RAZORPAY_API = "https://api.razorpay.com/v1";
 
 export type RazorpayEntity = Record<string, unknown>;

@@ -9,14 +9,6 @@ import {
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
-import { applyBulkTrackingOutcomes } from "@/modules/india-post/tracking-ingest-page";
-import {
-  isTrackingP0CanaryAwb,
-  isTrackingP0CanaryOrganization,
-  trackingP0CanaryActive,
-  trackingP0CanarySideEffectsEnabled,
-} from "@/modules/india-post/tracking-p0-canary";
-import type { TrackShipmentResult } from "@/modules/india-post/tracking-bulk";
 import type { NdrListQuery } from "@/modules/ndr-rto/schema";
 import { NDR_VISIBLE_SYNC_MAX } from "@/modules/ndr-rto/schema";
 import type { NdrSummary } from "@/types/api";
@@ -192,7 +184,6 @@ function mapNdrRow(row: Record<string, unknown>) {
   const pickup = nestedOne<{ city?: string }>(row.pickup_locations);
   return {
     ...row,
-    id: String(row.id ?? ""),
     orderId: row.order_id,
     orderNumber: order?.order_number,
     order_number: order?.order_number,
@@ -320,114 +311,6 @@ export async function listNdrShipments(supabase: SupabaseClient, ctx: TenantCont
   };
 }
 
-export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantContext, shipmentId: string) {
-  const { data, error } = await supabase
-    .from("shipments")
-    .select(
-      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at, organization_id"
-    )
-    .eq("organization_id", ctx.organizationId)
-    .eq("id", shipmentId)
-    .maybeSingle();
-  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-  if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipment not found.");
-  if (!data.barcode) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This shipment has no India Post tracking ID.");
-  }
-
-  const { data: connection, error: connectionError } = await supabase
-    .from("india_post_connections")
-    .select("*")
-    .eq("organization_id", ctx.organizationId)
-    .maybeSingle();
-  if (connectionError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, connectionError.message);
-
-  if (!connection) {
-    throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post is not connected.");
-  }
-  if (trackingP0CanaryActive() && isTrackingP0CanaryOrganization(ctx.organizationId) && !isTrackingP0CanaryAwb(ctx.organizationId, data.barcode)) {
-    throw new AppError(
-      ERROR_CODES.VALIDATION_ERROR,
-      "This shipment is outside the tracking canary allowlist."
-    );
-  }
-
-  const { ensurePersistedIndiaPostTrackingSession } = await import("@/modules/india-post/session");
-  const provider = await ensurePersistedIndiaPostTrackingSession(supabase, connection);
-  const useP0 = isTrackingP0CanaryAwb(ctx.organizationId, data.barcode);
-  let payload: TrackShipmentResult | { data?: BulkTrackingArticle[] };
-  try {
-    payload = await provider.trackShipment([data.barcode], { isolateFailures: useP0 });
-  } catch (caught) {
-    if (caught instanceof AppError) throw caught;
-    const message = caught instanceof Error ? caught.message : "Tracking lookup failed.";
-    throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
-  }
-
-  if (useP0) {
-    const applied = await applyBulkTrackingOutcomes(supabase, {
-      organizationId: ctx.organizationId,
-      shipments: [data],
-      outcomes: "outcomes" in payload ? payload.outcomes ?? [] : [],
-      articles: payload.data,
-      skipSideEffects: !trackingP0CanarySideEffectsEnabled(),
-    });
-    if (applied.rejected && !applied.ingested && !applied.absent) {
-      throw new AppError(ERROR_CODES.PROVIDER_ERROR, "India Post rejected tracking lookup for this shipment.");
-    }
-    const { data: next } = await supabase
-      .from("shipments")
-      .select("status, operational_status, last_tracked_at")
-      .eq("id", data.id)
-      .eq("organization_id", ctx.organizationId)
-      .maybeSingle();
-    return {
-      shipmentId: data.id,
-      lastTrackedAt: next?.last_tracked_at ?? null,
-      status: next?.status ?? data.status,
-      operationalStatus: next?.operational_status ?? data.operational_status,
-    };
-  }
-
-  const article = matchingBulkTrackingArticle(payload.data, data.barcode);
-  const trackedAt = new Date().toISOString();
-  if (!article) {
-    await supabase
-      .from("shipments")
-      .update({ last_tracked_at: trackedAt })
-      .eq("id", data.id)
-      .eq("organization_id", ctx.organizationId);
-    return {
-      shipmentId: data.id,
-      lastTrackedAt: trackedAt,
-      status: data.status,
-      operationalStatus: data.operational_status,
-    };
-  }
-
-  const ingested = await ingestBulkTrackingArticle(supabase, {
-    organizationId: ctx.organizationId,
-    shipment: snapshotFromShipmentRow(data, ctx.organizationId),
-    article,
-    source: "bulk",
-  });
-  if (ingested.whatsappEvents.length || ingested.orderStatus) {
-    await enqueueTrackingStageSideEffects(supabase, {
-      organizationId: ctx.organizationId,
-      shipmentId: data.id,
-      orderId: data.order_id,
-      orderStatus: ingested.orderStatus,
-      events: ingested.whatsappEvents,
-    });
-  }
-  return {
-    shipmentId: data.id,
-    lastTrackedAt: trackedAt,
-    status: ingested.snapshot.status,
-    operationalStatus: ingested.snapshot.operationalStatus,
-  };
-}
-
 type NdrSyncShipment = {
   id: string;
   barcode: string | null;
@@ -439,6 +322,31 @@ type NdrSyncShipment = {
   rto_initiated_at: string | null;
   organization_id: string;
 };
+
+async function indiaPostConnection(supabase: SupabaseClient, organizationId: string) {
+  const { data: connection, error: connectionError } = await supabase
+    .from("india_post_connections")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (connectionError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, connectionError.message);
+  if (!connection) {
+    throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post is not connected.");
+  }
+  return connection;
+}
+
+async function trackArticles(supabase: SupabaseClient, connection: Record<string, unknown>, barcodes: string[]) {
+  const { ensurePersistedIndiaPostTrackingSession } = await import("@/modules/india-post/session");
+  const provider = await ensurePersistedIndiaPostTrackingSession(supabase, connection);
+  try {
+    return (await provider.trackShipment(barcodes)) as { data?: BulkTrackingArticle[] };
+  } catch (caught) {
+    if (caught instanceof AppError) throw caught;
+    const message = caught instanceof Error ? caught.message : "Tracking lookup failed.";
+    throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
+  }
+}
 
 async function applyTrackedShipment(
   supabase: SupabaseClient,
@@ -488,6 +396,27 @@ async function applyTrackedShipment(
   };
 }
 
+export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantContext, shipmentId: string) {
+  const { data, error } = await supabase
+    .from("shipments")
+    .select(
+      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at, organization_id"
+    )
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", shipmentId)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipment not found.");
+  if (!data.barcode) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This shipment has no India Post tracking ID.");
+  }
+
+  const connection = await indiaPostConnection(supabase, ctx.organizationId);
+  const payload = await trackArticles(supabase, connection, [data.barcode]);
+  const article = matchingBulkTrackingArticle(payload.data, data.barcode);
+  return applyTrackedShipment(supabase, ctx, data as NdrSyncShipment, article, new Date().toISOString());
+}
+
 export async function syncNdrVisibleShipments(
   supabase: SupabaseClient,
   ctx: TenantContext,
@@ -504,62 +433,17 @@ export async function syncNdrVisibleShipments(
     .not("barcode", "is", null);
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
-  let shipments = ((data ?? []) as NdrSyncShipment[]).filter((row) => Boolean(row.barcode));
-  if (
-    trackingP0CanaryActive() &&
-    isTrackingP0CanaryOrganization(ctx.organizationId)
-  ) {
-    shipments = shipments.filter((row) => isTrackingP0CanaryAwb(ctx.organizationId, String(row.barcode)));
-  }
+  const shipments = ((data ?? []) as NdrSyncShipment[]).filter((row) => Boolean(row.barcode));
   if (!shipments.length) {
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "No India Post shipments found to track.");
   }
 
-  const { data: connection, error: connectionError } = await supabase
-    .from("india_post_connections")
-    .select("*")
-    .eq("organization_id", ctx.organizationId)
-    .maybeSingle();
-  if (connectionError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, connectionError.message);
-  if (!connection) {
-    throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post is not connected.");
-  }
-
-  const { ensurePersistedIndiaPostTrackingSession } = await import("@/modules/india-post/session");
-  const provider = await ensurePersistedIndiaPostTrackingSession(supabase, connection);
+  const connection = await indiaPostConnection(supabase, ctx.organizationId);
   const barcodes = shipments.map((row) => String(row.barcode));
-  const isolateFailures = barcodes.some((barcode) => isTrackingP0CanaryAwb(ctx.organizationId, barcode));
-  let payload: TrackShipmentResult | { data?: BulkTrackingArticle[] };
-  try {
-    payload = await provider.trackShipment(barcodes, { isolateFailures });
-  } catch (caught) {
-    if (caught instanceof AppError) throw caught;
-    const message = caught instanceof Error ? caught.message : "Tracking lookup failed.";
-    throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
-  }
-
+  const payload = await trackArticles(supabase, connection, barcodes);
   const trackedAt = new Date().toISOString();
   const results = [];
   for (const shipment of shipments) {
-    const useP0 = isTrackingP0CanaryAwb(ctx.organizationId, String(shipment.barcode));
-    if (useP0) {
-      const applied = await applyBulkTrackingOutcomes(supabase, {
-        organizationId: ctx.organizationId,
-        shipments: [shipment],
-        outcomes: "outcomes" in payload ? payload.outcomes ?? [] : [],
-        articles: payload.data,
-        skipSideEffects: !trackingP0CanarySideEffectsEnabled(),
-      });
-      results.push({
-        shipmentId: shipment.id,
-        barcode: shipment.barcode,
-        lastTrackedAt: trackedAt,
-        matched: Boolean(applied.ingested),
-        status: shipment.status,
-        operationalStatus: shipment.operational_status,
-      });
-      continue;
-    }
     const article = matchingBulkTrackingArticle(payload.data, String(shipment.barcode));
     results.push(await applyTrackedShipment(supabase, ctx, shipment, article, trackedAt));
   }

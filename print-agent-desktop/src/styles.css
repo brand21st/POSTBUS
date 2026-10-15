@@ -1,0 +1,166 @@
+:root {
+  color: #18181b;
+  background: #f4f4f5;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+}
+
+button, input { font: inherit; }
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 28px;
+  background: #18181b;
+  color: white;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-icon {
+  flex-shrink: 0;
+  border-radius: 6px;
+}
+
+header p { margin: 4px 0 0; color: #d4d4d8; font-size: 13px; }
+
+h1 { margin: 0; font-size: 20px; font-weight: 650; }
+
+main {
+  width: min(880px, 100%);
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: white;
+  border: 1px solid #e4e4e7;
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.card h2 { margin: 0; font-size: 16px; }
+
+.connected-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.status-connected {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.muted { color: #71717a; font-size: 13px; }
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+button {
+  border: 1px solid #d4d4d8;
+  background: white;
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #18181b;
+  color: white;
+  border-color: #18181b;
+}
+
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.printers { display: grid; gap: 8px; margin-top: 14px; }
+
+.printer {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  padding: 10px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.printer.selected { border-color: #18181b; }
+
+.printer strong { display: block; }
+
+.badges { display: flex; gap: 6px; }
+
+.badge {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: #f4f4f5;
+  color: #3f3f46;
+}
+
+.badge.usb { background: #ecfdf3; color: #166534; }
+
+.message {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f4f4f5;
+}
+
+.message.error { background: #fef2f2; color: #991b1b; }
+
+.code {
+  margin: 12px 0;
+  font-size: 32px;
+  letter-spacing: 0.12em;
+  font-weight: 650;
+}
+
+.empty { padding: 18px 0 4px; color: #52525b; }
+
+.update-banner {
+  background: white;
+  border: 1px solid #e4e4e7;
+  border-radius: 16px;
+  padding: 14px 18px;
+}
+
+.update-banner .row { margin-top: 10px; }

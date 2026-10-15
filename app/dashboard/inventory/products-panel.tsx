@@ -10,6 +10,8 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
+import { ProductAiCopyBox } from "@/components/dashboard/product-ai-copy";
+import { ProductAiStudioLauncher } from "@/components/dashboard/product-ai-studio";
 import { emptyPhotoSlots, padPhotoSlots, ProductImageSlots } from "@/components/dashboard/product-image-slots";
 import { SideSheet } from "@/components/dashboard/side-sheet";
 import { ProductEditorFields } from "@/app/dashboard/inventory/product-editor";
@@ -399,6 +401,7 @@ export function InventoryProducts({
   function refreshAfterProductDelete() {
     queryClient.invalidateQueries({ queryKey: ["products"] });
     queryClient.invalidateQueries({ queryKey: ["inventory-analytics"] });
+    queryClient.invalidateQueries({ queryKey: ["inventory-bundles"] });
     queryClient.invalidateQueries({ queryKey: ["product-categories"] });
   }
 
@@ -535,7 +538,7 @@ export function InventoryProducts({
         id: "status",
         header: "Status",
         hug: true,
-        cell: (row) => (row.active ? <Badge variant="brand">Active</Badge> : <Badge variant="outline">Inactive</Badge>),
+        cell: (row) => (row.active ? <Badge variant="success">Active</Badge> : <Badge variant="outline">Inactive</Badge>),
       },
       {
         id: "actions",
@@ -544,7 +547,7 @@ export function InventoryProducts({
         cell: (row) => (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button type="button" size="icon" variant="ghost" aria-label={`Actions for ${row.name}`}>
+              <Button type="button" size="icon-xs" variant="ghost" aria-label={`Actions for ${row.name}`}>
                 <MoreHorizontal className="size-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -655,10 +658,10 @@ export function InventoryProducts({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative sm:max-w-sm sm:flex-1">
           <Input
-            className="h-11 pr-24"
+            className="h-9 pr-24 text-sm"
             placeholder="Search products or SKU"
             value={searchDraft}
             onChange={(event) => {
@@ -672,13 +675,13 @@ export function InventoryProducts({
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">Searching…</span>
           ) : null}
         </div>
-        <Button type="button" className="h-11" variant="secondary" onClick={() => setFiltersOpen(true)}>
+        <Button type="button" size="sm" variant="secondary" onClick={() => setFiltersOpen(true)}>
           <SlidersHorizontal className="size-4" />
           Filters
           {activeFilters.length ? <Badge variant="brand">{activeFilters.length}</Badge> : null}
         </Button>
         <Select value={sort} onValueChange={(value) => setParams({ sort: value, page: 1 })}>
-          <SelectTrigger className="h-11 w-full sm:w-[190px]"><SelectValue placeholder="Sort" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-full text-xs sm:w-[170px]"><SelectValue placeholder="Sort" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="newest">Newest</SelectItem>
             <SelectItem value="oldest">Oldest</SelectItem>
@@ -694,7 +697,7 @@ export function InventoryProducts({
           </SelectContent>
         </Select>
         <Select value={analyticsRange} onValueChange={(value) => setParams({ analyticsRange: value, page: 1 })}>
-          <SelectTrigger className="h-11 w-full sm:w-[150px]"><SelectValue placeholder="Sales period" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-full text-xs sm:w-[140px]"><SelectValue placeholder="Sales period" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All-time sales</SelectItem>
             <SelectItem value="7d">Last 7 days</SelectItem>
@@ -703,7 +706,7 @@ export function InventoryProducts({
           </SelectContent>
         </Select>
         {canWrite ? (
-          <Button className="ml-auto h-11" type="button" onClick={() => setCreateOpen(true)}>
+          <Button className="ml-auto" size="sm" type="button" onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" /> Add product
           </Button>
         ) : null}
@@ -992,6 +995,39 @@ export function InventoryProducts({
               });
             }}
           />
+          {canWrite ? (
+            <ProductAiStudioLauncher
+              files={createFiles}
+              urls={createUrls}
+              productName={String(createForm.watch("name") ?? "")}
+              price={Number(createForm.watch("price") || 0)}
+              compareAtPrice={createForm.watch("compareAtPrice") ? Number(createForm.watch("compareAtPrice")) : null}
+              disabled={createMutation.isPending}
+              onApplyFiles={(nextFiles) => {
+                setCreateFiles((current) => {
+                  const next = [...current];
+                  nextFiles.slice(0, 3).forEach((file, index) => {
+                    next[index] = file;
+                  });
+                  return next;
+                });
+                setCreateUrls((current) => {
+                  const next = [...current];
+                  nextFiles.slice(0, 3).forEach((file, index) => {
+                    if (next[index]?.startsWith("blob:")) URL.revokeObjectURL(next[index]!);
+                    next[index] = URL.createObjectURL(file);
+                  });
+                  return next;
+                });
+              }}
+            />
+          ) : null}
+          <ProductAiCopyBox
+            form={createForm}
+            files={createFiles}
+            urls={createUrls}
+            disabled={!canWrite || createMutation.isPending}
+          />
           <ProductEditorFields
             form={createForm}
             showOpening
@@ -1063,6 +1099,30 @@ export function InventoryProducts({
                   setPhotoBusy(null);
                 }
               }}
+            />
+            {canWrite ? (
+              <ProductAiStudioLauncher
+                files={[null, null, null]}
+                urls={editUrls}
+                productId={editProduct.id}
+                productName={String(editForm.watch("name") ?? "")}
+                price={Number(editForm.watch("price") || 0)}
+                compareAtPrice={editForm.watch("compareAtPrice") ? Number(editForm.watch("compareAtPrice")) : null}
+                disabled={updateMutation.isPending || photoBusy != null}
+                onAttached={() => {
+                  queryClient.invalidateQueries({ queryKey: ["products"] });
+                  void api<ProductRecord>(`/api/v1/products/${editProduct.id}`).then((next) => {
+                    setEditProduct(next);
+                    setEditUrls(padPhotoSlots(next.imageUrls));
+                  });
+                }}
+              />
+            ) : null}
+            <ProductAiCopyBox
+              form={editForm}
+              files={[null, null, null]}
+              urls={editUrls}
+              disabled={!canWrite || updateMutation.isPending || photoBusy != null}
             />
             <ProductEditorFields
               form={editForm}

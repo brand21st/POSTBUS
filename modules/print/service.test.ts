@@ -76,6 +76,15 @@ function printClient(state: {
           }),
         };
       }
+      if (table === "print_devices") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: async () => ({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
       if (table === "print_agents") {
         return {
           select: () => ({
@@ -358,6 +367,35 @@ describe("print jobs", () => {
       expect(claimed?.orientation).toBe("portrait");
       expect(claimed?.paperSize).toBe(kind === "INDIA_POST" ? "A6" : "A4");
     }
+  });
+
+  it("claims a job using printers reported by a paired Windows device", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Microsoft Print to PDF",
+          source: "AUTO",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: new Date().toISOString(),
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Microsoft Print to PDF" },
+      agent: { printers: [] },
+    };
+    const claimed = await claimNextPrintJob(
+      printClient(state) as never,
+      { agentId: "device-1", organizationId: "org-1" },
+      { printers: ["Microsoft Print to PDF"] }
+    );
+    expect(claimed?.job.id).toBe("job-1");
+    expect(state.jobs[0].status).toBe("PRINTING");
   });
 
   it("does not claim a job when the selected printer is offline", async () => {
