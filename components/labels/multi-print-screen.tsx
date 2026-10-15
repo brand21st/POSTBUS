@@ -45,7 +45,11 @@ import { asPaginated } from "@/lib/dashboard/records";
 import { ApiError, api } from "@/lib/hooks/use-api";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
 import { cn } from "@/lib/utils";
-import { generatedOrderChips } from "@/modules/labels/generated-order-chips";
+import {
+  generatedOrderChipGroups,
+  generatedOrderChips,
+  type GeneratedOrderChip,
+} from "@/modules/labels/generated-order-chips";
 import { ptFromMm } from "@/modules/labels/layout/units";
 import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import {
@@ -166,6 +170,76 @@ async function fetchAllLabelRecords() {
 function presetCaption(preset: FourBySixPreset | null, fallback: string) {
   if (!preset) return fallback;
   return preset.name.includes(" × 4×6") ? `${preset.name} Labels` : preset.name;
+}
+
+function chipCountLine(today: number, earlier: number, printed: number) {
+  return [
+    today ? `${today} today` : null,
+    earlier ? `${earlier} earlier` : null,
+    printed ? `${printed} printed` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function OrderIdChip({
+  chip,
+  selected,
+  onSelect,
+  onRemove,
+}: {
+  chip: GeneratedOrderChip;
+  selected: boolean;
+  onSelect: (orderId: string) => void;
+  onRemove: (orderId: string) => void;
+}) {
+  const number = chip.orderNumber;
+  if (!selected) {
+    return (
+      <button
+        type="button"
+        aria-pressed={false}
+        onClick={() => onSelect(number)}
+        className={cn(
+          "rounded-full border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
+          chip.printed
+            ? "border-zinc-200 bg-zinc-100 text-zinc-500 hover:border-zinc-300 hover:bg-zinc-200"
+            : "border-border bg-card text-foreground hover:border-zinc-300 hover:bg-surface-soft"
+        )}
+      >
+        {number}
+      </button>
+    );
+  }
+  return (
+    <div
+      className={cn(
+        "inline-flex h-[29px] items-center overflow-hidden rounded-full border shadow-sm",
+        chip.printed ? "border-zinc-200 bg-zinc-100 text-zinc-500" : "border-brand/30 bg-rose-50 text-brand-dark"
+      )}
+    >
+      <button
+        type="button"
+        aria-pressed="true"
+        onClick={() => onSelect(number)}
+        className="px-2.5 py-1.5 text-xs font-medium transition-all duration-200"
+      >
+        {number}
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "mr-1 flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-red-100 hover:text-red-700",
+          chip.printed ? "text-zinc-400" : "text-brand-dark/70"
+        )}
+        onClick={() => onRemove(number)}
+        aria-label={`Remove ${number} from print order`}
+        title="Remove"
+      >
+        <X className="size-3" />
+      </button>
+    </div>
+  );
 }
 
 function presetChoiceCopy(item: FourBySixPreset) {
@@ -384,11 +458,10 @@ export function MultiPrintScreen() {
   const templateLabel = useMemo(() => (selected ? pageMm(selected.page) : null), [selected]);
   const labeledOrderChips = useMemo(() => generatedOrderChips(labels.data ?? []), [labels.data]);
   const labeledOrders = useMemo(() => labeledOrderChips.map((chip) => chip.orderNumber), [labeledOrderChips]);
-  const printedCount = useMemo(
-    () => labeledOrderChips.filter((chip) => chip.printed).length,
-    [labeledOrderChips]
-  );
-  const toPrintCount = labeledOrderChips.length - printedCount;
+  const labeledOrderGroups = useMemo(() => generatedOrderChipGroups(labeledOrderChips), [labeledOrderChips]);
+  const todayCount = labeledOrderGroups.today.length;
+  const earlierCount = labeledOrderGroups.earlier.length;
+  const printedCount = labeledOrderGroups.printed.length;
   const namedPaper = isMultiPrintPaperId(paper) ? multiPrintPaper(paper) : null;
   const sheetWidthMm = namedPaper?.widthMm ?? Number(customWidth);
   const sheetHeightMm = namedPaper?.heightMm ?? Number(customHeight);
@@ -1156,7 +1229,7 @@ export function MultiPrintScreen() {
                     <p className="text-xs font-medium text-muted">Generated labels</p>
                     {labels.isLoading ? null : (
                       <p className="text-xs font-semibold text-ink">
-                        {toPrintCount} to print{printedCount ? ` · ${printedCount} printed` : ""}
+                        {chipCountLine(todayCount, earlierCount, printedCount) || `${labeledOrders.length} order IDs`}
                       </p>
                     )}
                   </div>
@@ -1165,61 +1238,29 @@ export function MultiPrintScreen() {
                       {Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="h-8 w-16 rounded-full" />)}
                     </div>
                   ) : labeledOrders.length ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {labeledOrderChips.map((chip) => {
-                        const number = chip.orderNumber;
-                        const active = selectedOrderIds.has(number);
-                        if (!active) {
-                          return (
-                            <button
-                              key={number}
-                              type="button"
-                              aria-pressed={false}
-                              onClick={() => onChipClick(number)}
-                              className={cn(
-                                "rounded-full border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
-                                chip.printed
-                                  ? "border-zinc-200 bg-zinc-100 text-zinc-500 hover:border-zinc-300 hover:bg-zinc-200"
-                                  : "border-border bg-card text-foreground hover:border-zinc-300 hover:bg-surface-soft"
-                              )}
-                            >
-                              {number}
-                            </button>
-                          );
-                        }
-                        return (
-                          <div
-                            key={number}
-                            className={cn(
-                              "inline-flex h-[29px] items-center overflow-hidden rounded-full border shadow-sm",
-                              chip.printed
-                                ? "border-zinc-200 bg-zinc-100 text-zinc-500"
-                                : "border-brand/30 bg-rose-50 text-brand-dark"
-                            )}
-                          >
-                            <button
-                              type="button"
-                              aria-pressed="true"
-                              onClick={() => onChipClick(number)}
-                              className="px-2.5 py-1.5 text-xs font-medium transition-all duration-200"
-                            >
-                              {number}
-                            </button>
-                            <button
-                              type="button"
-                              className={cn(
-                                "mr-1 flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-red-100 hover:text-red-700",
-                                chip.printed ? "text-zinc-400" : "text-brand-dark/70"
-                              )}
-                              onClick={() => removeChipOrder(number)}
-                              aria-label={`Remove ${number} from print order`}
-                              title="Remove"
-                            >
-                              <X className="size-3" />
-                            </button>
+                    <div className="space-y-2.5">
+                      {([
+                        ["Today", labeledOrderGroups.today],
+                        ["Earlier", labeledOrderGroups.earlier],
+                        ["Printed", labeledOrderGroups.printed],
+                      ] as const)
+                        .filter(([, chips]) => chips.length)
+                        .map(([title, chips]) => (
+                          <div key={title} className="space-y-1">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{title}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {chips.map((chip) => (
+                                <OrderIdChip
+                                  key={chip.orderNumber}
+                                  chip={chip}
+                                  selected={selectedOrderIds.has(chip.orderNumber)}
+                                  onSelect={onChipClick}
+                                  onRemove={removeChipOrder}
+                                />
+                              ))}
+                            </div>
                           </div>
-                        );
-                      })}
+                        ))}
                     </div>
                   ) : (
                     <div className="rounded-xl border border-dashed border-border bg-surface-soft p-4 text-center">
