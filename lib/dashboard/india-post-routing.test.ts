@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIndiaPostRoutingView } from "@/lib/dashboard/india-post-routing";
+import { buildIndiaPostRoutingView, shipmentNeedsLiveTracking } from "@/lib/dashboard/india-post-routing";
 import type { TrackingEvent } from "@/types/api";
 
 function event(partial: Partial<TrackingEvent> & { eventDescription: string; occurredAt: string }): TrackingEvent {
@@ -112,6 +112,15 @@ describe("buildIndiaPostRoutingView", () => {
     expect(view.stages.find((stage) => stage.stage === "IN_TRANSIT")?.current).toBe(true);
     expect(view.stages.find((stage) => stage.stage === "BOOKED")?.completed).toBe(true);
     expect(view.stages.find((stage) => stage.stage === "DISPATCHED")?.completed).toBe(true);
+  });
+});
+
+describe("shipmentNeedsLiveTracking", () => {
+  it("keeps polling an open article and stops after delivery", () => {
+    expect(shipmentNeedsLiveTracking({ barcode: "CL556974046IN", status: "BOOKED" })).toBe(true);
+    expect(shipmentNeedsLiveTracking({ barcode: "CL556974046IN", operationalStatus: "IN_TRANSIT", status: "BOOKED" })).toBe(true);
+    expect(shipmentNeedsLiveTracking({ barcode: "CL556974046IN", status: "DELIVERED" })).toBe(false);
+    expect(shipmentNeedsLiveTracking({ status: "BOOKED" })).toBe(false);
   });
 });
 

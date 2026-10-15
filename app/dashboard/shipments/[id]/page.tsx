@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { IndiaPostRouting } from "@/components/dashboard/india-post-routing";
-import { buildIndiaPostRoutingView } from "@/lib/dashboard/india-post-routing";
+import { buildIndiaPostRoutingView, shipmentNeedsLiveTracking } from "@/lib/dashboard/india-post-routing";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
@@ -38,19 +38,28 @@ export default function ShipmentDetailPage() {
     queryKey: ["shipment", params.id],
     queryFn: () => api<ShipmentRecord & { events?: TrackingEvent[] }>(`/api/v1/shipments/${params.id}`),
     enabled: Boolean(params.id),
+    refetchInterval: (current) => (shipmentNeedsLiveTracking(current.state.data) ? 15_000 : false),
+    refetchIntervalInBackground: true,
   });
 
   const sync = useMutation({
-    mutationFn: () => api(`/api/v1/ndr-rto/${params.id}/sync`, { method: "POST" }),
-    onSuccess: () => {
-      toast.success("Tracking refreshed.");
+    mutationFn: async (silent: boolean) => {
+      await api(`/api/v1/ndr-rto/${params.id}/sync`, { method: "POST" });
+      return silent;
+    },
+    onSuccess: (silent) => {
+      if (!silent) toast.success("Tracking refreshed.");
       queryClient.invalidateQueries({ queryKey: ["shipment", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
       queryClient.invalidateQueries({ queryKey: ["ndr-rto"] });
       queryClient.invalidateQueries({ queryKey: ["ndr-rto-summary"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, silent) => {
+      if (!silent) toast.error(error.message);
+    },
   });
-  const autoSynced = useRef<string | null>(null);
+  const syncMutate = useRef(sync.mutate);
+  syncMutate.current = sync.mutate;
 
   const retry = useMutation({
     mutationFn: () => api(`/api/v1/shipments/${params.id}/retry`, { method: "POST" }),
@@ -114,16 +123,27 @@ export default function ShipmentDetailPage() {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [recordForHash]);
 
+  const liveTracking = shipmentNeedsLiveTracking(shipment.data);
   useEffect(() => {
-    if (!canSync || !params.id || shipment.isLoading || !shipment.data) return;
-    const article = shipment.data.trackingNumber ?? shipment.data.tracking_number ?? shipment.data.barcode;
-    const events = shipment.data.events ?? [];
-    if (!article || events.length > 0) return;
-    if (autoSynced.current === params.id) return;
-    autoSynced.current = params.id;
-    sync.mutate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync once per shipment when no scans exist
-  }, [canSync, params.id, shipment.data, shipment.isLoading]);
+    if (!canSync || !params.id || !liveTracking) return;
+    let stopped = false;
+    const inFlight = { current: false };
+    const pull = () => {
+      if (stopped || inFlight.current) return;
+      inFlight.current = true;
+      syncMutate.current(true, {
+        onSettled: () => {
+          inFlight.current = false;
+        },
+      });
+    };
+    pull();
+    const timer = window.setInterval(pull, 20_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [canSync, params.id, liveTracking]);
 
   if (shipment.isLoading) {
     return (
@@ -189,7 +209,7 @@ export default function ShipmentDetailPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             {canSync && article ? (
-              <Button type="button" variant="secondary" onClick={() => sync.mutate()} disabled={sync.isPending}>
+              <Button type="button" variant="secondary" onClick={() => sync.mutate(false)} disabled={sync.isPending}>
                 <RefreshCw className="size-4" />
                 Refresh tracking
               </Button>
