@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   ChevronDown,
@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Settings2,
   SlidersHorizontal,
+  Star,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -44,6 +45,7 @@ import { asPaginated } from "@/lib/dashboard/records";
 import { ApiError, api } from "@/lib/hooks/use-api";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
 import { cn } from "@/lib/utils";
+import { generatedOrderChips } from "@/modules/labels/generated-order-chips";
 import { ptFromMm } from "@/modules/labels/layout/units";
 import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import {
@@ -83,7 +85,12 @@ import {
   multiPrintPaperName,
   type MultiPrintPaperId,
 } from "@/modules/labels/page-presets";
-import type { LabelTemplate, NamedLabelTemplate } from "@/modules/labels/template-schema";
+import {
+  defaultLabelTemplateId,
+  withDefaultNamedTemplate,
+  type LabelTemplate,
+  type NamedLabelTemplate,
+} from "@/modules/labels/template-schema";
 import type { LabelRecord, Paginated } from "@/types/api";
 
 type TemplateResponse = { template: LabelTemplate };
@@ -138,15 +145,6 @@ function listedTemplates(template: LabelTemplate): NamedLabelTemplate[] {
   return [{ id: "active", name: "Current template", isDefault: true, page: template.page, elements: template.elements }];
 }
 
-function generatedOrderNumber(row: LabelRecord) {
-  const barcodeState = String(row.barcodeStatus ?? row.barcode_status ?? "").toUpperCase();
-  const packingState = String(row.packingStatus ?? row.packing_status ?? "").toUpperCase();
-  const status = String(row.status ?? "").toUpperCase();
-  const generated = barcodeState === "READY" || packingState === "READY" || status === "READY";
-  if (!generated) return "";
-  return (row.orderNumber || row.order_number || "").trim();
-}
-
 async function fetchAllLabelRecords() {
   const pageSize = 100;
   const items: LabelRecord[] = [];
@@ -189,7 +187,8 @@ function pageMm(page: LabelTemplate["page"]) {
 
 function templateOptionLabel(item: NamedLabelTemplate) {
   const size = pageMm(item.page);
-  return `${item.name} (${Math.round(size.widthMm)} × ${Math.round(size.heightMm)} mm)`;
+  const label = `${item.name} (${Math.round(size.widthMm)} × ${Math.round(size.heightMm)} mm)`;
+  return item.isDefault ? `${label} · Default` : label;
 }
 
 async function postSheet(body: unknown) {
@@ -239,9 +238,23 @@ function playPreviewChime() {
 }
 
 export function MultiPrintScreen() {
+  const queryClient = useQueryClient();
   const templates = useQuery({
     queryKey: ["label-template"],
     queryFn: () => api<TemplateResponse>("/api/v1/label-template"),
+  });
+  const saveTemplate = useMutation({
+    mutationFn: (template: LabelTemplate) =>
+      api<TemplateResponse>("/api/v1/label-template", {
+        method: "PUT",
+        body: JSON.stringify({ template }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["label-template"] });
+      setJustSavedDefault(true);
+      window.setTimeout(() => setJustSavedDefault(false), 900);
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
   const labels = useQuery({
     queryKey: ["labels", "multi-print"],
@@ -253,6 +266,7 @@ export function MultiPrintScreen() {
     [templates.data]
   );
   const [templateId, setTemplateId] = useState("");
+  const [justSavedDefault, setJustSavedDefault] = useState(false);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("preset");
   const [paper, setPaper] = useState<SheetChoice>("A4");
   const [presetQuantity, setPresetQuantity] = useState(2);
@@ -363,13 +377,18 @@ export function MultiPrintScreen() {
     };
   }, []);
 
-  const selectedId = library.some((item) => item.id === templateId) ? templateId : (library[0]?.id ?? "");
+  const fallbackTemplateId =
+    (templates.data ? defaultLabelTemplateId(templates.data.template) : null) ?? library[0]?.id ?? "";
+  const selectedId = library.some((item) => item.id === templateId) ? templateId : fallbackTemplateId;
   const selected = library.find((item) => item.id === selectedId);
   const templateLabel = useMemo(() => (selected ? pageMm(selected.page) : null), [selected]);
-  const labeledOrders = useMemo(
-    () => [...new Set((labels.data ?? []).map(generatedOrderNumber).filter(Boolean))],
-    [labels.data]
+  const labeledOrderChips = useMemo(() => generatedOrderChips(labels.data ?? []), [labels.data]);
+  const labeledOrders = useMemo(() => labeledOrderChips.map((chip) => chip.orderNumber), [labeledOrderChips]);
+  const printedCount = useMemo(
+    () => labeledOrderChips.filter((chip) => chip.printed).length,
+    [labeledOrderChips]
   );
+  const toPrintCount = labeledOrderChips.length - printedCount;
   const namedPaper = isMultiPrintPaperId(paper) ? multiPrintPaper(paper) : null;
   const sheetWidthMm = namedPaper?.widthMm ?? Number(customWidth);
   const sheetHeightMm = namedPaper?.heightMm ?? Number(customHeight);
@@ -1136,7 +1155,9 @@ export function MultiPrintScreen() {
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-medium text-muted">Generated labels</p>
                     {labels.isLoading ? null : (
-                      <p className="text-xs font-semibold text-ink">{labeledOrders.length} order IDs</p>
+                      <p className="text-xs font-semibold text-ink">
+                        {toPrintCount} to print{printedCount ? ` · ${printedCount} printed` : ""}
+                      </p>
                     )}
                   </div>
                   {labels.isLoading ? (
@@ -1145,7 +1166,8 @@ export function MultiPrintScreen() {
                     </div>
                   ) : labeledOrders.length ? (
                     <div className="flex flex-wrap gap-1.5">
-                      {labeledOrders.map((number) => {
+                      {labeledOrderChips.map((chip) => {
+                        const number = chip.orderNumber;
                         const active = selectedOrderIds.has(number);
                         if (!active) {
                           return (
@@ -1154,7 +1176,12 @@ export function MultiPrintScreen() {
                               type="button"
                               aria-pressed={false}
                               onClick={() => onChipClick(number)}
-                              className="rounded-full border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-all duration-200 hover:border-zinc-300 hover:bg-surface-soft"
+                              className={cn(
+                                "rounded-full border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
+                                chip.printed
+                                  ? "border-zinc-200 bg-zinc-100 text-zinc-500 hover:border-zinc-300 hover:bg-zinc-200"
+                                  : "border-border bg-card text-foreground hover:border-zinc-300 hover:bg-surface-soft"
+                              )}
                             >
                               {number}
                             </button>
@@ -1163,7 +1190,12 @@ export function MultiPrintScreen() {
                         return (
                           <div
                             key={number}
-                            className="inline-flex h-[29px] items-center overflow-hidden rounded-full border border-brand/30 bg-rose-50 text-brand-dark shadow-sm"
+                            className={cn(
+                              "inline-flex h-[29px] items-center overflow-hidden rounded-full border shadow-sm",
+                              chip.printed
+                                ? "border-zinc-200 bg-zinc-100 text-zinc-500"
+                                : "border-brand/30 bg-rose-50 text-brand-dark"
+                            )}
                           >
                             <button
                               type="button"
@@ -1175,7 +1207,10 @@ export function MultiPrintScreen() {
                             </button>
                             <button
                               type="button"
-                              className="mr-1 flex size-5 shrink-0 items-center justify-center rounded-full text-brand-dark/70 transition-colors hover:bg-red-100 hover:text-red-700"
+                              className={cn(
+                                "mr-1 flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-red-100 hover:text-red-700",
+                                chip.printed ? "text-zinc-400" : "text-brand-dark/70"
+                              )}
                               onClick={() => removeChipOrder(number)}
                               aria-label={`Remove ${number} from print order`}
                               title="Remove"
@@ -1249,16 +1284,59 @@ export function MultiPrintScreen() {
                   </p>
                 </div>
 
-                <label className="block space-y-1.5 text-xs font-medium text-muted">
-                  Label template
-                  <select className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm text-foreground" value={selectedId} onChange={(event) => setTemplateId(event.target.value)}>
-                    {library.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {templateOptionLabel(item)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="space-y-1.5">
+                  <label className="block space-y-1.5 text-xs font-medium text-muted">
+                    Label template
+                    <select
+                      className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm text-foreground"
+                      value={selectedId}
+                      onChange={(event) => {
+                        setJustSavedDefault(false);
+                        setTemplateId(event.target.value);
+                      }}
+                    >
+                      {library.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {templateOptionLabel(item)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {templates.data?.template.library?.length && selected ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className={cn(
+                        "w-full",
+                        justSavedDefault &&
+                          "border-amber-300 bg-amber-50 text-amber-950 disabled:opacity-100 motion-safe:animate-[default-save_0.7s_ease-out]"
+                      )}
+                      disabled={(selected.isDefault && !justSavedDefault) || saveTemplate.isPending}
+                      onClick={() => {
+                        const stored = templates.data?.template;
+                        if (!stored?.library?.length) return;
+                        saveTemplate.mutate(withDefaultNamedTemplate(stored, selectedId), {
+                          onSuccess: () => toast.success("Default template updated."),
+                        });
+                      }}
+                    >
+                      <Star
+                        className={cn(
+                          "size-4 text-amber-400 transition-transform",
+                          selected.isDefault || justSavedDefault ? "fill-amber-400" : "fill-amber-400/30",
+                          saveTemplate.isPending && "motion-safe:animate-pulse",
+                          justSavedDefault && "motion-safe:animate-[default-star_0.7s_ease-out]"
+                        )}
+                      />
+                      {saveTemplate.isPending
+                        ? "Saving…"
+                        : selected.isDefault || justSavedDefault
+                          ? "Saved as default"
+                          : "Save as default"}
+                    </Button>
+                  ) : null}
+                </div>
 
                 <div className="space-y-3 rounded-xl border border-border bg-surface-soft p-3">
                   <div>

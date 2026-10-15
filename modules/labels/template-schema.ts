@@ -390,6 +390,20 @@ export function defaultLabelTemplateId(template: LabelTemplate) {
   return template.library?.find((item) => item.isDefault)?.id ?? template.library?.[0]?.id ?? null;
 }
 
+export function withDefaultNamedTemplate(template: LabelTemplate, id: string): LabelTemplate {
+  if (!template.library?.length) return template;
+  const library = template.library.map((item) => ({ ...item, isDefault: item.id === id }));
+  const active = library.find((item) => item.isDefault);
+  if (!active) return template;
+  return {
+    ...template,
+    library,
+    page: active.page,
+    elements: active.elements,
+    templateVersion: Math.max(template.templateVersion, 5),
+  };
+}
+
 export function defaultLabelTemplatePage(template: LabelTemplate) {
   return selectLabelTemplate(template, defaultLabelTemplateId(template)).page;
 }

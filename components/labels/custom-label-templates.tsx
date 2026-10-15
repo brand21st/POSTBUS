@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/hooks/use-api";
 import {
   indiaPostLabelTemplate,
+  withDefaultNamedTemplate,
   type LabelTemplate,
   type NamedLabelTemplate,
 } from "@/modules/labels/template-schema";
@@ -85,18 +86,7 @@ export function CustomLabelTemplates() {
 
   const setDefault = (id: string) => {
     if (!template?.library?.length) return;
-    const library = template.library.map((item) => ({ ...item, isDefault: item.id === id }));
-    const active = library.find((item) => item.isDefault) ?? library[0];
-    save.mutate(
-      {
-        ...template,
-        library,
-        page: active.page,
-        elements: active.elements,
-        templateVersion: Math.max(template.templateVersion, 5),
-      },
-      { onSuccess: () => toast.success("Default template updated.") }
-    );
+    save.mutate(withDefaultNamedTemplate(template, id), { onSuccess: () => toast.success("Default template updated.") });
   };
 
   const remove = (id: string) => {
