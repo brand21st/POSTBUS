@@ -360,6 +360,30 @@ body {
   }
 }
 
+@keyframes default-save {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes default-star {
+  0% {
+    transform: scale(0.55) rotate(-18deg);
+  }
+  55% {
+    transform: scale(1.28) rotate(10deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
 @keyframes order-verified-card {
   from {
     opacity: 0;

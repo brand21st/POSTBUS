@@ -26,6 +26,7 @@ import {
   normalizeHLines,
   parseLabelTemplate,
   selectLabelTemplate,
+  withDefaultNamedTemplate,
   withEditorDraft,
 } from "@/modules/labels/template-schema";
 
@@ -124,6 +125,21 @@ describe("india post barcode block", () => {
     packing.library = packing.library.map((item) => ({ ...item, isDefault: false }));
     expect(defaultLabelTemplateId(packing)).toBe("default");
     expect(defaultLabelTemplateId(indiaPostLabelTemplate())).toBeNull();
+  });
+
+  it("promotes a library item to Default and copies its page", () => {
+    const packing = defaultLabelTemplate("A6");
+    const india = indiaPostLabelTemplate();
+    packing.library = [
+      { id: "default", name: "Default", isDefault: true, page: packing.page, elements: packing.elements },
+      { id: "india", name: "India Post", isDefault: false, page: india.page, elements: india.elements },
+    ];
+    const next = withDefaultNamedTemplate(packing, "india");
+    expect(defaultLabelTemplateId(next)).toBe("india");
+    expect(next.page.widthMm).toBe(india.page.widthMm);
+    expect(next.library?.find((item) => item.id === "default")?.isDefault).toBe(false);
+    expect(withDefaultNamedTemplate(packing, "missing")).toBe(packing);
+    expect(withDefaultNamedTemplate(indiaPostLabelTemplate(), "india")).toEqual(indiaPostLabelTemplate());
   });
 
   it("labels the Default template paper size for the Shipping Slip badge", () => {
