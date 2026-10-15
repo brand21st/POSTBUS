@@ -76,6 +76,11 @@ export function permissionForTenantRoute(
     return "automation.manage";
   }
 
+  if (root === "print-devices") {
+    if (method === "GET" && slugs.length === 1) return undefined;
+    return "automation.manage";
+  }
+
   if (root === "printers") {
     if (method === "GET") return undefined;
     if (method === "POST" && slugs[2] === "presence") return "labels.write";

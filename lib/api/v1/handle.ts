@@ -8,6 +8,7 @@ import { handleIntegrationRoutes } from "@/lib/api/v1/integrations";
 import { handleInvoiceRoutes } from "@/lib/api/v1/invoices";
 import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
 import { handlePrintAgentRoutes, handlePrintStationRoutes, isPrintAgentApiPath } from "@/lib/api/v1/print";
+import { handlePrintDevicePublicRoutes, handlePrintDeviceTenantRoutes, isPrintDevicePublicPath } from "@/lib/api/v1/print-devices";
 import { handleSessionRoutes } from "@/lib/api/v1/session";
 import { handleBillingRoutes } from "@/lib/api/v1/billing";
 import { handleMerchantTutorials } from "@/lib/api/v1/tutorials";
@@ -52,6 +53,10 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
     if (printAgent !== null) return printAgent;
   }
 
+  if (isPrintDevicePublicPath(path)) {
+    return handlePrintDevicePublicRoutes(request, path);
+  }
+
   const supabase = await createServerSupabase();
   if (key === "GET billing/plans") {
     const publicPlans = await handleBillingRoutes(request, supabase, null, key);
@@ -71,6 +76,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
     (await handleUiRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleShipmentPresetRoutes(request, supabase, ctx, method, slugs)) ??
     (await handlePrintStationRoutes(request, supabase, ctx, key, method, slugs)) ??
+    (await handlePrintDeviceTenantRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleLabelTemplateRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleInvoiceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleInventoryRoutes(request, supabase, ctx, key, method, slugs)) ??
