@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
+import { tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
 import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES } from "@/types/domain";
 
 const indiaMobile = z
@@ -50,6 +51,7 @@ export const createOrderSchema = z.object({
   billingAddress: addressInput.optional(),
   paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
   amountPaid: z.coerce.number().min(0).optional(),
+  extraCodCharge: z.unknown().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   lineItems: z
     .array(
@@ -83,6 +85,16 @@ export const createOrderSchema = z.object({
       });
     }
   });
+  if (value.paymentStatus === "COD") {
+    const extra = tryParseExtraCodCharge(value.extraCodCharge);
+    if (!extra.ok) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["extraCodCharge"],
+        message: extra.message,
+      });
+    }
+  }
   if (value.paymentStatus !== "PARTIAL") return;
   if (value.lineItems.some((item) => item.productId)) return;
   const total = value.lineItems.reduce((sum, item) => sum + (item.unitPrice ?? 0) * item.quantity, 0);

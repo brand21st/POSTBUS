@@ -49,6 +49,7 @@ import {
 import { optionalDimensionCm, optionalPositiveInt } from "@/modules/orders/schema";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { IndiaPostConfig, OrderRecord, Paginated, ProductRecord } from "@/types/api";
+import { addRupees, INDIA_POST_COD_MAX_RUPEES, tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
 import { catalogCodAdvancePaid } from "@/modules/products/payment";
 
 const addressSchema = z.object({
@@ -64,7 +65,7 @@ const addressSchema = z.object({
   country: z.string().min(2),
 });
 
-const schema = z.object({
+export const newOrderFormSchema = z.object({
   orderNumber: z.string().optional(),
   customerName: z
     .string()
@@ -83,9 +84,9 @@ const schema = z.object({
   ),
   paymentStatus: z.enum(PAYMENT_STATUSES),
   amountPaid: z.coerce.number().min(0).optional(),
+  extraCodCharge: z.unknown().optional(),
   shippingAddress: addressSchema,
   billingSameAsShipping: z.boolean(),
-  billingAddress: addressSchema.optional(),
   lineItems: z
     .array(
       z.object({
@@ -111,7 +112,43 @@ const schema = z.object({
       serviceCode: z.string().optional(),
     })
     .optional(),
+  // Registered even while the billing card is collapsed. Empty strings must not
+  // fail validation when the order uses the shipping address for billing.
+  billingAddress: z
+    .object({
+      name: z.string().optional(),
+      phone: z.string().optional(),
+      line1: z.string().optional(),
+      line2: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      pincode: z.string().optional(),
+      country: z.string().optional(),
+    })
+    .optional(),
 }).superRefine((value, ctx) => {
+  if (!value.billingSameAsShipping) {
+    const parsed = addressSchema.safeParse(value.billingAddress ?? {});
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["billingAddress", ...issue.path],
+          message: issue.message,
+        });
+      }
+    }
+  }
+  if (value.paymentStatus === "COD") {
+    const extra = tryParseExtraCodCharge(value.extraCodCharge);
+    if (!extra.ok) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["extraCodCharge"],
+        message: extra.message,
+      });
+    }
+  }
   if (value.paymentStatus !== "PARTIAL") return;
   const total = value.lineItems.reduce(
     (sum, item) => sum + Number(item.unitPrice || 0) * Number(item.quantity || 0),
@@ -133,7 +170,7 @@ const schema = z.object({
   }
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormValues = z.infer<typeof newOrderFormSchema>;
 
 export default function NewOrderPage() {
   const router = useRouter();
@@ -151,7 +188,7 @@ export default function NewOrderPage() {
     [indiaPost.data]
   );
   const form = useForm<FormValues>({
-    resolver: zodResolver(schema) as never,
+    resolver: zodResolver(newOrderFormSchema) as never,
     defaultValues: {
       orderNumber: "",
       customerName: "",
@@ -159,6 +196,7 @@ export default function NewOrderPage() {
       customerEmail: "",
       paymentStatus: "PAID",
       amountPaid: 0,
+      extraCodCharge: 0,
       billingSameAsShipping: true,
       shippingAddress: {
         name: "",
@@ -185,6 +223,8 @@ export default function NewOrderPage() {
   const createShipment = form.watch("createShipment");
   const paymentStatus = form.watch("paymentStatus");
   const amountPaid = Number(form.watch("amountPaid") || 0);
+  const extraCodRaw = form.watch("extraCodCharge");
+  const submitLock = useRef(false);
   const lineItemValues = form.watch("lineItems");
   const selectedService = form.watch("shipment.serviceCode");
   const shipmentWeight = form.watch("shipment.weightGrams");
@@ -257,6 +297,21 @@ export default function NewOrderPage() {
       : paymentStatus === "PARTIAL"
         ? Math.max(0, orderTotal - amountPaid)
         : 0;
+  const extraCodParsed = paymentStatus === "COD" ? tryParseExtraCodCharge(extraCodRaw) : { ok: true as const, amount: 0 };
+  const extraCodCharge = extraCodParsed.ok ? extraCodParsed.amount : 0;
+  let finalCodAmount = 0;
+  let finalCodLimitMessage: string | undefined;
+  if (paymentStatus === "COD" && extraCodParsed.ok && Number.isFinite(collectOnDelivery)) {
+    try {
+      finalCodAmount = addRupees(collectOnDelivery, extraCodCharge);
+      if (finalCodAmount > INDIA_POST_COD_MAX_RUPEES) {
+        finalCodLimitMessage = "Final COD amount exceeds the India Post collection limit.";
+      }
+    } catch (error) {
+      finalCodLimitMessage = error instanceof Error ? error.message : "Enter a valid extra COD charge.";
+    }
+  }
+  const codAdvance = paymentStatus === "COD" && Number.isFinite(orderTotal) ? Math.max(0, orderTotal - collectOnDelivery) : 0;
 
   useEffect(() => {
     if (!serviceOptions.length || serviceTouched.current) return;
@@ -275,6 +330,13 @@ export default function NewOrderPage() {
   }, [customerFieldError]);
 
   async function onSubmit(values: FormValues) {
+    if (submitLock.current) return;
+    submitLock.current = true;
+    if (finalCodLimitMessage) {
+      submitLock.current = false;
+      toast.error(finalCodLimitMessage);
+      return;
+    }
     unlockNewOrderSound();
     try {
       const created = await api<OrderRecord>("/api/v1/orders", {
@@ -308,6 +370,7 @@ export default function NewOrderPage() {
             values.paymentStatus === "PARTIAL"
               ? Number(values.amountPaid || 0)
               : undefined,
+          extraCodCharge: values.paymentStatus === "COD" ? values.extraCodCharge ?? 0 : undefined,
           lineItems: values.lineItems.map((item) =>
             item.productId
               ? { productId: item.productId, quantity: item.quantity }
@@ -342,6 +405,8 @@ export default function NewOrderPage() {
       router.push(`/dashboard/orders/${created.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create the order.");
+    } finally {
+      submitLock.current = false;
     }
   }
 
@@ -356,8 +421,8 @@ export default function NewOrderPage() {
   return (
     <form
       className="space-y-3 pb-16 xl:pb-0"
-      onSubmit={form.handleSubmit(onSubmit, () => {
-        toast.error("Please check the highlighted fields.");
+      onSubmit={form.handleSubmit(onSubmit, (errors) => {
+        toast.error(firstFormError(errors) ?? "Please check the highlighted fields.");
       })}
     >
       <PageHeader
@@ -432,9 +497,10 @@ export default function NewOrderPage() {
             <Label>Payment</Label>
             <Select
               value={paymentStatus}
-              onValueChange={(value) =>
-                form.setValue("paymentStatus", value as FormValues["paymentStatus"])
-              }
+              onValueChange={(value) => {
+                form.setValue("paymentStatus", value as FormValues["paymentStatus"]);
+                if (value !== "COD") form.setValue("extraCodCharge", 0);
+              }}
             >
               <SelectTrigger className="h-8">
                 <SelectValue />
@@ -457,7 +523,57 @@ export default function NewOrderPage() {
               <Input className="h-8" type="number" min={0} step="0.01" {...form.register("amountPaid")} />
             </Field>
           ) : null}
-          {paymentStatus === "COD" || paymentStatus === "PARTIAL" ? (
+          {paymentStatus === "COD" ? (
+            <div className="space-y-3 md:col-span-2">
+              <Field
+                label="Extra COD Charge (₹)"
+                hint="Optional additional amount to collect from the customer."
+                className="max-w-64"
+                error={
+                  extraCodParsed.ok
+                    ? finalCodLimitMessage ?? form.formState.errors.extraCodCharge?.message
+                    : extraCodParsed.message
+                }
+                htmlFor="extra-cod-charge"
+              >
+                <Input
+                  id="extra-cod-charge"
+                  className="h-8"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder="Enter additional COD charge"
+                  aria-describedby="extra-cod-charge-hint"
+                  {...form.register("extraCodCharge")}
+                />
+              </Field>
+              <div className="rounded-xl border border-border bg-surface-soft p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payment details</p>
+                <dl className="mt-2 space-y-1.5 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted">Product Amount</dt>
+                    <dd className="tabular-nums">{formatCurrency(orderTotal)}</dd>
+                  </div>
+                  {codAdvance > 0.001 ? (
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted">COD advance</dt>
+                      <dd className="tabular-nums">{formatCurrency(codAdvance)}</dd>
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted">Extra COD Charge</dt>
+                    <dd className="tabular-nums">{formatCurrency(extraCodCharge)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-border pt-2 font-semibold text-ink">
+                    <dt>Final COD Amount</dt>
+                    <dd className="tabular-nums">{formatCurrency(finalCodAmount)}</dd>
+                  </div>
+                </dl>
+              </div>
+            </div>
+          ) : null}
+          {paymentStatus === "PARTIAL" ? (
             <p className="text-sm text-muted md:col-span-2">
               Collect on delivery: {formatCurrency(collectOnDelivery)}
               {orderTotal > 0 ? ` of ${formatCurrency(orderTotal)} total` : ""}
@@ -857,7 +973,12 @@ export default function NewOrderPage() {
             <span className="text-muted">Total</span>
             <span className="font-medium tabular-nums">{formatCurrency(orderTotal)}</span>
           </p>
-          {paymentStatus === "COD" || paymentStatus === "PARTIAL" ? (
+          {paymentStatus === "COD" ? (
+            <p className="flex justify-between text-sm">
+              <span className="text-muted">Final COD</span>
+              <span className="font-medium tabular-nums">{formatCurrency(finalCodAmount)}</span>
+            </p>
+          ) : paymentStatus === "PARTIAL" ? (
             <p className="flex justify-between text-sm">
               <span className="text-muted">Collect</span>
               <span className="tabular-nums">{formatCurrency(collectOnDelivery)}</span>
@@ -874,6 +995,18 @@ export default function NewOrderPage() {
       </div>
     </form>
   );
+}
+
+function firstFormError(errors: unknown): string | undefined {
+  if (!errors || typeof errors !== "object") return undefined;
+  if ("message" in errors && typeof errors.message === "string" && errors.message) {
+    return errors.message;
+  }
+  for (const value of Object.values(errors)) {
+    const found = firstFormError(value);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 const LINE_ITEM_GRID = "lg:grid-cols-[minmax(0,1fr)_6.5rem_7rem_7rem_5.5rem_5.5rem_2rem]";
@@ -966,19 +1099,25 @@ function Field({
   hint,
   error,
   className,
+  htmlFor,
   children,
 }: {
   label: string;
   hint?: string;
   error?: string;
   className?: string;
+  htmlFor?: string;
   children: ReactNode;
 }) {
   return (
     <div className={className}>
-      <Label>{label}</Label>
+      <Label htmlFor={htmlFor}>{label}</Label>
       <div className="mt-1">{children}</div>
-      {hint ? <p className="mt-0.5 text-[11px] text-muted">{hint}</p> : null}
+      {hint ? (
+        <p id={htmlFor ? `${htmlFor}-hint` : undefined} className="mt-0.5 text-[11px] text-muted">
+          {hint}
+        </p>
+      ) : null}
       {error ? <p className="mt-0.5 text-xs text-error">{error}</p> : null}
     </div>
   );
