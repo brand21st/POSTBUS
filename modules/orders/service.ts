@@ -42,7 +42,7 @@ type OrderListQuery = z.infer<typeof orderListQuery>;
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
 const ORDER_LIST_SELECT =
-  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, parcel_weight_mode, parcel_weight_grams, customers(name, phone), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at)";
+  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, india_post_estimate_amount, india_post_estimated_at, parcel_weight_mode, parcel_weight_grams, customers(name, phone), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at)";
 
 function wantsOrderCounts(query: OrderListQuery) {
   const value = (query.includeCounts ?? "").toLowerCase();
@@ -597,6 +597,10 @@ function mapOrder(row: Record<string, unknown>) {
     extra_cod_charge: row.extra_cod_charge ?? 0,
     createdAt: row.created_at,
     indiaPostService: row.india_post_service ?? null,
+    indiaPostEstimateAmount: row.india_post_estimate_amount ?? null,
+    india_post_estimate_amount: row.india_post_estimate_amount ?? null,
+    indiaPostEstimatedAt: row.india_post_estimated_at ?? null,
+    india_post_estimated_at: row.india_post_estimated_at ?? null,
     parcelWeightMode: row.parcel_weight_mode ?? "auto",
     parcelWeightGrams: row.parcel_weight_grams ?? null,
     customer: customer

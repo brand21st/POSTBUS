@@ -36,6 +36,7 @@ export const env = {
   indiaPostBookingBatchSize: optional(process.env.INDIA_POST_BOOKING_BATCH_SIZE) || "1",
   indiaPostBookingConcurrency: optional(process.env.INDIA_POST_BOOKING_CONCURRENCY) || "4",
   indiaPostBulkEnabled: optional(process.env.INDIA_POST_BULK_ENABLED) || "false",
+  indiaPostTariffQuotesEnabled: optional(process.env.INDIA_POST_TARIFF_QUOTES_ENABLED).toLowerCase() === "true",
   indiaPostBulkMaxArticles: optional(process.env.INDIA_POST_BULK_MAX_ARTICLES) || "2",
   indiaPostBulkConcurrency: optional(process.env.INDIA_POST_BULK_CONCURRENCY) || "1",
   // Empty = webhook HTTP is acknowledged but events are quarantined (not processed). Set official CEPT CIDRs only after India Post confirms them.

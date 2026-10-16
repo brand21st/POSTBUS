@@ -626,6 +626,21 @@ export default function OrdersPage() {
         </span>
       ),
     },
+    {
+      id: "estimatedShipping",
+      header: "Est. shipping",
+      className: "w-[6.75rem] whitespace-nowrap",
+      cell: (row) => {
+        const amount = row.indiaPostEstimateAmount ?? row.india_post_estimate_amount;
+        return amount == null ? (
+          <span className="text-muted">—</span>
+        ) : (
+          <span className="whitespace-nowrap tabular-nums" title="Latest India Post pre-booking estimate">
+            {formatCurrency(amount, "INR")}
+          </span>
+        );
+      },
+    },
     ...(visibleColumns.created
       ? [
           {

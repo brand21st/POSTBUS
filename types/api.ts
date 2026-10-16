@@ -288,6 +288,10 @@ export type OrderRecord = {
   updated_at?: string;
   indiaPostService?: string | null;
   india_post_service?: string | null;
+  indiaPostEstimateAmount?: number | string | null;
+  india_post_estimate_amount?: number | string | null;
+  indiaPostEstimatedAt?: string | null;
+  india_post_estimated_at?: string | null;
   parcelWeightMode?: "auto" | "manual" | string | null;
   parcel_weight_mode?: "auto" | "manual" | string | null;
   parcelWeightGrams?: number | null;

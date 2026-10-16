@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
+import { TariffEstimateCard } from "@/components/orders/tariff-estimate-card";
 import { WhatsAppPasteParser } from "@/components/orders/whatsapp-paste-parser";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
@@ -172,6 +173,11 @@ export const newOrderFormSchema = z.object({
 
 type FormValues = z.infer<typeof newOrderFormSchema>;
 
+function positiveNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
 export default function NewOrderPage() {
   const router = useRouter();
   const indiaPost = useQuery({
@@ -231,6 +237,7 @@ export default function NewOrderPage() {
   const shipmentLength = form.watch("shipment.lengthCm");
   const shipmentWidth = form.watch("shipment.widthCm");
   const shipmentHeight = form.watch("shipment.heightCm");
+  const tariffDestinationPincode = form.watch("shippingAddress.pincode");
   const catalogItems = catalog.data?.items ?? [];
   const catalogById = useMemo(
     () => new Map(catalogItems.map((item) => [item.id, item])),
@@ -402,6 +409,16 @@ export default function NewOrderPage() {
             (shipment ? "India Post booking failed." : "Order saved, but India Post booking did not start.")
         );
       }
+      void api(`/api/v1/orders/${encodeURIComponent(created.id)}/tariff-quote`, {
+        method: "POST",
+        body: JSON.stringify({
+          service: values.shipment?.serviceCode,
+          weightGrams: positiveNumber(values.shipment?.weightGrams),
+          lengthCm: positiveNumber(values.shipment?.lengthCm),
+          widthCm: positiveNumber(values.shipment?.widthCm),
+          heightCm: positiveNumber(values.shipment?.heightCm),
+        }),
+      }).catch(() => undefined);
       router.push(`/dashboard/orders/${created.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create the order.");
@@ -958,10 +975,10 @@ export default function NewOrderPage() {
             </div>
             </div>
             </Expand>
+      <TariffEstimateCard draft={{ service: selectedService, destinationPincode: tariffDestinationPincode, weightGrams: positiveNumber(shipmentWeight) ?? (lineItemValues?.length && lineItemValues.every((item) => Number(item.weightGrams) > 0) ? totalWeight : undefined), lengthCm: positiveNumber(shipmentLength), widthCm: positiveNumber(shipmentWidth), heightCm: positiveNumber(shipmentHeight) }} />
         </CardContent>
       </Card>
       </div>
-
       <aside className="hidden xl:block">
         <div className="sticky top-4 space-y-2.5 rounded-2xl border border-border bg-card p-3 shadow-sm">
           <h2 className="text-sm font-semibold text-ink">Summary</h2>

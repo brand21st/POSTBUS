@@ -7,6 +7,9 @@ export function permissionForTenantRoute(
 ): Permission | undefined {
   const key = `${method} ${path}`;
   const root = slugs[0];
+  if (key === "GET india-post/tariff-capabilities") return "orders.read";
+  if (key === "POST india-post/tariff-quotes") return "orders.write";
+  if (method === "POST" && /^orders\/[^/]+\/tariff-quote$/.test(path)) return "orders.read";
 
   if (path.startsWith("dashboard/")) return "orders.read";
 
