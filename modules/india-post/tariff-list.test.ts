@@ -43,6 +43,28 @@ describe("orders-list tariff readiness", () => {
     }), defaults).status).toBe("saved");
   });
 
+  it("quotes the resolved service when the shipment still names the other product", () => {
+    const state = tariffListState(
+      order({
+        shipment: { id: "shipment-1", serviceCode: "SP_INLAND_PARCEL", service_code: "SP_INLAND_PARCEL" },
+      }),
+      defaults
+    );
+    expect(state.status).toBe("quote");
+    if (state.status !== "quote") throw new Error("expected quote state");
+    expect(state.input.service).toBe("BUSINESS_PARCEL");
+  });
+
+  it("keeps the order service when the page did not pass a resolved service", () => {
+    const state = tariffListState(order({ indiaPostService: "SP_INLAND_PARCEL" }), {
+      ...defaults,
+      service: undefined,
+    });
+    expect(state.status).toBe("blocked");
+    if (state.status !== "blocked") throw new Error("expected blocked state");
+    expect(state.warning).toBe("Tariff needs review");
+  });
+
   it("requires a new quote after parcel data changes", () => {
     const first = tariffListState(order(), defaults);
     if (first.status !== "quote") throw new Error("expected quote state");

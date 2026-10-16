@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
+import { barcodeForSelectedService } from "@/modules/india-post/barcode";
 import { mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import { assertValidatedArticle } from "@/modules/india-post/article-validator";
 import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/modules/india-post/parcel-defaults";
@@ -352,7 +353,7 @@ export async function runIndiaPostBooking(
 
   for (const shipment of pending) {
     const requestedService = (shipment.service_code as string) || DEFAULT_INDIA_POST_SERVICE;
-    let barcode = shipmentBarcode(shipment.barcode);
+    let barcode = barcodeForSelectedService(shipmentBarcode(shipment.barcode), requestedService);
     const serviceCode = indiaPostBookingServiceCode(requestedService, barcode);
     const contractId = contractByService.get(serviceCode) || connection.contract_id;
     if (!contractId) {
