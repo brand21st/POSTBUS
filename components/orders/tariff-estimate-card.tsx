@@ -9,10 +9,11 @@ import { tariffInputSchema, usableTariffDraft, type TariffQuote } from "@/module
 
 type Draft = { service?: string | null; destinationPincode?: string | null; weightGrams?: number; lengthCm?: number; widthCm?: number; heightCm?: number };
 type Capabilities = { enabled: boolean; organizationId: string; senderChoices: Array<{ id: string; label: string; pincode: string }>; defaults?: Draft | null };
-type Props = { orderId?: string; draft?: Draft; revision?: string; draftRevision?: string };
+export type TariffEstimateStatus = { visible: boolean; text: string };
+type Props = { orderId?: string; draft?: Draft; revision?: string; draftRevision?: string; onEstimate?: (status: TariffEstimateStatus) => void };
 
 /** Inline estimate using the containing order form; no duplicate parcel controls. */
-export function TariffEstimateCard(props: Props) {
+export function TariffEstimateCard({ onEstimate, ...props }: Props) {
   const me = useMe();
   const organizationId = me.data?.organization?.id;
   const capabilities = useQuery({
@@ -20,11 +21,15 @@ export function TariffEstimateCard(props: Props) {
     queryFn: () => api<Capabilities>(`/api/v1/india-post/tariff-capabilities${props.orderId ? `?orderId=${encodeURIComponent(props.orderId)}` : ""}`, { cache: "no-store" }),
     enabled: Boolean(organizationId), retry: false,
   });
-  if (!capabilities.data?.enabled || capabilities.data.organizationId !== organizationId || capabilities.isError) return null;
-  return <InlineEstimate {...props} capabilities={capabilities.data} />;
+  const visible = Boolean(capabilities.data?.enabled && capabilities.data.organizationId === organizationId && !capabilities.isError);
+  useEffect(() => {
+    if (!visible) onEstimate?.({ visible: false, text: "—" });
+  }, [onEstimate, visible]);
+  if (!visible || !capabilities.data) return null;
+  return <InlineEstimate {...props} onEstimate={onEstimate} capabilities={capabilities.data} />;
 }
 
-function InlineEstimate({ orderId, draft, revision, draftRevision, capabilities }: Props & { capabilities: Capabilities }) {
+function InlineEstimate({ orderId, draft, revision, draftRevision, onEstimate, capabilities }: Props & { capabilities: Capabilities }) {
   const [sender, setSender] = useState("");
   const [result, setResult] = useState<{ key: string; quote?: TariffQuote; error?: string } | null>(null);
   const [loadingKey, setLoadingKey] = useState("");
@@ -67,6 +72,10 @@ function InlineEstimate({ orderId, draft, revision, draftRevision, capabilities 
   const current = result?.key === key ? result : null;
   const quote = current?.quote;
   const lightParcel = values.service === "SP_INLAND_PARCEL" && Number(values.weightGrams) > 0 && Number(values.weightGrams) <= 500;
+  const estimateText = quote ? formatCurrency(quote.estimatedTotal, "INR") : loadingKey === key ? "Calculating…" : payload && !current?.error ? "Updating…" : "—";
+  useEffect(() => {
+    onEstimate?.({ visible: true, text: estimateText });
+  }, [estimateText, onEstimate]);
   return <div className="space-y-1.5 border-t border-border pt-3 text-sm" aria-label="Shipping tariff">
     {capabilities.senderChoices.length > 1 ? <label className="flex items-center justify-between gap-2 text-xs text-muted">Sender office
       <select aria-label="Tariff sender office" className="h-8 rounded border border-border bg-card px-2 text-ink" value={sender} onChange={(event) => setSender(event.target.value)}>
@@ -75,7 +84,7 @@ function InlineEstimate({ orderId, draft, revision, draftRevision, capabilities 
     </label> : null}
     <div className="flex items-center justify-between gap-3" aria-live="polite">
       <span className="text-muted">Estimated shipping</span>
-      <span className="font-medium tabular-nums">{quote ? formatCurrency(quote.estimatedTotal, "INR") : loadingKey === key ? "Calculating…" : payload && !current?.error ? "Updating…" : "—"}</span>
+      <span className="font-medium tabular-nums">{estimateText}</span>
     </div>
     {!payload ? <p className="text-xs text-muted">{lightParcel ? "Speed Post parcel estimates at 500 g or less await provider verification." : !office ? "Configure or select a sender office in India Post settings." : "Complete valid weight, dimensions, service and destination in the existing order fields to see the tariff."}</p> : null}
     {current?.error ? <p role="alert" className="text-xs text-muted">{current.error} Edit parcel details to calculate again.</p> : null}

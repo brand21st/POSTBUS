@@ -1,7 +1,7 @@
 "use client";
 
 import type { BaseSyntheticEvent, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -13,6 +13,7 @@ import { z } from "zod";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
 import { TariffEstimateCard } from "@/components/orders/tariff-estimate-card";
+import type { TariffEstimateStatus } from "@/components/orders/tariff-estimate-card";
 import { WhatsAppPasteParser } from "@/components/orders/whatsapp-paste-parser";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
@@ -245,6 +246,12 @@ export default function NewOrderPage() {
   const extraCodRaw = form.watch("extraCodCharge");
   const submitLock = useRef(false);
   const [activeSubmitAction, setActiveSubmitAction] = useState<SubmitAction | null>(null);
+  const [tariffEstimate, setTariffEstimate] = useState<TariffEstimateStatus>({ visible: false, text: "—" });
+  const updateTariffEstimate = useCallback((status: TariffEstimateStatus) => {
+    setTariffEstimate((current) =>
+      current.visible === status.visible && current.text === status.text ? current : status
+    );
+  }, []);
   const lineItemValues = form.watch("lineItems");
   const selectedService = form.watch("shipment.serviceCode");
   const shipmentWeight = form.watch("shipment.weightGrams");
@@ -988,7 +995,10 @@ export default function NewOrderPage() {
             </div>
             </div>
             </Expand>
-      <TariffEstimateCard draft={{ service: selectedService, destinationPincode: tariffDestinationPincode, weightGrams: positiveNumber(shipmentWeight) ?? (lineItemValues?.length && lineItemValues.every((item) => Number(item.weightGrams) > 0) ? totalWeight : undefined), lengthCm: positiveNumber(shipmentLength), widthCm: positiveNumber(shipmentWidth), heightCm: positiveNumber(shipmentHeight) }} />
+      <TariffEstimateCard
+        draft={{ service: selectedService, destinationPincode: tariffDestinationPincode, weightGrams: positiveNumber(shipmentWeight) ?? (lineItemValues?.length && lineItemValues.every((item) => Number(item.weightGrams) > 0) ? totalWeight : undefined), lengthCm: positiveNumber(shipmentLength), widthCm: positiveNumber(shipmentWidth), heightCm: positiveNumber(shipmentHeight) }}
+        onEstimate={updateTariffEstimate}
+      />
         </CardContent>
       </Card>
       </div>
@@ -1003,6 +1013,12 @@ export default function NewOrderPage() {
             <span className="text-muted">Total</span>
             <span className="font-medium tabular-nums">{formatCurrency(orderTotal)}</span>
           </p>
+          {tariffEstimate.visible ? (
+            <p className="flex justify-between gap-3 text-sm" aria-live="polite">
+              <span className="text-muted">Shipping tariff</span>
+              <span className="font-medium tabular-nums">{tariffEstimate.text}</span>
+            </p>
+          ) : null}
           {paymentStatus === "COD" ? (
             <p className="flex justify-between text-sm">
               <span className="text-muted">Final COD</span>
