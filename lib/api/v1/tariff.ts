@@ -9,7 +9,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { executeTariff, loadTariffConnection, loadTariffOrder, resolveTariffInput, safeTariffError, saveTariffEstimate, tariffError, tariffOrderDefaults, tariffSenderChoices, type TariffConnection } from "@/modules/india-post/tariff";
 
-const inFlight = new Set<string>();
+const inFlight = new Map<string, number>();
 function privateResponse(value: unknown) {
   const response = ok(value);
   response.headers.set("Cache-Control", "private, no-store");
@@ -31,10 +31,23 @@ export async function handleTariffRoutes(request: NextRequest, supabase: Supabas
     if (error) throw tariffError("INTERNAL_ERROR", "Unable to load estimate settings.");
     const orderId = request.nextUrl.searchParams.get("orderId");
     const order = orderId ? await loadTariffOrder(supabase, ctx.organizationId, orderId) : undefined;
-    return privateResponse({ enabled: true, organizationId: ctx.organizationId, senderChoices: tariffSenderChoices(data ?? {}), defaults: order ? tariffOrderDefaults(order, (data ?? {}) as TariffConnection) : null });
+    const connection = (data ?? {}) as TariffConnection;
+    return privateResponse({
+      enabled: true,
+      organizationId: ctx.organizationId,
+      senderChoices: tariffSenderChoices(connection),
+      defaults: order
+        ? tariffOrderDefaults(order, connection)
+        : {
+            weightGrams: connection.default_weight_grams ?? undefined,
+            lengthCm: connection.default_length_cm ?? undefined,
+            widthCm: connection.default_width_cm ?? undefined,
+            heightCm: connection.default_height_cm ?? undefined,
+          },
+    });
   }
-  if (!rateLimit(`tariff:${ctx.organizationId}`, 10, 60_000).ok || inFlight.has(ctx.organizationId)) throw tariffError("RATE_LIMITED", "Please wait before requesting another estimate.", ERROR_CODES.RATE_LIMITED);
-  inFlight.add(ctx.organizationId);
+  if (!rateLimit(`tariff:${ctx.organizationId}`, 30, 60_000).ok || (inFlight.get(ctx.organizationId) ?? 0) >= 2) throw tariffError("RATE_LIMITED", "Please wait before requesting another estimate.", ERROR_CODES.RATE_LIMITED);
+  inFlight.set(ctx.organizationId, (inFlight.get(ctx.organizationId) ?? 0) + 1);
   const started = Date.now();
   const orderId = orderMatch?.[1];
   let service: string | undefined;
@@ -47,12 +60,16 @@ export async function handleTariffRoutes(request: NextRequest, supabase: Supabas
     const input = resolveTariffInput(body, connection, order);
     service = input.service;
     const quote = await executeTariff(admin, ctx.organizationId, connection, input);
-    if (orderId) await saveTariffEstimate(admin, ctx.organizationId, orderId, quote);
+    if (orderId) await saveTariffEstimate(admin, ctx.organizationId, orderId, input, quote);
     logInfo("india-post.tariff", { organizationId: ctx.organizationId, orderId, service, category: "SUCCESS", durationMs: Date.now() - started });
     return privateResponse(quote);
   } catch (error) {
     const safe = safeTariffError(error);
     logInfo("india-post.tariff", { organizationId: ctx.organizationId, orderId, service, category: safe.details, status: safe.status, durationMs: Date.now() - started });
     throw safe;
-  } finally { inFlight.delete(ctx.organizationId); }
+  } finally {
+    const remaining = (inFlight.get(ctx.organizationId) ?? 1) - 1;
+    if (remaining > 0) inFlight.set(ctx.organizationId, remaining);
+    else inFlight.delete(ctx.organizationId);
+  }
 }
