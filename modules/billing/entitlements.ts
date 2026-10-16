@@ -131,6 +131,7 @@ export function lockedFeatureForPath(pathname: string): string | null {
 }
 
 export function lockedFeatureForApi(method: string, path: string, slugs: string[]): string | null {
+  if (method === "POST" && (path === "india-post/tariff-quotes" || /^orders\/[^/]+\/tariff-quote$/.test(path))) return FEATURE.indiaPost;
   if (path === "dashboard/analytics" || (slugs[0] === "dashboard" && slugs[1] === "analytics")) {
     return FEATURE.analytics;
   }

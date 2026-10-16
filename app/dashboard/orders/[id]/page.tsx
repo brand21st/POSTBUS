@@ -9,6 +9,7 @@ import { ArrowLeft, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
+import { TariffEstimateCard } from "@/components/orders/tariff-estimate-card";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
 import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
 import { orderStatusBadgeValue, StatusBadge } from "@/components/dashboard/status-badge";
@@ -38,6 +39,11 @@ import { FEATURE } from "@/modules/billing/entitlements";
 import type { LineItem, OrderRecord, ShipmentRecord } from "@/types/api";
 
 const WEIGHT_EDIT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
+
+function positiveNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
 
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
@@ -541,6 +547,7 @@ export default function OrderDetailPage() {
               ) : null}
             </div>
           )}
+          <TariffEstimateCard orderId={params.id} revision={JSON.stringify(record)} draftRevision={JSON.stringify([draftWeights, manualBox, weightMode, itemModes])} draft={{ weightGrams: weightMode === "manual" ? positiveNumber(manualBox) : items.length && items.every((item, index) => draftItemGrams(item, index) > 0) ? positiveNumber(autoBoxWeight) : undefined }} />
         </CardContent>
       </Card>
 

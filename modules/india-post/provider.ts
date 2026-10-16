@@ -12,10 +12,11 @@ import {
   retryAfterMsFromHeader,
 } from "@/modules/india-post/tracking-response";
 import type { ProviderEnvironment } from "@/types/domain";
+import { tariffRequest, type TariffInput } from "@/modules/india-post/tariff-contract";
 
 export type ShippingProvider = {
   validateShipment(input: Record<string, unknown>): Promise<void>;
-  getTariff(input: Record<string, unknown>): Promise<unknown>;
+  getTariff(input: TariffInput): Promise<unknown>;
   bookShipment(input: Record<string, unknown>): Promise<unknown>;
   allocateBarcode(): Promise<string>;
   generateLabel(input: Record<string, unknown>): Promise<ArrayBuffer>;
@@ -150,15 +151,11 @@ export class IndiaPostProvider implements ShippingProvider {
     }
   }
 
-  async getTariff(input: Record<string, unknown>) {
+  async getTariff(input: TariffInput) {
+    const path = tariffRequest(input);
     const token = await this.token();
-    const params = new URLSearchParams({
-      "product-code": String(input.productCode ?? "SP"),
-      weight: String(input.weight ?? 100),
-      "source-pincode": String(input.sourcePincode ?? ""),
-      "destination-pincode": String(input.destinationPincode ?? ""),
-    });
-    const response = await fetch(`${this.sessionUrl("/speed-post/tariffs")}?${params}`, {
+    const response = await fetch(this.sessionUrl(path), {
+      cache: "no-store",
       headers: { Authorization: `Bearer ${token}` },
       signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search),
     });

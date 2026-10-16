@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { requireTenant } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { handleCommerceRoutes } from "@/lib/api/v1/commerce";
+import { handleTariffRoutes } from "@/lib/api/v1/tariff";
 import { handleInventoryRoutes } from "@/lib/api/v1/inventory";
 import { handleInboundWebhook, isInboundWebhookPath } from "@/lib/api/v1/inbound-webhooks";
 import { handleIntegrationRoutes } from "@/lib/api/v1/integrations";
@@ -71,6 +72,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   const planFeature = lockedFeatureForApi(method, path, slugs);
   if (planFeature) await assertPlanFeature(supabase, ctx.organizationId, planFeature);
   return (
+    (await handleTariffRoutes(request, supabase, ctx, path)) ??
     (await handleBillingRoutes(request, supabase, ctx, key)) ??
     (await handleWorkspaceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleSupportRoutes(request, supabase, ctx, method, slugs)) ??
