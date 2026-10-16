@@ -33,9 +33,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
+import { useIndiaPost } from "@/lib/hooks/use-india-post";
+import { resolveOrderBookingService } from "@/modules/india-post/booking-service";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS, INDIAN_STATES } from "@/lib/indian-states";
+import { indiaPostServiceLabel } from "@/types/domain";
 import type { IndiaPostDirectoryLookup } from "@/lib/india-post/pincode-directory";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
@@ -50,7 +53,7 @@ import {
 } from "@/lib/notifications/new-order";
 import { optionalDimensionCm, optionalPositiveInt } from "@/modules/orders/schema";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
-import type { IndiaPostConfig, OrderRecord, Paginated, ProductRecord } from "@/types/api";
+import type { OrderRecord, Paginated, ProductRecord } from "@/types/api";
 import { addRupees, INDIA_POST_COD_MAX_RUPEES, tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
 import { catalogCodAdvancePaid } from "@/modules/products/payment";
 
@@ -194,10 +197,7 @@ export function newOrderShipmentPayload(shipment: FormValues["shipment"], action
 
 export default function NewOrderPage() {
   const router = useRouter();
-  const indiaPost = useQuery({
-    queryKey: ["integrations", "india-post"],
-    queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
-  });
+  const indiaPost = useIndiaPost();
   const catalog = useQuery({
     queryKey: ["products", "order-picker"],
     queryFn: () =>
@@ -341,13 +341,18 @@ export default function NewOrderPage() {
   }
   const codAdvance = paymentStatus === "COD" && Number.isFinite(orderTotal) ? Math.max(0, orderTotal - collectOnDelivery) : 0;
 
+  const bookingService = resolveOrderBookingService({
+    workspaceOverride: indiaPost.data?.bookingServiceOverride,
+    defaultService: indiaPost.data?.defaultServiceCode,
+    allowedServices: serviceOptions.map((item) => item.code),
+  });
+
   useEffect(() => {
     if (!serviceOptions.length || serviceTouched.current) return;
-    const preferred = serviceOptions.find((item) => item.isDefault)?.code ?? serviceOptions[0]?.code;
-    if (preferred && form.getValues("shipment.serviceCode") !== preferred) {
-      form.setValue("shipment.serviceCode", preferred);
+    if (bookingService && form.getValues("shipment.serviceCode") !== bookingService) {
+      form.setValue("shipment.serviceCode", bookingService);
     }
-  }, [form, serviceOptions]);
+  }, [bookingService, form, serviceOptions.length]);
 
   const customerFieldError =
     form.formState.errors.customerName ||
@@ -967,8 +972,10 @@ export default function NewOrderPage() {
                   value={selectedService || undefined}
                   disabled={indiaPost.isPending || serviceOptions.length === 0}
                   onValueChange={(value) => {
+                    if (value === form.getValues("shipment.serviceCode")) return;
                     serviceTouched.current = true;
-                    form.setValue("shipment.serviceCode", value);
+                    form.setValue("shipment.serviceCode", value, { shouldDirty: true });
+                    toast.success(`Switched to ${indiaPostServiceLabel(value)}.`);
                   }}
                 >
                   <SelectTrigger className="h-8">

@@ -49,14 +49,17 @@ function InlineEstimate({ orderId, draft, revision, draftRevision, onEstimate, c
   if (version.inputKey !== inputKey) setVersion({ inputKey, number: version.number + 1 });
   const key = JSON.stringify([inputKey, version.number]);
 
+  const previousService = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!payload) return;
+    const switched = previousService.current !== undefined && previousService.current !== values.service;
+    previousService.current = values.service == null ? undefined : String(values.service);
     let obsolete = false;
     const changedAt = Date.now();
-    // Serialize lookups and leave room under the server's 10/minute limit.
-    // Do not abort/restart provider work on every keystroke.
     const timer = setInterval(() => {
-      if (busy.current || Date.now() - changedAt < 800 || Date.now() - lastStarted.current < 6500) return;
+      const settleMs = switched ? 0 : 800;
+      const gapMs = switched ? 0 : 6500;
+      if (busy.current || Date.now() - changedAt < settleMs || Date.now() - lastStarted.current < gapMs) return;
       clearInterval(timer);
       busy.current = true;
       lastStarted.current = Date.now();
@@ -67,11 +70,10 @@ function InlineEstimate({ orderId, draft, revision, draftRevision, onEstimate, c
         .finally(() => { busy.current = false; if (!obsolete) setLoadingKey(""); });
     }, 100);
     return () => { obsolete = true; clearInterval(timer); };
-  }, [payload, key, orderId]);
+  }, [payload, key, orderId, values.service]);
 
   const current = result?.key === key ? result : null;
   const quote = current?.quote;
-  const lightParcel = values.service === "SP_INLAND_PARCEL" && Number(values.weightGrams) > 0 && Number(values.weightGrams) <= 500;
   const estimateText = quote ? formatCurrency(quote.estimatedTotal, "INR") : loadingKey === key ? "Calculating…" : payload && !current?.error ? "Updating…" : "—";
   useEffect(() => {
     onEstimate?.({ visible: true, text: estimateText });
@@ -86,7 +88,7 @@ function InlineEstimate({ orderId, draft, revision, draftRevision, onEstimate, c
       <span className="text-muted">Estimated shipping</span>
       <span className="font-medium tabular-nums">{estimateText}</span>
     </div>
-    {!payload ? <p className="text-xs text-muted">{lightParcel ? "Speed Post parcel estimates at 500 g or less await provider verification." : !office ? "Configure or select a sender office in India Post settings." : "Complete valid weight, dimensions, service and destination in the existing order fields to see the tariff."}</p> : null}
+    {!payload ? <p className="text-xs text-muted">{!office ? "Configure or select a sender office in India Post settings." : "Complete valid weight, dimensions, service and destination in the existing order fields to see the tariff."}</p> : null}
     {current?.error ? <p role="alert" className="text-xs text-muted">{current.error} Edit parcel details to calculate again.</p> : null}
     {quote ? <details className="text-xs text-muted"><summary className="cursor-pointer">Tariff breakdown</summary>
       <dl className="mt-2 space-y-1">{[
