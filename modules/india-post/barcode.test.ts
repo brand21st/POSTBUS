@@ -127,10 +127,29 @@ describe("parseBarcodeRange", () => {
     expect(formatStoredSerial(7537319)).toBe("7537319");
   });
 
+  it("binds EY and EL allotments to Speed Post Parcel Domestic", () => {
+    expect(indiaPostServiceForBarcodePrefix("ey")).toBe("SP_INLAND_PARCEL");
+    expect(indiaPostServiceForBarcodePrefix("EL")).toBe("SP_INLAND_PARCEL");
+    expect(barcodePrefixAllowedForService("EY", "SP_INLAND_PARCEL")).toBe(true);
+    expect(barcodePrefixAllowedForService("EL", "BUSINESS_PARCEL")).toBe(false);
+    expect(
+      parseBarcodeRange({
+        prefix: "EY",
+        suffix: "IN",
+        startNumber: 59288875,
+        endNumber: 59289874,
+        serviceCode: "BUSINESS_PARCEL",
+      }).serviceCode
+    ).toBe("SP_INLAND_PARCEL");
+  });
+
   it("binds CX allotments to Business Parcel (India Post Parcel Contractual)", () => {
     expect(indiaPostServiceForBarcodePrefix("cx")).toBe("BUSINESS_PARCEL");
     expect(barcodePrefixAllowedForService("CX", "SP_INLAND_PARCEL")).toBe(false);
     expect(barcodePrefixAllowedForService("CX", "BUSINESS_PARCEL")).toBe(true);
+    expect(indiaPostServiceForBarcodePrefix("cl")).toBe("BUSINESS_PARCEL");
+    expect(barcodePrefixAllowedForService("CL", "BUSINESS_PARCEL")).toBe(true);
+    expect(barcodePrefixAllowedForService("CL", "SP_INLAND_PARCEL")).toBe(false);
     expect(
       parseBarcodeRange({
         prefix: "CX",

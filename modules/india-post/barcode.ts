@@ -1,10 +1,23 @@
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { IndiaPostServiceCode } from "@/types/domain";
 
-/** CX articles are India Post Parcel Contractual (CEPT BUSINESS_PARCEL / BP). */
+/**
+ * Allotted prefixes pick the booked product.
+ * EY and EL are Speed Post Parcel Domestic. CX and CL are India Post Parcel Contractual.
+ */
 const PREFIX_SERVICE: Record<string, IndiaPostServiceCode> = {
+  EY: "SP_INLAND_PARCEL",
+  EL: "SP_INLAND_PARCEL",
   CX: "BUSINESS_PARCEL",
+  CL: "BUSINESS_PARCEL",
 };
+
+export function barcodePrefixServiceMessage(prefix: string) {
+  const mapped = indiaPostServiceForBarcodePrefix(prefix);
+  if (mapped === "SP_INLAND_PARCEL") return "EY and EL book Speed Post Parcel Domestic only.";
+  if (mapped === "BUSINESS_PARCEL") return "CX and CL book India Post Parcel Contractual only.";
+  return "This prefix belongs to another India Post service.";
+}
 
 export function indiaPostServiceForBarcodePrefix(prefix: string): IndiaPostServiceCode | null {
   return PREFIX_SERVICE[prefix.trim().toUpperCase().slice(0, 2)] ?? null;

@@ -45,7 +45,7 @@ describe("selectableIndiaPostServices", () => {
     expect(selectableIndiaPostServices(config).map((item) => item.code)).toEqual(["BUSINESS_PARCEL"]);
     expect(hideWorkspaceBookingToggle(config)).toBe(true);
     expect(parcelServiceToggleOptions(config)).toEqual([
-      { value: "BUSINESS_PARCEL", label: "BP", title: "Business Parcel" },
+      { value: "BUSINESS_PARCEL", label: "BP", title: "India Post Parcel Contractual" },
     ]);
   });
 
