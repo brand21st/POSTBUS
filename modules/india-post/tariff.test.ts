@@ -45,8 +45,8 @@ describe("tariff contract", () => {
   it("omits optional services", () => { expect(tariffRequest(input)).not.toMatch(/ins|INS|POD|COD/); });
   it.each([0, -1, 1.5, NaN, Infinity, 35001])("rejects invalid weight %s", (weightGrams) => expect(tariffInputSchema.safeParse({ ...input, weightGrams }).success).toBe(false));
   it.each([{}, { lengthCm: 0 }, { widthCm: 8 }, { heightCm: 151 }, { destinationPincode: "abc" }, { service: "EXPRESS" }, { proofOfDelivery: true }, { insuranceValue: -1 }])("rejects missing or invalid inputs %j", (patch) => expect(tariffInputSchema.safeParse(Object.keys(patch).length ? { ...input, ...patch } : {}).success).toBe(false));
-  it("blocks light SP parcels including 500 g while allowing documents", () => {
-    expect(tariffInputSchema.safeParse({ ...input, service: "SP_INLAND_PARCEL", weightGrams: 500 }).success).toBe(false);
+  it("accepts Speed Post parcel estimates at 500 g and still limits documents", () => {
+    expect(tariffInputSchema.safeParse({ ...input, service: "SP_INLAND_PARCEL", weightGrams: 500 }).success).toBe(true);
     expect(tariffInputSchema.safeParse({ ...input, service: "SP_INLAND_DOC", weightGrams: 500, lengthCm: 42, widthCm: 29, heightCm: 2 }).success).toBe(true);
     expect(tariffInputSchema.safeParse({ ...input, service: "SP_INLAND_DOC", weightGrams: 501, heightCm: 1 }).success).toBe(false);
   });

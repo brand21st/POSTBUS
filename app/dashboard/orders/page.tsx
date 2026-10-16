@@ -80,7 +80,7 @@ import {
 } from "@/lib/dashboard/records";
 import { toggleRowSelection } from "@/lib/dashboard/row-selection";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { api, toSearchParams } from "@/lib/hooks/use-api";
+import { ApiError, api, toSearchParams } from "@/lib/hooks/use-api";
 import {
   parcelServiceCode,
   resolveOrderBookingService,
@@ -88,6 +88,11 @@ import {
 } from "@/modules/india-post/booking-service";
 import { lowBarcodeServices } from "@/modules/india-post/barcode";
 import { parcelServiceToggleOptions, savedParcelContracts } from "@/modules/india-post/contracts";
+import {
+  FALLBACK_PARCEL_HEIGHT_CM,
+  FALLBACK_PARCEL_LENGTH_CM,
+  FALLBACK_PARCEL_WIDTH_CM,
+} from "@/modules/india-post/parcel-defaults";
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { tariffListState, type TariffListState } from "@/modules/india-post/tariff-list";
 import type { TariffQuote } from "@/modules/india-post/tariff-contract";
@@ -170,6 +175,7 @@ export default function OrdersPage() {
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [tariffProgress, setTariffProgress] = useState<Record<string, TariffProgress>>({});
   const attemptedTariffs = useRef(new Set<string>());
+  const workspaceBookingSeen = useRef<string | null | undefined>(undefined);
 
   const tableLayout = useQuery({
     queryKey: ["ui-table-layout", "orders"],
@@ -354,10 +360,14 @@ export default function OrdersPage() {
         defaultService: indiaPost.data?.defaultServiceCode,
         allowedServices,
       });
+      const sharedDefaults = tariffCapabilities.data?.defaults;
       states.set(row.id, tariffListState(row, {
-        ...tariffCapabilities.data?.defaults,
+        ...sharedDefaults,
         service,
         sourcePincode: tariffSender?.pincode,
+        lengthCm: sharedDefaults?.lengthCm ?? FALLBACK_PARCEL_LENGTH_CM,
+        widthCm: sharedDefaults?.widthCm ?? FALLBACK_PARCEL_WIDTH_CM,
+        heightCm: sharedDefaults?.heightCm ?? FALLBACK_PARCEL_HEIGHT_CM,
       }));
     }
     return states;
@@ -366,6 +376,33 @@ export default function OrdersPage() {
     .filter(([, state]) => state.status === "quote")
     .map(([id, state]) => `${id}:${state.status === "quote" ? state.key : ""}`)
     .join(",");
+
+  useEffect(() => {
+    if (!indiaPost.isFetched) return;
+    const next = indiaPost.data?.bookingServiceOverride ?? null;
+    const previous = workspaceBookingSeen.current;
+    workspaceBookingSeen.current = next;
+    if (previous === undefined || previous === next) return;
+    const followsWorkspace = list.items.filter(
+      (row) => !parcelServiceCode(row.indiaPostService ?? row.india_post_service)
+    );
+    for (const row of followsWorkspace) {
+      const prefix = `${row.id}:`;
+      for (const key of attemptedTariffs.current) {
+        if (key.startsWith(prefix)) attemptedTariffs.current.delete(key);
+      }
+    }
+    setTariffProgress((current) => {
+      let changed = false;
+      const progress = { ...current };
+      for (const row of followsWorkspace) {
+        if (!(row.id in progress)) continue;
+        delete progress[row.id];
+        changed = true;
+      }
+      return changed ? progress : current;
+    });
+  }, [indiaPost.data?.bookingServiceOverride, indiaPost.isFetched, list.items]);
 
   useEffect(() => {
     if (!tariffCapabilities.data?.enabled || !tariffSender) return;
@@ -386,10 +423,28 @@ export default function OrdersPage() {
           [job.orderId]: { key: job.state.key, status: "calculating" },
         }));
         try {
-          const quote = await api<TariffQuote>(`/api/v1/orders/${encodeURIComponent(job.orderId)}/tariff-quote`, {
-            method: "POST",
-            body: JSON.stringify({ senderOffice: tariffSender.id }),
-          });
+          let quote: TariffQuote | null = null;
+          for (let attempt = 0; attempt < 6; attempt += 1) {
+            try {
+              quote = await api<TariffQuote>(`/api/v1/orders/${encodeURIComponent(job.orderId)}/tariff-quote`, {
+                method: "POST",
+                body: JSON.stringify({
+                  senderOffice: tariffSender.id,
+                  service: job.state.input.service,
+                  weightGrams: job.state.input.weightGrams,
+                  lengthCm: job.state.input.lengthCm,
+                  widthCm: job.state.input.widthCm,
+                  heightCm: job.state.input.heightCm,
+                }),
+              });
+              break;
+            } catch (error) {
+              const waiting = error instanceof ApiError && (error.status === 429 || error.code === "RATE_LIMITED");
+              if (!waiting || attempt === 5) throw error;
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+            }
+          }
+          if (!quote) throw new ApiError("Please wait before requesting another estimate.", 429);
           queryClient.setQueriesData<Paginated<OrderRecord>>({ queryKey: ["orders"] }, (current) => current ? {
             ...current,
             items: current.items.map((row) => row.id === job.orderId ? {
@@ -481,6 +536,15 @@ export default function OrdersPage() {
         body: JSON.stringify({ service }),
       }),
     onSuccess: (_data, variables) => {
+      for (const key of attemptedTariffs.current) {
+        if (key.startsWith(`${variables.orderId}:`)) attemptedTariffs.current.delete(key);
+      }
+      setTariffProgress((current) => {
+        if (!(variables.orderId in current)) return current;
+        const next = { ...current };
+        delete next[variables.orderId];
+        return next;
+      });
       queryClient.setQueriesData<Paginated<OrderRecord>>({ queryKey: ["orders"] }, (current) =>
         current
           ? {
