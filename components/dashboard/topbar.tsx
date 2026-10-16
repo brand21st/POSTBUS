@@ -68,8 +68,8 @@ export function Topbar({
       label: "Default",
       title: `Use the India Post default service (${defaultServiceLabel})`,
     },
-    { value: "SP_INLAND_PARCEL", label: "SP", title: "SP Inland Parcel" },
-    { value: "BUSINESS_PARCEL", label: "BP", title: "India Post Parcel Contractual" },
+    { value: "SP_INLAND_PARCEL", label: "SP", title: "Speed Post Parcel Domestic" },
+    { value: "BUSINESS_PARCEL", label: "BP", title: "Business Parcel" },
   ];
   const bookingService = useMutation({
     mutationFn: (service: string) =>
@@ -86,6 +86,12 @@ export function Topbar({
       );
       queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["orders"] });
+      const label = indiaPostServiceLabel(data.serviceCode);
+      toast.success(
+        data.bookingServiceOverride
+          ? `Switched to ${label}.`
+          : `Using the default service, ${label}.`
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
