@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newOrderFormSchema } from "@/app/dashboard/orders/new/page";
+import { newOrderFormSchema, newOrderShipmentPayload } from "@/app/dashboard/orders/new/page";
 
 const filledOrder = {
   customerName: "",
@@ -40,6 +40,14 @@ const filledOrder = {
 };
 
 describe("new order form", () => {
+  it("uses processing only for the Processing submit and leaves Book now unchanged", () => {
+    expect(newOrderShipmentPayload(filledOrder.shipment, "processing")).toMatchObject({
+      ...filledOrder.shipment,
+      action: "processing",
+    });
+    expect(newOrderShipmentPayload(filledOrder.shipment, "book")).toEqual(filledOrder.shipment);
+  });
+
   it("accepts a filled shipping address when billing is the same", () => {
     const parsed = newOrderFormSchema.safeParse(filledOrder);
     expect(parsed.success).toBe(true);
