@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -104,6 +104,8 @@ function OrganizationSection() {
   const [pincode, setPincode] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [removeLogo, setRemoveLogo] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   const query = useQuery({
     queryKey: ["organization-settings"],
@@ -119,10 +121,10 @@ function OrganizationSection() {
     setCity(query.data.city ?? "");
     setState(query.data.state ?? "");
     setPincode(query.data.pincode ?? "");
-    if (!logoFile) {
+    if (!logoFile && !removeLogo) {
       setLogoPreview(query.data.logoUrl ?? query.data.logo_url ?? null);
     }
-  }, [query.data, me.data?.organization?.name, logoFile]);
+  }, [query.data, me.data?.organization?.name, logoFile, removeLogo]);
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -135,6 +137,7 @@ function OrganizationSection() {
       body.append("state", state);
       body.append("pincode", pincode);
       if (logoFile) body.append("logo", logoFile);
+      else if (removeLogo) body.append("removeLogo", "true");
       return api<OrganizationSettings>("/api/v1/organizations", {
         method: "PATCH",
         body,
@@ -143,7 +146,9 @@ function OrganizationSection() {
     onSuccess: (data) => {
       toast.success("Organization updated. New labels will use this identity.");
       setLogoFile(null);
-      setLogoPreview(data.logoUrl ?? data.logo_url ?? logoPreview);
+      setRemoveLogo(false);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+      setLogoPreview(data.logoUrl ?? data.logo_url ?? null);
       queryClient.invalidateQueries({ queryKey: ["me"] });
       queryClient.invalidateQueries({ queryKey: ["organization-settings"] });
     },
@@ -202,17 +207,55 @@ function OrganizationSection() {
           {logoPreview ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={logoPreview} alt="Organization logo" className="h-16 w-16 rounded-lg border border-border object-contain" />
-          ) : null}
-          <Input
+          ) : (
+            <p className="text-sm text-muted">No logo uploaded.</p>
+          )}
+          <input
+            ref={logoInputRef}
             type="file"
             accept="image/png,image/jpeg,image/webp"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden
             disabled={!canManage}
             onChange={(event) => {
               const file = event.target.files?.[0] ?? null;
+              if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
               setLogoFile(file);
+              setRemoveLogo(false);
               setLogoPreview(file ? URL.createObjectURL(file) : query.data?.logoUrl ?? query.data?.logo_url ?? null);
             }}
           />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!canManage}
+              onClick={() => logoInputRef.current?.click()}
+            >
+              {logoPreview ? "Change" : "Upload"}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-error"
+              disabled={!canManage || (!logoPreview && !logoFile)}
+              onClick={() => {
+                if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+                setLogoFile(null);
+                setRemoveLogo(true);
+                setLogoPreview(null);
+                if (logoInputRef.current) logoInputRef.current.value = "";
+              }}
+            >
+              Delete
+            </Button>
+          </div>
+          {removeLogo ? (
+            <p className="text-xs text-muted">Logo will be removed when you save.</p>
+          ) : null}
         </Field>
         <Button type="button" onClick={() => mutation.mutate()} disabled={!canManage || mutation.isPending}>
           Save organization

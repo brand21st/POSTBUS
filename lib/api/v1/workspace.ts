@@ -17,6 +17,7 @@ import { encryptSecret, hashSecret, randomToken } from "@/lib/security/crypto";
 import { getAutomationSettings, updateAutomationSettings } from "@/modules/automation/service";
 import {
   mapOrganizationSettings,
+  removeOrganizationLogo,
   uploadOrganizationLogo,
   type OrganizationIdentityRow,
 } from "@/modules/organizations/branding";
@@ -58,10 +59,12 @@ export async function handleWorkspaceRoutes(
     const contentType = request.headers.get("content-type") ?? "";
     let body: ReturnType<typeof updateOrganizationSchema.parse>;
     let logo: File | null = null;
+    let removeLogo = false;
     if (contentType.includes("multipart/form-data")) {
       const form = await request.formData();
       const file = form.get("logo");
       logo = file instanceof File && file.size > 0 ? file : null;
+      removeLogo = form.get("removeLogo") === "true";
       body = updateOrganizationSchema.parse({
         name: form.get("name") || undefined,
         phone: form.get("phone") ?? undefined,
@@ -85,6 +88,14 @@ export async function handleWorkspaceRoutes(
     if (body.pincode !== undefined) updates.pincode = body.pincode ?? null;
     if (logo) {
       updates.logo_path = await uploadOrganizationLogo(supabase, ctx, logo);
+    } else if (removeLogo) {
+      const { data: current } = await supabase
+        .from("organizations")
+        .select("logo_path")
+        .eq("id", ctx.organizationId)
+        .maybeSingle();
+      await removeOrganizationLogo(supabase, ctx.organizationId, current?.logo_path);
+      updates.logo_path = null;
     }
 
     if (Object.keys(updates).length === 0) {
