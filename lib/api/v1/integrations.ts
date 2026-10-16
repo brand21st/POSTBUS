@@ -139,6 +139,21 @@ async function listActiveBarcodeRanges(supabase: SupabaseClient, organizationId:
   return ranges ?? [];
 }
 
+async function retireSharedBarcodePrefix(
+  supabase: SupabaseClient,
+  organizationId: string,
+  prefix: string
+) {
+  const { error } = await supabase
+    .from("barcode_ranges")
+    .update({ is_active: false })
+    .eq("organization_id", organizationId)
+    .eq("is_active", true)
+    .is("service_code", null)
+    .eq("prefix", prefix);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+}
+
 async function persistIndiaPostBarcodeRange(
   supabase: SupabaseClient,
   organizationId: string,
@@ -153,8 +168,10 @@ async function persistIndiaPostBarcodeRange(
       .update({ is_active: false })
       .eq("organization_id", organizationId)
       .eq("is_active", true);
-    if (/^[A-Z]{2}$/.test(prefix)) retire = retire.eq("prefix", prefix);
-    else if (clear?.serviceCode) retire = retire.eq("service_code", clear.serviceCode);
+    if (clear?.serviceCode) {
+      retire = retire.eq("service_code", clear.serviceCode);
+      if (/^[A-Z]{2}$/.test(prefix)) retire = retire.eq("prefix", prefix);
+    } else if (/^[A-Z]{2}$/.test(prefix)) retire = retire.eq("prefix", prefix);
     else retire = retire.is("service_code", null);
     const { error } = await retire;
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
@@ -191,7 +208,12 @@ async function persistIndiaPostBarcodeRange(
     Number(currentRange.end_number) === parsed.endNumber &&
     (currentRange.service_code ?? null) === parsed.serviceCode;
 
-  if (sameSeries) return;
+  if (sameSeries) {
+    if (parsed.serviceCode) {
+      await retireSharedBarcodePrefix(supabase, organizationId, parsed.prefix);
+    }
+    return;
+  }
 
   const requestedNext = Number((barcodeRange as { nextNumber?: unknown }).nextNumber);
   const nextNumber = nextSerialForSavedRange(
@@ -210,6 +232,9 @@ async function persistIndiaPostBarcodeRange(
     : retire.is("service_code", null);
   const { error: retireError } = await retire;
   if (retireError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, retireError.message);
+  if (parsed.serviceCode) {
+    await retireSharedBarcodePrefix(supabase, organizationId, parsed.prefix);
+  }
 
   const { error: rangeError } = await supabase.from("barcode_ranges").insert({
     organization_id: organizationId,

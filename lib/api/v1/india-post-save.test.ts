@@ -54,7 +54,7 @@ function saveDb(initial: ContractRow[], range?: BarcodeRow | null) {
         suffix: "IN",
         start_number: 55697399,
         end_number: 55697999,
-        service_code: null,
+        service_code: "BUSINESS_PARCEL",
       }
     : range;
   const connection = {
@@ -377,6 +377,7 @@ describe("POST integrations/india-post connect:false", () => {
       start_number: 55697399,
       end_number: 55697999,
       next_number: 55697399,
+      service_code: "BUSINESS_PARCEL",
     });
   });
 

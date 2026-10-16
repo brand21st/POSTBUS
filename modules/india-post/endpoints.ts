@@ -64,10 +64,22 @@ export function indiaPostBookingFileUrl(environment: ProviderEnvironment, custom
  * India Post Parcel Contractual. The short "BP" code prints REGISTERED BOOK POST
  * on CEPT's PDF. See `indiaPostLabelServiceType`.
  */
+/** Merchant names and CEPT product codes for process-articles `article_type`. */
+const BOOKING_PRODUCT_CODE: Record<string, string> = {
+  "SP INLAND PARCEL": "SP_INLAND_PARCEL",
+  "SPEED POST PARCEL DOMESTIC": "SP_INLAND_PARCEL",
+  "SPEED POST PARCEL": "SP_INLAND_PARCEL",
+  "BUSINESS PARCEL": "BUSINESS_PARCEL",
+  "INDIA POST PARCEL CONTRACTUAL": "BUSINESS_PARCEL",
+  "INDIAPOST PARCEL CONTRACTUAL": "BUSINESS_PARCEL",
+};
+
 export function indiaPostBookingServiceCode(serviceCode: string, barcode?: string) {
   const fromPrefix = indiaPostServiceForBarcodePrefix(String(barcode ?? "").slice(0, 2));
   if (fromPrefix) return fromPrefix;
   const code = serviceCode.trim().toUpperCase();
+  const named = code.replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (BOOKING_PRODUCT_CODE[named]) return BOOKING_PRODUCT_CODE[named];
   if (code === "BP") return "BUSINESS_PARCEL";
   return code;
 }
