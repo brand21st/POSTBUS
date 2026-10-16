@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   barcodeStockForService,
   barcodesLeft,
+  lowBarcodeServices,
   formatBarcode,
   indiaPostAcceptedArticleId,
   indiaPostPublicTrackingUrl,
@@ -54,6 +55,42 @@ describe("barcodesLeft", () => {
     const business = { ...shared, prefix: "ET", serviceCode: "BUSINESS_PARCEL", nextNumber: 55697990 };
     expect(barcodeStockForService([shared, business], "BUSINESS_PARCEL")?.prefix).toBe("ET");
     expect(barcodesLeft(barcodeStockForService([shared, business], "SP_INLAND_PARCEL"))).toBe(601);
+  });
+});
+
+describe("lowBarcodeServices", () => {
+  const contract = (serviceCode: string) => ({ serviceCode, contractId: "123", isActive: true });
+  const range = (serviceCode: string, left: number) => ({
+    prefix: "CL",
+    serviceCode,
+    endNumber: 100,
+    nextNumber: 101 - left,
+  });
+
+  it("includes a contracted series at the threshold and when it is empty", () => {
+    const low = lowBarcodeServices({
+      contracts: [contract("SP_INLAND_PARCEL"), contract("BUSINESS_PARCEL")],
+      barcodeRanges: [range("SP_INLAND_PARCEL", 10), range("BUSINESS_PARCEL", 0)],
+    });
+    expect(low.map((item) => [item.label, item.left])).toEqual([
+      ["Speed Post Parcel Domestic", 10],
+      ["Business Parcel", 0],
+    ]);
+  });
+
+  it("skips a series with 11 left, a service with no series, and a service with no contract", () => {
+    expect(
+      lowBarcodeServices({
+        contracts: [contract("SP_INLAND_PARCEL")],
+        barcodeRanges: [range("SP_INLAND_PARCEL", 11), range("BUSINESS_PARCEL", 1)],
+      })
+    ).toEqual([]);
+    expect(
+      lowBarcodeServices({
+        contracts: [contract("BUSINESS_PARCEL")],
+        barcodeRanges: [],
+      })
+    ).toEqual([]);
   });
 });
 

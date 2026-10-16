@@ -86,6 +86,7 @@ import {
   resolveOrderBookingService,
   shipmentServiceLocked,
 } from "@/modules/india-post/booking-service";
+import { lowBarcodeServices } from "@/modules/india-post/barcode";
 import { parcelServiceToggleOptions, savedParcelContracts } from "@/modules/india-post/contracts";
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { tariffListState, type TariffListState } from "@/modules/india-post/tariff-list";
@@ -276,6 +277,13 @@ export default function OrdersPage() {
     queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
     staleTime: 60_000,
   });
+  const lowBarcodes = useMemo(() => lowBarcodeServices(indiaPost.data), [indiaPost.data]);
+  const barcodeWarningDismissed = useRef(false);
+  const [barcodeWarningOpen, setBarcodeWarningOpen] = useState(false);
+  useEffect(() => {
+    if (barcodeWarningDismissed.current || lowBarcodes.length === 0) return;
+    setBarcodeWarningOpen(true);
+  }, [lowBarcodes]);
   const tariffCapabilities = useQuery({
     queryKey: ["tariff-capabilities", "orders-list"],
     queryFn: () => api<TariffCapabilities>("/api/v1/india-post/tariff-capabilities", { cache: "no-store" }),
@@ -1114,6 +1122,47 @@ export default function OrdersPage() {
           </div>
         }
       />
+      <Dialog
+        open={barcodeWarningOpen}
+        onOpenChange={(open) => {
+          if (!open) barcodeWarningDismissed.current = true;
+          setBarcodeWarningOpen(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Low barcode series</DialogTitle>
+            <DialogDescription>
+              {lowBarcodes
+                .map((service) => `${service.label} has ${service.left} barcodes left.`)
+                .join(" ")}{" "}
+              Add a barcode series. Otherwise you can’t book this shipment.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                barcodeWarningDismissed.current = true;
+                setBarcodeWarningOpen(false);
+              }}
+            >
+              Close
+            </Button>
+            <Link
+              href="/dashboard/integrations/india-post"
+              className={buttonVariants({ size: "sm" })}
+              onClick={() => {
+                barcodeWarningDismissed.current = true;
+              }}
+            >
+              Add barcode
+            </Link>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={confirmFulfill}
         onOpenChange={(open) => {
