@@ -9,6 +9,7 @@ import {
   isCeptUatTestSeries,
   formatAllotmentNumber,
   formatStoredSerial,
+  barcodeForSelectedService,
   barcodePrefixAllowedForService,
   indiaPostServiceForBarcodePrefix,
   nextSerialForSavedRange,
@@ -187,6 +188,10 @@ describe("parseBarcodeRange", () => {
     expect(indiaPostServiceForBarcodePrefix("cl")).toBe("BUSINESS_PARCEL");
     expect(barcodePrefixAllowedForService("CL", "BUSINESS_PARCEL")).toBe(true);
     expect(barcodePrefixAllowedForService("CL", "SP_INLAND_PARCEL")).toBe(false);
+    expect(barcodeForSelectedService("EY592888755IN", "SP_INLAND_PARCEL")).toBe("EY592888755IN");
+    expect(barcodeForSelectedService("EY592888755IN", "BUSINESS_PARCEL")).toBe("");
+    expect(barcodeForSelectedService("CL556973995IN", "BUSINESS_PARCEL")).toBe("CL556973995IN");
+    expect(barcodeForSelectedService("CL556973995IN", "SP_INLAND_PARCEL")).toBe("");
     expect(
       parseBarcodeRange({
         prefix: "CX",

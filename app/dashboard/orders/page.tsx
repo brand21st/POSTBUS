@@ -480,8 +480,31 @@ export default function OrdersPage() {
         method: "PATCH",
         body: JSON.stringify({ service }),
       }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      queryClient.setQueriesData<Paginated<OrderRecord>>({ queryKey: ["orders"] }, (current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((row) =>
+                row.id === variables.orderId
+                  ? {
+                      ...row,
+                      indiaPostService: variables.service,
+                      india_post_service: variables.service,
+                      indiaPostEstimateKey: null,
+                      india_post_estimate_key: null,
+                    }
+                  : row
+              ),
+            }
+          : current
+      );
       queryClient.invalidateQueries({ queryKey: ["orders"] });
+      toast.success(
+        variables.service === "BUSINESS_PARCEL"
+          ? "Switched to Business Parcel."
+          : "Switched to Speed Post Parcel Domestic."
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -566,7 +589,7 @@ export default function OrdersPage() {
         options={parcelServiceToggleOptions(indiaPost.data)}
         disabled={locked || pending}
         onChange={(service) => {
-          if (service !== (row.indiaPostService ?? row.india_post_service)) {
+          if (service !== parcelServiceCode(effective)) {
             setService.mutate({ orderId: row.id, service });
           }
         }}

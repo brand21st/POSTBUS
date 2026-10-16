@@ -45,7 +45,13 @@ export function tariffListState(order: OrderRecord, defaults: TariffListDefaults
     ? positive(order.parcelWeightGrams ?? order.parcel_weight_grams)
     : undefined;
   const input = {
-    service: normalizedService(order.indiaPostService ?? order.india_post_service ?? shipment?.serviceCode ?? shipment?.service_code ?? defaults.service),
+    service: normalizedService(
+      order.indiaPostService ??
+        order.india_post_service ??
+        defaults.service ??
+        shipment?.serviceCode ??
+        shipment?.service_code
+    ),
     sourcePincode: defaults.sourcePincode,
     destinationPincode: order.shippingAddress?.pincode ?? defaults.destinationPincode,
     weightGrams: manualWeight ?? orderLineWeight(order) ?? positive(shipment?.weightGrams ?? shipment?.weight_grams) ?? positive(defaults.weightGrams),

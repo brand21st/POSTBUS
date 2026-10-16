@@ -30,6 +30,14 @@ export function barcodePrefixAllowedForService(prefix: string, serviceCode: stri
   return mapped === (code === "BP" ? "BUSINESS_PARCEL" : code);
 }
 
+/** Keep a stored article only when its prefix belongs to the service just chosen. */
+export function barcodeForSelectedService(barcode: string | null | undefined, serviceCode: string) {
+  const article = String(barcode ?? "").trim().toUpperCase();
+  if (!article) return "";
+  if (!barcodePrefixAllowedForService(article.slice(0, 2), serviceCode)) return "";
+  return article;
+}
+
 export type BarcodeRangeInput = {
   prefix: string;
   suffix?: string;
