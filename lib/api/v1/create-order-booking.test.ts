@@ -119,6 +119,45 @@ describe("POST /api/v1/orders Book now shipment status", () => {
     expect(result).not.toHaveProperty("shipment");
   });
 
+  it("passes the processing action without requesting India Post booking", async () => {
+    createManualOrder.mockResolvedValueOnce({ id: "ord-processing", order_number: "1004" });
+    createShipmentsForOrders.mockResolvedValueOnce({ queued: 0, skipped: [], shipments: [] });
+    const shipment = {
+      id: "ship-processing",
+      order_id: "ord-processing",
+      status: "DRAFT",
+      barcode: null,
+      booked_at: null,
+      last_error: null,
+    };
+    const processingShipment = {
+      weightGrams: 500,
+      lengthCm: 20,
+      widthCm: 15,
+      heightCm: 10,
+      serviceCode: "BUSINESS_PARCEL",
+      action: "processing" as const,
+    };
+
+    const result = await handleCommerceRoutes(
+      postOrders({ ...orderBody, shipment: processingShipment }),
+      shipmentClient(shipment) as never,
+      ctx,
+      "POST orders",
+      "POST",
+      ["orders"]
+    );
+
+    expect(createShipmentsForOrders).toHaveBeenCalledWith(
+      expect.anything(),
+      ctx,
+      ["ord-processing"],
+      processingShipment
+    );
+    expect(result).toMatchObject({ id: "ord-processing", shipment });
+    expect(result.shipment).toMatchObject({ status: "DRAFT", barcode: null });
+  });
+
   it("still returns the order with a null shipment when booking did not create one", async () => {
     createManualOrder.mockResolvedValueOnce({ id: "ord-2", order_number: "1002" });
     createShipmentsForOrders.mockRejectedValueOnce(new Error("queue down"));

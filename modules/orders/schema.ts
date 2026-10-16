@@ -73,6 +73,7 @@ export const createOrderSchema = z.object({
       widthCm: optionalDimensionCm,
       heightCm: optionalDimensionCm,
       serviceCode: z.string().optional(),
+      action: z.literal("processing").optional(),
     })
     .optional(),
 }).superRefine((value, ctx) => {

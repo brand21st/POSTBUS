@@ -1,7 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef } from "react";
+import type { BaseSyntheticEvent, ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -172,10 +172,23 @@ export const newOrderFormSchema = z.object({
 });
 
 type FormValues = z.infer<typeof newOrderFormSchema>;
+type SubmitAction = "processing" | "book";
 
 function positiveNumber(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function submitActionFromEvent(event?: BaseSyntheticEvent): SubmitAction {
+  const submitter = (event?.nativeEvent as SubmitEvent | undefined)?.submitter;
+  return submitter instanceof HTMLButtonElement && submitter.value === "processing" ? "processing" : "book";
+}
+
+export function newOrderShipmentPayload(shipment: FormValues["shipment"], action: SubmitAction) {
+  return {
+    ...shipment,
+    ...(action === "processing" ? { action: "processing" as const } : {}),
+  };
 }
 
 export default function NewOrderPage() {
@@ -231,6 +244,7 @@ export default function NewOrderPage() {
   const amountPaid = Number(form.watch("amountPaid") || 0);
   const extraCodRaw = form.watch("extraCodCharge");
   const submitLock = useRef(false);
+  const [activeSubmitAction, setActiveSubmitAction] = useState<SubmitAction | null>(null);
   const lineItemValues = form.watch("lineItems");
   const selectedService = form.watch("shipment.serviceCode");
   const shipmentWeight = form.watch("shipment.weightGrams");
@@ -336,7 +350,7 @@ export default function NewOrderPage() {
     if (customerFieldError && customerPanel.current) customerPanel.current.open = true;
   }, [customerFieldError]);
 
-  async function onSubmit(values: FormValues) {
+  async function onSubmit(values: FormValues, action: SubmitAction) {
     if (submitLock.current) return;
     submitLock.current = true;
     if (finalCodLimitMessage) {
@@ -344,6 +358,7 @@ export default function NewOrderPage() {
       toast.error(finalCodLimitMessage);
       return;
     }
+    setActiveSubmitAction(action);
     unlockNewOrderSound();
     try {
       const created = await api<OrderRecord>("/api/v1/orders", {
@@ -389,14 +404,14 @@ export default function NewOrderPage() {
                   weightGrams: item.weightGrams,
                 }
           ),
-          createShipment: values.createShipment,
-          shipment: values.createShipment ? values.shipment : undefined,
+          createShipment: true,
+          shipment: newOrderShipmentPayload(values.shipment, action),
         }),
       });
       const shipment = created.shipment;
       const orderNumber = created.orderNumber ?? created.order_number ?? created.id.slice(0, 8);
-      if (!values.createShipment) {
-        toast.success("Order saved.");
+      if (action === "processing") {
+        toast.success("Order marked processing.");
       } else if (isIndiaPostAcceptedStatus(shipment?.status)) {
         emitDashboardAlerts([localShipmentBookedAlert({ orderId: created.id, orderNumber })]);
         toast.success("India Post booked.");
@@ -424,21 +439,14 @@ export default function NewOrderPage() {
       toast.error(error instanceof Error ? error.message : "Could not create the order.");
     } finally {
       submitLock.current = false;
+      setActiveSubmitAction(null);
     }
   }
-
-  const submitLabel = form.formState.isSubmitting
-    ? createShipment
-      ? "Booking…"
-      : "Saving…"
-    : createShipment
-      ? "Book now"
-      : "Save order";
 
   return (
     <form
       className="space-y-3 pb-16 xl:pb-0"
-      onSubmit={form.handleSubmit(onSubmit, (errors) => {
+      onSubmit={form.handleSubmit((values, event) => onSubmit(values, submitActionFromEvent(event)), (errors) => {
         toast.error(firstFormError(errors) ?? "Please check the highlighted fields.");
       })}
     >
@@ -446,9 +454,14 @@ export default function NewOrderPage() {
         title="Add order"
         description="Customer, address, items, then book."
         actions={
-          <Button type="submit" size="xs" className="hidden xl:inline-flex" disabled={form.formState.isSubmitting}>
-            {submitLabel}
-          </Button>
+          <div className="hidden items-center gap-1.5 xl:flex">
+            <Button type="submit" name="submitAction" value="processing" variant="secondary" size="xs" disabled={form.formState.isSubmitting}>
+              {form.formState.isSubmitting && activeSubmitAction === "processing" ? "Saving…" : "Processing"}
+            </Button>
+            <Button type="submit" name="submitAction" value="book" size="xs" disabled={form.formState.isSubmitting}>
+              {form.formState.isSubmitting && activeSubmitAction === "book" ? "Booking…" : "Book now"}
+            </Button>
+          </div>
         }
       />
 
@@ -1005,9 +1018,12 @@ export default function NewOrderPage() {
       </aside>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 p-2 backdrop-blur-sm xl:hidden">
-        <Button type="submit" className="w-full" size="xs" disabled={form.formState.isSubmitting}>
-          {submitLabel}
+      <div className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-2 gap-2 border-t border-border bg-card/95 p-2 backdrop-blur-sm xl:hidden">
+        <Button type="submit" name="submitAction" value="processing" variant="secondary" className="w-full" size="xs" disabled={form.formState.isSubmitting}>
+          {form.formState.isSubmitting && activeSubmitAction === "processing" ? "Saving…" : "Processing"}
+        </Button>
+        <Button type="submit" name="submitAction" value="book" className="w-full" size="xs" disabled={form.formState.isSubmitting}>
+          {form.formState.isSubmitting && activeSubmitAction === "book" ? "Booking…" : "Book now"}
         </Button>
       </div>
     </form>
