@@ -1,5 +1,5 @@
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import type { IndiaPostServiceCode } from "@/types/domain";
+import { INDIA_POST_SERVICES, type IndiaPostServiceCode } from "@/types/domain";
 
 /**
  * Allotted prefixes pick the booked product.
@@ -223,6 +223,46 @@ export function barcodesLeft(range: Pick<BarcodeStock, "endNumber" | "nextNumber
   const next = Number(range.nextNumber);
   if (!Number.isInteger(end) || !Number.isInteger(next)) return null;
   return Math.max(0, end - next + 1);
+}
+
+/** Warn while a contracted series can still book, before it runs out. */
+export const LOW_BARCODE_THRESHOLD = 10;
+
+export type LowBarcodeService = {
+  serviceCode: string;
+  label: string;
+  left: number;
+  prefix?: string | null;
+};
+
+type LowBarcodeConfig = {
+  contracts?: Array<{
+    serviceCode: string;
+    contractId?: string | null;
+    isActive?: boolean;
+    label?: string | null;
+  }> | null;
+  barcodeRanges?: readonly BarcodeStock[] | null;
+} | null;
+
+/** Contracted services whose allotted series has this many barcodes left, or fewer. */
+export function lowBarcodeServices(config: LowBarcodeConfig, threshold = LOW_BARCODE_THRESHOLD) {
+  const known = new Map(INDIA_POST_SERVICES.map((service) => [service.code, service.label]));
+  const low: LowBarcodeService[] = [];
+  for (const contract of config?.contracts ?? []) {
+    const label = known.get(contract.serviceCode as IndiaPostServiceCode);
+    if (!label || !contract.contractId?.trim() || contract.isActive === false) continue;
+    const stock = barcodeStockForService(config?.barcodeRanges, contract.serviceCode);
+    const left = barcodesLeft(stock);
+    if (left == null || left > threshold) continue;
+    low.push({
+      serviceCode: contract.serviceCode,
+      label: contract.label?.trim() || label,
+      left,
+      prefix: stock?.prefix,
+    });
+  }
+  return low;
 }
 
 /** A service uses its own series when one is saved, otherwise the shared series. */

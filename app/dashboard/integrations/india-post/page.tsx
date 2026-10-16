@@ -19,6 +19,7 @@ import {
   barcodePrefixServiceMessage,
   barcodeStockForService,
   barcodesLeft,
+  LOW_BARCODE_THRESHOLD,
   formatStoredSerial,
   sanitizeBarcodeAllotmentField,
 } from "@/modules/india-post/barcode";
@@ -1206,7 +1207,12 @@ export default function IndiaPostPage() {
                     <p className="text-sm font-medium text-foreground">{service.label}</p>
                     <p className="truncate text-xs text-muted">{service.description}</p>
                     {left != null && stock ? (
-                      <p className="text-xs text-muted">
+                      <p
+                        className={cn(
+                          "text-xs",
+                          left <= LOW_BARCODE_THRESHOLD ? "font-medium text-warning" : "text-muted"
+                        )}
+                      >
                         {formatNumber(left)} barcodes left
                         {stock.prefix ? ` · ${stock.prefix} series` : ""}
                       </p>
