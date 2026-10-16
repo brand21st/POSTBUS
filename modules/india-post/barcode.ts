@@ -246,7 +246,7 @@ type LowBarcodeConfig = {
 } | null;
 
 /** Contracted services whose allotted series has this many barcodes left, or fewer. */
-export function lowBarcodeServices(config: LowBarcodeConfig, threshold = LOW_BARCODE_THRESHOLD) {
+export function lowBarcodeServices(config?: LowBarcodeConfig, threshold = LOW_BARCODE_THRESHOLD) {
   const known = new Map(INDIA_POST_SERVICES.map((service) => [service.code, service.label]));
   const low: LowBarcodeService[] = [];
   for (const contract of config?.contracts ?? []) {
