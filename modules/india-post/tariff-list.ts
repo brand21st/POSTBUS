@@ -62,9 +62,6 @@ export function tariffListState(order: OrderRecord, defaults: TariffListDefaults
   if (!input.weightGrams || !input.lengthCm || !input.widthCm || !input.heightCm) {
     return { status: "missing", warning: "Add weight & size" };
   }
-  if (input.service === "SP_INLAND_PARCEL" && input.weightGrams <= 500) {
-    return { status: "blocked", warning: "Tariff needs review" };
-  }
   const parsed = tariffInputSchema.safeParse(input);
   if (!parsed.success) return { status: "blocked", warning: "Check parcel setup" };
   const key = tariffEstimateKey(parsed.data);

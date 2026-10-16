@@ -55,14 +55,14 @@ describe("orders-list tariff readiness", () => {
     expect(state.input.service).toBe("BUSINESS_PARCEL");
   });
 
-  it("keeps the order service when the page did not pass a resolved service", () => {
+  it("quotes Speed Post when the order service is 500 g", () => {
     const state = tariffListState(order({ indiaPostService: "SP_INLAND_PARCEL" }), {
       ...defaults,
       service: undefined,
     });
-    expect(state.status).toBe("blocked");
-    if (state.status !== "blocked") throw new Error("expected blocked state");
-    expect(state.warning).toBe("Tariff needs review");
+    expect(state.status).toBe("quote");
+    if (state.status !== "quote") throw new Error("expected quote state");
+    expect(state.input.service).toBe("SP_INLAND_PARCEL");
   });
 
   it("requires a new quote after parcel data changes", () => {

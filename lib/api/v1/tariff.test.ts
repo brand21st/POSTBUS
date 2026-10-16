@@ -84,9 +84,9 @@ describe("tariff routes", () => {
   });
   it("limits attempts per organization", async () => {
     const ctx = context();
-    for (let i = 0; i < 30; i++) await handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes");
+    for (let i = 0; i < 90; i++) await handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes");
     await expect(handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes")).rejects.toMatchObject({ status: 429 });
-    expect(executeTariff).toHaveBeenCalledTimes(30);
+    expect(executeTariff).toHaveBeenCalledTimes(90);
   });
   it("allows two concurrent quotes, rejects a third, and releases the guard", async () => {
     let rejectFirst!: (error: Error) => void;

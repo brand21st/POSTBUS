@@ -46,7 +46,7 @@ export async function handleTariffRoutes(request: NextRequest, supabase: Supabas
           },
     });
   }
-  if (!rateLimit(`tariff:${ctx.organizationId}`, 30, 60_000).ok || (inFlight.get(ctx.organizationId) ?? 0) >= 2) throw tariffError("RATE_LIMITED", "Please wait before requesting another estimate.", ERROR_CODES.RATE_LIMITED);
+  if (!rateLimit(`tariff:${ctx.organizationId}`, 90, 60_000).ok || (inFlight.get(ctx.organizationId) ?? 0) >= 2) throw tariffError("RATE_LIMITED", "Please wait before requesting another estimate.", ERROR_CODES.RATE_LIMITED);
   inFlight.set(ctx.organizationId, (inFlight.get(ctx.organizationId) ?? 0) + 1);
   const started = Date.now();
   const orderId = orderMatch?.[1];

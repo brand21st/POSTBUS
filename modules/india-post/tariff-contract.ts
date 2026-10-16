@@ -30,7 +30,6 @@ export function usableTariffDraft<T extends Record<string, unknown>>(draft?: T):
 export const tariffInputSchema = manualTariffSchema.extend({ sourcePincode: z.string().regex(/^\d{6}$/) }).superRefine((input, ctx) => {
   const doc = input.service === "SP_INLAND_DOC";
   if (input.weightGrams > (doc ? 500 : 35000)) ctx.addIssue({ code: "custom", path: ["weightGrams"], message: "Weight exceeds the service limit." });
-  if (input.service === "SP_INLAND_PARCEL" && input.weightGrams <= 500) ctx.addIssue({ code: "custom", path: ["weightGrams"], message: "Speed Post parcel estimates at 500 g or less require provider verification. Booking remains available." });
   const bounds = doc ? [[1, 42], [1, 29], [1, 2]] : [[14, 150], [9, 150], [1, 150]];
   (["lengthCm", "widthCm", "heightCm"] as const).forEach((key, index) => {
     if (input[key] < bounds[index][0] || input[key] > bounds[index][1]) ctx.addIssue({ code: "custom", path: [key], message: `${key} must be between ${bounds[index][0]} and ${bounds[index][1]} cm.` });
