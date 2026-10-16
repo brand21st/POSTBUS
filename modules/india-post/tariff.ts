@@ -4,7 +4,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { encryptSecret, decryptSecret } from "@/lib/security/crypto";
 import { withProcessSessionLock } from "@/modules/india-post/session";
 import { IndiaPostProvider } from "@/modules/india-post/provider";
-import { manualTariffSchema, orderTariffSchema, tariffInputSchema, normalizeTariff, type TariffInput, type TariffQuote } from "@/modules/india-post/tariff-contract";
+import { manualTariffSchema, orderTariffSchema, tariffEstimateKey, tariffInputSchema, normalizeTariff, type TariffInput, type TariffQuote } from "@/modules/india-post/tariff-contract";
 
 export function tariffError(category: string, message: string, code: ConstructorParameters<typeof AppError>[0] = ERROR_CODES.PROVIDER_ERROR) {
   return new AppError(code, message, { category });
@@ -132,6 +132,7 @@ export async function saveTariffEstimate(
   db: SupabaseClient,
   organizationId: string,
   orderId: string,
+  input: TariffInput,
   quote: Pick<TariffQuote, "estimatedTotal" | "calculatedAt">
 ) {
   const { data, error } = await db
@@ -139,6 +140,7 @@ export async function saveTariffEstimate(
     .update({
       india_post_estimate_amount: quote.estimatedTotal,
       india_post_estimated_at: quote.calculatedAt,
+      india_post_estimate_key: tariffEstimateKey(input),
     })
     .eq("organization_id", organizationId)
     .eq("id", orderId)

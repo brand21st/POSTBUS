@@ -88,6 +88,8 @@ import {
 } from "@/modules/india-post/booking-service";
 import { parcelServiceToggleOptions, savedParcelContracts } from "@/modules/india-post/contracts";
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { tariffListState, type TariffListState } from "@/modules/india-post/tariff-list";
+import type { TariffQuote } from "@/modules/india-post/tariff-contract";
 import { ORDER_SOURCE_LABELS, ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { BulkOrderStatusResult, DashboardKpis, IndiaPostConfig, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
 
@@ -115,6 +117,24 @@ const COLUMN_LABELS: Record<OptionalColumn, string> = {
 };
 
 const FILTER_SELECT_CLASS = "h-8 shadow-none";
+
+type TariffCapabilities = {
+  enabled: boolean;
+  organizationId: string;
+  senderChoices: Array<{ id: "pickup" | "dropoff"; label: string; pincode: string }>;
+  defaults?: {
+    weightGrams?: number;
+    lengthCm?: number;
+    widthCm?: number;
+    heightCm?: number;
+  } | null;
+};
+
+type TariffProgress = {
+  key: string;
+  status: "calculating" | "success" | "error";
+  amount?: number;
+};
 
 function CreatedCell({ value }: { value?: string | null }) {
   if (!value) return <span className="text-muted">—</span>;
@@ -147,6 +167,8 @@ export default function OrdersPage() {
   const [columnsReady, setColumnsReady] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState(DEFAULT_COLUMNS);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [tariffProgress, setTariffProgress] = useState<Record<string, TariffProgress>>({});
+  const attemptedTariffs = useRef(new Set<string>());
 
   const tableLayout = useQuery({
     queryKey: ["ui-table-layout", "orders"],
@@ -254,6 +276,11 @@ export default function OrdersPage() {
     queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
     staleTime: 60_000,
   });
+  const tariffCapabilities = useQuery({
+    queryKey: ["tariff-capabilities", "orders-list"],
+    queryFn: () => api<TariffCapabilities>("/api/v1/india-post/tariff-capabilities", { cache: "no-store" }),
+    retry: false,
+  });
   const kpis = useQuery({
     queryKey: ["dashboard-kpis", kpiWindow],
     queryFn: () => api<DashboardKpis>(`/api/v1/dashboard/kpis?${toSearchParams(kpiWindow)}`),
@@ -307,6 +334,80 @@ export default function OrdersPage() {
 
   const list = asPaginated<OrderRecord>(query.data, ["orders", "items"]);
   const dateCounts = query.data?.counts ?? { all: list.total, today: undefined, yesterday: undefined };
+  const tariffSender = tariffCapabilities.data?.senderChoices.find((choice) => choice.id === "pickup")
+    ?? tariffCapabilities.data?.senderChoices[0];
+  const tariffRows = useMemo(() => {
+    const states = new Map<string, TariffListState>();
+    const allowedServices = savedParcelContracts(indiaPost.data).map((contract) => contract.serviceCode);
+    for (const row of list.items) {
+      const service = resolveOrderBookingService({
+        orderService: row.indiaPostService ?? row.india_post_service,
+        workspaceOverride: indiaPost.data?.bookingServiceOverride,
+        defaultService: indiaPost.data?.defaultServiceCode,
+        allowedServices,
+      });
+      states.set(row.id, tariffListState(row, {
+        ...tariffCapabilities.data?.defaults,
+        service,
+        sourcePincode: tariffSender?.pincode,
+      }));
+    }
+    return states;
+  }, [indiaPost.data, list.items, tariffCapabilities.data?.defaults, tariffSender?.pincode]);
+  const tariffQueueSignature = Array.from(tariffRows.entries())
+    .filter(([, state]) => state.status === "quote")
+    .map(([id, state]) => `${id}:${state.status === "quote" ? state.key : ""}`)
+    .join(",");
+
+  useEffect(() => {
+    if (!tariffCapabilities.data?.enabled || !tariffSender) return;
+    const jobs = Array.from(tariffRows.entries()).flatMap(([orderId, state]) => {
+      if (state.status !== "quote") return [];
+      const attemptKey = `${orderId}:${state.key}`;
+      if (attemptedTariffs.current.has(attemptKey)) return [];
+      attemptedTariffs.current.add(attemptKey);
+      return [{ orderId, state, attemptKey }];
+    });
+    if (!jobs.length) return;
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < jobs.length) {
+        const job = jobs[cursor++];
+        setTariffProgress((current) => ({
+          ...current,
+          [job.orderId]: { key: job.state.key, status: "calculating" },
+        }));
+        try {
+          const quote = await api<TariffQuote>(`/api/v1/orders/${encodeURIComponent(job.orderId)}/tariff-quote`, {
+            method: "POST",
+            body: JSON.stringify({ senderOffice: tariffSender.id }),
+          });
+          queryClient.setQueriesData<Paginated<OrderRecord>>({ queryKey: ["orders"] }, (current) => current ? {
+            ...current,
+            items: current.items.map((row) => row.id === job.orderId ? {
+              ...row,
+              indiaPostEstimateAmount: quote.estimatedTotal,
+              india_post_estimate_amount: quote.estimatedTotal,
+              indiaPostEstimatedAt: quote.calculatedAt,
+              india_post_estimated_at: quote.calculatedAt,
+              indiaPostEstimateKey: job.state.key,
+              india_post_estimate_key: job.state.key,
+            } : row),
+          } : current);
+          setTariffProgress((current) => ({
+            ...current,
+            [job.orderId]: { key: job.state.key, status: "success", amount: quote.estimatedTotal },
+          }));
+        } catch {
+          setTariffProgress((current) => ({
+            ...current,
+            [job.orderId]: { key: job.state.key, status: "error" },
+          }));
+        }
+      }
+    };
+    void Promise.all([worker(), worker()]);
+  }, [queryClient, tariffCapabilities.data?.enabled, tariffQueueSignature, tariffRows, tariffSender]);
 
   useEffect(() => {
     if (!syncInFlight) return;
@@ -629,11 +730,25 @@ export default function OrdersPage() {
     {
       id: "estimatedShipping",
       header: "Est. shipping",
-      className: "w-[6.75rem] whitespace-nowrap",
+      className: "w-[8.5rem] whitespace-nowrap",
       cell: (row) => {
+        const state = tariffRows.get(row.id);
+        const progress = tariffProgress[row.id];
+        if (state?.status === "missing" || state?.status === "blocked") {
+          return <span className="text-xs font-medium text-amber-700" title={state.warning}>{state.warning}</span>;
+        }
+        if (state?.status === "quote" && progress?.key === state.key) {
+          if (progress.status === "calculating") return <span className="text-xs text-muted">Calculating…</span>;
+          if (progress.status === "error") return <span className="text-xs font-medium text-amber-700">Unavailable</span>;
+          if (progress.status === "success" && progress.amount != null) {
+            return <span className="whitespace-nowrap tabular-nums">{formatCurrency(progress.amount, "INR")}</span>;
+          }
+        }
         const amount = row.indiaPostEstimateAmount ?? row.india_post_estimate_amount;
-        return amount == null ? (
-          <span className="text-muted">—</span>
+        return state?.status === "quote" ? (
+          <span className="text-xs text-muted">Queued…</span>
+        ) : amount == null ? (
+          <span className="text-xs text-muted">—</span>
         ) : (
           <span className="whitespace-nowrap tabular-nums" title="Latest India Post pre-booking estimate">
             {formatCurrency(amount, "INR")}

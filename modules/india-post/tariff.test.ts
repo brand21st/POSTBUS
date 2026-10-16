@@ -87,12 +87,13 @@ describe("tenant and read-only input resolution", () => {
   });
   it("stores only the estimate and timestamp on the tenant order", async () => {
     const { db, operations } = database();
-    await saveTariffEstimate(db, "org-1", "order-1", { estimatedTotal: 152, calculatedAt: "2026-10-16T00:00:00.000Z" });
+    await saveTariffEstimate(db, "org-1", "order-1", input, { estimatedTotal: 152, calculatedAt: "2026-10-16T00:00:00.000Z" });
     expect(operations[0]).toMatchObject({
       table: "orders",
       update: {
         india_post_estimate_amount: 152,
         india_post_estimated_at: "2026-10-16T00:00:00.000Z",
+        india_post_estimate_key: "v1|BUSINESS_PARCEL|400001|110001|550|20|15|10||",
       },
       filters: [["organization_id", "org-1"], ["id", "order-1"]],
     });

@@ -67,7 +67,13 @@ describe("tariff routes", () => {
     await handleTariffRoutes(request("orders/test/tariff-quote", temporary), db, ctx, "orders/test/tariff-quote");
     expect(loadTariffOrder).toHaveBeenCalledWith(db, ctx.organizationId, "test");
     expect(executeTariff).toHaveBeenCalledWith(expect.anything(), ctx.organizationId, expect.anything(), expect.objectContaining({ destinationPincode: "600001", weightGrams: 550 }));
-    expect(saveTariffEstimate).toHaveBeenCalledWith(expect.anything(), ctx.organizationId, "test", expect.objectContaining({ estimatedTotal: 152 }));
+    expect(saveTariffEstimate).toHaveBeenCalledWith(
+      expect.anything(),
+      ctx.organizationId,
+      "test",
+      expect.objectContaining({ destinationPincode: "600001", weightGrams: 550 }),
+      expect.objectContaining({ estimatedTotal: 152 })
+    );
   });
   it("does not save an estimate when the provider quote fails", async () => {
     vi.mocked(loadTariffOrder).mockResolvedValueOnce({ shipping_address: { pincode: "600001" }, order_line_items: [], shipments: [] });
@@ -78,17 +84,24 @@ describe("tariff routes", () => {
   });
   it("limits attempts per organization", async () => {
     const ctx = context();
-    for (let i = 0; i < 10; i++) await handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes");
+    for (let i = 0; i < 30; i++) await handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes");
     await expect(handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes")).rejects.toMatchObject({ status: 429 });
-    expect(executeTariff).toHaveBeenCalledTimes(10);
+    expect(executeTariff).toHaveBeenCalledTimes(30);
   });
-  it("rejects concurrent quotes and releases the guard on failure", async () => {
-    let reject!: (error: Error) => void;
-    vi.mocked(executeTariff).mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
-    const ctx = context(); const pending = handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes");
-    await vi.waitFor(() => expect(executeTariff).toHaveBeenCalled());
+  it("allows two concurrent quotes, rejects a third, and releases the guard", async () => {
+    let rejectFirst!: (error: Error) => void;
+    let rejectSecond!: (error: Error) => void;
+    vi.mocked(executeTariff)
+      .mockImplementationOnce(() => new Promise((_resolve, fail) => { rejectFirst = fail; }))
+      .mockImplementationOnce(() => new Promise((_resolve, fail) => { rejectSecond = fail; }));
+    const ctx = context();
+    const first = handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes");
+    const second = handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes");
+    await vi.waitFor(() => expect(executeTariff).toHaveBeenCalledTimes(2));
     await expect(handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes")).rejects.toMatchObject({ status: 429 });
-    reject(new Error("secret")); await expect(pending).rejects.not.toThrow("secret");
+    rejectFirst(new Error("secret")); rejectSecond(new Error("secret"));
+    await expect(first).rejects.not.toThrow("secret");
+    await expect(second).rejects.not.toThrow("secret");
     await expect(handleTariffRoutes(request("india-post/tariff-quotes"), db, ctx, "india-post/tariff-quotes")).resolves.toBeInstanceOf(Response);
   });
   it("maps permissions and retains India Post subscription gates", () => {

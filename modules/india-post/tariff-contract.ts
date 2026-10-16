@@ -40,6 +40,22 @@ export const tariffInputSchema = manualTariffSchema.extend({ sourcePincode: z.st
 export type TariffInput = z.infer<typeof tariffInputSchema>;
 export type TariffDraft = z.infer<typeof orderTariffSchema>;
 
+export function tariffEstimateKey(input: TariffInput) {
+  const value = tariffInputSchema.parse(input);
+  return [
+    "v1",
+    value.service,
+    value.sourcePincode,
+    value.destinationPincode,
+    value.weightGrams,
+    value.lengthCm,
+    value.widthCm,
+    value.heightCm,
+    value.insuranceValue ?? "",
+    value.proofOfDelivery ? "POD" : "",
+  ].join("|");
+}
+
 const nullableMoney = money.nullish().transform((value) => value ?? null);
 export const tariffResponseSchema = z.object({
   success: z.literal(true), currency: z.literal("INR"),
