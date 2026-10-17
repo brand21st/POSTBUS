@@ -344,8 +344,9 @@ export class IndiaPostProvider implements ShippingProvider {
       if (!response.ok) {
         const message =
           indiaPostJoinMessages([lastJson.error?.message, lastJson.message]) || "Tracking lookup failed.";
-        // Freshly booked articles often 400/403/404 until the first office scan.
-        if (response.status === 400 || response.status === 403 || response.status === 404) {
+        // Freshly booked articles often 400/404 until the first office scan.
+        // 403 is "not authorized to access this API" and must not look like empty Routing Steps.
+        if (response.status === 400 || response.status === 404) {
           continue;
         }
         const error = new Error(message);
