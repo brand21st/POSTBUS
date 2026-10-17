@@ -118,6 +118,7 @@ describe("buildIndiaPostRoutingView", () => {
 describe("shipmentNeedsLiveTracking", () => {
   it("keeps polling an open article and stops after delivery", () => {
     expect(shipmentNeedsLiveTracking({ barcode: "CL556974046IN", status: "BOOKED" })).toBe(true);
+    expect(shipmentNeedsLiveTracking({ barcode: "CL556974046IN", status: "MANIFEST_READY" })).toBe(true);
     expect(shipmentNeedsLiveTracking({ barcode: "CL556974046IN", operationalStatus: "IN_TRANSIT", status: "BOOKED" })).toBe(true);
     expect(shipmentNeedsLiveTracking({ barcode: "CL556974046IN", status: "DELIVERED" })).toBe(false);
     expect(shipmentNeedsLiveTracking({ status: "BOOKED" })).toBe(false);

@@ -3,8 +3,10 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { buildIndiaPostRoutingView } from "@/lib/dashboard/india-post-routing";
 import { applyIndiaPostTracking, type ShipmentTrackingSnapshot } from "@/modules/india-post/apply-tracking";
 import { parseIndiaPostWebhook } from "@/modules/india-post/webhook-parser";
+import type { TrackingEvent } from "@/types/api";
 
 const migration = readFileSync(
   path.join(process.cwd(), "supabase/migrations/20260927140000_ndr_rto.sql"),
@@ -405,6 +407,129 @@ describe("NDR RTO database migration", () => {
     );
     expect(visible.rows.map((row) => row.organization_id)).toEqual([orgA]);
     await db.exec(`reset role`);
+  });
+
+  it("stores chronological scans that dashboard Routing Steps can render", async () => {
+    const order = await db.query<{ id: string }>(
+      `insert into public.orders (organization_id, order_number) values ($1, 'PB-ROUTE-1') returning id`,
+      [orgA]
+    );
+    const created = await db.query<{ id: string }>(
+      `insert into public.shipments (
+         organization_id, order_id, weight_grams, barcode, tracking_number, status, operational_status
+       ) values ($1, $2, 500, 'CX075250656IN', 'CX075250656IN', 'BOOKED', 'BOOKED')
+       returning id`,
+      [orgA, order.rows[0].id]
+    );
+    const shipmentId = created.rows[0].id;
+    let current: ShipmentTrackingSnapshot = {
+      id: shipmentId,
+      organizationId: orgA,
+      orderId: order.rows[0].id,
+      status: "BOOKED",
+      operationalStatus: "BOOKED",
+      lastEventAt: null,
+      ndrAttemptCount: 0,
+      rtoInitiatedAt: null,
+    };
+
+    const scans = [
+      {
+        eventCode: "ITEM_BOOKED",
+        eventDescription: "Item Booked",
+        officeName: "Pulikkal SO",
+        occurredAt: "2026-10-09T06:03:44.000Z",
+      },
+      {
+        eventCode: "ITEM_DISPATCHED",
+        eventDescription: "Item Dispatched",
+        officeName: "Kozhikode PH",
+        occurredAt: "2026-10-09T23:14:05.000Z",
+      },
+      {
+        eventCode: "BAG_RECEIVED",
+        eventDescription: "Bag Received",
+        officeName: "Kollam RMS",
+        occurredAt: "2026-10-10T01:40:00.000Z",
+      },
+    ];
+    for (const scan of scans) {
+      const applied = await applyIndiaPostTracking(client(), current, {
+        ...scan,
+        officeId: null,
+        raw: { event: scan.eventDescription },
+        nonDeliveryReason: null,
+      });
+      expect(applied.inserted || applied.duplicate).toBe(true);
+      current = applied.snapshot;
+    }
+
+    const stored = await db.query<{
+      id: string;
+      event_code: string;
+      event_description: string;
+      office_name: string;
+      occurred_at: string;
+    }>(
+      `select id, event_code, event_description, office_name, occurred_at
+         from public.tracking_events
+        where organization_id = $1 and shipment_id = $2
+        order by occurred_at asc`,
+      [orgA, shipmentId]
+    );
+    expect(stored.rows).toHaveLength(3);
+
+    const shipment = await db.query<{
+      barcode: string;
+      tracking_number: string;
+      status: string;
+      operational_status: string | null;
+      last_event_description: string | null;
+      last_scan_office: string | null;
+      last_event_at: string | null;
+    }>(
+      `select barcode, tracking_number, status, operational_status,
+              last_event_description, last_scan_office, last_event_at
+         from public.shipments where id = $1`,
+      [shipmentId]
+    );
+    expect(shipment.rows[0].last_event_description).toBe("Bag Received");
+    expect(shipment.rows[0].operational_status).toBe("IN_TRANSIT");
+
+    const events: TrackingEvent[] = stored.rows.map((row) => ({
+      id: row.id,
+      eventCode: row.event_code,
+      eventDescription: row.event_description,
+      officeName: row.office_name,
+      occurredAt: new Date(row.occurred_at).toISOString(),
+    }));
+    const view = buildIndiaPostRoutingView(
+      {
+        barcode: shipment.rows[0].barcode,
+        trackingNumber: shipment.rows[0].tracking_number,
+        status: shipment.rows[0].status,
+        operationalStatus: shipment.rows[0].operational_status,
+        bookedAt: events[0]?.occurredAt,
+        lastEventDescription: shipment.rows[0].last_event_description,
+        lastScanOffice: shipment.rows[0].last_scan_office,
+        lastEventAt: shipment.rows[0].last_event_at,
+        shippingCity: "Eravipuram SO",
+        shippingPincode: "691011",
+      },
+      events
+    );
+
+    expect(view.steps).toHaveLength(3);
+    expect(view.steps.map((step) => step.title)).toEqual(["Item Booked", "Item Dispatched", "Bag Received"]);
+    expect(view.steps.map((step) => step.office)).toEqual(["Pulikkal SO", "Kozhikode PH", "Kollam RMS"]);
+    expect(view.steps.every((step) => step.dateLabel !== "—")).toBe(true);
+    expect(view.steps[2]?.latest).toBe(true);
+    expect(view.currentEvent).toBe("Bag Received");
+    expect(view.stages.find((stage) => stage.stage === "IN_TRANSIT")).toMatchObject({
+      current: true,
+      completed: false,
+    });
+    expect(view.stages.find((stage) => stage.stage === "BOOKED")?.completed).toBe(true);
   });
 });
 

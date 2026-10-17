@@ -4,13 +4,13 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, RotateCcw, Truck } from "lucide-react";
+import { ExternalLink, RefreshCw, RotateCcw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,6 +23,7 @@ import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { FEATURE } from "@/modules/billing/entitlements";
+import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 import { indiaPostServiceLabel, type MemberRole } from "@/types/domain";
 import type { ShipmentRecord, TrackingEvent } from "@/types/api";
 
@@ -44,11 +45,13 @@ export default function ShipmentDetailPage() {
 
   const sync = useMutation({
     mutationFn: async (silent: boolean) => {
-      await api(`/api/v1/ndr-rto/${params.id}/sync`, { method: "POST" });
-      return silent;
+      const result = await api<{ matched?: boolean }>(`/api/v1/ndr-rto/${params.id}/sync`, { method: "POST" });
+      return { silent, matched: Boolean(result.matched) };
     },
-    onSuccess: (silent) => {
-      if (!silent) toast.success("Tracking refreshed.");
+    onSuccess: ({ silent, matched }) => {
+      if (!silent) {
+        toast.success(matched ? "Tracking refreshed." : "India Post has no scans for this article yet.");
+      }
       queryClient.invalidateQueries({ queryKey: ["shipment", params.id] });
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
       queryClient.invalidateQueries({ queryKey: ["ndr-rto"] });
@@ -214,6 +217,17 @@ export default function ShipmentDetailPage() {
                 Refresh tracking
               </Button>
             ) : null}
+            {article ? (
+              <a
+                className={buttonVariants({ variant: "secondary" })}
+                href={postbusTrackingLink(article)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ExternalLink className="size-4" />
+                Customer tracking
+              </a>
+            ) : null}
             <Button type="button" variant="secondary" onClick={() => void openCustomLabel(params.id, "preview")}>
               Preview label
             </Button>
@@ -239,7 +253,10 @@ export default function ShipmentDetailPage() {
           <CardContent className="space-y-3 text-sm">
             <StatusBadge value={statusValue} />
             <p className="text-muted">
-              Last synced {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
+              Last scan {formatDate(record.lastEventAt ?? record.last_event_at, true)}
+            </p>
+            <p className="text-muted">
+              Last lookup {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
             </p>
             {bookedAt && trackingLookupFailed ? (
               <p className="text-muted">

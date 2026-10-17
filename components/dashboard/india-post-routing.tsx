@@ -133,7 +133,10 @@ export function IndiaPostRouting({ view }: { view: IndiaPostRoutingView }) {
           Routing Steps
         </h3>
         {view.steps.length === 0 ? (
-          <p className="mt-3 text-sm text-muted">No India Post scans yet. Sync tracking to load routing steps.</p>
+          <p className="mt-3 text-sm text-muted">
+            No India Post scans yet. Use Refresh tracking, or wait for a CEPT webhook. Routing steps appear as soon as
+            a scan is stored.
+          </p>
         ) : (
           <ol className="mt-4 space-y-0">
             {view.steps.map((step, index) => (
