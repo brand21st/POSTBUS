@@ -70,6 +70,38 @@ describe("articlesForRequestedBarcodes", () => {
   });
 });
 
+describe("India Post public tracking payload aliases", () => {
+  it("normalizes DD/MM/YYYY scans into date, time, event, and office", () => {
+    const parsed = parseBulkTrackingResponse({
+      success: true,
+      data: {
+        article_number: "CX075364503IN",
+        trackingDetails: [
+          {
+            event_date: "16/10/2026",
+            event_time: "11:04:20",
+            event_description: "Item Booked",
+            event_office_name: "Kozhikode PH",
+          },
+          {
+            event_date: "17/10/2026",
+            event_time: "07:53:51",
+            event_description: "Item Dispatched",
+            event_office_name: "Palakkad TMO",
+          },
+        ],
+      },
+    });
+    expect(parsed.data?.[0]?.tracking_details).toHaveLength(2);
+    expect(parsed.data?.[0]?.tracking_details?.[0]).toMatchObject({
+      date: "16/10/2026",
+      time: "11:04:20",
+      event: "Item Booked",
+      office: "Kozhikode PH",
+    });
+  });
+});
+
 describe("retryAfterMsFromHeader", () => {
   it("parses integer seconds", () => {
     expect(retryAfterMsFromHeader("12")).toBe(12000);

@@ -10,6 +10,7 @@ import {
   type ShipmentTrackingSnapshot,
 } from "@/modules/india-post/apply-tracking";
 import { planTrackingUpdate, mapIndiaPostEventToShipmentUpdate } from "@/modules/india-post/event-mapper";
+import { buildIndiaPostRoutingView } from "@/lib/dashboard/india-post-routing";
 import { processIndiaPostInboxEvent } from "@/modules/india-post/webhook";
 
 function snapshot(overrides: Partial<ShipmentTrackingSnapshot> = {}): ShipmentTrackingSnapshot {
@@ -206,6 +207,17 @@ describe("bulkEventOccurredAt", () => {
   it("does not invent a timestamp when date and time are missing", () => {
     expect(bulkEventOccurredAt({})).toBeNull();
   });
+
+  it("parses India Post website dates and office-scan field names", () => {
+    expect(
+      bulkEventOccurredAt({
+        event_date: "16/10/2026",
+        event_time: "11:04:20",
+        event_description: "Item Booked",
+        event_office_name: "Kozhikode PH",
+      })
+    ).toBe("2026-10-16T05:34:20.000Z");
+  });
 });
 
 describe("tracking poll eligibility", () => {
@@ -360,6 +372,94 @@ describe("applyIndiaPostTracking", () => {
     expect(events).toHaveLength(0);
     expect(ingested.snapshot.operationalStatus).toBe("IN_TRANSIT");
     expect(updates.some((update) => update.patch.operational_status === "DELIVERED")).toBe(false);
+  });
+
+  it("stores India Post website routing scans with DD/MM/YYYY timestamps", async () => {
+    const { client, events } = memorySupabase();
+    await ingestBulkTrackingArticle(client, {
+      organizationId: "org-1",
+      shipment: snapshot({ status: "MANIFEST_READY" }),
+      article: {
+        article_number: "CX075364503IN",
+        tracking_details: [
+          {
+            event_date: "16/10/2026",
+            event_time: "11:04:20",
+            event_description: "Item Booked",
+            event_office_name: "Kozhikode PH",
+          },
+          {
+            event_date: "16/10/2026",
+            event_time: "15:42:27",
+            event_description: "Item bagged",
+            event_office_name: "Kozhikode PH",
+          },
+          {
+            event_date: "16/10/2026",
+            event_time: "16:59:36",
+            event_description: "Item Dispatched",
+            event_office_name: "Kozhikode PH",
+          },
+          {
+            event_date: "17/10/2026",
+            event_time: "07:20:49",
+            event_description: "Bag Received for Forwarding",
+            event_office_name: "Palakkad TMO",
+          },
+          {
+            event_date: "17/10/2026",
+            event_time: "07:53:51",
+            event_description: "Item Dispatched",
+            event_office_name: "Palakkad TMO",
+          },
+        ],
+      },
+    });
+    expect(events).toHaveLength(5);
+    expect(events.map((event) => event.event_description)).toEqual([
+      "Item Booked",
+      "Item bagged",
+      "Item Dispatched",
+      "Bag Received for Forwarding",
+      "Item Dispatched",
+    ]);
+    expect(events[0]).toMatchObject({
+      office_name: "Kozhikode PH",
+      occurred_at: "2026-10-16T05:34:20.000Z",
+    });
+    const view = buildIndiaPostRoutingView(
+      {
+        barcode: "CX075364503IN",
+        trackingNumber: "CX075364503IN",
+        serviceCode: "BUSINESS_PARCEL",
+        status: "IN_TRANSIT",
+        operationalStatus: "DISPATCHED",
+      },
+      events.map((event, index) => ({
+        id: `ev-${index + 1}`,
+        eventCode: String(event.event_code),
+        eventDescription: String(event.event_description ?? ""),
+        officeName: String(event.office_name ?? ""),
+        occurredAt: String(event.occurred_at),
+      }))
+    );
+    expect(view.steps).toHaveLength(5);
+    expect(view.steps.map((step) => step.title)).toEqual([
+      "Item Booked",
+      "Item bagged",
+      "Item Dispatched",
+      "Bag Received for Forwarding",
+      "Item Dispatched",
+    ]);
+    expect(view.steps.map((step) => step.office)).toEqual([
+      "Kozhikode PH",
+      "Kozhikode PH",
+      "Kozhikode PH",
+      "Palakkad TMO",
+      "Palakkad TMO",
+    ]);
+    expect(view.steps.every((step) => step.dateLabel !== "—")).toBe(true);
+    expect(view.currentEvent).toBe("Item Dispatched");
   });
 });
 

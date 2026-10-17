@@ -141,7 +141,7 @@ export default function ShipmentDetailPage() {
       });
     };
     pull();
-    const timer = window.setInterval(pull, 20_000);
+    const timer = window.setInterval(pull, 15_000);
     return () => {
       stopped = true;
       window.clearInterval(timer);
