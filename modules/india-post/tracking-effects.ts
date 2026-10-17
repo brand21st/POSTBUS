@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { TrackingNotifyNotice } from "@/modules/india-post/apply-tracking";
 import type { TrackingWhatsAppEvent } from "@/modules/india-post/event-mapper";
 import type { WatiNotifyEvent } from "@/modules/wati/notify";
 
@@ -10,6 +11,7 @@ export async function enqueueTrackingStageSideEffects(
     orderId?: string | null;
     orderStatus?: "IN_TRANSIT" | "DELIVERED" | null;
     events?: TrackingWhatsAppEvent[];
+    notices?: TrackingNotifyNotice[];
     body?: string | null;
   }
 ) {
@@ -22,16 +24,26 @@ export async function enqueueTrackingStageSideEffects(
     orderId: input.orderId ?? null,
   };
 
-  for (const stage of events) {
+  const notices: Array<{ event: WatiNotifyEvent; eventCode: string; occurredAt: string }> = input.notices?.length
+    ? input.notices
+    : events.map((event) => ({ event, eventCode: "", occurredAt: "" }));
+
+  for (const notice of notices) {
+    const scanIds = {
+      ...ids,
+      ...(notice.eventCode && notice.occurredAt
+        ? { eventCode: notice.eventCode, occurredAt: notice.occurredAt }
+        : {}),
+    };
     try {
       const { enqueueWatiNotify } = await import("@/modules/wati/send");
-      await enqueueWatiNotify(supabase, input.organizationId, stage, ids);
+      await enqueueWatiNotify(supabase, input.organizationId, notice.event, scanIds);
     } catch {
       // WhatsApp is optional; tracking updates should still persist.
     }
     try {
       const { enqueueVachatNotify } = await import("@/modules/vachat/send");
-      await enqueueVachatNotify(supabase, input.organizationId, stage, ids);
+      await enqueueVachatNotify(supabase, input.organizationId, notice.event, scanIds);
     } catch {
       // Vachat is optional; tracking updates should still persist.
     }

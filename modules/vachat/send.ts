@@ -27,11 +27,24 @@ export const VACHAT_PLATFORM_WEBHOOK_EVENTS = ["message.status_updated", "messag
 export type VachatNotifyIds = {
   orderId?: string | null;
   shipmentId?: string | null;
+  eventCode?: string | null;
+  occurredAt?: string | null;
 };
 
 export function vachatExternalRef(event: WatiNotifyEvent, ids: VachatNotifyIds) {
   const entity = ids.shipmentId ?? ids.orderId ?? "unknown";
-  return `postbus:${event}:${entity}`;
+  const scan = ids.eventCode && ids.occurredAt ? `:${ids.eventCode}:${ids.occurredAt}` : "";
+  return `postbus:${event}:${entity}${scan}`;
+}
+
+function sameNotifyScan(
+  left: { eventCode?: string | null; occurredAt?: string | null },
+  right: { eventCode?: string | null; occurredAt?: string | null }
+) {
+  const leftScan = left.eventCode && left.occurredAt ? `${left.eventCode}|${left.occurredAt}` : null;
+  const rightScan = right.eventCode && right.occurredAt ? `${right.eventCode}|${right.occurredAt}` : null;
+  if (leftScan && rightScan) return leftScan === rightScan;
+  return !leftScan && !rightScan;
 }
 
 export function vachatRecipientE164(raw?: string | null) {
@@ -338,7 +351,13 @@ export async function enqueueVachatNotify(
     jobType: "vachat-notify",
     entityType: ids.shipmentId ? "shipment" : "order",
     entityId,
-    progress: { event, shipmentId: ids.shipmentId ?? null, orderId: ids.orderId ?? null },
+    progress: {
+      event,
+      shipmentId: ids.shipmentId ?? null,
+      orderId: ids.orderId ?? null,
+      eventCode: ids.eventCode ?? null,
+      occurredAt: ids.occurredAt ?? null,
+    },
   });
 }
 
@@ -351,11 +370,12 @@ export function isDuplicateVachatNotifyJob(
     const progress = job.progress && typeof job.progress === "object" ? (job.progress as { event?: string }) : {};
     if (progress.event !== event) return false;
     const fromJob = vachatIdsFromJob(job.progress, job.entity_id);
-    if (ids.orderId && (fromJob.orderId === ids.orderId || job.entity_id === ids.orderId)) return true;
-    if (ids.shipmentId && (fromJob.shipmentId === ids.shipmentId || job.entity_id === ids.shipmentId)) {
-      return true;
-    }
-    return false;
+    const sameOrder = Boolean(ids.orderId && (fromJob.orderId === ids.orderId || job.entity_id === ids.orderId));
+    const sameShipment = Boolean(
+      ids.shipmentId && (fromJob.shipmentId === ids.shipmentId || job.entity_id === ids.shipmentId)
+    );
+    if (!sameOrder && !sameShipment) return false;
+    return sameNotifyScan(ids, fromJob);
   });
 }
 
@@ -457,5 +477,7 @@ export function vachatIdsFromJob(progress: unknown, fallbackId?: string | null):
   return {
     shipmentId: record.shipmentId ?? (fallbackId && !record.orderId ? fallbackId : null),
     orderId: record.orderId ?? null,
+    eventCode: record.eventCode ?? null,
+    occurredAt: record.occurredAt ?? null,
   };
 }

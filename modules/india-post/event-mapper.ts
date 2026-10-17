@@ -220,6 +220,15 @@ function eventIsOlder(eventAt: string, lastEventAt: string | null) {
   return next < previous;
 }
 
+export function whatsappEventsForScan(
+  mapped: Pick<IndiaPostShipmentUpdate, "delayScan">,
+  operational: OperationalStatus | null
+): TrackingWhatsAppEvent[] {
+  if (operational === "DELIVERED") return ["delivered"];
+  if (mapped.delayScan) return ["shipment_delayed"];
+  return ["in_transit"];
+}
+
 export function planTrackingUpdate(input: {
   currentStatus: string;
   currentOperational: string | null;
@@ -240,7 +249,10 @@ export function planTrackingUpdate(input: {
 
   const older = eventIsOlder(input.eventAt, input.lastEventAt);
   if (older) {
-    return none;
+    return {
+      ...none,
+      whatsappEvents: whatsappEventsForScan(input.mapped, input.mapped.operationalStatus),
+    };
   }
 
   if (
@@ -251,7 +263,7 @@ export function planTrackingUpdate(input: {
     return {
       ...none,
       updateLastScan: true,
-      whatsappEvents: input.mapped.delayScan ? ["shipment_delayed"] : [],
+      whatsappEvents: whatsappEventsForScan(input.mapped, null),
     };
   }
 
@@ -266,11 +278,11 @@ export function planTrackingUpdate(input: {
   }
 
   if (input.currentStatus === "DELIVERED" && !RETURN_OPERATIONAL.has(operational)) {
-    return { ...none, updateLastScan: true };
+    return { ...none, updateLastScan: true, whatsappEvents: whatsappEventsForScan(input.mapped, operational) };
   }
 
   if (returnStarted && !RETURN_OPERATIONAL.has(operational)) {
-    return { ...none, updateLastScan: true };
+    return { ...none, updateLastScan: true, whatsappEvents: whatsappEventsForScan(input.mapped, operational) };
   }
 
   const shipmentStatus = shipmentStatusForOperational(operational);
@@ -288,26 +300,13 @@ export function planTrackingUpdate(input: {
     orderStatus = "IN_TRANSIT";
   }
 
-  const whatsappEvents: TrackingWhatsAppEvent[] = [];
-  if (orderStatus === "IN_TRANSIT") whatsappEvents.push("in_transit");
-  if (orderStatus === "DELIVERED") whatsappEvents.push("delivered");
-  if (
-    operational === "OUT_FOR_DELIVERY" &&
-    input.currentOperational !== "OUT_FOR_DELIVERY" &&
-    input.currentStatus !== "DELIVERED" &&
-    !whatsappEvents.includes("in_transit")
-  ) {
-    whatsappEvents.push("in_transit");
-  }
-  if (input.mapped.delayScan) whatsappEvents.push("shipment_delayed");
-
   return {
     updateLastScan: true,
     applyStatus: true,
     shipmentStatus,
     operationalStatus: operational,
     orderStatus,
-    whatsappEvents,
+    whatsappEvents: whatsappEventsForScan(input.mapped, operational),
   };
 }
 

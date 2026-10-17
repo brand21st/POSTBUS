@@ -93,7 +93,7 @@ describe("planTrackingUpdate return vs customer delivery", () => {
     });
     expect(plan.operationalStatus).toBe("RTO_DELIVERED");
     expect(plan.orderStatus).toBeNull();
-    expect(plan.whatsappEvents).not.toContain("delivered");
+    expect(plan.whatsappEvents).toEqual(["in_transit"]);
   });
 
   it("TEST F: older NDR then confirmed customer delivery resolves to DELIVERED", () => {
@@ -172,7 +172,7 @@ describe("planTrackingUpdate return vs customer delivery", () => {
     expect(after.ndrAttemptCount).toBe(1);
   });
 
-  it("does not queue WhatsApp for NDR or RTO classifications", () => {
+  it("queues in_transit WhatsApp for NDR and RTO scans", () => {
     const ndr = planTrackingUpdate({
       currentStatus: "OUT_FOR_DELIVERY",
       currentOperational: "OUT_FOR_DELIVERY",
@@ -186,7 +186,7 @@ describe("planTrackingUpdate return vs customer delivery", () => {
       }),
     });
     expect(ndr.operationalStatus).toBe("NDR");
-    expect(ndr.whatsappEvents).toEqual([]);
+    expect(ndr.whatsappEvents).toEqual(["in_transit"]);
     expect(ndr.orderStatus).toBeNull();
 
     const rto = planTrackingUpdate({
@@ -198,6 +198,6 @@ describe("planTrackingUpdate return vs customer delivery", () => {
       mapped: map({ eventCode: "ITEM_RETURNED", eventDescription: "Item returned" }),
     });
     expect(rto.operationalStatus).toBe("RTO");
-    expect(rto.whatsappEvents).toEqual([]);
+    expect(rto.whatsappEvents).toEqual(["in_transit"]);
   });
 });

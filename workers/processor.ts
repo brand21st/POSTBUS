@@ -740,6 +740,7 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
           orderId: shipment.order_id,
           orderStatus: ingested.orderStatus,
           events: ingested.whatsappEvents,
+          notices: ingested.notices,
         });
       }
     }

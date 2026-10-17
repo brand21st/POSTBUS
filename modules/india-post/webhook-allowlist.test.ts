@@ -50,4 +50,14 @@ describe("India Post webhook allowlist", () => {
   it("uses the leftmost forwarded hop when Cloudflare is absent", () => {
     expect(webhookSourceIp(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.2" }))).toBe("203.0.113.9");
   });
+
+  it("falls back to x-real-ip for Traefik", () => {
+    expect(webhookSourceIp(new Headers({ "x-real-ip": "203.0.113.40" }))).toBe("203.0.113.40");
+  });
+
+  it("allows any source including a missing IP when 0.0.0.0/0 is configured", () => {
+    expect(ipMatchesCidrs("203.0.113.9", ["0.0.0.0/0"])).toBe(true);
+    expect(() => assertIndiaPostWebhookSourceAllowed(null, "0.0.0.0/0")).not.toThrow();
+    expect(() => assertIndiaPostWebhookSourceAllowed("8.8.8.8", "0.0.0.0/0")).not.toThrow();
+  });
 });

@@ -83,6 +83,30 @@ describe("vachat enqueue dedupe", () => {
     expect(vachatExternalRef("booked", { shipmentId: "s1" })).toBe("postbus:booked:s1");
   });
 
+  it("keeps a later scan of the same stage", () => {
+    const first = {
+      entity_id: "ship-1",
+      progress: { event: "in_transit", shipmentId: "ship-1", eventCode: "BAG_CLOSE", occurredAt: "2026-09-01T00:00:00.000Z" },
+    };
+    expect(
+      isDuplicateVachatNotifyJob([first], "in_transit", {
+        shipmentId: "ship-1",
+        eventCode: "BAG_CLOSE",
+        occurredAt: "2026-09-01T00:00:00.000Z",
+      })
+    ).toBe(true);
+    expect(
+      isDuplicateVachatNotifyJob([first], "in_transit", {
+        shipmentId: "ship-1",
+        eventCode: "ITEM_RECEIVED",
+        occurredAt: "2026-09-02T00:00:00.000Z",
+      })
+    ).toBe(false);
+    expect(vachatExternalRef("in_transit", { shipmentId: "s1", eventCode: "BAG_CLOSE", occurredAt: "2026-09-01T00:00:00.000Z" })).toBe(
+      "postbus:in_transit:s1:BAG_CLOSE:2026-09-01T00:00:00.000Z"
+    );
+  });
+
   it("normalizes the default automation test number to E.164", () => {
     expect(vachatRecipientE164("918618456029")).toBe("+918618456029");
     expect(vachatRecipientE164("8618456029")).toBe("+918618456029");

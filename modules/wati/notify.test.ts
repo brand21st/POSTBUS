@@ -45,6 +45,27 @@ describe("isDuplicateWatiNotifyJob", () => {
       )
     ).toBe(false);
   });
+
+  it("allows a later in-transit scan for the same shipment", () => {
+    const first = {
+      entity_id: "ship-1",
+      progress: { event: "in_transit", shipmentId: "ship-1", eventCode: "BAG_CLOSE", occurredAt: "2026-09-01T00:00:00.000Z" },
+    };
+    expect(
+      isDuplicateWatiNotifyJob([first], "in_transit", {
+        shipmentId: "ship-1",
+        eventCode: "ITEM_RECEIVED",
+        occurredAt: "2026-09-02T00:00:00.000Z",
+      })
+    ).toBe(false);
+    expect(
+      isDuplicateWatiNotifyJob([first], "in_transit", {
+        shipmentId: "ship-1",
+        eventCode: "BAG_CLOSE",
+        occurredAt: "2026-09-01T00:00:00.000Z",
+      })
+    ).toBe(true);
+  });
 });
 
 describe("isApprovedWatiTemplate", () => {
