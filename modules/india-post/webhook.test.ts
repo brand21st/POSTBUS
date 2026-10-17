@@ -186,6 +186,31 @@ describe("webhook URLs and tenant path", () => {
     );
   });
 
+  it("gives CEPT the public www host instead of apex, aliases, or tracking subdomains", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const local = indiaPostWebhookUrls(id, "http://localhost:3000");
+    expect(local.eventsWebhookUrl.startsWith("http://localhost:3000/")).toBe(true);
+
+    const staging = indiaPostWebhookUrls(id, "https://auth-staging.postbus.in");
+    expect(staging.bookingWebhookUrl.startsWith("https://auth-staging.postbus.in/")).toBe(true);
+
+    for (const appUrl of [
+      "https://postbus.in",
+      "https://www.postbus.in",
+      "https://postbus.vachat.in",
+      "https://evlathholdings.postbus.in",
+      "http://mw9larpomkyonxzy1rk3h6jm.89.116.34.166.sslip.io",
+    ]) {
+      const urls = indiaPostWebhookUrls(id, appUrl);
+      expect(urls.bookingWebhookUrl).toBe(
+        `https://www.postbus.in/api/v1/webhooks/india-post/${id}/booking`
+      );
+      expect(urls.eventsWebhookUrl).toBe(
+        `https://www.postbus.in/api/v1/webhooks/india-post/${id}/events`
+      );
+    }
+  });
+
   it("parses only valid connection-scoped paths", () => {
     expect(
       parseIndiaPostWebhookPath("webhooks/india-post/11111111-1111-4111-8111-111111111111/booking")

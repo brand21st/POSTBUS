@@ -17,44 +17,76 @@ vi.mock("@/modules/india-post/tracking-effects", () => ({
 const orgId = "org-a";
 const shipmentId = "ship-a";
 
-function inboxClient(options?: { duplicate?: boolean; customerId?: string | null }) {
+function inboxClient(options?: {
+  duplicate?: boolean;
+  customerId?: string | null;
+  shipment?: Record<string, unknown> | null;
+  ownerConnection?: Record<string, unknown> | null;
+}) {
   const jobs: unknown[] = [];
-  const customerId = options?.customerId === undefined ? "1000002954" : options.customerId;
+  const urlConnection = {
+    id: "11111111-1111-4111-8111-111111111111",
+    organization_id: orgId,
+    bulk_customer_id: options?.customerId === undefined ? "1000002954" : options.customerId,
+  };
+  const ownerConnection = options?.ownerConnection ?? null;
+  const shipment = options?.shipment ?? null;
+  const connections = [urlConnection, ownerConnection].filter(Boolean) as Array<Record<string, unknown>>;
   return {
     jobs,
-    rpc: async (_name: string, args: Record<string, unknown>) => ({
-      data: {
-        accepted: true,
-        duplicate: Boolean(options?.duplicate),
-        inbox_event_id: "inbox-1",
-        organization_id: orgId,
-      },
-      error: null,
-      args,
-    }),
-    from(table: string) {
-      if (table === "india_post_connections") {
-        return {
-          select() {
-            return {
-              eq() {
-                return {
-                  maybeSingle: async () => ({
-                    data: { id: "11111111-1111-4111-8111-111111111111", bulk_customer_id: customerId },
-                    error: null,
-                  }),
-                };
-              },
-            };
-          },
-        };
-      }
+    rpc: async (_name: string, args: Record<string, unknown>) => {
+      const connectionId = String(args.p_connection_id ?? "");
+      const matched = connections.find((row) => row.id === connectionId) ?? urlConnection;
       return {
-        insert(row: unknown) {
-          jobs.push(row);
-          return Promise.resolve({ error: null });
+        data: {
+          accepted: true,
+          duplicate: Boolean(options?.duplicate),
+          inbox_event_id: "inbox-1",
+          organization_id: matched.organization_id,
         },
+        error: null,
+        args,
       };
+    },
+    from(table: string) {
+      const state: { filters: Record<string, unknown> } = { filters: {} };
+      const api: Record<string, unknown> = {};
+      const result = () => {
+        if (table === "india_post_connections") {
+          let rows = connections;
+          if (state.filters.id) rows = rows.filter((row) => row.id === state.filters.id);
+          if (state.filters.organization_id) {
+            rows = rows.filter((row) => row.organization_id === state.filters.organization_id);
+          }
+          if (state.filters.bulk_customer_id) {
+            rows = rows.filter((row) => String(row.bulk_customer_id) === String(state.filters.bulk_customer_id));
+          }
+          return rows;
+        }
+        if (table === "shipments") {
+          if (!shipment) return [];
+          const article = state.filters.barcode ?? state.filters.tracking_number;
+          if (article && article !== shipment.barcode && article !== shipment.tracking_number) return [];
+          if (state.filters.organization_id && state.filters.organization_id !== shipment.organization_id) return [];
+          if (state.filters.id && state.filters.id !== shipment.id) return [];
+          return [shipment];
+        }
+        return [];
+      };
+      api.select = () => api;
+      api.eq = (column: string, value: unknown) => {
+        state.filters[column] = value;
+        return api;
+      };
+      api.limit = () => api;
+      api.maybeSingle = async () => ({ data: result()[0] ?? null, error: null });
+      api.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+        Promise.resolve({ data: result(), error: null }).then(resolve, reject);
+      api.insert = (row: unknown) => {
+        jobs.push(row);
+        return Promise.resolve({ error: null });
+      };
+      return api;
     },
   };
 }
@@ -124,24 +156,43 @@ function processClient(input: {
         maybeSingle: async () => {
           if (table === "provider_webhook_inbox") return { data: inbox, error: null };
           if (table === "shipments") {
+            if (state.filters.id && state.filters.id !== shipment.id) {
+              return { data: null, error: null };
+            }
             if (state.filters.barcode && state.filters.barcode !== shipment.barcode) {
               return { data: null, error: null };
             }
             if (state.filters.tracking_number && state.filters.tracking_number !== shipment.tracking_number) {
               return { data: null, error: null };
             }
-            if (state.filters.organization_id && state.filters.organization_id !== orgId) {
+            if (
+              state.filters.organization_id &&
+              state.filters.organization_id !== shipment.organization_id
+            ) {
               return { data: null, error: null };
             }
             return { data: shipment, error: null };
           }
           return { data: null, error: null };
         },
-        then(resolve: (value: { error: null }) => void) {
+        limit() {
+          return api;
+        },
+        then(resolve: (value: { data?: unknown; error: { code?: string; message?: string } | null }) => void) {
           if (state.patch) {
             updates.push({ table, patch: state.patch });
             if (table === "shipments") shipment = { ...shipment, ...state.patch };
             if (table === "provider_webhook_inbox") Object.assign(inbox, state.patch);
+            resolve({ error: null });
+            return;
+          }
+          if (table === "shipments") {
+            const article = state.filters.barcode ?? state.filters.tracking_number;
+            const articleOk = !article || article === shipment.barcode || article === shipment.tracking_number;
+            const orgOk = !state.filters.organization_id || state.filters.organization_id === shipment.organization_id;
+            const idOk = !state.filters.id || state.filters.id === shipment.id;
+            resolve({ data: articleOk && orgOk && idOk ? [shipment] : [], error: null });
+            return;
           }
           resolve({ error: null });
         },
@@ -232,6 +283,47 @@ describe("CEPT webhook accept", () => {
     expect(createBackgroundJob).not.toHaveBeenCalled();
   });
 
+  it("routes a CEPT event to the workspace that owns the article", async () => {
+    const { createBackgroundJob } = await import("@/modules/jobs/service");
+    vi.mocked(createBackgroundJob).mockClear();
+    const supabase = inboxClient({
+      shipment: {
+        id: "ship-b",
+        organization_id: "org-b",
+        barcode: "AW784699994IN",
+        tracking_number: "AW784699994IN",
+      },
+      ownerConnection: {
+        id: "22222222-2222-4222-8222-222222222222",
+        organization_id: "org-b",
+        bulk_customer_id: "1000002954",
+      },
+    });
+    const rpc = vi.fn(supabase.rpc.bind(supabase));
+    supabase.rpc = rpc as typeof supabase.rpc;
+    const result = await acceptIndiaPostWebhook(supabase as never, {
+      connectionId: "11111111-1111-4111-8111-111111111111",
+      channel: "events",
+      rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
+      contentType: "application/json",
+      headers: new Headers({
+        "content-type": "application/json",
+        "cf-connecting-ip": "10.9.8.7",
+      }),
+    });
+    expect(result).toEqual({ accepted: true, duplicate: false, inboxEventId: "inbox-1" });
+    expect(rpc.mock.calls[0]?.[1]).toMatchObject({
+      p_connection_id: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(createBackgroundJob).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        organizationId: "org-b",
+        jobType: "india-post-events",
+      })
+    );
+  });
+
   it("rejects a webhook whose bulk_customer_id does not match the connection", async () => {
     await expect(
       acceptIndiaPostWebhook(inboxClient({ customerId: "999" }) as never, {
@@ -293,6 +385,34 @@ describe("CEPT webhook process", () => {
     expect(result.processed).toBe(true);
     expect(supabase.shipment.status).toBe("IN_TRANSIT");
     expect(supabase.shipment.last_event_code).toBe("BAG_CLOSE");
+  });
+
+  it("applies a scan when CEPT posted to another workspace URL", async () => {
+    const supabase = processClient({
+      payload: {
+        article_number: "AW784699994IN",
+        event_code: "BAG_CLOSE",
+        event_description: "Bag Close",
+        event_date: "2025-11-09",
+        event_time: "08:37:52",
+      },
+      shipment: {
+        id: "ship-b",
+        organization_id: "org-b",
+        status: "BOOKED",
+        barcode: "AW784699994IN",
+        tracking_number: "AW784699994IN",
+        order_id: "order-b",
+        operational_status: "BOOKED",
+        last_event_at: null,
+        ndr_attempt_count: 0,
+        rto_initiated_at: null,
+      },
+    });
+    const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
+    expect(result).toEqual({ processed: true, shipmentId: "ship-b" });
+    expect(supabase.shipment.status).toBe("IN_TRANSIT");
+    expect(supabase.events[0]).toMatchObject({ shipment_id: "ship-b", event_code: "BAG_CLOSE" });
   });
 
   it("fails closed when the article does not belong to the tenant", async () => {

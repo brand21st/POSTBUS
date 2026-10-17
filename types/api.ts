@@ -812,6 +812,8 @@ export type IndiaPostConfig = {
   last_error?: string | null;
   uatConfigured?: boolean;
   prodConfigured?: boolean;
+  id?: string | null;
+  connectionId?: string | null;
   bookingWebhookUrl?: string;
   booking_webhook_url?: string;
   eventsWebhookUrl?: string;

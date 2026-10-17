@@ -26,7 +26,7 @@ import {
 import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { cn } from "@/lib/utils";
-import { Copy, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { IndiaPostOfficeFinder, type IndiaPostOfficeRow } from "@/components/integrations/india-post-office-finder";
 import { notifyIndiaPostSaved } from "@/components/integrations/india-post-saved-toast";
 import { indiaPostOfficeWritePayload, indiaPostPickupOfficeWritePayload } from "@/modules/india-post/office-patch";
@@ -769,9 +769,6 @@ export default function IndiaPostPage() {
     });
   }
 
-  const bookingWebhook = config?.bookingWebhookUrl ?? config?.booking_webhook_url ?? "";
-  const eventsWebhook = config?.eventsWebhookUrl ?? config?.events_webhook_url ?? "";
-
   return (
     <div className="space-y-5">
       <PageHeader
@@ -1265,53 +1262,6 @@ export default function IndiaPostPage() {
         </CardContent>
       </Card>
 
-      {bookingWebhook || eventsWebhook ? (
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle>Tracking updates</CardTitle>
-            <CardDescription>
-              Paste these links in your India Post portal so booking and tracking updates come back to PostBus.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 lg:grid-cols-2">
-            <CopyField id="booking-webhook" label="After booking" value={bookingWebhook} />
-            <CopyField id="events-webhook" label="Tracking changes" value={eventsWebhook} />
-          </CardContent>
-        </Card>
-      ) : null}
-    </div>
-  );
-}
-
-function CopyField({
-  id,
-  label,
-  value,
-}: {
-  id: string;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      <div className="flex gap-2">
-        <Input id={id} readOnly value={value} className="font-mono text-xs" />
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="h-11"
-          disabled={!value}
-          onClick={async () => {
-            await navigator.clipboard.writeText(value);
-            toast.success(`${label} copied.`);
-          }}
-        >
-          <Copy />
-          Copy
-        </Button>
-      </div>
     </div>
   );
 }

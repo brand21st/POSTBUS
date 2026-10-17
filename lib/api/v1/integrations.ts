@@ -672,6 +672,8 @@ export async function handleIntegrationRoutes(
       lastError: data?.last_error,
       uatConfigured: Boolean(env.indiaPostUatBaseUrl),
       prodConfigured: Boolean(env.indiaPostProdBaseUrl),
+      id: data?.id ?? null,
+      connectionId: data?.id ?? null,
       ...(data?.id ? indiaPostWebhookUrls(data.id) : {}),
       contracts,
       defaultServiceCode:
