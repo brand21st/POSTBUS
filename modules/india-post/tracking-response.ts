@@ -86,7 +86,7 @@ function looksLikeTrackingEvent(value: unknown) {
     Boolean(row.date || row.event_date || row.time || row.event_time || row.office);
 }
 
-function articleList(value: unknown) {
+function articleList(value: unknown): unknown[] | undefined {
   const parsed = parseJsonIfString(value);
   if (parsed == null) return undefined;
   if (Array.isArray(parsed)) {
