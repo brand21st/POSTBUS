@@ -198,6 +198,12 @@ describe("bulkEventOccurredAt", () => {
     ).toBe("2026-09-07T15:24:12.000Z");
   });
 
+  it("combines CEPT midnight date with the office scan time", () => {
+    expect(
+      bulkEventOccurredAt({ date: "2026-10-16T00:00:00Z", time: "11:04:20", event: "Item Booked" })
+    ).toBe("2026-10-16T05:34:20.000Z");
+  });
+
   it("combines a civil date and time when date is not ISO", () => {
     const parsed = bulkEventOccurredAt({ date: "2026-09-27", time: "10:15:00" });
     expect(parsed).toBeTruthy();
@@ -246,6 +252,19 @@ describe("matchingBulkTrackingArticle", () => {
       "CX075250656IN"
     );
     expect(match?.tracking_details?.[0]?.event).toBe("Item Booked");
+  });
+
+  it("uses the only article with scans even if CEPT omits a matching article number", () => {
+    const match = matchingBulkTrackingArticle(
+      [
+        {
+          booking_details: { article_number: "UNKNOWN" },
+          tracking_details: [{ event: "Item Dispatched", date: "2026-10-16T00:00:00Z", time: "13:18:30" }],
+        },
+      ],
+      "CX075364450IN"
+    );
+    expect(match?.tracking_details?.[0]?.event).toBe("Item Dispatched");
   });
 });
 

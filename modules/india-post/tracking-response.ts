@@ -68,15 +68,39 @@ export function normalizeTrackingDetail(raw: Record<string, unknown>) {
   };
 }
 
-function articleList(value: unknown) {
-  if (value == null) return undefined;
-  if (Array.isArray(value)) return value;
-  if (typeof value === "object") {
-    const row = value as Record<string, unknown>;
-    const nested = row.articles ?? row.article ?? row.tracking ?? row.result;
-    if (nested != null && nested !== value) return asArray(nested) ?? asArray(value);
+function parseJsonIfString(value: unknown) {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
   }
-  return asArray(value);
+}
+
+function looksLikeTrackingEvent(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return Boolean(row.event || row.event_description || row.event_code || row.eventDescription) &&
+    Boolean(row.date || row.event_date || row.time || row.event_time || row.office);
+}
+
+function articleList(value: unknown) {
+  const parsed = parseJsonIfString(value);
+  if (parsed == null) return undefined;
+  if (Array.isArray(parsed)) {
+    if (parsed.length && parsed.every(looksLikeTrackingEvent) && !parsed.some((item) => item && typeof item === "object" && "booking_details" in (item as object))) {
+      return [{ tracking_details: parsed }];
+    }
+    return parsed;
+  }
+  if (typeof parsed === "object") {
+    const row = parsed as Record<string, unknown>;
+    const nested = row.articles ?? row.article ?? row.tracking ?? row.result ?? row.tracking_details;
+    if (nested != null && nested !== parsed) return articleList(nested) ?? asArray(parsed);
+  }
+  return asArray(parsed);
 }
 
 function articleTrackingDetails(row: Record<string, unknown>) {
@@ -92,7 +116,15 @@ const bulkArticleSchema = z.preprocess((value) => {
       : {};
   return {
     ...row,
-    article_number: firstText(row.article_number, row.articleNumber, booking.article_number),
+    article_number: firstText(
+      row.article_number,
+      row.articleNumber,
+      booking.article_number,
+      booking.articleNumber,
+      booking.articleid,
+      row.barcode,
+      row.consignment_number
+    ),
     tracking_details: articleTrackingDetails(row),
   };
 }, z
@@ -130,7 +162,19 @@ export const bulkTrackingResponseSchema = z
 export type ParsedBulkTrackingResponse = z.infer<typeof bulkTrackingResponseSchema>;
 
 export function parseBulkTrackingResponse(json: unknown): ParsedBulkTrackingResponse {
-  const parsed = bulkTrackingResponseSchema.safeParse(json);
+  const root = parseJsonIfString(json);
+  const envelope =
+    root && typeof root === "object" && !Array.isArray(root)
+      ? {
+          ...(root as Record<string, unknown>),
+          data: (root as Record<string, unknown>).data ??
+            (root as Record<string, unknown>).Data ??
+            (root as Record<string, unknown>).articles ??
+            (root as Record<string, unknown>).Articles ??
+            (root as Record<string, unknown>).result,
+        }
+      : root;
+  const parsed = bulkTrackingResponseSchema.safeParse(envelope);
   if (!parsed.success) {
     const error = new Error("Tracking response schema is invalid.");
     (error as { code?: string; status?: number }).code = "TEMPORARY_PROVIDER_FAILURE";
@@ -151,9 +195,21 @@ export function retryAfterMsFromHeader(value: string | null) {
 
 export function bulkArticleNumber(article: {
   article_number?: unknown;
-  booking_details?: { article_number?: unknown } | null;
+  barcode?: unknown;
+  consignment_number?: unknown;
+  booking_details?: Record<string, unknown> | null;
 } | null | undefined) {
-  return String(article?.booking_details?.article_number ?? article?.article_number ?? "").trim();
+  const booking = article?.booking_details ?? undefined;
+  return (
+    firstText(
+      booking?.article_number,
+      booking?.articleNumber,
+      booking?.articleid,
+      article?.article_number,
+      article?.barcode,
+      article?.consignment_number
+    ) ?? ""
+  );
 }
 
 export function articlesForRequestedBarcodes(
@@ -165,7 +221,7 @@ export function articlesForRequestedBarcodes(
   const list = articles ?? [];
   const matched = list.filter((article) => wantedSet.has(bulkArticleNumber(article).toUpperCase()));
   if (matched.length) return matched;
-  if (wanted.length === 1 && list.length === 1 && !bulkArticleNumber(list[0])) {
+  if (wanted.length === 1 && list.length === 1) {
     const details = list[0]?.tracking_details;
     if (Array.isArray(details) && details.length) return list;
   }
