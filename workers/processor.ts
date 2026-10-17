@@ -16,7 +16,11 @@ import {
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
 import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
-import { enqueueOrgTrackingSyncIfIdle, trackingSyncCutoffIso, trackingSyncPageSize } from "@/modules/india-post/tracking-sync";
+import {
+  enqueueOrgTrackingSyncIfIdle,
+  trackingSyncDueFilter,
+  trackingSyncPageSize,
+} from "@/modules/india-post/tracking-sync";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
 import { assertIndiaPostBulkPostAllowed } from "@/modules/india-post/bulk-run";
@@ -690,7 +694,7 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
   try {
   const provider = await ensurePersistedIndiaPostSession(supabase, connection);
   const pageSize = trackingSyncPageSize();
-  const cutoff = trackingSyncCutoffIso();
+  const dueFilter = trackingSyncDueFilter();
   const maxPages = 4;
   let page = 0;
   let lastPageFull = false;
@@ -705,7 +709,7 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
       .not("barcode", "is", null)
       .in("status", [...TRACKING_POLL_STATUSES])
       .or("operational_status.is.null,operational_status.neq.RTO_DELIVERED")
-      .or(`last_tracked_at.is.null,last_tracked_at.lt.${cutoff}`)
+      .or(dueFilter)
       .order("last_tracked_at", { ascending: true, nullsFirst: true })
       .limit(pageSize);
     const rows = shipments ?? [];

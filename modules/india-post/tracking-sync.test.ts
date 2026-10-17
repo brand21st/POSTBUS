@@ -3,7 +3,9 @@ import { INDIA_POST_TRACKING_BULK_LIMIT } from "@/modules/india-post/spec";
 import {
   enqueueDueTrackingSyncJobs,
   enqueueOrgTrackingSyncIfIdle,
+  trackingSyncDueFilter,
   trackingSyncPageSize,
+  trackingSyncUnscannedIntervalMs,
 } from "@/modules/india-post/tracking-sync";
 
 vi.mock("@/modules/jobs/service", () => ({
@@ -90,5 +92,15 @@ describe("tracking-sync enqueue", () => {
     const result = await enqueueDueTrackingSyncJobs(supabase as never);
     expect(result.enqueued).toBe(2);
     expect(createBackgroundJob).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("tracking-sync due filter", () => {
+  it("re-polls articles with no scans sooner than the normal interval", () => {
+    const now = Date.parse("2026-10-17T12:00:00.000Z");
+    expect(trackingSyncUnscannedIntervalMs()).toBe(2 * 60 * 1000);
+    expect(trackingSyncDueFilter(now)).toContain("last_event_at.is.null");
+    expect(trackingSyncDueFilter(now)).toContain("2026-10-17T11:58:00.000Z");
+    expect(trackingSyncDueFilter(now)).toContain("2026-10-17T11:45:00.000Z");
   });
 });

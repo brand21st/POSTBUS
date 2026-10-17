@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logInfo } from "@/lib/logger";
 import { mapIndiaPostEventToShipmentUpdate, planTrackingUpdate, type TrackingWhatsAppEvent } from "@/modules/india-post/event-mapper";
+import { civilIndiaPostDate, normalizeTrackingDetail } from "@/modules/india-post/tracking-response";
 
 export type TrackingNotifyNotice = {
   event: TrackingWhatsAppEvent;
@@ -40,18 +41,25 @@ export type ApplyTrackingResult = {
   whatsappEvents: TrackingWhatsAppEvent[];
 };
 
+export type BulkTrackingEvent = {
+  event?: string;
+  office?: string;
+  officeid?: string;
+  date?: string;
+  time?: string;
+  event_code?: string;
+  event_date?: string;
+  event_time?: string;
+  event_description?: string;
+  event_office_name?: string;
+  remarks?: string;
+  rts?: boolean;
+};
+
 export type BulkTrackingArticle = {
+  article_number?: string;
   booking_details?: { article_number?: string; delivery_confirmed_on?: string | null };
-  tracking_details?: Array<{
-    event?: string;
-    office?: string;
-    officeid?: string;
-    date?: string;
-    time?: string;
-    event_code?: string;
-    remarks?: string;
-    rts?: boolean;
-  }>;
+  tracking_details?: BulkTrackingEvent[];
   del_status?: { del_status?: string };
 };
 
@@ -102,16 +110,18 @@ export function snapshotFromShipmentRow(
   };
 }
 
-export function bulkEventOccurredAt(event: { date?: string; time?: string }) {
-  const date = String(event.date ?? "").trim();
-  const time = String(event.time ?? "").trim();
+export function bulkEventOccurredAt(event: BulkTrackingEvent | Record<string, unknown>) {
+  const normalized = normalizeTrackingDetail(event as Record<string, unknown>);
+  const date = String(normalized.date ?? "").trim();
+  const time = String(normalized.time ?? "").trim();
   if (/^\d{4}-\d{2}-\d{2}T/.test(date)) {
     const parsed = new Date(date);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
-  if (date && time && !date.includes("T")) {
+  const civil = civilIndiaPostDate(date);
+  if (civil && time && !date.includes("T")) {
     const clock = /^\d{2}:\d{2}(:\d{2})?$/.test(time) ? (time.length === 5 ? `${time}:00` : time) : time;
-    const parsed = new Date(`${date}T${clock}`);
+    const parsed = new Date(`${civil}T${clock}+05:30`);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
   if (date) {
@@ -147,8 +157,8 @@ export function matchingBulkTrackingArticle(articles: BulkTrackingArticle[] | un
   return (only?.tracking_details?.length ?? 0) > 0 ? only ?? null : null;
 }
 
-function bulkEventDescription(event: { event?: string; remarks?: string }) {
-  const text = String(event.event ?? "").trim();
+function bulkEventDescription(event: { event?: string; event_description?: string; remarks?: string }) {
+  const text = String(event.event ?? event.event_description ?? "").trim();
   const remarks = String(event.remarks ?? "").trim();
   if (text && remarks) return `${text} — ${remarks}`;
   return text || remarks || null;
@@ -297,7 +307,9 @@ export async function ingestBulkTrackingArticle(
     source?: TrackingIngestSource;
   }
 ) {
-  const details = [...(input.article.tracking_details ?? [])].sort((left, right) => {
+  const details = [...(input.article.tracking_details ?? [])]
+    .map((event) => normalizeTrackingDetail(event as Record<string, unknown>) as BulkTrackingEvent)
+    .sort((left, right) => {
     const leftAt = bulkEventOccurredAt(left) ?? "";
     const rightAt = bulkEventOccurredAt(right) ?? "";
     const time = leftAt.localeCompare(rightAt);

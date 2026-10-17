@@ -27,6 +27,20 @@ export function trackingSyncCutoffIso(now = Date.now()) {
   return new Date(now - trackingSyncMinIntervalMs()).toISOString();
 }
 
+export function trackingSyncUnscannedIntervalMs() {
+  return Math.min(trackingSyncMinIntervalMs(), 2 * 60 * 1000);
+}
+
+export function trackingSyncUnscannedCutoffIso(now = Date.now()) {
+  return new Date(now - trackingSyncUnscannedIntervalMs()).toISOString();
+}
+
+export function trackingSyncDueFilter(now = Date.now()) {
+  const cutoff = trackingSyncCutoffIso(now);
+  const unscannedCutoff = trackingSyncUnscannedCutoffIso(now);
+  return `last_tracked_at.is.null,last_tracked_at.lt.${cutoff},and(last_event_at.is.null,last_tracked_at.lt.${unscannedCutoff})`;
+}
+
 export async function organizationHasOpenTrackingSync(
   supabase: SupabaseClient,
   organizationId: string
