@@ -40,7 +40,15 @@ export function webhookSourceIp(headers: Headers) {
   const cf = headers.get("cf-connecting-ip")?.trim();
   if (cf) return cf;
   const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || null;
+  if (forwarded) return forwarded;
+  return headers.get("x-real-ip")?.trim() || null;
+}
+
+export function allowlistAllowsAnyIp(cidrs: string[]) {
+  return cidrs.some((cidr) => {
+    const bitsRaw = cidr.includes("/") ? cidr.split("/")[1] : "32";
+    return Number(bitsRaw) === 0;
+  });
 }
 
 export function currentIndiaPostWebhookAllowlist() {
@@ -59,6 +67,7 @@ export function assertIndiaPostWebhookSourceAllowed(
 ) {
   const cidrs = allowlist == null ? currentIndiaPostWebhookAllowlist() : parseCidrList(allowlist);
   if (!cidrs.length) return;
+  if (allowlistAllowsAnyIp(cidrs)) return;
   if (!ip || !ipMatchesCidrs(ip, cidrs)) {
     throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook source is not allowed.");
   }

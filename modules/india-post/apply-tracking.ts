@@ -2,6 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logInfo } from "@/lib/logger";
 import { mapIndiaPostEventToShipmentUpdate, planTrackingUpdate, type TrackingWhatsAppEvent } from "@/modules/india-post/event-mapper";
 
+export type TrackingNotifyNotice = {
+  event: TrackingWhatsAppEvent;
+  eventCode: string;
+  occurredAt: string;
+};
+
 export const TRACKING_POLL_STATUSES = [
   "BOOKED",
   "LABEL_READY",
@@ -278,7 +284,7 @@ export async function applyIndiaPostTracking(
     shipmentStatus: next.status,
     operationalStatus: next.operationalStatus,
     snapshot: next,
-    whatsappEvents: plan.whatsappEvents,
+    whatsappEvents: duplicate ? [] : plan.whatsappEvents,
   };
 }
 
@@ -301,6 +307,7 @@ export async function ingestBulkTrackingArticle(
   let snapshot = input.shipment;
   let orderStatus: "IN_TRANSIT" | "DELIVERED" | null = null;
   const whatsappEvents: TrackingWhatsAppEvent[] = [];
+  const notices: TrackingNotifyNotice[] = [];
 
   for (const event of details) {
     const occurredAt = bulkEventOccurredAt(event);
@@ -327,6 +334,7 @@ export async function ingestBulkTrackingArticle(
     if (result.orderStatus) orderStatus = result.orderStatus;
     for (const notify of result.whatsappEvents) {
       if (!whatsappEvents.includes(notify)) whatsappEvents.push(notify);
+      notices.push({ event: notify, eventCode: event.event_code || event.event || "EVENT", occurredAt });
     }
   }
 
@@ -353,6 +361,7 @@ export async function ingestBulkTrackingArticle(
     if (result.orderStatus) orderStatus = result.orderStatus;
     for (const notify of result.whatsappEvents) {
       if (!whatsappEvents.includes(notify)) whatsappEvents.push(notify);
+      notices.push({ event: notify, eventCode: "ITEM_DELIVERED", occurredAt: deliveredAt });
     }
   } else if (!details.length) {
     await supabase
@@ -362,5 +371,5 @@ export async function ingestBulkTrackingArticle(
       .eq("organization_id", input.organizationId);
   }
 
-  return { snapshot, orderStatus, whatsappEvents };
+  return { snapshot, orderStatus, whatsappEvents, notices };
 }

@@ -15,7 +15,19 @@ import {
 export type WatiNotifyIds = {
   orderId?: string | null;
   shipmentId?: string | null;
+  eventCode?: string | null;
+  occurredAt?: string | null;
 };
+
+function sameNotifyScan(
+  left: { eventCode?: string | null; occurredAt?: string | null },
+  right: { eventCode?: string | null; occurredAt?: string | null }
+) {
+  const leftScan = left.eventCode && left.occurredAt ? `${left.eventCode}|${left.occurredAt}` : null;
+  const rightScan = right.eventCode && right.occurredAt ? `${right.eventCode}|${right.occurredAt}` : null;
+  if (leftScan && rightScan) return leftScan === rightScan;
+  return !leftScan && !rightScan;
+}
 
 const TEMPLATE_COLUMNS =
   "status, order_confirmation_template_name, processing_template_name, booked_template_name, in_transit_template_name, delivered_template_name";
@@ -175,7 +187,13 @@ export async function enqueueWatiNotify(
     jobType: "wati-notify",
     entityType: ids.shipmentId ? "shipment" : "order",
     entityId,
-    progress: { event, shipmentId: ids.shipmentId ?? null, orderId: ids.orderId ?? null },
+    progress: {
+      event,
+      shipmentId: ids.shipmentId ?? null,
+      orderId: ids.orderId ?? null,
+      eventCode: ids.eventCode ?? null,
+      occurredAt: ids.occurredAt ?? null,
+    },
   });
 }
 
@@ -187,11 +205,12 @@ export function isDuplicateWatiNotifyJob(
   return jobs.some((job) => {
     if (watiEventFromJobProgress(job.progress) !== event) return false;
     const fromJob = watiIdsFromJob(job.progress, job.entity_id);
-    if (ids.orderId && (fromJob.orderId === ids.orderId || job.entity_id === ids.orderId)) return true;
-    if (ids.shipmentId && (fromJob.shipmentId === ids.shipmentId || job.entity_id === ids.shipmentId)) {
-      return true;
-    }
-    return false;
+    const sameOrder = Boolean(ids.orderId && (fromJob.orderId === ids.orderId || job.entity_id === ids.orderId));
+    const sameShipment = Boolean(
+      ids.shipmentId && (fromJob.shipmentId === ids.shipmentId || job.entity_id === ids.shipmentId)
+    );
+    if (!sameOrder && !sameShipment) return false;
+    return sameNotifyScan(ids, fromJob);
   });
 }
 
@@ -227,5 +246,7 @@ export function watiIdsFromJob(progress: unknown, fallbackId?: string | null): W
   return {
     shipmentId: record.shipmentId ?? (fallbackId && !record.orderId ? fallbackId : null),
     orderId: record.orderId ?? null,
+    eventCode: record.eventCode ?? null,
+    occurredAt: record.occurredAt ?? null,
   };
 }

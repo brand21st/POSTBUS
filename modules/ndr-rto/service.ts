@@ -388,6 +388,7 @@ async function applyTrackedShipment(
       orderId: data.order_id,
       orderStatus: ingested.orderStatus,
       events: ingested.whatsappEvents,
+      notices: ingested.notices,
     });
   }
   return {

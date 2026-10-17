@@ -65,15 +65,17 @@ export async function acceptIndiaPostWebhook(
     headers: Headers;
   }
 ) {
+  const sourceIp = webhookSourceIp(input.headers);
   if (isIndiaPostWebhookQuarantined()) {
     logInfo("india_post.webhook.quarantined", {
       provider: "INDIA_POST",
       connectionId: input.connectionId,
       channel: input.channel,
+      sourceIp,
     });
     return { accepted: false, quarantined: true, duplicate: false, inboxEventId: null };
   }
-  assertIndiaPostWebhookSourceAllowed(webhookSourceIp(input.headers));
+  assertIndiaPostWebhookSourceAllowed(sourceIp);
   if (Buffer.byteLength(input.rawBody, "utf8") > INDIA_POST_WEBHOOK_MAX_BYTES) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Payload too large.");
   }
@@ -160,6 +162,7 @@ export async function acceptIndiaPostWebhook(
     provider: "INDIA_POST",
     connectionId: input.connectionId,
     channel: input.channel,
+    sourceIp,
     eventCode: parsed.eventCode,
     trackingNumber: maskTrackingNumber(parsed.barcode),
     inboxEventId,
@@ -246,15 +249,17 @@ export async function processIndiaPostInboxEvent(
     return { processed: false, reason: "unknown-shipment" };
   }
 
+  const occurredAt = parsed.eventTimestamp ?? inbox.received_at ?? new Date().toISOString();
+  const eventCode = parsed.eventCode || "EVENT";
   const applied = await applyIndiaPostTracking(
     supabase,
     snapshotFromShipmentRow(shipment, organizationId),
     {
-      eventCode: parsed.eventCode || "EVENT",
+      eventCode,
       eventDescription: parsed.eventDescription,
       officeName: parsed.officeName,
       officeId: parsed.officeId,
-      occurredAt: parsed.eventTimestamp ?? inbox.received_at ?? new Date().toISOString(),
+      occurredAt,
       raw: trackingEventRaw(parsed.rawPayload, "webhook"),
       nonDeliveryReason: parsed.nonDeliveryReason,
       rts: parsed.rawPayload.rts === true ? true : parsed.rawPayload.rts === false ? false : null,
@@ -268,6 +273,7 @@ export async function processIndiaPostInboxEvent(
       orderId: shipment.order_id,
       orderStatus: applied.orderStatus,
       events: applied.whatsappEvents,
+      notices: applied.whatsappEvents.map((event) => ({ event, eventCode, occurredAt })),
       body: parsed.eventDescription ?? parsed.eventCode,
     });
   } else if (applied.inserted) {

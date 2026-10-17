@@ -17,6 +17,12 @@ vi.mock("@/modules/shopify/orders", () => ({
 vi.mock("@/modules/automation/service", () => ({
   getAutomationSettings: (...args: unknown[]) => getAutomationSettings(...args),
 }));
+vi.mock("@/lib/notifications/order-stage", () => ({
+  insertOrderStageNotification: vi.fn(async () => undefined),
+}));
+vi.mock("@/modules/vachat/knowledge", () => ({
+  scheduleMerchantKnowledgeSync: vi.fn(),
+}));
 
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 

@@ -117,7 +117,7 @@ describe("planTrackingUpdate", () => {
     expect(plan.whatsappEvents).toEqual(["in_transit"]);
   });
 
-  it("does not queue WhatsApp for a later in-transit scan", () => {
+  it("queues in_transit WhatsApp for a later office scan", () => {
     const plan = planTrackingUpdate({
       currentStatus: "IN_TRANSIT",
       currentOperational: "IN_TRANSIT",
@@ -127,7 +127,7 @@ describe("planTrackingUpdate", () => {
       mapped: mapIndiaPostEventToShipmentUpdate({ eventCode: "ITEM_RECEIVED", eventDescription: "Item Received" }),
     });
     expect(plan.applyStatus).toBe(true);
-    expect(plan.whatsappEvents).toEqual([]);
+    expect(plan.whatsappEvents).toEqual(["in_transit"]);
   });
 
   it("queues shipment_delayed WhatsApp when India Post reports a delay", () => {
@@ -159,6 +159,7 @@ describe("planTrackingUpdate", () => {
     });
     expect(plan.applyStatus).toBe(false);
     expect(plan.updateLastScan).toBe(false);
+    expect(plan.whatsappEvents).toEqual(["in_transit"]);
   });
 
   it("turns a later plain delivered scan into RTO delivered without marking the order delivered", () => {
@@ -277,7 +278,9 @@ describe("applyIndiaPostTracking", () => {
       raw: { non_delivery_reason: "Door locked" },
       nonDeliveryReason: "Door locked",
     });
+    expect(first.whatsappEvents).toEqual(["in_transit"]);
     expect(second.duplicate).toBe(true);
+    expect(second.whatsappEvents).toEqual([]);
     expect(second.snapshot.ndrAttemptCount).toBe(1);
     const attemptPatches = updates
       .filter((update) => update.table === "shipments")
@@ -339,6 +342,7 @@ describe("applyIndiaPostTracking", () => {
       event_description: "Item Kept on Hold — Intimation Delivered",
     });
     expect((events[0].raw as { _meta?: { source?: string } })._meta?.source).toBe("bulk");
+    expect(ingested.notices.map((notice) => notice.eventCode)).toEqual(["Item Kept on Hold", "Item Dispatched"]);
     expect(ingested.snapshot.status).toBe("RTO");
     const delivery = updates.find((update) => update.patch.status === "DELIVERED");
     expect(delivery).toBeUndefined();
