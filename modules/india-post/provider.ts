@@ -3,6 +3,7 @@ import { timed } from "@/lib/jobs/timing";
 import { decryptSecret, encryptSecret } from "@/lib/security/crypto";
 import { indiaPostBookingFileUrl, indiaPostBookingUrl, indiaPostOfficesFromPincodeResponse, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
 import { indiaPostBookingHasArticleOutcomes, indiaPostFormatBookingFailure, indiaPostJoinMessages } from "@/modules/india-post/error-text";
+import { createIndiaPostLoginError } from "@/modules/india-post/login-auth";
 import { INDIA_POST_TIMEOUT_MS, indiaPostTimeoutSignal } from "@/modules/india-post/http";
 import { chunkIds } from "@/modules/india-post/booking-batch";
 import { INDIA_POST_TRACKING_BULK_LIMIT } from "@/modules/india-post/spec";
@@ -81,11 +82,12 @@ export class IndiaPostProvider implements ShippingProvider {
     });
     const json = await response.json().catch(() => ({}));
     if (!response.ok || !json?.success) {
-      const error = new Error(json?.message || "India Post authentication failed.");
-      (error as { status?: number; code?: string }).status = response.status;
-      (error as { code?: string }).code =
-        response.status === 401 ? "PERMANENT_AUTH_ERROR" : `HTTP_${response.status}`;
-      throw error;
+      throw createIndiaPostLoginError(
+        response.status,
+        typeof json?.message === "string" && json.message.trim()
+          ? json.message
+          : "India Post authentication failed."
+      );
     }
     const tokens = json.data as {
       access_token: string;

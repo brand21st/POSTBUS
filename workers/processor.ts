@@ -15,6 +15,7 @@ import {
   TRACKING_POLL_STATUSES,
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
+import { tagTrackingLoginAuthFailure } from "@/modules/india-post/login-auth";
 import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
 import {
   enqueueOrgTrackingSyncIfIdle,
@@ -768,13 +769,17 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
     barcodesSynced,
   });
   } catch (error) {
+    const tagged = tagTrackingLoginAuthFailure(error);
+    const taggedError = tagged as { code?: string; status?: number };
     logError("india_post.tracking.sync_fail", {
       organizationId: payload.organizationId,
       jobId: payload.jobId,
       durationMs: Date.now() - started,
-      message: error instanceof Error ? error.message : "tracking sync failed",
+      errorCode: taggedError.code,
+      httpStatus: taggedError.status,
+      message: tagged instanceof Error ? tagged.message : "tracking sync failed",
     });
-    throw error;
+    throw tagged;
   }
 }
 

@@ -146,6 +146,29 @@ describe("IndiaPostProvider in-memory session", () => {
     await expect(provider.trackShipment(["AW123456789IN"])).rejects.toMatchObject({
       code: "PERMANENT_AUTH_ERROR",
       status: 401,
+      indiaPostOperation: "login",
+    });
+  });
+
+  it("keeps login HTTP 400 as HTTP_400 so booking classification stays unchanged", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ success: false, message: "Authentication failed" }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new IndiaPostProvider({
+      environment: "UAT",
+      status: "CONNECTED",
+      encrypted_username: encryptSecret("user"),
+      encrypted_password: encryptSecret("pass"),
+    });
+
+    await expect(provider.login()).rejects.toMatchObject({
+      code: "HTTP_400",
+      status: 400,
+      indiaPostOperation: "login",
     });
   });
 
