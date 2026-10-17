@@ -55,6 +55,90 @@ export function indiaPostWebhookIdempotencyKey(parsed: ParsedIndiaPostWebhook, r
   return { kind: "hash" as const, key: payloadHash(rawBody) };
 }
 
+type WebhookConnection = {
+  id: string;
+  organization_id: string;
+  bulk_customer_id?: string | null;
+};
+
+type ArticleShipment = {
+  id: string;
+  organization_id: string;
+  barcode?: string | null;
+  tracking_number?: string | null;
+};
+
+const SHIPMENT_LOOKUP_COLUMNS =
+  "id, organization_id, status, barcode, tracking_number, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at";
+
+async function rowsFor<T>(query: PromiseLike<{ data: T[] | T | null; error: { message?: string } | null }>) {
+  const { data, error } = await query;
+  if (error) return [] as T[];
+  if (!data) return [] as T[];
+  return Array.isArray(data) ? data : [data];
+}
+
+export async function findShipmentByArticle(
+  supabase: ReturnType<typeof createAdminClient>,
+  article: string | null
+): Promise<ArticleShipment | null> {
+  if (!article || !/^[A-Za-z0-9]{5,50}$/.test(article)) return null;
+  const byBarcode = await rowsFor<ArticleShipment>(
+    supabase.from("shipments").select("id, organization_id, barcode, tracking_number").eq("barcode", article).limit(2) as never
+  );
+  if (byBarcode.length > 1) return null;
+  if (byBarcode.length === 1) return byBarcode[0];
+  const byTracking = await rowsFor<ArticleShipment>(
+    supabase
+      .from("shipments")
+      .select("id, organization_id, barcode, tracking_number")
+      .eq("tracking_number", article)
+      .limit(2) as never
+  );
+  if (byTracking.length !== 1) return null;
+  return byTracking[0];
+}
+
+export async function resolveIndiaPostWebhookTarget(
+  supabase: ReturnType<typeof createAdminClient>,
+  input: { connectionId: string; barcode: string | null; customerId: string | null }
+): Promise<WebhookConnection> {
+  const { data: urlConnection } = await supabase
+    .from("india_post_connections")
+    .select("id, organization_id, bulk_customer_id")
+    .eq("id", input.connectionId)
+    .maybeSingle();
+  if (!urlConnection) {
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
+  }
+
+  const shipment = await findShipmentByArticle(supabase, input.barcode);
+  if (shipment) {
+    const { data: ownerConnection } = await supabase
+      .from("india_post_connections")
+      .select("id, organization_id, bulk_customer_id")
+      .eq("organization_id", shipment.organization_id)
+      .maybeSingle();
+    return (ownerConnection as WebhookConnection | null) ?? (urlConnection as WebhookConnection);
+  }
+
+  const payloadCustomer = String(input.customerId ?? "").trim();
+  const urlCustomer = String(urlConnection.bulk_customer_id ?? "").trim();
+  if (payloadCustomer && urlCustomer && payloadCustomer !== urlCustomer) {
+    const matches = await rowsFor<WebhookConnection>(
+      supabase
+        .from("india_post_connections")
+        .select("id, organization_id, bulk_customer_id")
+        .eq("bulk_customer_id", payloadCustomer)
+        .limit(2) as never
+    );
+    if (matches.length === 1) return matches[0];
+    throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook customer id does not match this connection.");
+  }
+
+  return urlConnection as WebhookConnection;
+}
+
 export async function acceptIndiaPostWebhook(
   supabase: ReturnType<typeof createAdminClient>,
   input: {
@@ -81,17 +165,11 @@ export async function acceptIndiaPostWebhook(
   }
 
   const parsed = parseIndiaPostWebhook(input.rawBody, input.contentType, input.channel);
-  if (parsed.customerId) {
-    const { data: connection } = await supabase
-      .from("india_post_connections")
-      .select("id, bulk_customer_id")
-      .eq("id", input.connectionId)
-      .maybeSingle();
-    const expected = String(connection?.bulk_customer_id ?? "").trim();
-    if (expected && expected !== parsed.customerId) {
-      throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook customer id does not match this connection.");
-    }
-  }
+  const target = await resolveIndiaPostWebhookTarget(supabase, {
+    connectionId: input.connectionId,
+    barcode: parsed.barcode,
+    customerId: parsed.customerId,
+  });
   const hash = payloadHash(input.rawBody);
   const storedPayload = {
     ...parsed.rawPayload,
@@ -99,11 +177,13 @@ export async function acceptIndiaPostWebhook(
       channel: input.channel,
       headers: safeWebhookHeaders(input.headers),
       parseError: parsed.parseError,
+      receivedConnectionId: input.connectionId,
+      routedConnectionId: target.id,
     },
   };
 
   const persist = await supabase.rpc("accept_india_post_webhook", {
-    p_connection_id: input.connectionId,
+    p_connection_id: target.id,
     p_channel: input.channel,
     p_raw_payload: storedPayload,
     p_payload_hash: hash,
@@ -130,7 +210,8 @@ export async function acceptIndiaPostWebhook(
   if (result.duplicate) {
     logInfo("india_post.webhook.duplicate", {
       provider: "INDIA_POST",
-      connectionId: input.connectionId,
+      connectionId: target.id,
+      receivedConnectionId: input.connectionId,
       organizationId: result.organization_id,
       channel: input.channel,
       inboxEventId,
@@ -150,7 +231,7 @@ export async function acceptIndiaPostWebhook(
     } catch (error) {
       logError("india_post.webhook.enqueue_failed", {
         provider: "INDIA_POST",
-        connectionId: input.connectionId,
+        connectionId: target.id,
         organizationId: result.organization_id,
         inboxEventId,
         message: error instanceof Error ? error.message : "enqueue failed",
@@ -160,7 +241,8 @@ export async function acceptIndiaPostWebhook(
 
   logInfo("india_post.webhook.accepted", {
     provider: "INDIA_POST",
-    connectionId: input.connectionId,
+    connectionId: target.id,
+    receivedConnectionId: input.connectionId,
     channel: input.channel,
     sourceIp,
     eventCode: parsed.eventCode,
@@ -218,9 +300,7 @@ export async function processIndiaPostInboxEvent(
 
   const { data: byBarcode } = await supabase
     .from("shipments")
-    .select(
-      "id, organization_id, status, barcode, tracking_number, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
-    )
+    .select(SHIPMENT_LOOKUP_COLUMNS)
     .eq("organization_id", organizationId)
     .eq("barcode", parsed.barcode)
     .maybeSingle();
@@ -228,20 +308,30 @@ export async function processIndiaPostInboxEvent(
     ? { data: byBarcode }
     : await supabase
         .from("shipments")
-        .select(
-          "id, organization_id, status, barcode, tracking_number, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
-        )
+        .select(SHIPMENT_LOOKUP_COLUMNS)
         .eq("organization_id", organizationId)
         .eq("tracking_number", parsed.barcode)
         .maybeSingle();
-  const shipment = byBarcode ?? byTracking;
+  let shipment = byBarcode ?? byTracking;
+  if (!shipment) {
+    const matched = await findShipmentByArticle(supabase, parsed.barcode);
+    if (matched) {
+      const { data: owned } = await supabase
+        .from("shipments")
+        .select(SHIPMENT_LOOKUP_COLUMNS)
+        .eq("id", matched.id)
+        .eq("organization_id", matched.organization_id)
+        .maybeSingle();
+      shipment = owned;
+    }
+  }
 
-  if (!shipment || shipment.organization_id !== organizationId) {
+  if (!shipment) {
     await supabase
       .from("provider_webhook_inbox")
       .update({
         process_status: "FAILED",
-        process_error: "No shipment matched this organization and article_number.",
+        process_error: "No shipment matched this article_number.",
         processed_at: new Date().toISOString(),
       })
       .eq("id", inbox.id)
@@ -249,11 +339,12 @@ export async function processIndiaPostInboxEvent(
     return { processed: false, reason: "unknown-shipment" };
   }
 
+  const shipmentOrgId = String(shipment.organization_id);
   const occurredAt = parsed.eventTimestamp ?? inbox.received_at ?? new Date().toISOString();
   const eventCode = parsed.eventCode || "EVENT";
   const applied = await applyIndiaPostTracking(
     supabase,
-    snapshotFromShipmentRow(shipment, organizationId),
+    snapshotFromShipmentRow(shipment, shipmentOrgId),
     {
       eventCode,
       eventDescription: parsed.eventDescription,
@@ -268,7 +359,7 @@ export async function processIndiaPostInboxEvent(
 
   if (applied.whatsappEvents.length || applied.orderStatus) {
     await enqueueTrackingStageSideEffects(supabase, {
-      organizationId,
+      organizationId: shipmentOrgId,
       shipmentId: shipment.id,
       orderId: shipment.order_id,
       orderStatus: applied.orderStatus,
@@ -278,7 +369,7 @@ export async function processIndiaPostInboxEvent(
     });
   } else if (applied.inserted) {
     await supabase.from("notifications").insert({
-      organization_id: organizationId,
+      organization_id: shipmentOrgId,
       type: "tracking.updated",
       title: "Shipment tracking updated",
       body: parsed.eventDescription ?? parsed.eventCode,
@@ -288,7 +379,7 @@ export async function processIndiaPostInboxEvent(
   }
 
   if (applied.inserted) {
-    await emitWebhook(supabase, organizationId, "tracking.updated", {
+    await emitWebhook(supabase, shipmentOrgId, "tracking.updated", {
       shipmentId: shipment.id,
       eventCode: parsed.eventCode,
     });
@@ -306,7 +397,8 @@ export async function processIndiaPostInboxEvent(
 
   logInfo("india_post.webhook.processed", {
     provider: "INDIA_POST",
-    organizationId,
+    organizationId: shipmentOrgId,
+    receivedOrganizationId: organizationId,
     inboxEventId: inbox.id,
     eventCode: parsed.eventCode,
     trackingNumber: maskTrackingNumber(parsed.barcode),
