@@ -150,4 +150,16 @@ describe("toCustomerTrackView", () => {
   it("returns null when no shipment was found", () => {
     expect(toCustomerTrackView({ found: false, liveTracking: "unavailable", shipment: null })).toBeNull();
   });
+
+  it("keeps a booked article without scans on Booked instead of In Transit", () => {
+    const view = toCustomerTrackView(
+      result({
+        status: "MANIFEST_READY",
+        operationalStatus: null,
+        events: [],
+      })
+    );
+    expect(view?.statusKey).toBe("BOOKED");
+    expect(view?.events).toEqual([]);
+  });
 });

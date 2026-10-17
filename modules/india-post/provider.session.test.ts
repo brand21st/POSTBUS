@@ -44,6 +44,45 @@ describe("IndiaPostProvider in-memory session", () => {
     expect(result.data).toEqual([]);
   });
 
+  it("does not treat tracking 403 as empty Routing Steps", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes("/access/login")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: {
+              access_token: "live-token",
+              refresh_token: "refresh",
+              id_token: "id",
+              expires_in: 3600,
+              refresh_expires_in: 7200,
+            },
+          }),
+        };
+      }
+      return {
+        ok: false,
+        status: 403,
+        json: async () => ({ success: false, error: { message: "You are not authorized to access this API" } }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new IndiaPostProvider({
+      environment: "UAT",
+      status: "CONNECTED",
+      encrypted_username: encryptSecret("user"),
+      encrypted_password: encryptSecret("pass"),
+      bulk_customer_id: "cust-1",
+    });
+
+    await expect(provider.trackShipment(["CX075364450IN"])).rejects.toMatchObject({
+      status: 403,
+      message: "You are not authorized to access this API",
+    });
+  });
+
   it("treats HTTP 200 with success false as a tracking failure", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).includes("/access/login")) {
