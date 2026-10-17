@@ -38,6 +38,28 @@ export type RoutingStageView = {
   current: boolean;
 };
 
+const LIVE_TRACKING_STOP = new Set(["DELIVERED", "CANCELLED", "FAILED", "RETURNED"]);
+
+export function shipmentNeedsLiveTracking(
+  record:
+    | {
+        status?: string | null;
+        operationalStatus?: string | null;
+        operational_status?: string | null;
+        trackingNumber?: string | null;
+        tracking_number?: string | null;
+        barcode?: string | null;
+      }
+    | null
+    | undefined
+) {
+  if (!record) return false;
+  const article = text(record.trackingNumber) ?? text(record.tracking_number) ?? text(record.barcode);
+  if (!article) return false;
+  const status = String(record.operationalStatus ?? record.operational_status ?? record.status ?? "").toUpperCase();
+  return Boolean(status) && !LIVE_TRACKING_STOP.has(status);
+}
+
 export type IndiaPostRoutingView = {
   articleNumber: string;
   articleType: string;

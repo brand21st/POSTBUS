@@ -4,18 +4,18 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, RotateCcw, Truck } from "lucide-react";
+import { ExternalLink, RefreshCw, RotateCcw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { IndiaPostRouting } from "@/components/dashboard/india-post-routing";
-import { buildIndiaPostRoutingView } from "@/lib/dashboard/india-post-routing";
+import { buildIndiaPostRoutingView, shipmentNeedsLiveTracking } from "@/lib/dashboard/india-post-routing";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
@@ -23,6 +23,7 @@ import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { FEATURE } from "@/modules/billing/entitlements";
+import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 import { indiaPostServiceLabel, type MemberRole } from "@/types/domain";
 import type { ShipmentRecord, TrackingEvent } from "@/types/api";
 
@@ -38,19 +39,30 @@ export default function ShipmentDetailPage() {
     queryKey: ["shipment", params.id],
     queryFn: () => api<ShipmentRecord & { events?: TrackingEvent[] }>(`/api/v1/shipments/${params.id}`),
     enabled: Boolean(params.id),
+    refetchInterval: (current) => (shipmentNeedsLiveTracking(current.state.data) ? 15_000 : false),
+    refetchIntervalInBackground: true,
   });
 
   const sync = useMutation({
-    mutationFn: () => api(`/api/v1/ndr-rto/${params.id}/sync`, { method: "POST" }),
-    onSuccess: () => {
-      toast.success("Tracking refreshed.");
+    mutationFn: async (silent: boolean) => {
+      const result = await api<{ matched?: boolean }>(`/api/v1/ndr-rto/${params.id}/sync`, { method: "POST" });
+      return { silent, matched: Boolean(result.matched) };
+    },
+    onSuccess: ({ silent, matched }) => {
+      if (!silent) {
+        toast.success(matched ? "Tracking refreshed." : "India Post has no scans for this article yet.");
+      }
       queryClient.invalidateQueries({ queryKey: ["shipment", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
       queryClient.invalidateQueries({ queryKey: ["ndr-rto"] });
       queryClient.invalidateQueries({ queryKey: ["ndr-rto-summary"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, silent) => {
+      if (!silent) toast.error(error.message);
+    },
   });
-  const autoSynced = useRef<string | null>(null);
+  const syncMutate = useRef(sync.mutate);
+  syncMutate.current = sync.mutate;
 
   const retry = useMutation({
     mutationFn: () => api(`/api/v1/shipments/${params.id}/retry`, { method: "POST" }),
@@ -114,16 +126,27 @@ export default function ShipmentDetailPage() {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [recordForHash]);
 
+  const liveTracking = shipmentNeedsLiveTracking(shipment.data);
   useEffect(() => {
-    if (!canSync || !params.id || shipment.isLoading || !shipment.data) return;
-    const article = shipment.data.trackingNumber ?? shipment.data.tracking_number ?? shipment.data.barcode;
-    const events = shipment.data.events ?? [];
-    if (!article || events.length > 0) return;
-    if (autoSynced.current === params.id) return;
-    autoSynced.current = params.id;
-    sync.mutate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync once per shipment when no scans exist
-  }, [canSync, params.id, shipment.data, shipment.isLoading]);
+    if (!canSync || !params.id || !liveTracking) return;
+    let stopped = false;
+    const inFlight = { current: false };
+    const pull = () => {
+      if (stopped || inFlight.current) return;
+      inFlight.current = true;
+      syncMutate.current(true, {
+        onSettled: () => {
+          inFlight.current = false;
+        },
+      });
+    };
+    pull();
+    const timer = window.setInterval(pull, 20_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [canSync, params.id, liveTracking]);
 
   if (shipment.isLoading) {
     return (
@@ -189,10 +212,21 @@ export default function ShipmentDetailPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             {canSync && article ? (
-              <Button type="button" variant="secondary" onClick={() => sync.mutate()} disabled={sync.isPending}>
+              <Button type="button" variant="secondary" onClick={() => sync.mutate(false)} disabled={sync.isPending}>
                 <RefreshCw className="size-4" />
                 Refresh tracking
               </Button>
+            ) : null}
+            {article ? (
+              <a
+                className={buttonVariants({ variant: "secondary" })}
+                href={postbusTrackingLink(article)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ExternalLink className="size-4" />
+                Customer tracking
+              </a>
             ) : null}
             <Button type="button" variant="secondary" onClick={() => void openCustomLabel(params.id, "preview")}>
               Preview label
@@ -219,7 +253,10 @@ export default function ShipmentDetailPage() {
           <CardContent className="space-y-3 text-sm">
             <StatusBadge value={statusValue} />
             <p className="text-muted">
-              Last synced {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
+              Last scan {formatDate(record.lastEventAt ?? record.last_event_at, true)}
+            </p>
+            <p className="text-muted">
+              Last lookup {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
             </p>
             {bookedAt && trackingLookupFailed ? (
               <p className="text-muted">
