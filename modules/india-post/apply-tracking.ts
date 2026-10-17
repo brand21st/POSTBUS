@@ -1,7 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logInfo } from "@/lib/logger";
 import { mapIndiaPostEventToShipmentUpdate, planTrackingUpdate, type TrackingWhatsAppEvent } from "@/modules/india-post/event-mapper";
-import { civilIndiaPostDate, normalizeTrackingDetail } from "@/modules/india-post/tracking-response";
+import {
+  bulkArticleNumber,
+  civilIndiaPostDate,
+  normalizeTrackingDetail,
+} from "@/modules/india-post/tracking-response";
 
 export type TrackingNotifyNotice = {
   event: TrackingWhatsAppEvent;
@@ -110,18 +114,24 @@ export function snapshotFromShipmentRow(
   };
 }
 
+function clockToHms(time: string) {
+  if (/^\d{2}:\d{2}:\d{2}$/.test(time)) return time;
+  if (/^\d{2}:\d{2}$/.test(time)) return `${time}:00`;
+  return time;
+}
+
 export function bulkEventOccurredAt(event: BulkTrackingEvent | Record<string, unknown>) {
   const normalized = normalizeTrackingDetail(event as Record<string, unknown>);
   const date = String(normalized.date ?? "").trim();
   const time = String(normalized.time ?? "").trim();
-  if (/^\d{4}-\d{2}-\d{2}T/.test(date)) {
+  const midnightIso = /^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?(Z|[+-]00:00)?$/.test(date);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(date) && (!midnightIso || !time)) {
     const parsed = new Date(date);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
-  const civil = civilIndiaPostDate(date);
-  if (civil && time && !date.includes("T")) {
-    const clock = /^\d{2}:\d{2}(:\d{2})?$/.test(time) ? (time.length === 5 ? `${time}:00` : time) : time;
-    const parsed = new Date(`${civil}T${clock}+05:30`);
+  const civil = midnightIso ? date.slice(0, 10) : civilIndiaPostDate(date);
+  if (civil && time && (midnightIso || !date.includes("T"))) {
+    const parsed = new Date(`${civil}T${clockToHms(time)}+05:30`);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
   if (date) {
@@ -139,21 +149,10 @@ export function matchingBulkTrackingArticle(articles: BulkTrackingArticle[] | un
   const wanted = String(barcode ?? "").trim().toUpperCase();
   if (!wanted || !articles?.length) return null;
   const matched =
-    articles.find((item) => {
-      const number = String(
-        item.booking_details?.article_number ?? (item as { article_number?: string }).article_number ?? ""
-      )
-        .trim()
-        .toUpperCase();
-      return Boolean(number) && number === wanted;
-    }) ?? null;
+    articles.find((item) => bulkArticleNumber(item).toUpperCase() === wanted) ?? null;
   if (matched) return matched;
   if (articles.length !== 1) return null;
   const only = articles[0];
-  const labeled = String(
-    only?.booking_details?.article_number ?? (only as { article_number?: string } | undefined)?.article_number ?? ""
-  ).trim();
-  if (labeled) return null;
   return (only?.tracking_details?.length ?? 0) > 0 ? only ?? null : null;
 }
 

@@ -68,6 +68,20 @@ describe("articlesForRequestedBarcodes", () => {
     );
     expect(kept).toHaveLength(1);
   });
+
+  it("keeps a lone article with scans when CEPT labels it differently", () => {
+    const kept = articlesForRequestedBarcodes(
+      [
+        {
+          booking_details: { article_number: "UNKNOWN" },
+          tracking_details: [{ event: "Item Booked", date: "2026-10-16T00:00:00Z", time: "11:04:20" }],
+        },
+      ],
+      ["CX075364450IN"]
+    );
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.tracking_details?.[0]?.event).toBe("Item Booked");
+  });
 });
 
 describe("India Post public tracking payload aliases", () => {
@@ -99,6 +113,28 @@ describe("India Post public tracking payload aliases", () => {
       event: "Item Booked",
       office: "Kozhikode PH",
     });
+  });
+
+  it("reads scans from an Articles envelope and a raw event list", () => {
+    const fromArticles = parseBulkTrackingResponse({
+      success: true,
+      Articles: [
+        {
+          booking_details: { articleNumber: "CX075364450IN" },
+          tracking_details: [{ date: "2026-10-16T00:00:00Z", time: "11:04:20", event: "Item Booked" }],
+        },
+      ],
+    });
+    expect(fromArticles.data?.[0]?.tracking_details?.[0]?.event).toBe("Item Booked");
+
+    const fromEvents = parseBulkTrackingResponse({
+      success: true,
+      data: [
+        { date: "2026-10-16T00:00:00Z", time: "11:04:20", event: "Item Booked", office: "Kozhikode PH" },
+        { date: "2026-10-16T00:00:00Z", time: "11:39:44", event: "Item bagged", office: "Kozhikode PH" },
+      ],
+    });
+    expect(fromEvents.data?.[0]?.tracking_details).toHaveLength(2);
   });
 });
 

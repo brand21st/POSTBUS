@@ -264,10 +264,26 @@ async function loadStoredShipment(
   return redactShipment(data as StoredShipmentRow);
 }
 
+function liveEventsFromArticle(article: BulkTrackingArticle | null) {
+  return (article?.tracking_details ?? [])
+    .map((event) => ({
+      eventCode: event.event_code || event.event || "EVENT",
+      eventDescription: event.event ?? null,
+      officeName: event.office ?? null,
+      occurredAt: eventOccurredAt(event),
+    }))
+    .filter((event) => event.eventDescription || event.eventCode !== "EVENT" || event.occurredAt);
+}
+
 async function refreshLiveTracking(
   organizationId: string,
   shipment: NonNullable<PublicTrackResult["shipment"]>
-): Promise<{ liveTracking: LiveState; liveMessage: string | null; status?: string | null }> {
+): Promise<{
+  liveTracking: LiveState;
+  liveMessage: string | null;
+  status?: string | null;
+  events?: PublicTrackingEvent[];
+}> {
   const barcode = shipment.barcode || shipment.trackingNumber;
   if (!barcode) {
     return {
@@ -282,6 +298,7 @@ async function refreshLiveTracking(
       liveTracking: "cached",
       liveMessage: `Last updated at ${new Date(cached.fetchedAt).toISOString()}`,
       status: cached.status,
+      events: cached.events,
     };
   }
 
@@ -327,12 +344,7 @@ async function refreshLiveTracking(
             source: "public",
           })
         : null;
-    const incoming = (article?.tracking_details ?? []).map((event) => ({
-      eventCode: event.event_code || event.event || "EVENT",
-      eventDescription: event.event ?? null,
-      officeName: event.office ?? null,
-      occurredAt: eventOccurredAt(event),
-    }));
+    const incoming = liveEventsFromArticle(article);
 
     liveCache.set(cacheKey(organizationId, barcode), {
       expiresAt: Date.now() + LIVE_TTL_MS,
@@ -345,6 +357,7 @@ async function refreshLiveTracking(
       liveTracking: "ok",
       liveMessage: null,
       status: ingested?.snapshot.status ?? shipment.status,
+      events: incoming,
     };
   } catch {
     return {
@@ -362,20 +375,20 @@ async function buildTrackResult(
 ): Promise<PublicTrackResult> {
   const live = await refreshLiveTracking(organizationId, stored);
   const refreshed =
-    live.liveTracking === "ok"
-      ? await loadStoredShipment(supabase, organizationId, query)
+    live.liveTracking === "ok" || live.liveTracking === "cached"
+      ? (await loadStoredShipment(supabase, organizationId, query)) ?? stored
       : stored;
+  const events = refreshed.events?.length ? refreshed.events : live.events ?? refreshed.events;
 
   return {
     found: true,
     liveTracking: live.liveTracking,
     liveMessage: live.liveMessage,
-    shipment: refreshed
-      ? {
-          ...refreshed,
-          status: live.status ?? refreshed.status,
-        }
-      : stored,
+    shipment: {
+      ...refreshed,
+      status: live.status ?? refreshed.status,
+      events,
+    },
   };
 }
 
