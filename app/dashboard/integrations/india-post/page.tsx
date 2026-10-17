@@ -26,7 +26,7 @@ import {
 import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { cn } from "@/lib/utils";
-import { Eye, EyeOff } from "lucide-react";
+import { Copy, Eye, EyeOff } from "lucide-react";
 import { IndiaPostOfficeFinder, type IndiaPostOfficeRow } from "@/components/integrations/india-post-office-finder";
 import { notifyIndiaPostSaved } from "@/components/integrations/india-post-saved-toast";
 import { indiaPostOfficeWritePayload, indiaPostPickupOfficeWritePayload } from "@/modules/india-post/office-patch";
@@ -65,6 +65,12 @@ type FormState = {
   defaultServiceCode: string;
   ranges: SeriesDraft[];
 };
+
+function withReadableWebhookId(url: string, customerId: string) {
+  const id = customerId.replace(/\D/g, "");
+  if (!url || id.length < 6) return url;
+  return url.replace(/\/india-post\/[^/]+\//, `/india-post/${id}/`);
+}
 
 function emptySeries(serviceCode: string): SeriesDraft {
   return { serviceCode, prefix: "", suffix: "IN", startNumber: "", endNumber: "" };
@@ -137,6 +143,14 @@ export default function IndiaPostPage() {
   const productionBlocked = !prodConfigured;
   const lastError = config?.lastError || config?.last_error;
   const lastVerified = config?.lastVerifiedAt ?? config?.last_verified_at;
+  const bookingWebhookUrl = withReadableWebhookId(
+    config?.bookingWebhookUrl ?? config?.booking_webhook_url ?? "",
+    form.customerId
+  );
+  const eventsWebhookUrl = withReadableWebhookId(
+    config?.eventsWebhookUrl ?? config?.events_webhook_url ?? "",
+    form.customerId
+  );
 
   useEffect(() => {
     if (!config) return;
@@ -879,6 +893,35 @@ export default function IndiaPostPage() {
 
       <Card>
         <CardHeader className="pb-4">
+          <CardTitle>Webhook URL</CardTitle>
+          <CardDescription>
+            Copy these links into your India Post portal. PostBus uses them to receive booking confirmations and
+            Shipment Tracking updates for this workspace.
+            {bookingWebhookUrl || eventsWebhookUrl
+              ? ""
+              : " Log in to India Post above to generate the links."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <CopyField
+            id="india-post-booking-webhook"
+            label="Booking"
+            hint="India Post sends a notice here when a shipment is booked."
+            value={bookingWebhookUrl}
+            placeholder="Log in to India Post to generate this link"
+          />
+          <CopyField
+            id="india-post-events-webhook"
+            label="Shipment Tracking"
+            hint="India Post sends scan updates here as the parcel moves — bagged, in transit, out for delivery, and delivered."
+            value={eventsWebhookUrl}
+            placeholder="Log in to India Post to generate this link"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-4">
           <CardTitle>Pickup Location</CardTitle>
           <CardDescription className="mt-1">
             The India Post office used when a booking is pickup. Search the 6-digit office pincode and select the office
@@ -1262,6 +1305,50 @@ export default function IndiaPostPage() {
         </CardContent>
       </Card>
 
+    </div>
+  );
+}
+
+function CopyField({
+  id,
+  label,
+  value,
+  placeholder,
+  hint,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder?: string;
+  hint?: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      {hint ? <p className="text-sm text-muted">{hint}</p> : null}
+      <div className="flex gap-2">
+        <Input
+          id={id}
+          readOnly
+          value={value}
+          placeholder={placeholder}
+          className="font-mono text-sm tracking-tight"
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          className="h-11 shrink-0"
+          disabled={!value}
+          onClick={async () => {
+            await navigator.clipboard.writeText(value);
+            toast.success(`${label} link copied.`);
+          }}
+        >
+          <Copy />
+          Copy
+        </Button>
+      </div>
     </div>
   );
 }

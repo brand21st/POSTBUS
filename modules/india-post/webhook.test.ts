@@ -220,6 +220,21 @@ describe("webhook URLs and tenant path", () => {
     });
     expect(parseIndiaPostWebhookPath("webhooks/shopify")).toBeNull();
     expect(parseIndiaPostWebhookPath("webhooks/india-post/not-a-uuid/booking")).toBeNull();
+    expect(parseIndiaPostWebhookPath("webhooks/india-post/1392911671/events")).toEqual({
+      connectionId: "1392911671",
+      channel: "events",
+    });
+  });
+
+  it("prefers the India Post customer ID in public webhook URLs", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const urls = indiaPostWebhookUrls(id, "http://localhost:3000", "1392911671");
+    expect(urls.bookingWebhookUrl).toBe(
+      "http://localhost:3000/api/v1/webhooks/india-post/1392911671/booking"
+    );
+    expect(urls.eventsWebhookUrl).toBe(
+      "http://localhost:3000/api/v1/webhooks/india-post/1392911671/events"
+    );
   });
 });
 

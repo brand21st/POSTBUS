@@ -17,6 +17,7 @@ import {
   type IndiaPostWebhookChannel,
   type ParsedIndiaPostWebhook,
 } from "@/modules/india-post/webhook-parser";
+import { isIndiaPostWebhookConnectionUuid } from "@/modules/india-post/webhook-urls";
 import type { createAdminClient } from "@/lib/supabase/admin";
 
 export const INDIA_POST_WEBHOOK_MAX_BYTES = 256 * 1024;
@@ -103,11 +104,27 @@ export async function resolveIndiaPostWebhookTarget(
   supabase: ReturnType<typeof createAdminClient>,
   input: { connectionId: string; barcode: string | null; customerId: string | null }
 ): Promise<WebhookConnection> {
-  const { data: urlConnection } = await supabase
-    .from("india_post_connections")
-    .select("id, organization_id, bulk_customer_id")
-    .eq("id", input.connectionId)
-    .maybeSingle();
+  let urlConnection: WebhookConnection | null = null;
+  if (isIndiaPostWebhookConnectionUuid(input.connectionId)) {
+    const { data } = await supabase
+      .from("india_post_connections")
+      .select("id, organization_id, bulk_customer_id")
+      .eq("id", input.connectionId)
+      .maybeSingle();
+    urlConnection = (data as WebhookConnection | null) ?? null;
+  } else {
+    const matches = await rowsFor<WebhookConnection>(
+      supabase
+        .from("india_post_connections")
+        .select("id, organization_id, bulk_customer_id")
+        .eq("bulk_customer_id", input.connectionId)
+        .limit(2) as never
+    );
+    if (matches.length > 1) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook customer id matches more than one connection.");
+    }
+    urlConnection = matches[0] ?? null;
+  }
   if (!urlConnection) {
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
   }
