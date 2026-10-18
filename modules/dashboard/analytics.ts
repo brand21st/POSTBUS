@@ -102,7 +102,36 @@ export function startOfIstYearIso(now: Date, timeZone = ANALYTICS_TIMEZONE) {
 }
 
 export function emptyPeriod(): AnalyticsPeriodKpi {
-  return { shipments: 0, revenue: 0, orders: 0, codOrders: 0, codAmount: 0 };
+  return {
+    shipments: 0,
+    revenue: 0,
+    orders: 0,
+    codOrders: 0,
+    codAmount: 0,
+    prepaidOrders: 0,
+    prepaidAmount: 0,
+    indiaPostBooked: 0,
+    indiaPostBookedAmount: 0,
+    indiaPostCodBooked: 0,
+    indiaPostCodAmount: 0,
+    indiaPostPrepaidBooked: 0,
+    indiaPostPrepaidAmount: 0,
+  };
+}
+
+function emptySeriesPoint(key: string, label: string): AnalyticsSeriesPoint {
+  return {
+    key,
+    label,
+    revenue: 0,
+    shipments: 0,
+    orders: 0,
+    cod: 0,
+    prepaid: 0,
+    indiaPostBooked: 0,
+    indiaPostCodAmount: 0,
+    indiaPostPrepaidAmount: 0,
+  };
 }
 
 function sourceLabel(source: string) {
@@ -122,38 +151,19 @@ function inRange(parts: IstParts, now: IstParts, range: AnalyticsRange) {
 }
 
 function buildSeries(now: IstParts): Record<AnalyticsRange, AnalyticsSeriesPoint[]> {
-  const today = Array.from({ length: 24 }, (_, hour) => ({
-    key: String(hour).padStart(2, "0"),
-    label: `${String(hour).padStart(2, "0")}:00`,
-    revenue: 0,
-    shipments: 0,
-    orders: 0,
-    cod: 0,
-    prepaid: 0,
-  }));
+  const today = Array.from({ length: 24 }, (_, hour) =>
+    emptySeriesPoint(String(hour).padStart(2, "0"), `${String(hour).padStart(2, "0")}:00`)
+  );
   const month = Array.from({ length: now.day }, (_, index) => {
     const day = index + 1;
-    return {
-      key: `${now.year}-${String(now.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-      label: String(day),
-      revenue: 0,
-      shipments: 0,
-      orders: 0,
-      cod: 0,
-      prepaid: 0,
-    };
+    return emptySeriesPoint(
+      `${now.year}-${String(now.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+      String(day)
+    );
   });
   const year = Array.from({ length: now.month }, (_, index) => {
     const monthNumber = index + 1;
-    return {
-      key: `${now.year}-${String(monthNumber).padStart(2, "0")}`,
-      label: monthLabel(monthNumber),
-      revenue: 0,
-      shipments: 0,
-      orders: 0,
-      cod: 0,
-      prepaid: 0,
-    };
+    return emptySeriesPoint(`${now.year}-${String(monthNumber).padStart(2, "0")}`, monthLabel(monthNumber));
   });
   return { today, month, year };
 }
