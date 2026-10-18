@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { printPdfBlob } from "@/lib/print/browser-pdf";
 import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
+import { runPrintShippingSlip } from "@/lib/print/print-shipping-slip";
+import { usePrintStation } from "@/lib/hooks/use-print-station";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Download, LayoutGrid, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
+import { Check, Download, LayoutGrid, Printer, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -249,6 +252,7 @@ export default function LabelsPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const entitlements = usePlanEntitlements();
+  const printStation = usePrintStation();
   const me = useMe();
   const canWriteLabels = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "labels.write");
   const canBulk = entitlements.allows(FEATURE.bulk);
@@ -315,6 +319,79 @@ export default function LabelsPage() {
   const downloadShippingSlip = useMutation({
     mutationFn: (id: string) => downloadLabelPdf(id, "shipping-slip"),
     onSuccess: () => toast.success("Shipping slip downloaded."),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const printAllSlips = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const key = beginClientPrint("bulk-slip-print");
+      if (!key) throw new Error("This print is already in progress.");
+      try {
+        return await api<{
+          connected?: boolean;
+          downloadPath?: string;
+          message?: string;
+          slipCount?: number;
+          pageCount?: number;
+        }>("/api/v1/labels/bulk-print", {
+          method: "POST",
+          headers: { "Idempotency-Key": key },
+          body: JSON.stringify({ ids }),
+        });
+      } finally {
+        endClientPrint("bulk-slip-print");
+      }
+    },
+    onSuccess: (data) => {
+      if (!data.connected && data.downloadPath) {
+        window.open(data.downloadPath, "_blank", "noopener,noreferrer");
+      }
+      const count = data.slipCount ?? data.pageCount;
+      toast.success(
+        count ? `Queued ${count} slips as one PDF` : data.message || "Queued for the Print Agent."
+      );
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const printShippingSlip = useMutation({
+    mutationFn: async (input: { shipmentId: string; labelId: string }) => {
+      const connected = Boolean(printStation.data?.connected);
+      return runPrintShippingSlip({
+        connected,
+        shipmentId: input.shipmentId,
+        labelId: input.labelId,
+        queueName: printStation.data?.selectedPrinterName ?? printStation.data?.selected_printer_name,
+        fetchSlipPdf: async (labelId) => {
+          const { blob } = await fetchLabelPdf(labelId, "shipping-slip");
+          return blob;
+        },
+        printPdf: (blob) => {
+          printPdfBlob(blob);
+        },
+        queueAgentPrint: async (shipmentId) => {
+          const key = beginClientPrint(`custom-print:${shipmentId}`);
+          if (!key) throw new Error("This print is already in progress.");
+          try {
+            return await api<{
+              message?: string;
+              job?: { printerName?: string | null; printer_name?: string | null };
+            }>("/api/v1/label-template/custom-print", {
+              method: "POST",
+              headers: { "Idempotency-Key": key },
+              body: JSON.stringify({ shipmentId }),
+            });
+          } finally {
+            endClientPrint(`custom-print:${shipmentId}`);
+          }
+        },
+      });
+    },
+    onSuccess: (data) => {
+      toast.success(data.message);
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -399,8 +476,10 @@ export default function LabelsPage() {
           (downloadLatestLabel.variables?.shipmentId ?? downloadLatestLabel.variables?.labelId) ===
             (shipmentId || labelId);
         const slipDownloadBusy = downloadShippingSlip.isPending && downloadShippingSlip.variables === labelId;
+        const slipPrintBusy =
+          printShippingSlip.isPending && printShippingSlip.variables?.shipmentId === shipmentId;
         const labelBusy = labelPreviewBusy || labelDownloadBusy;
-        const slipBusy = slipPreviewBusy || slipDownloadBusy;
+        const slipBusy = slipPreviewBusy || slipDownloadBusy || slipPrintBusy;
         const indiaReady =
           Boolean(indiaId) &&
           String(row.barcodeStatus ?? row.barcode_status ?? (indiaId ? row.status : "")).toUpperCase() === "READY";
@@ -458,6 +537,20 @@ export default function LabelsPage() {
               <Download className="size-4" />
               {slipDownloadBusy ? "Downloading…" : "Download Slip PDF"}
             </Button>
+            {canWriteLabels ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={!indiaReady || !shipmentId || !labelId || slipBusy || printStation.isLoading}
+                onClick={() =>
+                  shipmentId && labelId && printShippingSlip.mutate({ shipmentId, labelId })
+                }
+              >
+                <Printer className="size-4" />
+                {slipPrintBusy ? "Sending…" : "Print Slip"}
+              </Button>
+            ) : null}
           </div>
         );
       },
@@ -542,6 +635,24 @@ export default function LabelsPage() {
               <RefreshCw className="size-4" />
               {retryIncomplete.isPending ? "Retrying…" : "Retry incomplete"}
             </Button>
+            {canWriteLabels && selected.length > 0 ? (
+              <Button
+                type="button"
+                variant="secondary"
+                title={canBulk ? "Queue selected slips as one PDF" : "Bulk printing is on Pro"}
+                disabled={canBulk ? printAllSlips.isPending : false}
+                onClick={() => {
+                  if (!canBulk) {
+                    window.location.href = "/dashboard/billing";
+                    return;
+                  }
+                  printAllSlips.mutate(selected);
+                }}
+              >
+                <Printer className="size-4" />
+                {printAllSlips.isPending ? "Sending…" : "Print all"}
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="secondary"

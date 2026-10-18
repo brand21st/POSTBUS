@@ -725,6 +725,27 @@ describe("print jobs", () => {
     expect(inserted[0]?.paper_size).toBe("A3");
   });
 
+  it("stamps device_id from the selected Print Agent computer", async () => {
+    const state = {
+      jobs: [] as Job[],
+      settings: { selected_printer_name: "Epson TM", selected_device_id: "device-1" },
+      devices: [
+        {
+          id: "device-1",
+          device_name: "Packing PC",
+          last_seen_at: new Date().toISOString(),
+          last_printers: ["Epson TM"],
+          status: "active",
+        },
+      ],
+    };
+    const supabase = printClient(state);
+    const ctx = { organizationId: "org-1", userId: "user-1", role: "OWNER" as const };
+    const job = await enqueueManualPrintJob(supabase as never, ctx, "label-1", { paperSize: "A6", copies: 1 });
+    expect(job.device_id).toBe("device-1");
+    expect(job.printer_name).toBe("Epson TM");
+  });
+
   it("only exposes print-agent API paths", () => {
     expect(isPrintAgentApiPath("print-agent/heartbeat")).toBe(true);
     expect(isPrintAgentApiPath("print-agent/jobs/claim")).toBe(true);

@@ -140,7 +140,13 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
   if (slugs[0] === "automation" && method !== "GET") return FEATURE.automation;
   if (slugs[0] === "manifests" && method !== "GET") return FEATURE.manifests;
   if (slugs[0] === "label-template" && method !== "GET") return FEATURE.packing;
-  if (path === "labels/bulk-download" || (slugs[0] === "labels" && slugs[1] === "bulk-download")) return FEATURE.bulk;
+  if (
+    path === "labels/bulk-download" ||
+    path === "labels/bulk-print" ||
+    (slugs[0] === "labels" && (slugs[1] === "bulk-download" || slugs[1] === "bulk-print"))
+  ) {
+    return FEATURE.bulk;
+  }
   if (path === "orders/bulk/status") return FEATURE.bulk;
   if (slugs[0] === "bookings") return FEATURE.bulk;
   if (slugs[0] === "integrations") {

@@ -132,7 +132,7 @@ export function parseMultiUpRequest(body: unknown): MultiUpSheetRequest {
   const total = copies.reduce((sum, item) => sum + item.copies, 0);
   if (!copies.length) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Add at least one order.");
   if (total > MAX_LABELS) throw new AppError(ERROR_CODES.VALIDATION_ERROR, `A sheet run can include up to ${MAX_LABELS} labels.`);
-  const disposition = source.disposition === "attachment" || source.disposition === "print" ? source.disposition : "inline";
+  const disposition = normalizeMultiUpDisposition(source);
   const scale = numberValue(sheet.scale, 1);
   const labelWidthMm = optionalPositive(sheet.labelWidthMm);
   const labelHeightMm = optionalPositive(sheet.labelHeightMm);

@@ -5,6 +5,7 @@ use serde::Serialize;
 pub struct PrinterInfo {
     pub local_id: String,
     pub name: String,
+    pub port: String,
     pub connection_type: ConnectionType,
     pub status: PrinterStatus,
     pub is_default: bool,
@@ -73,19 +74,97 @@ pub fn normalize(name: &str, port: &str, status_bits: u32, attributes: u32) -> O
     if name.is_empty() {
         return None;
     }
+    let port = port.trim();
     Some(PrinterInfo {
-        local_id: local_id(name, port.trim()),
+        local_id: local_id(name, port),
         connection_type: classify_port(port),
         status: classify_status(status_bits, attributes),
         is_default: is_windows_default(attributes),
         supports_pdf: None,
         name: name.to_string(),
+        port: port.to_string(),
     })
+}
+
+#[derive(Debug)]
+pub enum EnumProbe {
+    Empty,
+    Buffer,
+}
+
+const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+
+pub fn interpret_enum_printers_probe(ok: i32, needed: u32, last_error: u32) -> Result<EnumProbe, String> {
+    if needed > 0 {
+        return Ok(EnumProbe::Buffer);
+    }
+    if ok == 0 && last_error != 0 && last_error != ERROR_INSUFFICIENT_BUFFER {
+        return Err(format!(
+            "Windows could not list installed printers (error {last_error})."
+        ));
+    }
+    Ok(EnumProbe::Empty)
+}
+
+pub fn resolve_printer<'a>(
+    printers: &'a [PrinterInfo],
+    printer_name: &str,
+    preferred_local_id: Option<&str>,
+) -> Result<&'a PrinterInfo, String> {
+    let name = printer_name.trim();
+    if name.is_empty() {
+        return Err("Choose a printer first.".into());
+    }
+    let matches: Vec<&'a PrinterInfo> = printers.iter().filter(|printer| printer.name == name).collect();
+    if matches.is_empty() {
+        return Err("That printer is not installed in Windows.".into());
+    }
+    let chosen = if let Some(local_id) = preferred_local_id.map(str::trim).filter(|value| !value.is_empty()) {
+        matches
+            .iter()
+            .copied()
+            .find(|printer| printer.local_id == local_id)
+            .or_else(|| if matches.len() == 1 { Some(matches[0]) } else { None })
+    } else if matches.len() == 1 {
+        Some(matches[0])
+    } else {
+        None
+    };
+    let Some(printer) = chosen else {
+        return Err(
+            "Multiple Windows printers share that name. Select the printer again in the Print Agent.".into(),
+        );
+    };
+    if printer.status == PrinterStatus::Offline {
+        return Err("The selected printer is offline or unavailable.".into());
+    }
+    Ok(printer)
+}
+
+#[allow(dead_code)]
+pub fn saved_selection<'a>(
+    printers: &'a [PrinterInfo],
+    saved_name: Option<&str>,
+    saved_local_id: Option<&str>,
+) -> Option<&'a PrinterInfo> {
+    if let Some(local_id) = saved_local_id.map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(printer) = printers.iter().find(|printer| printer.local_id == local_id) {
+            return Some(printer);
+        }
+    }
+    let name = saved_name.map(str::trim).filter(|value| !value.is_empty())?;
+    let matches: Vec<&'a PrinterInfo> = printers.iter().filter(|printer| printer.name == name).collect();
+    if matches.len() == 1 {
+        Some(matches[0])
+    } else {
+        None
+    }
 }
 
 #[cfg(windows)]
 pub fn list_installed_printers() -> Result<Vec<PrinterInfo>, String> {
     use std::ptr;
+    use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Graphics::Printing::{
         EnumPrintersW, PRINTER_ENUM_CONNECTIONS, PRINTER_ENUM_LOCAL, PRINTER_INFO_2W,
     };
@@ -94,7 +173,7 @@ pub fn list_installed_printers() -> Result<Vec<PrinterInfo>, String> {
         let flags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS;
         let mut needed = 0u32;
         let mut returned = 0u32;
-        EnumPrintersW(
+        let probe = EnumPrintersW(
             flags,
             ptr::null(),
             2,
@@ -103,11 +182,13 @@ pub fn list_installed_printers() -> Result<Vec<PrinterInfo>, String> {
             &mut needed,
             &mut returned,
         );
-        if needed == 0 {
-            return Ok(Vec::new());
+        let last_error = GetLastError();
+        match interpret_enum_printers_probe(probe, needed, last_error)? {
+            EnumProbe::Empty => return Ok(Vec::new()),
+            EnumProbe::Buffer => {}
         }
         let mut buffer = vec![0u8; needed as usize];
-        let ok = EnumPrintersW(
+        let mut ok = EnumPrintersW(
             flags,
             ptr::null(),
             2,
@@ -116,8 +197,23 @@ pub fn list_installed_printers() -> Result<Vec<PrinterInfo>, String> {
             &mut needed,
             &mut returned,
         );
+        if ok == 0 && GetLastError() == ERROR_INSUFFICIENT_BUFFER {
+            buffer.resize(needed as usize, 0);
+            ok = EnumPrintersW(
+                flags,
+                ptr::null(),
+                2,
+                buffer.as_mut_ptr(),
+                needed,
+                &mut needed,
+                &mut returned,
+            );
+        }
         if ok == 0 {
-            return Err("Windows could not list installed printers.".into());
+            return Err(format!(
+                "Windows could not list installed printers (error {}).",
+                GetLastError()
+            ));
         }
         let rows = std::slice::from_raw_parts(
             buffer.as_ptr() as *const PRINTER_INFO_2W,
@@ -160,7 +256,10 @@ fn wide_to_string(ptr: *mut u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_port, classify_status, normalize, ConnectionType, PrinterStatus};
+    use super::{
+        classify_port, classify_status, interpret_enum_printers_probe, normalize, resolve_printer,
+        saved_selection, ConnectionType, EnumProbe, PrinterStatus,
+    };
 
     #[test]
     fn usb_ports_are_marked_usb() {
@@ -190,6 +289,54 @@ mod tests {
     }
 
     #[test]
+    fn enum_probe_empty_list_is_ok_when_windows_reports_no_buffer() {
+        assert!(matches!(interpret_enum_printers_probe(0, 0, 122).unwrap(), EnumProbe::Empty));
+        assert!(matches!(interpret_enum_printers_probe(1, 0, 0).unwrap(), EnumProbe::Empty));
+    }
+
+    #[test]
+    fn enum_probe_reports_windows_error_when_listing_fails() {
+        let error = interpret_enum_printers_probe(0, 0, 5).unwrap_err();
+        assert!(error.contains("error 5"));
+    }
+
+    #[test]
+    fn resolve_printer_requires_exact_name_and_local_id_on_collision() {
+        let left = normalize("Zebra", "USB001", 0, 0).unwrap();
+        let right = normalize("Zebra", "USB002", 0, 0).unwrap();
+        let printers = vec![left.clone(), right.clone()];
+        assert_eq!(
+            resolve_printer(&printers, "Zebra", Some(&left.local_id))
+                .unwrap()
+                .local_id,
+            left.local_id
+        );
+        let missing = resolve_printer(&printers, "Missing", None).unwrap_err();
+        assert!(missing.contains("not installed"));
+        let collision = resolve_printer(&printers, "Zebra", None).unwrap_err();
+        assert!(collision.contains("Multiple Windows printers"));
+        let offline = normalize("Zebra", "USB001", 0x80, 0).unwrap();
+        assert!(resolve_printer(&[offline], "Zebra", None)
+            .unwrap_err()
+            .contains("offline"));
+    }
+
+    #[test]
+    fn saved_selection_does_not_fall_back_to_another_queue() {
+        let zebra = normalize("Zebra", "USB001", 0, 0).unwrap();
+        let epson = normalize("Epson", "USB002", 0, 0x4).unwrap();
+        let printers = vec![zebra.clone(), epson];
+        assert!(saved_selection(&printers, Some("Gone"), None).is_none());
+        assert_eq!(
+            saved_selection(&printers, Some("Zebra"), Some(&zebra.local_id))
+                .unwrap()
+                .name,
+            "Zebra"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn windows_returns_installed_queues_without_invented_pdf_support() {
         let printers = super::list_installed_printers().expect("windows printer enumeration");
         for printer in &printers {
@@ -210,5 +357,6 @@ mod tests {
         assert_eq!(printer.connection_type, ConnectionType::USB);
         assert_eq!(printer.supports_pdf, None);
         assert_eq!(printer.local_id, "USB001|Zebra");
+        assert_eq!(printer.port, "USB001");
     }
 }

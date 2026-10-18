@@ -63,6 +63,7 @@ export function permissionForTenantRoute(
     if (
       method === "POST" &&
       (slugs[1] === "retry-incomplete" ||
+        slugs[1] === "bulk-print" ||
         slugs[2] === "print" ||
         slugs[2] === "regenerate" ||
         slugs[2] === "india-post" ||

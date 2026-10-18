@@ -103,6 +103,14 @@ export type AnalyticsPeriodKpi = {
   orders: number;
   codOrders: number;
   codAmount: number;
+  prepaidOrders: number;
+  prepaidAmount: number;
+  indiaPostBooked: number;
+  indiaPostBookedAmount: number;
+  indiaPostCodBooked: number;
+  indiaPostCodAmount: number;
+  indiaPostPrepaidBooked: number;
+  indiaPostPrepaidAmount: number;
 };
 
 export type AnalyticsSeriesPoint = {
@@ -113,6 +121,9 @@ export type AnalyticsSeriesPoint = {
   orders: number;
   cod: number;
   prepaid: number;
+  indiaPostBooked: number;
+  indiaPostCodAmount: number;
+  indiaPostPrepaidAmount: number;
 };
 
 export type AnalyticsSourceShare = {
@@ -1166,9 +1177,18 @@ export type PublicTrackedShipment = {
   events: PublicTrackingEvent[];
 };
 
+export type TrackingAvailability =
+  | "TRACKING_AVAILABLE"
+  | "TRACKING_NO_SCANS_YET"
+  | "TRACKING_SYNC_PENDING"
+  | "TRACKING_TEMPORARILY_UNAVAILABLE"
+  | "TRACKING_PROVIDER_UNAUTHORIZED"
+  | "TRACKING_DATA_STALE";
+
 export type PublicTrackResult = {
   found: boolean;
   liveTracking: "ok" | "cached" | "unavailable" | "not_connected";
   liveMessage?: string | null;
+  trackingAvailability?: TrackingAvailability | null;
   shipment?: PublicTrackedShipment | null;
 };

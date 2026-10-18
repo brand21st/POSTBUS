@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { UpdateBanner } from "./UpdateBanner";
 
 type PrinterInfo = {
   localId: string;
   name: string;
+  port?: string;
   connectionType: "USB" | "NETWORK" | "UNKNOWN";
   status: "ready" | "offline" | "UNKNOWN";
   isDefault: boolean;
@@ -16,6 +18,21 @@ type PrintResult = {
   pdfPath: string;
 };
 
+type PrinterSelection = {
+  name: string | null;
+  localId: string | null;
+};
+
+type PrintStatus = {
+  currentJob: string;
+  jobId: string | null;
+  printerName: string | null;
+  pdfPath: string | null;
+  lastAttemptAt: string | null;
+  lastResult: string | null;
+  lastError: string | null;
+};
+
 type Connection = {
   state: "disconnected" | "pairing" | "connected" | "revoked" | "error";
   code: string | null;
@@ -25,18 +42,44 @@ type Connection = {
   message: string | null;
 };
 
+function printerStatusLabel(printers: PrinterInfo[], selectedName: string, selectedLocalId: string) {
+  if (!selectedName) return "Not Found";
+  const match = selectedLocalId
+    ? printers.find((printer) => printer.localId === selectedLocalId)
+    : printers.filter((printer) => printer.name === selectedName).length === 1
+      ? printers.find((printer) => printer.name === selectedName)
+      : undefined;
+  if (!match) return "Not Found";
+  if (match.status === "offline") return "Offline";
+  if (match.status === "ready") return "Available";
+  return "Unknown";
+}
+
+function jobLabel(current: string) {
+  if (current === "queued") return "Queued";
+  if (current === "processing") return "Processing";
+  if (current === "submitted") return "Submitted";
+  if (current === "failed") return "Failed";
+  return "Idle";
+}
+
+function formatAttempt(value: string | null) {
+  if (!value) return "None";
+  const asNumber = Number(value);
+  if (!Number.isFinite(asNumber)) return value;
+  return new Date(asNumber).toLocaleString();
+}
+
 export function ConnectionCard({
   connection,
   onGenerate,
   onDisconnect,
-  onPrinters,
   error,
   selectedPrinter,
 }: {
   connection: Connection | null;
   onGenerate: () => void;
   onDisconnect: () => void;
-  onPrinters: () => void;
   error: string;
   selectedPrinter?: string;
 }) {
@@ -52,8 +95,6 @@ export function ConnectionCard({
       const field = document.createElement("textarea");
       field.value = code;
       field.setAttribute("readonly", "");
-      field.style.position = "fixed";
-      field.style.left = "-9999px";
       document.body.appendChild(field);
       field.select();
       document.execCommand("copy");
@@ -76,7 +117,6 @@ export function ConnectionCard({
           <p>Selected printer: {selectedPrinter || "None"}</p>
           {error ? <p className="message error">{error}</p> : null}
           <div className="row">
-            <button type="button" onClick={onPrinters}>View printers</button>
             <button type="button" onClick={onDisconnect}>Disconnect</button>
           </div>
         </>
@@ -129,22 +169,50 @@ export function ConnectionCard({
 export function App() {
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [selected, setSelected] = useState("");
+  const [selectedLocalId, setSelectedLocalId] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [connection, setConnection] = useState<Connection | null>(null);
-  const [showPrinters, setShowPrinters] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [printStatus, setPrintStatus] = useState<PrintStatus>({
+    currentJob: "idle",
+    jobId: null,
+    printerName: null,
+    pdfPath: null,
+    lastAttemptAt: null,
+    lastResult: null,
+    lastError: null,
+  });
 
   const load = useCallback(async () => {
     setError("");
     try {
       const [found, saved] = await Promise.all([
         invoke<PrinterInfo[]>("list_printers"),
-        invoke<string | null>("selected_printer"),
+        invoke<PrinterSelection>("selected_printer"),
       ]);
       setPrinters(found);
-      const stillThere = saved && found.some((printer) => printer.name === saved);
-      setSelected(stillThere ? saved : found.find((printer) => printer.isDefault)?.name ?? found[0]?.name ?? "");
+      const savedName = saved?.name ?? "";
+      const savedId = saved?.localId ?? "";
+      const stillThere = savedId
+        ? found.some((printer) => printer.localId === savedId)
+        : savedName
+          ? found.filter((printer) => printer.name === savedName).length === 1
+          : false;
+      if (stillThere) {
+        const match = savedId
+          ? found.find((printer) => printer.localId === savedId)
+          : found.find((printer) => printer.name === savedName);
+        setSelected(match?.name ?? savedName);
+        setSelectedLocalId(match?.localId ?? savedId);
+      } else {
+        setSelected("");
+        setSelectedLocalId("");
+        if (savedName || savedId) {
+          setError("The previously selected printer was not found. Choose a printer from the list.");
+        }
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -162,6 +230,8 @@ export function App() {
   useEffect(() => {
     void load();
     void refreshConnection().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+    void invoke<PrintStatus>("print_status").then(setPrintStatus).catch(() => undefined);
+    void invoke<string>("agent_version").then(setAppVersion).catch(() => undefined);
   }, [load, refreshConnection]);
 
   useEffect(() => {
@@ -172,30 +242,68 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [connection?.state, refreshConnection]);
 
-  async function choose(name: string) {
-    setSelected(name);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<PrintStatus>("print-agent-status", (event) => {
+      setPrintStatus(event.payload);
+      if (event.payload.lastError) setError(event.payload.lastError);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  async function choose(printer: PrinterInfo) {
+    if (printer.status === "offline") {
+      setError("The selected printer is offline or unavailable.");
+      return;
+    }
+    setSelected(printer.name);
+    setSelectedLocalId(printer.localId);
     setError("");
     try {
-      await invoke("set_selected_printer", { printerName: name });
+      await invoke("set_selected_printer", { printerName: printer.name, localId: printer.localId });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
-  async function printTest() {
-    if (!selected) return;
+  async function clearStatus() {
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      const result = await invoke<PrintResult>("print_test_pdf", { printerName: selected });
-      setMessage(`Sent the test PDF to ${result.printerName} through its Windows printer driver. This does not confirm that paper came out.`);
+      const next = await invoke<PrintStatus>("clear_print_status");
+      setPrintStatus(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
   }
+
+  async function printTest() {
+    if (!selected) return;
+    if (!window.confirm(`Send a local 4×6 test page to ${selected}? This does not print a customer label.`)) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await invoke<PrintResult>("print_test_pdf", { printerName: selected, localId: selectedLocalId || null });
+      setMessage(`Submitted the test PDF to the Windows spooler for ${result.printerName}. This does not confirm that paper came out.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const connected = connection?.state === "connected";
+  const printerState = printerStatusLabel(printers, selected, selectedLocalId);
 
   return (
     <div className="app">
@@ -207,6 +315,7 @@ export function App() {
           <p>Pair this computer with your PostBus organization.</p>
           </div>
         </div>
+        {appVersion ? <span className="header-version">Version {appVersion}</span> : null}
       </header>
       <main>
         <UpdateBanner />
@@ -223,18 +332,47 @@ export function App() {
               .then(setConnection)
               .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
           }
-          onPrinters={() => setShowPrinters(true)}
           error={error}
         />
-        {connection?.state === "connected" && !showPrinters ? null : (
-        <>
+        {connected ? (
+          <section className="card">
+            <div className="connected-header">
+              <h2>Print status</h2>
+              <button type="button" disabled={busy} onClick={() => void clearStatus()}>
+                Clear
+              </button>
+            </div>
+            <dl className="status-grid">
+              <div><dt>Agent connection</dt><dd>{connected ? "Connected" : "Disconnected"}</dd></div>
+              <div><dt>Windows print queue</dt><dd>{printStatus.printerName || selected || "None"}</dd></div>
+              <div><dt>Printer status</dt><dd>{printerState}</dd></div>
+              <div><dt>Current print job</dt><dd>{jobLabel(printStatus.currentJob)}</dd></div>
+              <div><dt>Last print attempt</dt><dd>{formatAttempt(printStatus.lastAttemptAt)} — {printStatus.lastResult || "none"}</dd></div>
+              <div><dt>Last error</dt><dd>{printStatus.lastError || connection?.message || "None"}</dd></div>
+            </dl>
+            {printStatus.pdfPath ? (
+              <iframe
+                className="label-preview"
+                title="Label PDF"
+                src={convertFileSrc(printStatus.pdfPath)}
+              />
+            ) : (
+              <p className="muted">The label PDF appears here when a job is claimed.</p>
+            )}
+            {printers.length ? (
+              <p className="muted queues">
+                Queues: {printers.map((printer) => printer.name).join(", ")}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
         <section className="card">
           <h2>Installed printers</h2>
           <p className="muted">
             Names come from Windows. A printer is marked USB only when its port says USB. Install the manufacturer driver if a printer does not appear.
           </p>
           <div className="row">
-            <button type="button" onClick={() => void load()} disabled={busy}>Refresh</button>
+            <button type="button" onClick={() => void load()} disabled={busy}>Refresh printers</button>
           </div>
           {printers.length === 0 ? (
             <p className="empty">No installed printers were found.</p>
@@ -244,13 +382,13 @@ export function App() {
                 <button
                   key={printer.localId}
                   type="button"
-                  className={printer.name === selected ? "printer selected" : "printer"}
-                  onClick={() => void choose(printer.name)}
+                  className={printer.localId === selectedLocalId || printer.name === selected ? "printer selected" : "printer"}
+                  onClick={() => void choose(printer)}
                 >
-                  <input type="radio" checked={printer.name === selected} readOnly aria-label={`Select ${printer.name}`} />
+                  <input type="radio" checked={printer.localId === selectedLocalId || (!selectedLocalId && printer.name === selected)} readOnly aria-label={`Select ${printer.name}`} />
                   <span>
                     <strong>{printer.name}</strong>
-                    <span className="muted">{printer.isDefault ? "Windows default" : "Installed printer"}</span>
+                    <span className="muted">{printer.isDefault ? "Windows default" : printer.port || "Installed printer"}</span>
                   </span>
                   <span className="badges">
                     <span className={printer.connectionType === "USB" ? "badge usb" : "badge"}>{printer.connectionType}</span>
@@ -264,18 +402,19 @@ export function App() {
         <section className="card">
           <h2>Test print</h2>
           <p className="muted">
-            Prints a local 4×6 inch PDF through the selected Windows printer driver. Nothing is uploaded.
+            Prints a local 4×6 inch PDF through the selected Windows printer driver. Nothing is uploaded and no customer label is sent.
           </p>
           <div className="row">
             <button type="button" className="primary" disabled={!selected || busy} onClick={() => void printTest()}>
               {busy ? "Sending…" : "Print test PDF"}
             </button>
+            <button type="button" disabled={busy} onClick={() => void clearStatus()}>
+              Clear
+            </button>
           </div>
           {message ? <p className="message">{message}</p> : null}
           {(connection?.state ?? "disconnected") === "disconnected" ? null : error ? <p className="message error">{error}</p> : null}
         </section>
-        </>
-        )}
       </main>
     </div>
   );

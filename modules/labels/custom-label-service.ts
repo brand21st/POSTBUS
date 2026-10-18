@@ -219,7 +219,13 @@ export async function printCustomShippingLabel(
   const station = await getPrintStation(supabase, ctx.organizationId);
   return {
     labelId: saved.id,
-    job: { id: job.id, status: job.status, source: job.source, paperSize: media.paperSize },
+    job: {
+      id: job.id,
+      status: job.status,
+      source: job.source,
+      paperSize: media.paperSize,
+      printerName: job.printer_name,
+    },
     connected: station.connected,
     downloadPath: `/api/v1/labels/${saved.id}/download`,
     message: queuedPrintMessage({ connected: station.connected, delivery: job.delivery }),
