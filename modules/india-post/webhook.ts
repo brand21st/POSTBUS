@@ -60,7 +60,14 @@ type WebhookConnection = {
   id: string;
   organization_id: string;
   bulk_customer_id?: string | null;
+  environment?: string | null;
 };
+
+const WEBHOOK_CONNECTION_COLUMNS = "id, organization_id, bulk_customer_id, environment";
+
+export function isIndiaPostWebhookProductionEnvironment(value: string | null | undefined) {
+  return String(value ?? "").trim().toUpperCase() === "PRODUCTION";
+}
 
 type ArticleShipment = {
   id: string;
@@ -82,78 +89,131 @@ async function rowsFor<T>(query: PromiseLike<{ data: T[] | T | null; error: { me
 export async function findShipmentByArticle(
   supabase: ReturnType<typeof createAdminClient>,
   article: string | null
-): Promise<ArticleShipment | null> {
-  if (!article || !/^[A-Za-z0-9]{5,50}$/.test(article)) return null;
+): Promise<ArticleShipment[]> {
+  if (!article || !/^[A-Za-z0-9]{5,50}$/.test(article)) return [];
   const byBarcode = await rowsFor<ArticleShipment>(
-    supabase.from("shipments").select("id, organization_id, barcode, tracking_number").eq("barcode", article).limit(2) as never
+    supabase
+      .from("shipments")
+      .select("id, organization_id, barcode, tracking_number")
+      .eq("barcode", article)
+      .limit(8) as never
   );
-  if (byBarcode.length > 1) return null;
-  if (byBarcode.length === 1) return byBarcode[0];
   const byTracking = await rowsFor<ArticleShipment>(
     supabase
       .from("shipments")
       .select("id, organization_id, barcode, tracking_number")
       .eq("tracking_number", article)
-      .limit(2) as never
+      .limit(8) as never
   );
-  if (byTracking.length !== 1) return null;
-  return byTracking[0];
+  const byId = new Map<string, ArticleShipment>();
+  for (const row of [...byBarcode, ...byTracking]) {
+    if (row.id) byId.set(row.id, row);
+  }
+  return [...byId.values()];
+}
+
+async function assertWebhookArticleTenant(
+  supabase: ReturnType<typeof createAdminClient>,
+  input: { barcode: string | null; organizationId: string; connectionId: string }
+) {
+  const rows = await findShipmentByArticle(supabase, input.barcode);
+  if (rows.some((row) => row.organization_id !== input.organizationId)) {
+    logInfo("india_post.webhook.tenant_rejected", {
+      provider: "INDIA_POST",
+      reason: "article_organization_mismatch",
+      connectionId: input.connectionId,
+      trackingNumber: maskTrackingNumber(input.barcode),
+    });
+    throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook article does not belong to this customer.");
+  }
+}
+
+async function resolveProductionWebhookConnection(
+  supabase: ReturnType<typeof createAdminClient>,
+  connectionId: string
+): Promise<WebhookConnection> {
+  if (isIndiaPostWebhookConnectionUuid(connectionId)) {
+    const { data } = await supabase
+      .from("india_post_connections")
+      .select(WEBHOOK_CONNECTION_COLUMNS)
+      .eq("id", connectionId)
+      .maybeSingle();
+    const row = (data as WebhookConnection | null) ?? null;
+    if (!row) {
+      throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
+    }
+    if (!isIndiaPostWebhookProductionEnvironment(row.environment)) {
+      logInfo("india_post.webhook.tenant_rejected", {
+        provider: "INDIA_POST",
+        reason: "uat_connection",
+        connectionId: row.id,
+      });
+      throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
+    }
+    return row;
+  }
+
+  const matches = (
+    await rowsFor<WebhookConnection>(
+      supabase
+        .from("india_post_connections")
+        .select(WEBHOOK_CONNECTION_COLUMNS)
+        .eq("bulk_customer_id", connectionId)
+        .eq("environment", "PRODUCTION")
+        .limit(3) as never
+    )
+  ).filter((row) => isIndiaPostWebhookProductionEnvironment(row.environment));
+
+  if (matches.length > 1) {
+    logInfo("india_post.webhook.tenant_rejected", {
+      provider: "INDIA_POST",
+      reason: "ambiguous_production_connections",
+      receivedConnectionId: connectionId,
+    });
+    throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook customer id matches more than one production connection.");
+  }
+  if (!matches[0]) {
+    logInfo("india_post.webhook.tenant_rejected", {
+      provider: "INDIA_POST",
+      reason: "no_production_connection",
+      receivedConnectionId: connectionId,
+    });
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
+  }
+  return matches[0];
 }
 
 export async function resolveIndiaPostWebhookTarget(
   supabase: ReturnType<typeof createAdminClient>,
   input: { connectionId: string; barcode: string | null; customerId: string | null }
 ): Promise<WebhookConnection> {
-  let urlConnection: WebhookConnection | null = null;
-  if (isIndiaPostWebhookConnectionUuid(input.connectionId)) {
-    const { data } = await supabase
-      .from("india_post_connections")
-      .select("id, organization_id, bulk_customer_id")
-      .eq("id", input.connectionId)
-      .maybeSingle();
-    urlConnection = (data as WebhookConnection | null) ?? null;
-  } else {
-    const matches = await rowsFor<WebhookConnection>(
-      supabase
-        .from("india_post_connections")
-        .select("id, organization_id, bulk_customer_id")
-        .eq("bulk_customer_id", input.connectionId)
-        .limit(2) as never
-    );
-    if (matches.length > 1) {
-      throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook customer id matches more than one connection.");
-    }
-    urlConnection = matches[0] ?? null;
-  }
-  if (!urlConnection) {
-    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
-  }
-
-  const shipment = await findShipmentByArticle(supabase, input.barcode);
-  if (shipment) {
-    const { data: ownerConnection } = await supabase
-      .from("india_post_connections")
-      .select("id, organization_id, bulk_customer_id")
-      .eq("organization_id", shipment.organization_id)
-      .maybeSingle();
-    return (ownerConnection as WebhookConnection | null) ?? (urlConnection as WebhookConnection);
-  }
+  const urlConnection = await resolveProductionWebhookConnection(supabase, input.connectionId);
 
   const payloadCustomer = String(input.customerId ?? "").trim();
   const urlCustomer = String(urlConnection.bulk_customer_id ?? "").trim();
   if (payloadCustomer && urlCustomer && payloadCustomer !== urlCustomer) {
-    const matches = await rowsFor<WebhookConnection>(
-      supabase
-        .from("india_post_connections")
-        .select("id, organization_id, bulk_customer_id")
-        .eq("bulk_customer_id", payloadCustomer)
-        .limit(2) as never
-    );
-    if (matches.length === 1) return matches[0];
+    logInfo("india_post.webhook.tenant_rejected", {
+      provider: "INDIA_POST",
+      reason: "customer_mismatch",
+      connectionId: urlConnection.id,
+      trackingNumber: maskTrackingNumber(input.barcode),
+    });
     throw new AppError(ERROR_CODES.FORBIDDEN, "Webhook customer id does not match this connection.");
   }
 
-  return urlConnection as WebhookConnection;
+  await assertWebhookArticleTenant(supabase, {
+    barcode: input.barcode,
+    organizationId: urlConnection.organization_id,
+    connectionId: urlConnection.id,
+  });
+
+  logInfo("india_post.webhook.production_resolved", {
+    provider: "INDIA_POST",
+    connectionId: urlConnection.id,
+    receivedConnectionId: input.connectionId,
+    environment: urlConnection.environment ?? "PRODUCTION",
+  });
+  return urlConnection;
 }
 
 export async function acceptIndiaPostWebhook(
@@ -312,6 +372,12 @@ export async function processIndiaPostInboxEvent(
       })
       .eq("id", inbox.id)
       .eq("organization_id", organizationId);
+    logInfo("india_post.webhook.process_failed", {
+      provider: "INDIA_POST",
+      organizationId,
+      inboxEventId: inbox.id,
+      reason: "missing-barcode",
+    });
     return { processed: false, reason: "missing-barcode" };
   }
 
@@ -329,21 +395,9 @@ export async function processIndiaPostInboxEvent(
         .eq("organization_id", organizationId)
         .eq("tracking_number", parsed.barcode)
         .maybeSingle();
-  let shipment = byBarcode ?? byTracking;
-  if (!shipment) {
-    const matched = await findShipmentByArticle(supabase, parsed.barcode);
-    if (matched) {
-      const { data: owned } = await supabase
-        .from("shipments")
-        .select(SHIPMENT_LOOKUP_COLUMNS)
-        .eq("id", matched.id)
-        .eq("organization_id", matched.organization_id)
-        .maybeSingle();
-      shipment = owned;
-    }
-  }
+  const shipment = byBarcode ?? byTracking;
 
-  if (!shipment) {
+  if (!shipment || String(shipment.organization_id) !== organizationId) {
     await supabase
       .from("provider_webhook_inbox")
       .update({
@@ -353,10 +407,18 @@ export async function processIndiaPostInboxEvent(
       })
       .eq("id", inbox.id)
       .eq("organization_id", organizationId);
+    logInfo("india_post.webhook.process_failed", {
+      provider: "INDIA_POST",
+      organizationId,
+      inboxEventId: inbox.id,
+      reason: "unknown-shipment",
+      trackingNumber: maskTrackingNumber(parsed.barcode),
+    });
     return { processed: false, reason: "unknown-shipment" };
   }
 
   const shipmentOrgId = String(shipment.organization_id);
+  // A CEPT wall clock without an offset is not converted. Receipt time is a real UTC instant.
   const occurredAt = parsed.eventTimestamp ?? inbox.received_at ?? new Date().toISOString();
   const eventCode = parsed.eventCode || "EVENT";
   const applied = await applyIndiaPostTracking(

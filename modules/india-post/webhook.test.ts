@@ -26,7 +26,7 @@ describe("CEPT webhook parser", () => {
     expect(parsed.contractId).toBe("40000354");
     expect(parsed.nonDeliveryReason).toBeNull();
     expect(parsed.providerEventId).toBeNull();
-    expect(parsed.eventTimestamp).toBe("2025-11-09T08:37:52.000Z");
+    expect(parsed.eventTimestamp).toBeNull();
   });
 
   it("rejects malformed JSON", () => {
@@ -162,8 +162,33 @@ describe("idempotency", () => {
       "events"
     );
     const key = indiaPostWebhookIdempotencyKey(parsed, JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD));
-    expect(key.kind).toBe("event");
-    expect(key.key).toBe("AW784699994IN:BAG_CLOSE:2025-11-09T08:37:52.000Z");
+    expect(key.kind).toBe("hash");
+    expect(key.key).toHaveLength(64);
+  });
+
+  it("honors an explicit offset and does not invent IST or UTC for a wall clock", () => {
+    const zoned = parseIndiaPostWebhook(
+      JSON.stringify({
+        article_number: "AW784699994IN",
+        event_code: "BAG_CLOSE",
+        event_date: "2025-11-09",
+        event_time: "08:37:52+05:30",
+      }),
+      "application/json",
+      "events"
+    );
+    expect(zoned.eventTimestamp).toBe("2025-11-09T03:07:52.000Z");
+    const wall = parseIndiaPostWebhook(
+      JSON.stringify({
+        article_number: "AW784699994IN",
+        event_code: "BAG_CLOSE",
+        event_date: "2025-11-09",
+        event_time: "08:37:52",
+      }),
+      "application/json",
+      "events"
+    );
+    expect(wall.eventTimestamp).toBeNull();
   });
 
   it("falls back to payload hash when event identity fields are missing", () => {
@@ -246,7 +271,12 @@ describe("security helpers", () => {
       cookie: "a=1",
       "content-type": "application/json",
       "x-webhook-secret": "nope",
+      "cf-connecting-ip": "203.0.113.9",
+      "x-forwarded-for": "10.9.8.7",
     });
-    expect(safeWebhookHeaders(headers)).toEqual({ "content-type": "application/json" });
+    expect(safeWebhookHeaders(headers)).toEqual({
+      "content-type": "application/json",
+      "cf-connecting-ip": "203.0.113.9",
+    });
   });
 });

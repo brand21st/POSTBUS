@@ -47,17 +47,42 @@ describe("India Post webhook allowlist", () => {
     expect(webhookSourceIp(headers)).toBe("203.0.113.9");
   });
 
-  it("uses the leftmost forwarded hop when Cloudflare is absent", () => {
-    expect(webhookSourceIp(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.2" }))).toBe("203.0.113.9");
+  it("ignores a spoofed x-forwarded-for list", () => {
+    expect(webhookSourceIp(new Headers({ "x-forwarded-for": "10.9.8.7, 203.0.113.9" }))).toBeNull();
+    expect(() =>
+      assertIndiaPostWebhookSourceAllowed(
+        webhookSourceIp(new Headers({ "x-forwarded-for": "10.9.8.7" })),
+        "10.0.0.0/8"
+      )
+    ).toThrow(AppError);
   });
 
-  it("falls back to x-real-ip for Traefik", () => {
-    expect(webhookSourceIp(new Headers({ "x-real-ip": "203.0.113.40" }))).toBe("203.0.113.40");
+  it("does not let a forwarded header override Cloudflare or the proxy address", () => {
+    expect(
+      webhookSourceIp(
+        new Headers({
+          "cf-connecting-ip": "203.0.113.9",
+          "x-forwarded-for": "10.9.8.7",
+          "x-real-ip": "10.9.8.7",
+        })
+      )
+    ).toBe("203.0.113.9");
+    expect(
+      webhookSourceIp(
+        new Headers({
+          "x-real-ip": "203.0.113.40",
+          "x-forwarded-for": "10.9.8.7",
+        })
+      )
+    ).toBe("203.0.113.40");
   });
 
-  it("allows any source including a missing IP when 0.0.0.0/0 is configured", () => {
-    expect(ipMatchesCidrs("203.0.113.9", ["0.0.0.0/0"])).toBe(true);
-    expect(() => assertIndiaPostWebhookSourceAllowed(null, "0.0.0.0/0")).not.toThrow();
-    expect(() => assertIndiaPostWebhookSourceAllowed("8.8.8.8", "0.0.0.0/0")).not.toThrow();
+  it("matches an IPv6 prefix and rejects a world-open prefix", () => {
+    expect(ipMatchesCidrs("2001:db8:1::10", ["2001:db8:1::/48"])).toBe(true);
+    expect(ipMatchesCidrs("2001:db8:2::10", ["2001:db8:1::/48"])).toBe(false);
+    expect(ipMatchesCidrs("2001:db8::1", ["::/0"])).toBe(false);
+    expect(ipMatchesCidrs("203.0.113.9", ["0.0.0.0/0"])).toBe(false);
+    expect(() => assertIndiaPostWebhookSourceAllowed("8.8.8.8", "0.0.0.0/0")).toThrow(AppError);
+    expect(() => assertIndiaPostWebhookSourceAllowed("2001:db8::1", "2001:db8::/32")).not.toThrow();
   });
 });

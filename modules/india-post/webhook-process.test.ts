@@ -20,18 +20,23 @@ const shipmentId = "ship-a";
 function inboxClient(options?: {
   duplicate?: boolean;
   customerId?: string | null;
+  environment?: string;
   shipment?: Record<string, unknown> | null;
   ownerConnection?: Record<string, unknown> | null;
+  extraConnections?: Array<Record<string, unknown>>;
 }) {
   const jobs: unknown[] = [];
   const urlConnection = {
     id: "11111111-1111-4111-8111-111111111111",
     organization_id: orgId,
     bulk_customer_id: options?.customerId === undefined ? "1000002954" : options.customerId,
+    environment: options?.environment ?? "PRODUCTION",
   };
   const ownerConnection = options?.ownerConnection ?? null;
   const shipment = options?.shipment ?? null;
-  const connections = [urlConnection, ownerConnection].filter(Boolean) as Array<Record<string, unknown>>;
+  const connections = [urlConnection, ownerConnection, ...(options?.extraConnections ?? [])].filter(
+    Boolean
+  ) as Array<Record<string, unknown>>;
   return {
     jobs,
     rpc: async (_name: string, args: Record<string, unknown>) => {
@@ -60,6 +65,11 @@ function inboxClient(options?: {
           }
           if (state.filters.bulk_customer_id) {
             rows = rows.filter((row) => String(row.bulk_customer_id) === String(state.filters.bulk_customer_id));
+          }
+          if (state.filters.environment) {
+            rows = rows.filter(
+              (row) => String(row.environment ?? "").toUpperCase() === String(state.filters.environment).toUpperCase()
+            );
           }
           return rows;
         }
@@ -283,7 +293,7 @@ describe("CEPT webhook accept", () => {
     expect(createBackgroundJob).not.toHaveBeenCalled();
   });
 
-  it("routes a CEPT event to the workspace that owns the article", async () => {
+  it("rejects an article owned by another organization before persistence", async () => {
     const { createBackgroundJob } = await import("@/modules/jobs/service");
     vi.mocked(createBackgroundJob).mockClear();
     const supabase = inboxClient({
@@ -301,27 +311,47 @@ describe("CEPT webhook accept", () => {
     });
     const rpc = vi.fn(supabase.rpc.bind(supabase));
     supabase.rpc = rpc as typeof supabase.rpc;
-    const result = await acceptIndiaPostWebhook(supabase as never, {
-      connectionId: "11111111-1111-4111-8111-111111111111",
-      channel: "events",
-      rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
-      contentType: "application/json",
-      headers: new Headers({
-        "content-type": "application/json",
-        "cf-connecting-ip": "10.9.8.7",
-      }),
-    });
-    expect(result).toEqual({ accepted: true, duplicate: false, inboxEventId: "inbox-1" });
-    expect(rpc.mock.calls[0]?.[1]).toMatchObject({
-      p_connection_id: "22222222-2222-4222-8222-222222222222",
-    });
-    expect(createBackgroundJob).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        organizationId: "org-b",
-        jobType: "india-post-events",
+    await expect(
+      acceptIndiaPostWebhook(supabase as never, {
+        connectionId: "11111111-1111-4111-8111-111111111111",
+        channel: "events",
+        rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
+        contentType: "application/json",
+        headers: new Headers({
+          "content-type": "application/json",
+          "cf-connecting-ip": "10.9.8.7",
+          "x-forwarded-for": "10.9.8.7",
+        }),
       })
-    );
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(createBackgroundJob).not.toHaveBeenCalled();
+  });
+
+  it("does not follow a payload customer id onto another connection", async () => {
+    const supabase = inboxClient({
+      customerId: "1392911671",
+      ownerConnection: {
+        id: "22222222-2222-4222-8222-222222222222",
+        organization_id: "org-b",
+        bulk_customer_id: "1000002954",
+      },
+    });
+    const rpc = vi.fn(supabase.rpc.bind(supabase));
+    supabase.rpc = rpc as typeof supabase.rpc;
+    await expect(
+      acceptIndiaPostWebhook(supabase as never, {
+        connectionId: "1392911671",
+        channel: "events",
+        rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
+        contentType: "application/json",
+        headers: new Headers({
+          "content-type": "application/json",
+          "cf-connecting-ip": "10.9.8.7",
+        }),
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("rejects a webhook whose bulk_customer_id does not match the connection", async () => {
@@ -337,6 +367,108 @@ describe("CEPT webhook accept", () => {
         }),
       })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("selects the PRODUCTION connection when a UAT sibling shares the customer id", async () => {
+    const { createBackgroundJob } = await import("@/modules/jobs/service");
+    vi.mocked(createBackgroundJob).mockClear();
+    const supabase = inboxClient({
+      customerId: "1788590988",
+      extraConnections: [
+        {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          organization_id: "org-uat",
+          bulk_customer_id: "1788590988",
+          environment: "UAT",
+        },
+      ],
+    });
+    const rpc = vi.fn(supabase.rpc.bind(supabase));
+    supabase.rpc = rpc as typeof supabase.rpc;
+    const result = await acceptIndiaPostWebhook(supabase as never, {
+      connectionId: "1788590988",
+      channel: "events",
+      rawBody: JSON.stringify({ ...CEPT_SAMPLE_WEBHOOK_PAYLOAD, bulk_customer_id: 1788590988 }),
+      contentType: "application/json",
+      headers: new Headers({
+        "content-type": "application/json",
+        "cf-connecting-ip": "10.9.8.7",
+      }),
+    });
+    expect(result.accepted).toBe(true);
+    expect(rpc.mock.calls[0]?.[1]).toMatchObject({
+      p_connection_id: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
+  it("rejects a customer-id webhook when only a UAT connection exists", async () => {
+    const supabase = inboxClient({
+      customerId: "1788590988",
+      environment: "UAT",
+    });
+    const rpc = vi.fn(supabase.rpc);
+    supabase.rpc = rpc as typeof supabase.rpc;
+    await expect(
+      acceptIndiaPostWebhook(supabase as never, {
+        connectionId: "1788590988",
+        channel: "booking",
+        rawBody: JSON.stringify({ ...CEPT_SAMPLE_WEBHOOK_PAYLOAD, bulk_customer_id: 1788590988 }),
+        contentType: "application/json",
+        headers: new Headers({
+          "content-type": "application/json",
+          "cf-connecting-ip": "10.9.8.7",
+        }),
+      })
+    ).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects a UAT connection UUID on the production webhook route", async () => {
+    const supabase = inboxClient({ environment: "UAT" });
+    const rpc = vi.fn(supabase.rpc);
+    supabase.rpc = rpc as typeof supabase.rpc;
+    await expect(
+      acceptIndiaPostWebhook(supabase as never, {
+        connectionId: "11111111-1111-4111-8111-111111111111",
+        channel: "events",
+        rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
+        contentType: "application/json",
+        headers: new Headers({
+          "content-type": "application/json",
+          "cf-connecting-ip": "10.9.8.7",
+        }),
+      })
+    ).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when two PRODUCTION connections share the customer id", async () => {
+    const supabase = inboxClient({
+      customerId: "1788590988",
+      extraConnections: [
+        {
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          organization_id: "org-prod-b",
+          bulk_customer_id: "1788590988",
+          environment: "PRODUCTION",
+        },
+      ],
+    });
+    const rpc = vi.fn(supabase.rpc);
+    supabase.rpc = rpc as typeof supabase.rpc;
+    await expect(
+      acceptIndiaPostWebhook(supabase as never, {
+        connectionId: "1788590988",
+        channel: "events",
+        rawBody: JSON.stringify({ ...CEPT_SAMPLE_WEBHOOK_PAYLOAD, bulk_customer_id: 1788590988 }),
+        contentType: "application/json",
+        headers: new Headers({
+          "content-type": "application/json",
+          "cf-connecting-ip": "10.9.8.7",
+        }),
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(rpc).not.toHaveBeenCalled();
   });
 });
 
@@ -387,7 +519,9 @@ describe("CEPT webhook process", () => {
     expect(supabase.shipment.last_event_code).toBe("BAG_CLOSE");
   });
 
-  it("applies a scan when CEPT posted to another workspace URL", async () => {
+  it("does not update another organization's shipment or emit side effects", async () => {
+    const { enqueueTrackingStageSideEffects } = await import("@/modules/india-post/tracking-effects");
+    vi.mocked(enqueueTrackingStageSideEffects).mockClear();
     const supabase = processClient({
       payload: {
         article_number: "AW784699994IN",
@@ -410,9 +544,10 @@ describe("CEPT webhook process", () => {
       },
     });
     const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
-    expect(result).toEqual({ processed: true, shipmentId: "ship-b" });
-    expect(supabase.shipment.status).toBe("IN_TRANSIT");
-    expect(supabase.events[0]).toMatchObject({ shipment_id: "ship-b", event_code: "BAG_CLOSE" });
+    expect(result).toEqual({ processed: false, reason: "unknown-shipment" });
+    expect(supabase.events).toHaveLength(0);
+    expect(supabase.shipment.status).toBe("BOOKED");
+    expect(enqueueTrackingStageSideEffects).not.toHaveBeenCalled();
   });
 
   it("fails closed when the article does not belong to the tenant", async () => {
@@ -426,5 +561,157 @@ describe("CEPT webhook process", () => {
     });
     const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
     expect(result).toEqual({ processed: false, reason: "unknown-shipment" });
+    expect(supabase.events).toHaveLength(0);
+    expect(supabase.shipment.status).toBe("IN_TRANSIT");
+  });
+
+  it("rejects an unknown India Post customer id before persistence", async () => {
+    vi.stubEnv("INDIA_POST_WEBHOOK_ALLOWED_CIDRS", "10.0.0.0/8");
+    const supabase = inboxClient();
+    const rpc = vi.fn(supabase.rpc);
+    supabase.rpc = rpc as typeof supabase.rpc;
+    await expect(
+      acceptIndiaPostWebhook(supabase as never, {
+        connectionId: "000000000001",
+        channel: "booking",
+        rawBody: JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD),
+        contentType: "application/json",
+        headers: new Headers({
+          "content-type": "application/json",
+          "cf-connecting-ip": "10.9.8.7",
+        }),
+      })
+    ).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    expect(rpc).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+
+  it("stores a hold webhook without turning it into NDR", async () => {
+    const supabase = processClient({
+      payload: {
+        article_number: "AW784699994IN",
+        event_code: "ON_HOLD",
+        event_description: "Item Kept on Hold",
+        event_date: "2026-10-18",
+        event_time: "11:00:00",
+        event_office_name: "Pandhana S.O",
+      },
+    });
+    const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
+    expect(result).toEqual({ processed: true, shipmentId });
+    expect(supabase.events[0]).toMatchObject({
+      event_description: "Item Kept on Hold",
+      office_name: "Pandhana S.O",
+      classification: null,
+    });
+    expect(supabase.shipment.operational_status).toBe("IN_TRANSIT");
+    expect(supabase.shipment.ndr_attempt_count).toBe(0);
+  });
+
+  it("stores a redirect webhook without turning it into RTO", async () => {
+    const supabase = processClient({
+      payload: {
+        article_number: "AW784699994IN",
+        event_code: "REDIRECTED",
+        event_description: "Item Redirected",
+        event_date: "2026-10-18",
+        event_time: "12:00:00",
+      },
+    });
+    const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
+    expect(result.processed).toBe(true);
+    expect(supabase.events[0]).toMatchObject({
+      event_description: "Item Redirected",
+      classification: null,
+    });
+    expect(supabase.shipment.operational_status).toBe("IN_TRANSIT");
+  });
+
+  it("does not create a shipment for a booking webhook with an unknown article", async () => {
+    const supabase = processClient({
+      payload: {
+        article_number: "ZZ000000000IN",
+        event_code: "ITEM_BOOKED",
+        event_description: "Item Booked",
+        event_date: "2026-10-18",
+        event_time: "09:00:00",
+        bulk_customer_id: "1392911671",
+      },
+    });
+    const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
+    expect(result).toEqual({ processed: false, reason: "unknown-shipment" });
+    expect(supabase.events).toHaveLength(0);
+    expect(supabase.updates.some((update) => update.table === "shipments" && update.patch.status)).toBe(false);
+    expect(supabase.updates.some((update) => update.patch.process_status === "FAILED")).toBe(true);
+  });
+
+  it("marks a malformed inbox body failed without writing tracking history", async () => {
+    const supabase = processClient({
+      payload: { _unparsed: "{not-json" },
+    });
+    const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
+    expect(result).toEqual({ processed: false, reason: "missing-barcode" });
+    expect(supabase.events).toHaveLength(0);
+  });
+
+  it("does not mutate a real shipment for a synthetic PB Test AWB", async () => {
+    const { enqueueTrackingStageSideEffects } = await import("@/modules/india-post/tracking-effects");
+    vi.mocked(enqueueTrackingStageSideEffects).mockClear();
+    const supabase = processClient({
+      payload: {
+        article_number: "PB123456789IN",
+        event_code: "BAG_CLOSE",
+        event_description: "Bag Close",
+        event_office_name: "TEST OFFICE",
+        bulk_customer_id: 1788590988,
+      },
+    });
+    const before = supabase.shipment.status;
+    const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
+    expect(result).toEqual({ processed: false, reason: "unknown-shipment" });
+    expect(supabase.shipment.status).toBe(before);
+    expect(supabase.events).toHaveLength(0);
+    expect(enqueueTrackingStageSideEffects).not.toHaveBeenCalled();
+  });
+
+  it("classifies Item Delivered(Addressee) as delivered", async () => {
+    const supabase = processClient({
+      payload: {
+        article_number: "AW784699994IN",
+        event_code: "ITEM_DELIVERED",
+        event_description: "Item Delivered(Addressee)",
+        event_date: "2026-10-18",
+        event_time: "16:00:00",
+      },
+    });
+    const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
+    expect(result.processed).toBe(true);
+    expect(supabase.shipment.status).toBe("DELIVERED");
+    expect(supabase.events[0]).toMatchObject({
+      event_description: "Item Delivered(Addressee)",
+    });
+  });
+
+  it("does not re-process or enqueue side effects for an already processed inbox row", async () => {
+    const { enqueueTrackingStageSideEffects } = await import("@/modules/india-post/tracking-effects");
+    vi.mocked(enqueueTrackingStageSideEffects).mockClear();
+    const supabase = processClient({
+      processStatus: "PROCESSED",
+      payload: { ...CEPT_SAMPLE_WEBHOOK_PAYLOAD },
+    });
+    const result = await processIndiaPostInboxEvent(supabase as never, "inbox-1", orgId);
+    expect(result).toEqual({ processed: false, reason: "already-processed" });
+    expect(supabase.events).toHaveLength(0);
+    expect(enqueueTrackingStageSideEffects).not.toHaveBeenCalled();
+  });
+
+  it("documents same-timestamp different-office collisions until the identity migration", () => {
+    const occurredAt = "2026-10-18T10:30:00.000Z";
+    const currentKey = (office: string) =>
+      [orgId, shipmentId, "ITEM_RECEIVED", occurredAt].join("|");
+    const proposedKey = (office: string) =>
+      [orgId, shipmentId, "item received", occurredAt, office.toLowerCase()].join("|");
+    expect(currentKey("Office A")).toBe(currentKey("Office B"));
+    expect(proposedKey("Office A")).not.toBe(proposedKey("Office B"));
   });
 });

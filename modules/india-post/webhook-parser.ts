@@ -95,13 +95,29 @@ function asText(value: unknown) {
   return text.length ? text : null;
 }
 
-function eventTimestamp(eventDate: string | null, eventTime: string | null) {
+const EXPLICIT_OFFSET = /(?:[zZ]|[+-]\d{2}:\d{2})$/;
+
+/**
+ * CEPT's webhook sample sends event_date and event_time with no offset.
+ * The source zone is not documented, so those values are not labeled UTC or IST.
+ * An explicit offset is honored. A bare wall clock stays unparsed.
+ */
+export function indiaPostWebhookEventTimestamp(eventDate: string | null, eventTime: string | null) {
   if (!eventDate) return null;
-  const time = eventTime && /^\d{2}:\d{2}(:\d{2})?$/.test(eventTime) ? eventTime : "00:00:00";
-  const clock = time.length === 5 ? `${time}:00` : time;
-  const iso = `${eventDate}T${clock}Z`;
-  const parsed = new Date(iso);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  if (EXPLICIT_OFFSET.test(eventDate) && !eventTime) {
+    const parsed = new Date(eventDate);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+  if (eventTime && EXPLICIT_OFFSET.test(eventTime)) {
+    const date = eventDate.slice(0, 10);
+    const parsed = new Date(`${date}T${eventTime}`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+  if (EXPLICIT_OFFSET.test(eventDate)) {
+    const parsed = new Date(eventDate);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+  return null;
 }
 
 export function parseIndiaPostWebhook(
@@ -169,7 +185,7 @@ export function parseIndiaPostWebhook(
     barcode: asText(rawPayload.article_number),
     eventCode: asText(rawPayload.event_code),
     eventDescription: asText(rawPayload.event_description),
-    eventTimestamp: eventTimestamp(asText(rawPayload.event_date), asText(rawPayload.event_time)),
+    eventTimestamp: indiaPostWebhookEventTimestamp(asText(rawPayload.event_date), asText(rawPayload.event_time)),
     officeId: asText(rawPayload.event_office_facility_id),
     officeName: asText(rawPayload.event_office_name),
     customerId: asText(rawPayload.bulk_customer_id),
@@ -194,6 +210,8 @@ export function safeWebhookHeaders(headers: Headers) {
     "x-request-id",
     "x-correlation-id",
     "date",
+    "cf-connecting-ip",
+    "x-real-ip",
   ]);
   const out: Record<string, string> = {};
   headers.forEach((value, key) => {
