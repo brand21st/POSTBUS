@@ -14,7 +14,7 @@ This report does **not** claim production deployment of this SHA.
 |---|---|
 | Branch | `release/merchant-developer-platform-v1` |
 | Base | `fd9021236e9c8e136ca20b80a38d1c0621c475a5` |
-| New SHA | recorded after commit (see git log on that branch) |
+| New SHA | `9ac3be6774979dcbf46386671e5a9d9976d6ea18` |
 | Worktree | `.worktrees/merchant-developer-platform-v1` |
 
 ## C–D. Files
