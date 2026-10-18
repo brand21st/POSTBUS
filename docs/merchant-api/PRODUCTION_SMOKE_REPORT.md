@@ -40,14 +40,15 @@ No live CEPT booking. Create used `source=API` only. Temporary HMAC key `prod-sm
 | Portal — Developer API card hidden when org is off allowlist | PASS (local dashboard for the same org with empty local allowlist did not show the card) |
 | Portal — create/copy/revoke/rotate on production | BLOCKED (not logged in on www.postbus.in) |
 | Isolation — other-org UUID as order id | PASS (404 `RESOURCE_NOT_FOUND`) |
-| Isolation — other-org shipment | NOT TESTED (no shipment row on the sampled other org) |
-| Isolation — cannot list other org keys | NOT TESTED (portal session on production unavailable) |
+| Isolation — other-org shipment and label | PASS (404 `RESOURCE_NOT_FOUND` for a shipment owned by another organization) |
+| Isolation — cannot list other org keys | BLOCKED (production dashboard session required) |
 | Create `POST /orders` + Idempotency-Key | PASS (one order, `source=API`, no shipment) |
 | Read list/get | PASS |
-| `updated_since` / cursor | NOT TESTED (list used default `limit=5` only) |
+| `updated_since` | PASS (future timestamp returns an empty page) |
+| cursor | PASS (`limit=1` then `next_cursor` returns a different order) |
 | Idempotency replay | PASS |
 | Idempotency conflict | PASS (`IDEMPOTENCY_CONFLICT`) |
-| Rate limit 429 | NOT TESTED (did not flood) |
+| Rate limit 429 | NOT TESTED (general limit is 120/minute; extra requests were not sent) |
 | Tracking + label on existing same-org shipment | PASS |
 | Docs portal downloads | NOT TESTED |
 | Google Apps Script sample | NOT TESTED |
