@@ -498,6 +498,7 @@ export type LabelRecord = {
   printError?: string | null;
   print_error?: string | null;
   printJob?: PrintJobRecord | null;
+  print_job?: PrintJobRecord | null;
   packingLabelId?: string | null;
   packing_label_id?: string | null;
   indiaPostLabelId?: string | null;
@@ -622,6 +623,15 @@ export type PrintStation = {
   offline_message?: string | null;
   defaultDelivery?: "webusb" | "agent";
   default_delivery?: "webusb" | "agent";
+  selectedDeviceId?: string | null;
+  selected_device_id?: string | null;
+  devices?: Array<{
+    id: string;
+    deviceName: string;
+    connection: "online" | "offline";
+    printers: string[];
+    selected: boolean;
+  }>;
 };
 
 export type SavedPrinter = {

@@ -44,6 +44,14 @@ vi.mock("@/modules/labels/retry", () => ({
   RETRY_INCOMPLETE_MAX: 20,
 }));
 
+vi.mock("@/modules/print/manual-idempotency", () => ({
+  requirePrintIdempotencyKey: (value: string | null | undefined) => value?.trim() || "test-print-key",
+  printRequestFingerprint: () => "fp",
+  claimManualPrintKey: async () => ({ key: "print:manual:test-print-key", cached: null }),
+  storeManualPrintKey: async () => undefined,
+  releaseManualPrintKey: async () => undefined,
+}));
+
 vi.mock("@/modules/print/service", () => ({
   enqueueManualPrintJob: vi.fn(async (_supabase: unknown, _ctx: unknown, labelId: string, opts?: { paperSize?: string; copies?: number }) => {
     printCalls.push({
@@ -79,9 +87,21 @@ function chain(table: string, data: unknown) {
     },
     maybeSingle: async () => ({ data, error: null }),
     single: async () => ({ data, error: null }),
-    insert(row: Record<string, unknown>) {
+    insert(row: Record<string, unknown> | Record<string, unknown>[]) {
       labelOps.push({ op: "insert", table });
-      return { ...api, then: undefined, row };
+      const result = { data: row, error: null };
+      return {
+        ...api,
+        select() {
+          return {
+            single: async () => result,
+            maybeSingle: async () => result,
+          };
+        },
+        then(resolve: (value: typeof result) => unknown) {
+          return Promise.resolve(result).then(resolve);
+        },
+      };
     },
     update() {
       labelOps.push({ op: "update", table });
@@ -134,10 +154,14 @@ function supabase() {
   };
 }
 
-function call(method: string, path: string, body?: unknown, search?: string) {
+function call(method: string, path: string, body?: unknown, search?: string, headers?: Record<string, string>) {
   const request = new NextRequest(`http://localhost/api/v1/${path}${search ? `?${search}` : ""}`, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers: {
+      Origin: "http://localhost",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...headers,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const slugs = path.split("/");
@@ -518,6 +542,75 @@ describe("label template API", () => {
     };
     expect(result.retried).toBe(2);
     expect(retryIncompleteLabelsByIds).toHaveBeenCalledWith(expect.anything(), "org-a", ["a", "b"]);
+  });
+
+  it("lets a VIEWER preview and download a multi-print sheet but not print", async () => {
+    ctx.role = "VIEWER";
+    try {
+    const preview = await call("POST", "label-template/multi-sheet", {
+      disposition: "inline",
+      items: [{ orderId: "246072", copies: 1 }],
+      sheet: { paperSize: "A4" },
+    });
+    await pdfBytes(preview);
+    const download = await call("POST", "label-template/multi-sheet", {
+      disposition: "PRINT",
+      items: [{ orderId: "246072", copies: 1 }],
+      sheet: { paperSize: "A4" },
+    });
+    await pdfBytes(download);
+    const attachment = await call("POST", "label-template/multi-sheet", {
+      disposition: "attachment",
+      items: [{ orderId: "246072", copies: 1 }],
+      sheet: { paperSize: "A4" },
+    });
+    expect((attachment as Response).headers.get("Content-Disposition")).toContain("attachment");
+    station = { connected: true, paperSize: "A4" };
+    await expect(
+      call("POST", "label-template/multi-sheet", {
+        disposition: "print",
+        items: [{ orderId: "246072", copies: 1 }],
+        sheet: { paperSize: "A4" },
+      })
+    ).rejects.toThrow(/permission to print/);
+    expect(persisted).toEqual([]);
+    expect(printCalls).toEqual([]);
+    } finally {
+      ctx.role = "OWNER";
+    }
+  });
+
+  it("rejects a cross-origin print before storage or print jobs", async () => {
+    station = { connected: true, paperSize: "A4" };
+    await expect(
+      call(
+        "POST",
+        "label-template/multi-sheet",
+        {
+          disposition: "print",
+          items: [{ orderId: "246072", copies: 1 }],
+          sheet: { paperSize: "A4" },
+        },
+        undefined,
+        { Origin: "https://evil.example" }
+      )
+    ).rejects.toThrow(/PostBus app/);
+    expect(persisted).toEqual([]);
+    expect(printCalls).toEqual([]);
+  });
+
+  it("returns 404 when multi-up printing is turned off", async () => {
+    const previous = process.env.NEXT_PUBLIC_MULTI_UP_PRINT_ENABLED;
+    process.env.NEXT_PUBLIC_MULTI_UP_PRINT_ENABLED = "false";
+    await expect(
+      call("POST", "label-template/multi-sheet", {
+        disposition: "inline",
+        items: [{ orderId: "246072", copies: 1 }],
+        sheet: { paperSize: "A4" },
+      })
+    ).rejects.toThrow(/turned off/);
+    if (previous == null) delete process.env.NEXT_PUBLIC_MULTI_UP_PRINT_ENABLED;
+    else process.env.NEXT_PUBLIC_MULTI_UP_PRINT_ENABLED = previous;
   });
 });
 

@@ -227,15 +227,27 @@ export async function heartbeatPrintDevice(
   if (selected && names.includes(selected) && device.organization_id) {
     const { data: settings } = await supabase
       .from("print_settings")
-      .select("selected_printer_name")
+      .select("selected_printer_name, selected_device_id")
       .eq("organization_id", device.organization_id)
       .maybeSingle();
+    const selectedDeviceId = String(settings?.selected_device_id ?? "").trim();
+    if (selectedDeviceId && selectedDeviceId !== device.id) {
+      return {
+        deviceId: device.id,
+        organizationId: device.organization_id,
+        organizationName: device.organization_name,
+        deviceName: device.device_name,
+        printers: names,
+        authorization: "active" as const,
+        connection: "online" as const,
+      };
+    }
     const current = String(settings?.selected_printer_name ?? "").trim();
-    if (!current || !names.includes(current)) {
-      await supabase
-        .from("print_settings")
-        .update({ selected_printer_name: selected })
-        .eq("organization_id", device.organization_id);
+    const patchSettings: Record<string, unknown> = {};
+    if (!selectedDeviceId) patchSettings.selected_device_id = device.id;
+    if (!current || !names.includes(current)) patchSettings.selected_printer_name = selected;
+    if (Object.keys(patchSettings).length) {
+      await supabase.from("print_settings").update(patchSettings).eq("organization_id", device.organization_id);
     }
   }
   return {

@@ -9,6 +9,7 @@ import { renderMerchantLabelPdf, type PackingLabelData } from "@/modules/labels/
 import { loadLogoBytes, SAMPLE_PACKING_DATA } from "@/modules/labels/packing-data";
 import { persistLabelPdf } from "@/modules/labels/persist";
 import { enqueueManualPrintJob, getPrintStation } from "@/modules/print/service";
+import { queuedPrintMessage } from "@/modules/print/queued-message";
 import { getLabelTemplate } from "@/modules/labels/template-service";
 import { printMediaForPage } from "@/modules/labels/page-presets";
 import { parseLabelTemplate, selectLabelTemplate, type LabelTemplate } from "@/modules/labels/template-schema";
@@ -71,12 +72,12 @@ export async function resolveCustomLabelShipment(
   if (!orderKey && shipmentId) {
     const { data } = await supabase
       .from("shipments")
-      .select("id")
+      .select("id, order_id")
       .eq("organization_id", organizationId)
       .eq("id", shipmentId)
       .maybeSingle();
     if (!data?.id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipment not found.");
-    return String(data.id);
+    return { shipmentId: String(data.id), orderId: data.order_id ? String(data.order_id) : "" };
   }
 
   if (!orderKey) {
@@ -108,14 +109,17 @@ export async function resolveCustomLabelShipment(
 
   const shipment = await supabase
     .from("shipments")
-    .select("id")
+    .select("id, order_id")
     .eq("organization_id", organizationId)
     .eq("order_id", orderId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (!shipment.data?.id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "No shipment for that order.");
-  return String(shipment.data.id);
+  return {
+    shipmentId: String(shipment.data.id),
+    orderId: shipment.data.order_id ? String(shipment.data.order_id) : orderId,
+  };
 }
 
 function applyPaymentPreview(data: PackingLabelData, paymentPreview?: string | null) {
@@ -160,7 +164,8 @@ export async function loadCustomShippingLabel(
   organizationId: string,
   input: CustomLabelRequest
 ) {
-  const shipmentId = await resolveCustomLabelShipment(supabase, organizationId, input);
+  const resolved = await resolveCustomLabelShipment(supabase, organizationId, input);
+  const shipmentId = resolved.shipmentId;
   const loaded = await loadPackingLabelData(supabase, organizationId, shipmentId);
   const stored = input.template
     ? parseLabelTemplate(input.template)
@@ -169,7 +174,7 @@ export async function loadCustomShippingLabel(
       : loaded.template;
   const template = selectLabelTemplate(stored, input.templateId);
   const data = applyPaymentPreview(loaded.data, input.paymentPreview);
-  return { shipmentId, template, data };
+  return { shipmentId, orderId: resolved.orderId, template, data };
 }
 
 export async function renderCustomShippingLabel(
@@ -195,7 +200,8 @@ export async function customLabelBarcodePng(
 export async function printCustomShippingLabel(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  input: CustomLabelRequest
+  input: CustomLabelRequest,
+  options?: { idempotencyKey?: string | null }
 ) {
   const rendered = await renderCustomShippingLabel(supabase, ctx.organizationId, input);
   const saved = await persistLabelPdf(supabase, {
@@ -206,16 +212,17 @@ export async function printCustomShippingLabel(
     templateSnapshot: rendered.template,
   });
   const media = printMediaForPage(rendered.template.page);
-  const job = await enqueueManualPrintJob(supabase, ctx, saved.id, { paperSize: media.paperSize });
+  const job = await enqueueManualPrintJob(supabase, ctx, saved.id, {
+    paperSize: media.paperSize,
+    idempotencyKey: options?.idempotencyKey,
+  });
   const station = await getPrintStation(supabase, ctx.organizationId);
   return {
     labelId: saved.id,
     job: { id: job.id, status: job.status, source: job.source, paperSize: media.paperSize },
     connected: station.connected,
     downloadPath: `/api/v1/labels/${saved.id}/download`,
-    message: station.connected
-      ? "Custom shipping label sent to the printer."
-      : "Printer unavailable. Opening the shipping label PDF.",
+    message: queuedPrintMessage({ connected: station.connected, delivery: job.delivery }),
     template: rendered.template satisfies LabelTemplate,
   };
 }

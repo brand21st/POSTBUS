@@ -92,7 +92,7 @@ export function permissionForTenantRoute(
 
   if (root === "print-jobs") {
     if (method === "GET") return "labels.read";
-    if (slugs[2] === "claim" || slugs[2] === "complete") return "labels.write";
+    if (slugs[2] === "claim" || slugs[2] === "complete" || slugs[2] === "reprint") return "labels.write";
   }
 
   if (root === "manifests") {

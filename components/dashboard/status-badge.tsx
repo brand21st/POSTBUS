@@ -35,6 +35,7 @@ const WARNING = new Set([
   "DRAFT",
   "WAITING",
   "PRINTING",
+  "NEEDS_REVIEW",
   "HOLD",
   "CREATED",
   "OPENED",
@@ -126,9 +127,13 @@ export function StatusBadge({ value }: { value?: string | null }) {
       }
     >
       {key === "WAITING"
-        ? "Waiting to print"
+        ? "Waiting for Print Agent"
+        : key === "PRINTING"
+          ? "Sending to Print Agent"
         : key === "PRINTED"
-          ? "Printed"
+          ? "Sent to Windows printer"
+          : key === "NEEDS_REVIEW"
+            ? "Needs verification"
           : key === "LABEL_PENDING"
             ? "Generating label"
             : titleCase(value)}

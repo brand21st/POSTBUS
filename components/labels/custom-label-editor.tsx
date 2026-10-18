@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
 import { ADDRESS_FIELD_OPTIONS, normalizeAddressLayout, type AddressFieldConfig, type AddressLayout } from "@/modules/labels/address-layout";
@@ -768,17 +769,24 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
       template: draft,
     };
     if (path === "custom-print") {
-      const printed = await api<{ connected?: boolean; downloadPath?: string; message?: string }>(
-        "/api/v1/label-template/custom-print",
-        {
-          method: "POST",
-          body: JSON.stringify(body),
+      const key = beginClientPrint("custom-label-print");
+      if (!key) return;
+      try {
+        const printed = await api<{ connected?: boolean; downloadPath?: string; message?: string }>(
+          "/api/v1/label-template/custom-print",
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": key },
+            body: JSON.stringify(body),
+          }
+        );
+        if (!printed.connected && printed.downloadPath) {
+          window.open(printed.downloadPath, "_blank", "noopener,noreferrer");
         }
-      );
-      if (!printed.connected && printed.downloadPath) {
-        window.open(printed.downloadPath, "_blank", "noopener,noreferrer");
+        toast.success(printed.message || "Queued for the Print Agent.");
+      } finally {
+        endClientPrint("custom-label-print");
       }
-      toast.success(printed.message || "Shipping label sent to the printer.");
       return;
     }
     const response = await fetch(`/api/v1/label-template/${path}`, {

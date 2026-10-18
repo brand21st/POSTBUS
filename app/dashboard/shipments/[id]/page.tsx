@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { IndiaPostRouting } from "@/components/dashboard/india-post-routing";
 import { buildIndiaPostRoutingView, shipmentNeedsLiveTracking } from "@/lib/dashboard/india-post-routing";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
@@ -75,17 +76,25 @@ export default function ShipmentDetailPage() {
 
   const openCustomLabel = async (shipmentId: string, mode: "preview" | "download" | "print") => {
     if (mode === "print") {
+      const key = beginClientPrint(`custom-print:${shipmentId}`);
+      if (!key) return;
       try {
         const printed = await api<{ connected?: boolean; downloadPath?: string; message?: string }>(
           "/api/v1/label-template/custom-print",
-          { method: "POST", body: JSON.stringify({ shipmentId }) }
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": key },
+            body: JSON.stringify({ shipmentId }),
+          }
         );
         if (!printed.connected && printed.downloadPath) {
           window.open(printed.downloadPath, "_blank", "noopener,noreferrer");
         }
-        toast.success(printed.message || "Shipping label sent to the printer.");
+        toast.success(printed.message || "Queued for the Print Agent.");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not print the shipping label.");
+      } finally {
+        endClientPrint(`custom-print:${shipmentId}`);
       }
       return;
     }

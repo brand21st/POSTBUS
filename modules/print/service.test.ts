@@ -5,6 +5,7 @@ import {
   PRINTING_STALE_MS,
   authenticatePrintAgent,
   claimNextPrintJob,
+  completePrintJob,
   enqueueAutoPrintJob,
   enqueueManualPrintJob,
   isPrintAgentApiPath,
@@ -12,6 +13,7 @@ import {
   loadPrintJobPdf,
   printStatusForJob,
   recoverStalePrintJobs,
+  reprintPrintJob,
   updatePrintSettings,
 } from "@/modules/print/service";
 
@@ -29,18 +31,38 @@ type Job = {
   created_at: string;
   paper_size?: string | null;
   copies?: number | null;
+  delivery?: string | null;
+  device_id?: string | null;
+  claimed_by_device_id?: string | null;
+  claim_id?: string | null;
+};
+
+type Device = {
+  id: string;
+  device_name: string;
+  last_seen_at: string;
+  last_printers: string[];
+  status: string;
 };
 
 function printClient(state: {
   jobs: Job[];
-  settings?: { selected_printer_name: string | null };
+  settings?: { selected_printer_name: string | null; selected_device_id?: string | null };
   agent?: { printers: string[]; token_hash?: string; token_prefix?: string };
   insertErrors?: Array<{ code?: string; message?: string } | null>;
-  labels?: Array<{ id: string; kind: string; template_snapshot: unknown }>;
+  labels?: Array<{
+    id: string;
+    kind?: string;
+    status?: string;
+    shipment_id?: string;
+    template_snapshot?: unknown;
+  }>;
+  devices?: Device[];
 }) {
   const settings = {
     organization_id: "org-1",
     selected_printer_name: state.settings?.selected_printer_name ?? "Epson TM",
+    selected_device_id: state.settings?.selected_device_id ?? null,
     paper_size: "A6",
     orientation: "portrait",
     copies: 1,
@@ -68,7 +90,12 @@ function printClient(state: {
             eq: () => ({
               eq: (_column: string, id: string) => ({
                 maybeSingle: async () => ({
-                  data: state.labels?.find((label) => label.id === id) ?? null,
+                  data: state.labels?.find((label) => label.id === id) ?? {
+                    id,
+                    shipment_id: "ship-1",
+                    status: "READY",
+                    kind: "INDIA_POST",
+                  },
                   error: null,
                 }),
               }),
@@ -77,13 +104,29 @@ function printClient(state: {
         };
       }
       if (table === "print_devices") {
+        const chain = {
+          eq: () => chain,
+          maybeSingle: async () => ({ data: (state.devices ?? [])[0] ?? null, error: null }),
+          then: (resolve: (value: { data: Device[]; error: null }) => void) =>
+            resolve({ data: state.devices ?? [], error: null }),
+        };
+        return { select: () => chain };
+      }
+      if (table === "printers") {
         return {
           select: () => ({
             eq: () => ({
-              eq: async () => ({ data: [], error: null }),
+              eq: () => ({
+                eq: () => ({
+                  maybeSingle: async () => ({ data: null, error: null }),
+                }),
+              }),
             }),
           }),
         };
+      }
+      if (table === "audit_logs") {
+        return { insert: async () => ({ error: null }) };
       }
       if (table === "print_agents") {
         return {
@@ -154,14 +197,12 @@ function printClient(state: {
           eq: (column: string, value: string) => {
             const chain = {
               eq: () => chain,
-              lt: () => {
-                const cutoff = Date.now() - PRINTING_STALE_MS / 2;
+              lt: (_column: string, cutoff: string) => {
                 for (const job of state.jobs) {
-                  if (job.status === "PRINTING") {
+                  if (job.status === "PRINTING" && job.claimed_at && job.claimed_at < cutoff) {
                     Object.assign(job, payload);
                   }
                 }
-                void cutoff;
                 return chain;
               },
               select: () => ({
@@ -237,6 +278,8 @@ describe("print jobs", () => {
   it("maps job status for the labels page", () => {
     expect(printStatusForJob({ status: "PRINTED" })).toBe("PRINTED");
     expect(printStatusForJob({ status: "PENDING" })).toBe("WAITING");
+    expect(printStatusForJob({ status: "PRINTING" })).toBe("PRINTING");
+    expect(printStatusForJob({ status: "NEEDS_REVIEW" })).toBe("NEEDS_REVIEW");
     expect(printStatusForJob({ status: "FAILED" })).toBe("FAILED");
     expect(printStatusForJob(null)).toBeNull();
   });
@@ -426,7 +469,7 @@ describe("print jobs", () => {
     expect(state.jobs[0].status).toBe("PENDING");
   });
 
-  it("resets stale PRINTING jobs to PENDING", async () => {
+  it("moves stale PRINTING jobs to NEEDS_REVIEW", async () => {
     const state = {
       jobs: [
         {
@@ -445,7 +488,7 @@ describe("print jobs", () => {
       ] as Job[],
     };
     await recoverStalePrintJobs(printClient(state) as never, "org-1");
-    expect(state.jobs[0].status).toBe("PENDING");
+    expect(state.jobs[0].status).toBe("NEEDS_REVIEW");
   });
 
   it("rejects a bearer token from another agent", async () => {
@@ -547,7 +590,6 @@ describe("print jobs", () => {
         },
       ] as Job[],
     };
-    const { completePrintJob } = await import("@/modules/print/service");
     await expect(
       completePrintJob(printClient(state) as never, { agentId: "agent-1", organizationId: "org-1" }, "usb-job", {
         status: "PRINTED",
@@ -641,6 +683,14 @@ describe("print jobs", () => {
             }),
           };
         }
+        if (table === "print_devices") {
+          const chain = {
+            eq: () => chain,
+            maybeSingle: async () => ({ data: null, error: null }),
+            then: (resolve: (value: { data: never[]; error: null }) => void) => resolve({ data: [], error: null }),
+          };
+          return { select: () => chain };
+        }
         if (table === "printers") {
           return {
             select: () => ({
@@ -682,7 +732,322 @@ describe("print jobs", () => {
     expect(isPrintAgentApiPath("print-jobs/job-1")).toBe(true);
     expect(isPrintAgentApiPath("print-jobs/job-1/claim")).toBe(false);
     expect(isPrintAgentApiPath("print-jobs/job-1/complete")).toBe(false);
+    expect(isPrintAgentApiPath("print-jobs/job-1/reprint")).toBe(false);
     expect(isPrintAgentApiPath("print-station")).toBe(false);
     expect(isPrintAgentApiPath("labels/job-1/download")).toBe(false);
+  });
+
+  it("does not auto-claim a stale job after NEEDS_REVIEW", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "AUTO",
+          status: "PRINTING",
+          error_message: null,
+          claimed_at: new Date(Date.now() - PRINTING_STALE_MS - 1_000).toISOString(),
+          printed_at: null,
+          created_at: new Date().toISOString(),
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+      agent: { printers: ["Epson TM"] },
+    };
+    const claimed = await claimNextPrintJob(printClient(state) as never, {
+      agentId: "agent-1",
+      organizationId: "org-1",
+    });
+    expect(claimed).toBeNull();
+    expect(state.jobs[0].status).toBe("NEEDS_REVIEW");
+  });
+
+  it("lets a pre-submit PENDING retry be claimed again", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "MANUAL",
+          status: "PRINTING",
+          error_message: null,
+          claimed_at: new Date().toISOString(),
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          claimed_by_device_id: null,
+          claim_id: "claim-1",
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+      agent: { printers: ["Epson TM"] },
+    };
+    await completePrintJob(
+      printClient(state) as never,
+      { agentId: "agent-1", organizationId: "org-1" },
+      "job-1",
+      { status: "PENDING", errorMessage: "Printer offline" }
+    );
+    expect(state.jobs[0].status).toBe("PENDING");
+    const claimed = await claimNextPrintJob(printClient(state) as never, {
+      agentId: "agent-1",
+      organizationId: "org-1",
+    });
+    expect(claimed?.job.id).toBe("job-1");
+    expect(state.jobs[0].status).toBe("PRINTING");
+  });
+
+  it("accepts a late PRINTED ack on NEEDS_REVIEW from the same device", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "MANUAL",
+          status: "NEEDS_REVIEW",
+          error_message: "verify",
+          claimed_at: new Date().toISOString(),
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          device_id: "device-1",
+          claimed_by_device_id: "device-1",
+          claim_id: "claim-1",
+        },
+      ] as Job[],
+    };
+    const done = await completePrintJob(
+      printClient(state) as never,
+      { agentId: "device-1", organizationId: "org-1" },
+      "job-1",
+      { status: "PRINTED" },
+      { source: "device" }
+    );
+    expect(done.status).toBe("PRINTED");
+  });
+
+  it("rejects a late ack from another device", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "MANUAL",
+          status: "NEEDS_REVIEW",
+          error_message: "verify",
+          claimed_at: new Date().toISOString(),
+          printed_at: null,
+          created_at: new Date().toISOString(),
+          device_id: "device-1",
+          claimed_by_device_id: "device-1",
+          claim_id: "claim-1",
+        },
+      ] as Job[],
+    };
+    await expect(
+      completePrintJob(
+        printClient(state) as never,
+        { agentId: "device-2", organizationId: "org-1" },
+        "job-1",
+        { status: "PRINTED" },
+        { source: "device" }
+      )
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(state.jobs[0].status).toBe("NEEDS_REVIEW");
+  });
+
+  it("only lets the owning device claim a job with the same printer name", async () => {
+    const now = new Date().toISOString();
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "MANUAL",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: now,
+          device_id: "device-1",
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM", selected_device_id: "device-1" },
+      devices: [
+        {
+          id: "device-1",
+          device_name: "Desk A",
+          last_seen_at: now,
+          last_printers: ["Epson TM"],
+          status: "active",
+        },
+        {
+          id: "device-2",
+          device_name: "Desk B",
+          last_seen_at: now,
+          last_printers: ["Epson TM"],
+          status: "active",
+        },
+      ],
+    };
+    const other = await claimNextPrintJob(
+      printClient(state) as never,
+      { agentId: "device-2", organizationId: "org-1" },
+      { printers: ["Epson TM"], source: "device" }
+    );
+    expect(other).toBeNull();
+    const owned = await claimNextPrintJob(
+      printClient(state) as never,
+      { agentId: "device-1", organizationId: "org-1" },
+      { printers: ["Epson TM"], source: "device" }
+    );
+    expect(owned?.job.id).toBe("job-1");
+  });
+
+  it("lets the legacy agent claim only jobs with a null device_id", async () => {
+    const now = new Date().toISOString();
+    const state = {
+      jobs: [
+        {
+          id: "paired",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "AUTO",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: now,
+          device_id: "device-1",
+        },
+        {
+          id: "legacy",
+          organization_id: "org-1",
+          shipment_id: "ship-2",
+          label_id: "label-2",
+          printer_name: "Epson TM",
+          source: "AUTO",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: now,
+          device_id: null,
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+      agent: { printers: ["Epson TM"] },
+    };
+    const claimed = await claimNextPrintJob(printClient(state) as never, {
+      agentId: "agent-1",
+      organizationId: "org-1",
+    });
+    expect(claimed?.job.id).toBe("legacy");
+    expect(state.jobs[0].status).toBe("PENDING");
+  });
+
+  it("does not let a paired device claim a legacy null device_id job", async () => {
+    const now = new Date().toISOString();
+    const state = {
+      jobs: [
+        {
+          id: "legacy",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "AUTO",
+          status: "PENDING",
+          error_message: null,
+          claimed_at: null,
+          printed_at: null,
+          created_at: now,
+          device_id: null,
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+      agent: { printers: ["Epson TM"] },
+    };
+    const claimed = await claimNextPrintJob(
+      printClient(state) as never,
+      { agentId: "device-1", organizationId: "org-1" },
+      { printers: ["Epson TM"], source: "device" }
+    );
+    expect(claimed).toBeNull();
+    expect(state.jobs[0].status).toBe("PENDING");
+  });
+
+  it("ignores a late ACK after the job is already PRINTED", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-1",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "MANUAL",
+          status: "PRINTED",
+          error_message: null,
+          claimed_at: new Date().toISOString(),
+          printed_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        },
+      ] as Job[],
+    };
+    const done = await completePrintJob(
+      printClient(state) as never,
+      { agentId: "agent-1", organizationId: "org-1" },
+      "job-1",
+      { status: "FAILED", errorMessage: "too late" }
+    );
+    expect(done.status).toBe("PRINTED");
+    expect(state.jobs[0].status).toBe("PRINTED");
+  });
+
+  it("creates a new MANUAL job on reprint and leaves the original in NEEDS_REVIEW", async () => {
+    const state = {
+      jobs: [
+        {
+          id: "job-old",
+          organization_id: "org-1",
+          shipment_id: "ship-1",
+          label_id: "label-1",
+          printer_name: "Epson TM",
+          source: "MANUAL",
+          status: "NEEDS_REVIEW",
+          error_message: "verify",
+          claimed_at: new Date().toISOString(),
+          printed_at: null,
+          created_at: new Date().toISOString(),
+        },
+      ] as Job[],
+      settings: { selected_printer_name: "Epson TM" },
+    };
+    const reprinted = await reprintPrintJob(
+      printClient(state) as never,
+      { organizationId: "org-1", userId: "user-1", role: "OWNER" } as never,
+      "job-old",
+      { idempotencyKey: "print:manual:reprint-1" }
+    );
+    expect(reprinted.id).not.toBe("job-old");
+    expect(reprinted.status).toBe("PENDING");
+    expect(state.jobs[0].status).toBe("NEEDS_REVIEW");
+    expect(reprinted.reprinted_from_job_id).toBe("job-old");
   });
 });

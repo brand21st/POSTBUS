@@ -31,12 +31,14 @@ export function ConnectionCard({
   onDisconnect,
   onPrinters,
   error,
+  selectedPrinter,
 }: {
   connection: Connection | null;
   onGenerate: () => void;
   onDisconnect: () => void;
   onPrinters: () => void;
   error: string;
+  selectedPrinter?: string;
 }) {
   const state = connection?.state ?? "disconnected";
   const [copied, setCopied] = useState(false);
@@ -71,7 +73,8 @@ export function ConnectionCard({
           </div>
           <p>Organization: {connection?.organizationName || "PostBus"}</p>
           <p>Device: {connection?.deviceName || "This computer"}</p>
-          <p className="muted">This connection does not print shipping labels yet.</p>
+          <p>Selected printer: {selectedPrinter || "None"}</p>
+          {error ? <p className="message error">{error}</p> : null}
           <div className="row">
             <button type="button" onClick={onPrinters}>View printers</button>
             <button type="button" onClick={onDisconnect}>Disconnect</button>
@@ -209,6 +212,7 @@ export function App() {
         <UpdateBanner />
         <ConnectionCard
           connection={connection}
+          selectedPrinter={selected}
           onGenerate={() =>
             void invoke<Connection>("start_device_pairing")
               .then(setConnection)

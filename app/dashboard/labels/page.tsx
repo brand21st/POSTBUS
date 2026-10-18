@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Download, LayoutGrid, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
@@ -12,7 +13,10 @@ import { Button } from "@/components/ui/button";
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
 import { ApiError, api } from "@/lib/hooks/use-api";
+import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { hasPermission } from "@/lib/permissions/rbac";
+import type { MemberRole } from "@/types/domain";
 import { FEATURE } from "@/modules/billing/entitlements";
 import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import {
@@ -24,8 +28,10 @@ import type { LabelRecord, Paginated } from "@/types/api";
 
 function printLabel(status?: string | null) {
   const value = (status ?? "").toUpperCase();
-  if (value === "PRINTED") return { text: "Printed", badge: "PRINTED" };
-  if (value === "WAITING") return { text: "Waiting to print", badge: "WAITING" };
+  if (value === "PRINTED") return { text: "Sent to Windows printer", badge: "PRINTED" };
+  if (value === "WAITING") return { text: "Waiting for Print Agent", badge: "WAITING" };
+  if (value === "PRINTING") return { text: "Sending to Print Agent", badge: "PRINTING" };
+  if (value === "NEEDS_REVIEW") return { text: "Needs verification", badge: "NEEDS_REVIEW" };
   if (value === "FAILED") return { text: "Print failed", badge: "FAILED" };
   return null;
 }
@@ -243,6 +249,8 @@ export default function LabelsPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const entitlements = usePlanEntitlements();
+  const me = useMe();
+  const canWriteLabels = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "labels.write");
   const canBulk = entitlements.allows(FEATURE.bulk);
   const canPacking = entitlements.allows(FEATURE.packing);
   const canOfficialIndiaPostLabel = !entitlements.loading && entitlements.showsOfficialIndiaPostLabel;
@@ -307,6 +315,27 @@ export default function LabelsPage() {
   const downloadShippingSlip = useMutation({
     mutationFn: (id: string) => downloadLabelPdf(id, "shipping-slip"),
     onSuccess: () => toast.success("Shipping slip downloaded."),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const reprint = useMutation({
+    mutationFn: async (jobId: string) => {
+      const key = beginClientPrint(`reprint:${jobId}`);
+      if (!key) throw new Error("This reprint is already in progress.");
+      try {
+        return await api<{ message?: string }>(`/api/v1/print-jobs/${jobId}/reprint`, {
+          method: "POST",
+          headers: { "Idempotency-Key": key },
+          body: JSON.stringify({}),
+        });
+      } finally {
+        endClientPrint(`reprint:${jobId}`);
+      }
+    },
+    onSuccess: (data) => {
+      toast.success(data.message || "Reprint queued for the Print Agent.");
+      void queryClient.invalidateQueries({ queryKey: ["labels"] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -459,7 +488,22 @@ export default function LabelsPage() {
                 {retryBusy ? "Retrying…" : "Retry"}
               </Button>
             ) : null}
+            {info ? <StatusBadge value={info.badge} /> : null}
             {info ? <p className="text-xs text-muted">{info.text}</p> : null}
+            {canWriteLabels && (info?.badge === "NEEDS_REVIEW" || info?.badge === "FAILED") && (row.printJob?.id || row.print_job?.id) ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={reprint.isPending}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  reprint.mutate(String(row.printJob?.id || row.print_job?.id));
+                }}
+              >
+                Reprint
+              </Button>
+            ) : null}
             {row.printError || row.print_error ? (
               <p className="max-w-[16rem] text-xs text-muted">{row.printError ?? row.print_error}</p>
             ) : null}

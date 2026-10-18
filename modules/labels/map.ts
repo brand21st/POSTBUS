@@ -24,9 +24,9 @@ export function mapLabelRow(row: Record<string, unknown>) {
   const orderNumber = order?.order_number ?? null;
   const jobsRaw = row.print_jobs;
   const jobs = Array.isArray(jobsRaw) ? jobsRaw : jobsRaw ? [jobsRaw] : [];
-  const printJob = latestPrintJob(jobs as { created_at?: string; status?: string; error_message?: string }[]) as
-    | { status?: string; error_message?: string }
-    | null;
+  const printJob = latestPrintJob(
+    jobs as { id?: string; created_at?: string; status?: string; error_message?: string }[]
+  ) as { id?: string; status?: string; error_message?: string } | null;
   const printStatus = printStatusForJob(printJob);
   const fileUrl = (row.file_url as string | null | undefined) ?? (row.fileUrl as string | null | undefined) ?? null;
   const shipmentId = String(row.shipment_id || row.shipmentId || "");

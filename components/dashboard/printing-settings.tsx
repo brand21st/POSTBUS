@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/hooks/use-api";
-import { PRINT_STATION_QUERY_KEY } from "@/lib/hooks/use-print-station";
+import { PRINT_STATION_QUERY_KEY, usePrintStation } from "@/lib/hooks/use-print-station";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
@@ -75,6 +75,16 @@ export function PrintingSettings() {
     queryKey: PRINTERS_QUERY_KEY,
     queryFn: () => api<PrintingConfiguration>("/api/v1/printers"),
   });
+  const stationQuery = usePrintStation();
+  const stationDevices = stationQuery.data?.devices ?? [];
+  const selectedDeviceId =
+    stationQuery.data?.selectedDeviceId ?? stationQuery.data?.selected_device_id ?? "";
+  const selectedDevice = stationDevices.find((device) => device.id === selectedDeviceId) ?? null;
+  const agentPrinters = selectedDevice?.printers?.length
+    ? selectedDevice.printers
+    : stationQuery.data?.printerNames ?? stationQuery.data?.printer_names ?? [];
+  const selectedAgentPrinter =
+    stationQuery.data?.selectedPrinterName ?? stationQuery.data?.selected_printer_name ?? "";
 
   useEffect(() => provider.subscribe(() => setStatus(provider.getStatus())), [provider]);
 
@@ -98,6 +108,19 @@ export function PrintingSettings() {
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: PRINTERS_QUERY_KEY });
   };
+
+  const saveStation = useMutation({
+    mutationFn: (next: { selectedDeviceId?: string | null; selectedPrinterName?: string | null }) =>
+      api("/api/v1/print-station", {
+        method: "PATCH",
+        body: JSON.stringify(next),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: PRINT_STATION_QUERY_KEY });
+      toast.success("Print Agent station saved.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const savePaper = useMutation({
     mutationFn: (next: string) =>
@@ -238,6 +261,57 @@ export function PrintingSettings() {
             }}
           />
         </section>
+
+        {stationDevices.length > 0 ? (
+          <section className="space-y-2 rounded-xl border border-border p-3 transition-colors duration-200 hover:border-brand/25">
+            <Label htmlFor="print-agent-station" className="font-semibold">Print Agent computer</Label>
+            <Select
+              value={selectedDeviceId || undefined}
+              disabled={!canManage || saveStation.isPending}
+              onValueChange={(value) => {
+                const device = stationDevices.find((row) => row.id === value);
+                const printer =
+                  selectedAgentPrinter && device?.printers.includes(selectedAgentPrinter)
+                    ? selectedAgentPrinter
+                    : device?.printers[0] ?? null;
+                saveStation.mutate({ selectedDeviceId: value, selectedPrinterName: printer });
+              }}
+            >
+              <SelectTrigger id="print-agent-station" className="h-9">
+                <SelectValue placeholder="Select a packing computer" />
+              </SelectTrigger>
+              <SelectContent>
+                {stationDevices.map((device) => (
+                  <SelectItem key={device.id} value={device.id}>
+                    {device.deviceName} ({device.connection})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {agentPrinters.length > 0 ? (
+              <>
+                <Label htmlFor="print-agent-printer" className="font-semibold">Windows printer</Label>
+                <Select
+                  value={selectedAgentPrinter || undefined}
+                  disabled={!canManage || saveStation.isPending || !selectedDeviceId}
+                  onValueChange={(value) => saveStation.mutate({ selectedPrinterName: value })}
+                >
+                  <SelectTrigger id="print-agent-printer" className="h-9">
+                    <SelectValue placeholder="Select a printer on this computer" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {agentPrinters.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            ) : null}
+            <p className="text-xs text-muted">Jobs stay on this computer. They do not fail over to another PC.</p>
+          </section>
+        ) : null}
 
         <section className="space-y-2 rounded-xl border border-border p-3 transition-colors duration-200 hover:border-brand/25">
           <div className="flex items-center justify-between gap-2">

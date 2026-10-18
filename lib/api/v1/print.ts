@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { assertBrowserOrigin } from "@/lib/security/origin";
 import {
   completeWebusbJobSchema,
   printerEventSchema,
@@ -19,9 +20,18 @@ import {
   isPrintAgentApiPath,
   listPendingWebusbJobs,
   loadPrintJobPdf,
+  reprintPrintJob,
   rotatePrintAgentToken,
   updatePrintSettings,
 } from "@/modules/print/service";
+import {
+  claimManualPrintKey,
+  printRequestFingerprint,
+  releaseManualPrintKey,
+  requirePrintIdempotencyKey,
+  storeManualPrintKey,
+} from "@/modules/print/manual-idempotency";
+import { queuedPrintMessage } from "@/modules/print/queued-message";
 import {
   listPrinters,
   recordPrinterEvent,
@@ -136,46 +146,82 @@ export async function handlePrintStationRoutes(
     const body = (await request.json().catch(() => ({}))) as {
       selectedPrinterName?: string | null;
       selected_printer_name?: string | null;
+      selectedDeviceId?: string | null;
+      selected_device_id?: string | null;
       paperSize?: string;
       paper_size?: string;
       orientation?: string;
-    copies?: number;
-    autoPrintMerchant?: boolean;
-    auto_print_merchant?: boolean;
-  };
-  return updatePrintSettings(supabase, ctx, {
-    selectedPrinterName: body.selectedPrinterName ?? body.selected_printer_name,
-    paperSize: body.paperSize ?? body.paper_size,
-    orientation: body.orientation,
-    copies: body.copies,
-    autoPrintMerchant: body.autoPrintMerchant ?? body.auto_print_merchant,
-  });
+      copies?: number;
+      autoPrintMerchant?: boolean;
+      auto_print_merchant?: boolean;
+    };
+    return updatePrintSettings(supabase, ctx, {
+      selectedPrinterName: body.selectedPrinterName ?? body.selected_printer_name,
+      selectedDeviceId: body.selectedDeviceId ?? body.selected_device_id,
+      paperSize: body.paperSize ?? body.paper_size,
+      orientation: body.orientation,
+      copies: body.copies,
+      autoPrintMerchant: body.autoPrintMerchant ?? body.auto_print_merchant,
+    });
   }
 
   if (key === "POST print-station/token") {
     return rotatePrintAgentToken(supabase, ctx);
   }
 
+  if (method === "POST" && slugs[0] === "print-jobs" && slugs[1] && slugs[2] === "reprint") {
+    assertBrowserOrigin(request, true);
+    const rawKey = requirePrintIdempotencyKey(request.headers.get("idempotency-key"));
+    const fingerprint = printRequestFingerprint({ action: "reprint", jobId: slugs[1] });
+    const claimed = await claimManualPrintKey(supabase, ctx.organizationId, rawKey, fingerprint);
+    if (claimed.cached) return claimed.cached;
+    try {
+      const job = await reprintPrintJob(supabase, ctx, slugs[1], { idempotencyKey: claimed.key });
+      const station = await getPrintStation(supabase, ctx.organizationId);
+      const result = {
+        job: { id: job.id, status: job.status, source: job.source, delivery: job.delivery ?? "agent" },
+        connected: station.connected,
+        message: queuedPrintMessage({ connected: station.connected, delivery: job.delivery }),
+      };
+      await storeManualPrintKey(supabase, ctx.organizationId, claimed.key, result);
+      return result;
+    } catch (error) {
+      await releaseManualPrintKey(supabase, ctx.organizationId, claimed.key);
+      throw error;
+    }
+  }
+
   if (method === "POST" && slugs[0] === "labels" && slugs[2] === "print") {
+    assertBrowserOrigin(request, true);
     const { enqueueManualPrintJob } = await import("@/modules/print/service");
     const body = (await request.json().catch(() => ({}))) as { paperSize?: string };
-    const job = await enqueueManualPrintJob(supabase, ctx, slugs[1], { paperSize: body.paperSize });
-    const station = await getPrintStation(supabase, ctx.organizationId);
-    const usb = job.delivery === "webusb";
-    return {
-      job: {
-        id: job.id,
-        status: job.status,
-        source: job.source,
-        delivery: job.delivery ?? "agent",
-      },
-      connected: usb ? false : station.connected,
-      message: usb
-        ? "Queued for direct USB printing."
-        : station.connected
-          ? "Sent to the printer."
-          : "Printer unavailable. The job will print when the printer reconnects.",
-    };
+    const rawKey = requirePrintIdempotencyKey(request.headers.get("idempotency-key"));
+    const fingerprint = printRequestFingerprint({ action: "label-print", labelId: slugs[1], paperSize: body.paperSize ?? null });
+    const claimed = await claimManualPrintKey(supabase, ctx.organizationId, rawKey, fingerprint);
+    if (claimed.cached) return claimed.cached;
+    try {
+      const job = await enqueueManualPrintJob(supabase, ctx, slugs[1], {
+        paperSize: body.paperSize,
+        idempotencyKey: claimed.key,
+      });
+      const station = await getPrintStation(supabase, ctx.organizationId);
+      const usb = job.delivery === "webusb";
+      const result = {
+        job: {
+          id: job.id,
+          status: job.status,
+          source: job.source,
+          delivery: job.delivery ?? "agent",
+        },
+        connected: usb ? false : station.connected,
+        message: queuedPrintMessage({ connected: usb ? false : station.connected, delivery: job.delivery }),
+      };
+      await storeManualPrintKey(supabase, ctx.organizationId, claimed.key, result);
+      return result;
+    } catch (error) {
+      await releaseManualPrintKey(supabase, ctx.organizationId, claimed.key);
+      throw error;
+    }
   }
 
   return null;

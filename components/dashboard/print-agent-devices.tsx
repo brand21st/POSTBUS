@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/hooks/use-api";
+import { PRINT_STATION_QUERY_KEY, usePrintStation } from "@/lib/hooks/use-print-station";
 import { useMe } from "@/lib/hooks/use-me";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,9 @@ export function PrintAgentDevices() {
     queryKey: DEVICES_KEY,
     queryFn: () => api<PrintDevice[]>("/api/v1/print-devices"),
   });
+  const station = usePrintStation();
+  const selectedDeviceId = station.data?.selectedDeviceId ?? station.data?.selected_device_id ?? null;
+  const stationDevices = station.data?.devices ?? [];
 
   const connect = useMutation({
     mutationFn: () =>
@@ -66,6 +70,25 @@ export function PrintAgentDevices() {
       setCode("");
       await queryClient.invalidateQueries({ queryKey: DEVICES_KEY });
       toast.success("Pairing confirmed. The Windows app will finish connecting.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const selectStation = useMutation({
+    mutationFn: (deviceId: string) => {
+      const printers = stationDevices.find((row) => row.id === deviceId)?.printers ?? [];
+      const current = station.data?.selectedPrinterName ?? station.data?.selected_printer_name ?? null;
+      return api("/api/v1/print-station", {
+        method: "PATCH",
+        body: JSON.stringify({
+          selectedDeviceId: deviceId,
+          selectedPrinterName: current && printers.includes(current) ? current : printers[0] ?? null,
+        }),
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: PRINT_STATION_QUERY_KEY });
+      toast.success("Print jobs will go to this computer.");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -210,16 +233,27 @@ export function PrintAgentDevices() {
                   </p>
                 </div>
                 {canManage && device.authorization === "active" ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    className="shrink-0 text-muted opacity-70 transition-opacity group-hover:opacity-100"
-                    disabled={revoke.isPending}
-                    onClick={() => revoke.mutate(device.id)}
-                  >
-                    Revoke
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      type="button"
+                      variant={selectedDeviceId === device.id ? "secondary" : "ghost"}
+                      size="xs"
+                      disabled={selectStation.isPending}
+                      onClick={() => selectStation.mutate(device.id)}
+                    >
+                      {selectedDeviceId === device.id ? "Selected station" : "Use for printing"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      className="text-muted opacity-70 transition-opacity group-hover:opacity-100"
+                      disabled={revoke.isPending}
+                      onClick={() => revoke.mutate(device.id)}
+                    >
+                      Revoke
+                    </Button>
+                  </div>
                 ) : null}
               </div>
             ))}

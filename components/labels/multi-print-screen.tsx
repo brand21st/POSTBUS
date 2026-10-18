@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   ChevronDown,
@@ -42,9 +42,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { asPaginated } from "@/lib/dashboard/records";
+import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
 import { ApiError, api } from "@/lib/hooks/use-api";
+import { useMe } from "@/lib/hooks/use-me";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
+import { hasPermission } from "@/lib/permissions/rbac";
 import { cn } from "@/lib/utils";
+import type { LabelRecord, Paginated } from "@/types/api";
+import type { MemberRole } from "@/types/domain";
 import {
   generatedOrderChipGroups,
   generatedOrderChips,
@@ -65,6 +70,14 @@ import {
   type SlotBox,
 } from "@/modules/labels/multi-up/align";
 import { nextGroupFromList, sheetGroups } from "@/modules/labels/multi-up/group";
+import { MAX_LABELS } from "@/modules/labels/multi-up/request";
+import {
+  labelCopyCount,
+  mergeSelectedItems,
+  MULTI_PRINT_PAGE_SIZE,
+  multiPrintLabelsPath,
+  remainingLabelSlots,
+} from "@/modules/labels/multi-up/selection";
 import {
   applyPlacementOverrides,
   calculateMultiUpLayout,
@@ -95,7 +108,6 @@ import {
   type LabelTemplate,
   type NamedLabelTemplate,
 } from "@/modules/labels/template-schema";
-import type { LabelRecord, Paginated } from "@/types/api";
 
 type TemplateResponse = { template: LabelTemplate };
 type SheetChoice = MultiPrintPaperId | "custom";
@@ -149,22 +161,11 @@ function listedTemplates(template: LabelTemplate): NamedLabelTemplate[] {
   return [{ id: "active", name: "Current template", isDefault: true, page: template.page, elements: template.elements }];
 }
 
-async function fetchAllLabelRecords() {
-  const pageSize = 100;
-  const items: LabelRecord[] = [];
-  let page = 1;
-  let total = Number.POSITIVE_INFINITY;
-  while (items.length < total) {
-    const list = asPaginated<LabelRecord>(
-      await api<Paginated<LabelRecord>>(`/api/v1/labels?page=${page}&pageSize=${pageSize}`),
-      ["labels", "items"]
-    );
-    items.push(...list.items);
-    total = list.total;
-    if (list.items.length < pageSize) break;
-    page += 1;
-  }
-  return items;
+async function fetchLabelPage(page: number, q: string, signal?: AbortSignal) {
+  return asPaginated<LabelRecord>(
+    await api<Paginated<LabelRecord>>(multiPrintLabelsPath(page, MULTI_PRINT_PAGE_SIZE, q), { signal }),
+    ["labels", "items"]
+  );
 }
 
 function presetCaption(preset: FourBySixPreset | null, fallback: string) {
@@ -265,11 +266,11 @@ function templateOptionLabel(item: NamedLabelTemplate) {
   return item.isDefault ? `${label} · Default` : label;
 }
 
-async function postSheet(body: unknown) {
+async function postSheet(body: unknown, headers?: Record<string, string>) {
   const response = await fetch("/api/v1/label-template/multi-sheet", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
   const contentType = response.headers.get("Content-Type") ?? "";
@@ -313,6 +314,11 @@ function playPreviewChime() {
 
 export function MultiPrintScreen() {
   const queryClient = useQueryClient();
+  const me = useMe();
+  const canWriteLabels = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "labels.write");
+  const [labelSearch, setLabelSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const printIdempotencyKey = useRef<string | null>(null);
   const templates = useQuery({
     queryKey: ["label-template"],
     queryFn: () => api<TemplateResponse>("/api/v1/label-template"),
@@ -330,9 +336,20 @@ export function MultiPrintScreen() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
-  const labels = useQuery({
-    queryKey: ["labels", "multi-print"],
-    queryFn: fetchAllLabelRecords,
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(labelSearch.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [labelSearch]);
+
+  const labels = useInfiniteQuery({
+    queryKey: ["labels", "multi-print", debouncedSearch],
+    queryFn: ({ pageParam, signal }) => fetchLabelPage(pageParam, debouncedSearch, signal),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, pages) => {
+      const loaded = pages.reduce((sum, page) => sum + page.items.length, 0);
+      if (loaded >= lastPage.total || lastPage.items.length < MULTI_PRINT_PAGE_SIZE) return undefined;
+      return lastPage.page + 1;
+    },
   });
   const station = usePrintStation();
   const library = useMemo(
@@ -456,7 +473,12 @@ export function MultiPrintScreen() {
   const selectedId = library.some((item) => item.id === templateId) ? templateId : fallbackTemplateId;
   const selected = library.find((item) => item.id === selectedId);
   const templateLabel = useMemo(() => (selected ? pageMm(selected.page) : null), [selected]);
-  const labeledOrderChips = useMemo(() => generatedOrderChips(labels.data ?? []), [labels.data]);
+  const loadedLabelRows = useMemo(
+    () => labels.data?.pages.flatMap((page) => page.items) ?? [],
+    [labels.data]
+  );
+  const labelsTotal = labels.data?.pages.at(-1)?.total ?? loadedLabelRows.length;
+  const labeledOrderChips = useMemo(() => generatedOrderChips(loadedLabelRows), [loadedLabelRows]);
   const labeledOrders = useMemo(() => labeledOrderChips.map((chip) => chip.orderNumber), [labeledOrderChips]);
   const labeledOrderGroups = useMemo(() => generatedOrderChipGroups(labeledOrderChips), [labeledOrderChips]);
   const todayCount = labeledOrderGroups.today.length;
@@ -608,8 +630,13 @@ export function MultiPrintScreen() {
     canvasScaleRef.current = canvasScale;
   }, [canvasScale]);
   const agentPaper = station.data?.paperSize ?? "";
-  const canPrint = paper !== "custom" && Boolean(station.data?.connected) && agentPaper === paper && Boolean(layout?.ok);
-  const labelCount = items.reduce((sum, item) => sum + item.copies, 0);
+  const canPrint =
+    canWriteLabels &&
+    paper !== "custom" &&
+    Boolean(station.data?.connected) &&
+    agentPaper === paper &&
+    Boolean(layout?.ok);
+  const labelCount = labelCopyCount(items);
   const sheetOrders =
     displayLayout?.ok ? displayLayout.placements.filter((placement) => placement.page === pageIndex) : [];
   const markManual = useCallback(() => {
@@ -751,7 +778,21 @@ export function MultiPrintScreen() {
       layout?.ok ? layout.perSheet : chosenFourBySix?.quantity ?? 4
     );
     if (!added.length) return;
-    setItems((current) => [...current, ...added.map((id) => ({ orderId: id, copies: 1 }))]);
+    setItems((current) => {
+      const remaining = remainingLabelSlots(current);
+      if (!remaining) {
+        toast.error(`A sheet run can include up to ${MAX_LABELS} labels.`);
+        return current;
+      }
+      const next = mergeSelectedItems(
+        current,
+        added.slice(0, remaining).map((id) => ({ orderId: id, copies: 1 }))
+      );
+      if (next.length === current.length) {
+        toast.error(`A sheet run can include up to ${MAX_LABELS} labels.`);
+      }
+      return next;
+    });
   }
 
   function removeChipOrder(orderId: string) {
@@ -767,7 +808,18 @@ export function MultiPrintScreen() {
   function addItem(orderId: string, copies = Number(draftCopies) || 1) {
     const key = orderId.trim();
     if (!key) return;
-    setItems((current) => [...current, { orderId: key, copies: Math.max(1, Math.floor(copies)) }]);
+    setItems((current) => {
+      const next = mergeSelectedItems(current, [{ orderId: key, copies: Math.max(1, Math.floor(copies)) }]);
+      if (next.length === current.length) {
+        toast.error(
+          current.some((item) => item.orderId === key)
+            ? "That order is already in the print queue."
+            : `A sheet run can include up to ${MAX_LABELS} labels.`
+        );
+        return current;
+      }
+      return next;
+    });
     setDraftOrder("");
   }
 
@@ -844,14 +896,26 @@ export function MultiPrintScreen() {
   }
 
   async function print() {
+    if (!canWriteLabels) {
+      toast.error("You do not have permission to print labels.");
+      return;
+    }
+    const key = beginClientPrint("multi-print", printIdempotencyKey.current);
+    if (!key) return;
+    printIdempotencyKey.current = key;
     setBusy("print");
     try {
-      const result = await postSheet({ ...requestBody(), disposition: "print" });
+      const result = await postSheet(
+        { ...requestBody(), disposition: "print" },
+        { "Idempotency-Key": key }
+      );
       if (result instanceof Blob) return;
-      toast.success(result.message || "Sheet sent to the printer.");
+      printIdempotencyKey.current = null;
+      toast.success(result.message || "Queued for the Print Agent.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not print the sheet.");
     } finally {
+      endClientPrint("multi-print");
       setBusy(null);
     }
   }
@@ -1114,13 +1178,15 @@ export function MultiPrintScreen() {
   }
 
   const printerMessage =
-    paper === "custom"
-      ? "Custom sheets can be previewed and downloaded."
-      : !station.data?.connected
-        ? "Connect a printer to print."
-        : agentPaper !== paper
-          ? `Printer paper must match ${paper}.`
-          : "Printer ready.";
+    !canWriteLabels
+      ? "Preview and download are available. Printing needs labels write access."
+      : paper === "custom"
+        ? "Custom sheets can be previewed and downloaded."
+        : !station.data?.connected
+          ? "Connect a printer to print."
+          : agentPaper !== paper
+            ? `Printer paper must match ${paper}.`
+            : "Printer ready.";
   const selectedOrderIds = new Set(items.map((item) => item.orderId));
 
   const outputActions = (
@@ -1227,15 +1293,28 @@ export function MultiPrintScreen() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-medium text-muted">Generated labels</p>
-                    {labels.isLoading ? null : (
+                    {labels.isPending ? null : (
                       <p className="text-xs font-semibold text-ink">
                         {chipCountLine(todayCount, earlierCount, printedCount) || `${labeledOrders.length} order IDs`}
                       </p>
                     )}
                   </div>
-                  {labels.isLoading ? (
+                  <Input
+                    value={labelSearch}
+                    onChange={(event) => setLabelSearch(event.target.value)}
+                    placeholder="Search order ID"
+                    aria-label="Search generated labels"
+                  />
+                  {labels.isPending ? (
                     <div className="flex flex-wrap gap-2">
                       {Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="h-8 w-16 rounded-full" />)}
+                    </div>
+                  ) : labels.isError ? (
+                    <div className="rounded-xl border border-dashed border-border bg-surface-soft p-4 text-center">
+                      <p className="text-sm font-medium">Could not load labels</p>
+                      <Button type="button" variant="secondary" className="mt-2" onClick={() => void labels.refetch()}>
+                        Try again
+                      </Button>
                     </div>
                   ) : labeledOrders.length ? (
                     <div className="space-y-2.5">
@@ -1261,12 +1340,30 @@ export function MultiPrintScreen() {
                             </div>
                           </div>
                         ))}
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted">
+                          Showing {loadedLabelRows.length} of {labelsTotal}
+                        </p>
+                        {labels.hasNextPage ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={labels.isFetchingNextPage}
+                            onClick={() => void labels.fetchNextPage()}
+                          >
+                            {labels.isFetchingNextPage ? "Loading…" : "Load more"}
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
                   ) : (
                     <div className="rounded-xl border border-dashed border-border bg-surface-soft p-4 text-center">
                       <FileText className="mx-auto size-5 text-muted" />
-                      <p className="mt-2 text-sm font-medium">No generated labels yet</p>
-                      <p className="mt-1 text-xs text-muted">Generate a shipping label, then return here.</p>
+                      <p className="mt-2 text-sm font-medium">{debouncedSearch ? "No matching labels" : "No generated labels yet"}</p>
+                      <p className="mt-1 text-xs text-muted">
+                        {debouncedSearch ? "Try another order ID, or add it manually." : "Generate a shipping label, then return here."}
+                      </p>
                     </div>
                   )}
                 </div>

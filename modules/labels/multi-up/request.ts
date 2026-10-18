@@ -105,6 +105,11 @@ export function labelSizeMm(page: LabelTemplate["page"]) {
   };
 }
 
+export function normalizeMultiUpDisposition(body: unknown): MultiUpDisposition {
+  const source = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  return source.disposition === "attachment" || source.disposition === "print" ? source.disposition : "inline";
+}
+
 export function parseMultiUpRequest(body: unknown): MultiUpSheetRequest {
   const source = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
   const sheet = source.sheet && typeof source.sheet === "object" ? (source.sheet as Record<string, unknown>) : {};
