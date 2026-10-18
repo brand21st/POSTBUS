@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { CodeBlock } from "@/app/(marketing)/developers/docs-code";
+import { DocsHeader, Note } from "@/app/(marketing)/developers/docs-ui";
 import { marketingMetadata } from "@/lib/seo/metadata";
 import { merchantAiIntegrationPrompt } from "@/modules/merchant-api/ai-prompt";
 
@@ -15,21 +17,39 @@ export default function BuildWithAiPage() {
     erp: string;
     custom: string;
   };
+
   return (
     <>
-      <h1>Build with AI</h1>
-      <p>
-        Copy a prompt into ChatGPT, Gemini, Claude, or Cursor together with the{" "}
-        <a href="/developers/openapi.json">OpenAPI file</a>. Do not paste real API keys.
-      </p>
-      <h2>Google Sheets</h2>
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap">{prompts.sheets}</pre>
-      <h2>CRM</h2>
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap">{prompts.crm}</pre>
-      <h2>ERP</h2>
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap">{prompts.erp}</pre>
-      <h2>Custom app</h2>
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap">{prompts.custom}</pre>
+      <DocsHeader
+        kicker="AI"
+        title="Build with AI"
+        description="Copy a prompt into ChatGPT, Gemini, Claude, or Cursor together with the OpenAPI file. Do not paste real API keys."
+      />
+      <Note tone="info">
+        Attach{" "}
+        <a className="font-medium text-sky-800 underline" href="/developers/openapi.json">
+          openapi.json
+        </a>{" "}
+        so the model only uses implemented routes.
+      </Note>
+      <div className="mt-8 space-y-8">
+        <section>
+          <h2 className="mb-3 text-lg font-semibold text-ink">Google Sheets</h2>
+          <CodeBlock samples={[{ label: "Prompt", code: prompts.sheets }]} />
+        </section>
+        <section>
+          <h2 className="mb-3 text-lg font-semibold text-ink">CRM</h2>
+          <CodeBlock samples={[{ label: "Prompt", code: prompts.crm }]} />
+        </section>
+        <section>
+          <h2 className="mb-3 text-lg font-semibold text-ink">ERP</h2>
+          <CodeBlock samples={[{ label: "Prompt", code: prompts.erp }]} />
+        </section>
+        <section>
+          <h2 className="mb-3 text-lg font-semibold text-ink">Custom app</h2>
+          <CodeBlock samples={[{ label: "Prompt", code: prompts.custom }]} />
+        </section>
+      </div>
     </>
   );
 }

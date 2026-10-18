@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { DocsHeader, DocsSection, Endpoint, InlineCode, Note } from "@/app/(marketing)/developers/docs-ui";
 import { marketingMetadata } from "@/lib/seo/metadata";
 
 export const metadata: Metadata = marketingMetadata({
@@ -10,15 +11,29 @@ export const metadata: Metadata = marketingMetadata({
 export default function TrackingDocsPage() {
   return (
     <>
-      <h1>Tracking</h1>
-      <p>
-        <code>GET /shipments/{`{id}`}/tracking</code> reads cached events. Stale data may enqueue a background refresh.
-        Preferred live updates: subscribe to <code>tracking.updated</code>, <code>shipment.out_for_delivery</code>, and{" "}
-        <code>shipment.delivered</code>.
-      </p>
-      <p>
-        Public tracking URL format: <code>https://www.postbus.in/track?tracking=AWB</code>.
-      </p>
+      <DocsHeader
+        kicker="REST"
+        title="Tracking"
+        description="Read cached events from PostBus. Prefer webhooks for live updates instead of polling India Post."
+      />
+
+      <Endpoint
+        method="GET"
+        path="/api/merchant/v1/shipments/{shipmentId}/tracking"
+        scope="tracking:read"
+        purpose="Cached events. Stale data may enqueue a background refresh (older than 15 minutes)."
+      />
+
+      <DocsSection title="Public page">
+        <p>
+          Shareable URL: <InlineCode>https://www.postbus.in/track?tracking=AWB</InlineCode>
+        </p>
+      </DocsSection>
+
+      <Note tone="ok" title="Preferred live path">
+        Subscribe to <InlineCode>tracking.updated</InlineCode>, <InlineCode>shipment.out_for_delivery</InlineCode>, and{" "}
+        <InlineCode>shipment.delivered</InlineCode>.
+      </Note>
     </>
   );
 }
