@@ -14,6 +14,10 @@ import {
 } from "@/lib/api/v1-schemas";
 import { isBillingConfiguredAsync } from "@/modules/razorpay/config";
 import { encryptSecret, hashSecret, randomToken } from "@/lib/security/crypto";
+import { isMerchantApiOpenForOrg } from "@/modules/merchant-api/flags";
+import { mintMerchantApiKey } from "@/modules/merchant-api/keys";
+import { merchantApiUsage } from "@/modules/merchant-api/logs";
+import { merchantPublicSchema } from "@/modules/merchant-api/public-contract";
 import { getAutomationSettings, updateAutomationSettings } from "@/modules/automation/service";
 import {
   mapOrganizationSettings,
@@ -323,29 +327,64 @@ export async function handleWorkspaceRoutes(
     return mapOrganizationPolicies(data);
   }
 
+  if (
+    key === "GET api-keys" ||
+    key === "POST api-keys" ||
+    key.startsWith("GET merchant-api") ||
+    slugs[0] === "api-keys"
+  ) {
+    if (!isMerchantApiOpenForOrg(ctx.organizationId)) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Merchant API is not enabled for this workspace.");
+    }
+  }
+
   if (key === "GET api-keys") {
     const { data } = await supabase
       .from("api_keys")
-      .select("id, name, key_prefix, status, last_used_at, created_at")
+      .select("id, name, key_prefix, status, scopes, last_used_at, created_at, expires_at, revoked_at, hash_version")
       .eq("organization_id", ctx.organizationId)
       .order("created_at", { ascending: false });
     return { items: data ?? [] };
   }
 
+  if (key === "GET merchant-api/usage") {
+    return merchantApiUsage(supabase, ctx.organizationId);
+  }
+
+  if (key === "GET merchant-api/schema") {
+    return merchantPublicSchema();
+  }
+
+  if (key === "GET merchant-api/ai-prompt") {
+    const { merchantAiIntegrationPrompt } = await import("@/modules/merchant-api/ai-prompt");
+    return { prompt: merchantAiIntegrationPrompt() };
+  }
+
+  if (key === "GET merchant-api/docs") {
+    const name = request.nextUrl.searchParams.get("name") ?? "POSTBUS_API_REFERENCE.md";
+    const { readMerchantDoc, merchantDocNames } = await import("@/modules/merchant-api/docs-files");
+    const content = await readMerchantDoc(name);
+    if (!content) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Document not found.");
+    return { name, content, files: merchantDocNames() };
+  }
+
   if (key === "POST api-keys") {
     const body = createApiKeySchema.parse(await request.json().catch(() => ({})));
-    const secret = `pb_live_${randomToken(24)}`;
-    const prefix = secret.slice(0, 12);
+    const minted = mintMerchantApiKey();
     const { data, error } = await supabase
       .from("api_keys")
       .insert({
         organization_id: ctx.organizationId,
         name: body.name || "Default",
-        key_prefix: prefix,
-        secret_hash: hashSecret(secret),
+        key_prefix: minted.keyPrefix,
+        lookup_id: minted.lookupId,
+        secret_hash: minted.secretHash,
+        hash_version: minted.hashVersion,
+        scopes: body.scopes,
+        expires_at: body.expiresAt ?? null,
         created_by: ctx.userId,
       })
-      .select("id, name, key_prefix, status, created_at")
+      .select("id, name, key_prefix, status, scopes, created_at, expires_at")
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
     await supabase.from("audit_logs").insert({
@@ -355,13 +394,40 @@ export async function handleWorkspaceRoutes(
       entity_type: "api_key",
       entity_id: data.id,
     });
-    return { ...data, secret };
+    return { ...data, secret: minted.fullKey };
+  }
+
+  if (method === "POST" && slugs[0] === "api-keys" && slugs[1] && slugs[2] === "rotate") {
+    const minted = mintMerchantApiKey();
+    const { data, error } = await supabase
+      .from("api_keys")
+      .update({
+        key_prefix: minted.keyPrefix,
+        lookup_id: minted.lookupId,
+        secret_hash: minted.secretHash,
+        hash_version: minted.hashVersion,
+        status: "ACTIVE",
+        revoked_at: null,
+      })
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", slugs[1])
+      .select("id, name, key_prefix, status, scopes, created_at, expires_at")
+      .single();
+    if (error || !data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "API key not found.");
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "api_key.rotated",
+      entity_type: "api_key",
+      entity_id: data.id,
+    });
+    return { ...data, secret: minted.fullKey };
   }
 
   if (method === "DELETE" && slugs[0] === "api-keys" && slugs[1]) {
     await supabase
       .from("api_keys")
-      .update({ status: "REVOKED" })
+      .update({ status: "REVOKED", revoked_at: new Date().toISOString() })
       .eq("organization_id", ctx.organizationId)
       .eq("id", slugs[1]);
     await supabase.from("audit_logs").insert({

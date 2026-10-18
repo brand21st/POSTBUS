@@ -140,7 +140,7 @@ export function permissionForTenantRoute(
   if (key === "PATCH settings/policies") return "settings.manage";
   if (root === "settings") return "settings.manage";
 
-  if (root === "api-keys") return "api_keys.manage";
+  if (root === "api-keys" || root === "merchant-api") return "api_keys.manage";
 
   if (path === "webhooks") return "webhooks.manage";
 

@@ -47,6 +47,7 @@ export type MeResponse = {
   organizations?: MeMembership[];
   memberships?: MeMembership[];
   subscription?: MeSubscription | null;
+  merchantApi?: { enabled: boolean };
 };
 
 export type OrderListCounts = {

@@ -173,6 +173,9 @@ describe("permissionForTenantRoute", () => {
       "members.manage"
     );
     expect(permissionForTenantRoute("POST", "api-keys", ["api-keys"])).toBe("api_keys.manage");
+    expect(permissionForTenantRoute("GET", "merchant-api/usage", ["merchant-api", "usage"])).toBe(
+      "api_keys.manage"
+    );
     expect(permissionForTenantRoute("GET", "webhooks", ["webhooks"])).toBe("webhooks.manage");
     expect(permissionForTenantRoute("GET", "audit-logs", ["audit-logs"])).toBe("audit.read");
     expect(permissionForTenantRoute("PATCH", "automation", ["automation"])).toBe("automation.manage");

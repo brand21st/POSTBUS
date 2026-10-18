@@ -10,6 +10,7 @@ import { getOrganizationEntitlements } from "@/modules/billing/entitlements";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTransientAuthClass } from "@/lib/auth/session/classify";
 import { getRequestAuthUser } from "@/lib/supabase/request-auth";
+import { isMerchantApiOpenForOrg } from "@/modules/merchant-api/flags";
 
 export async function handleSessionRoutes(
   request: NextRequest,
@@ -57,6 +58,9 @@ export async function handleSessionRoutes(
         planName: entitlements?.planName,
         status: entitlements?.status ?? "CONFIGURATION_REQUIRED",
         features: entitlements?.features ?? [],
+      },
+      merchantApi: {
+        enabled: isMerchantApiOpenForOrg(organization?.id),
       },
     };
   }

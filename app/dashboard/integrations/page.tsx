@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { PlanLock } from "@/components/billing/plan-lock";
+import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
 import type { IntegrationCard, IntegrationsResponse } from "@/types/api";
@@ -59,6 +60,7 @@ function cardsFromPayload(payload?: IntegrationsResponse | null): IntegrationCar
 
 export default function IntegrationsPage() {
   const entitlements = usePlanEntitlements();
+  const me = useMe();
   const query = useQuery({
     queryKey: ["integrations"],
     queryFn: () => api<IntegrationsResponse>("/api/v1/integrations"),
@@ -72,6 +74,22 @@ export default function IntegrationsPage() {
         title="Integrations"
         description="Shopify, India Post, Wati, PostBus WhatsApp, and merchant Vachat are live. WooCommerce stays reserved."
       />
+
+      {me.data?.merchantApi?.enabled ? (
+      <Card>
+        <CardHeader>
+          <CardTitle>Developer API</CardTitle>
+          <CardDescription>
+            Create scoped API keys, read the Merchant API v1 contract, and generate Google Apps Script with AI.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link href="/dashboard/integrations/developer" className={buttonVariants({ size: "sm" })}>
+            Open Developer Portal
+          </Link>
+        </CardContent>
+      </Card>
+      ) : null}
 
       {query.isLoading ? (
         <div className="grid gap-4 md:grid-cols-2">
