@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
@@ -7,6 +6,7 @@ import { hasPermission } from "@/lib/permissions/rbac";
 import { assertBrowserOrigin } from "@/lib/security/origin";
 import {
   parseBulkPrintIds,
+  prepareBulkShippingSlips,
   printBulkShippingSlips,
 } from "@/modules/labels/bulk-slip-print";
 import {
@@ -468,49 +468,10 @@ export async function handleCommerceRoutes(
   }
 
   if (key === "POST labels/bulk-download") {
-    const body = await request.json();
-    const ids: string[] = body.ids ?? [];
-    const { data: selected } = await supabase
-      .from("labels")
-      .select("id, shipment_id")
-      .eq("organization_id", ctx.organizationId)
-      .in("id", ids);
-    const shipmentIds = [
-      ...new Set((selected ?? []).map((row) => String(row.shipment_id || "")).filter(Boolean)),
-    ];
-    const { data } = shipmentIds.length
-      ? await supabase
-          .from("labels")
-          .select("*")
-          .eq("organization_id", ctx.organizationId)
-          .eq("status", "READY")
-          .in("shipment_id", shipmentIds)
-          .in("kind", ["INDIA_POST", "MERCHANT"])
-      : { data: [] as Record<string, unknown>[] };
-    const zip = new JSZip();
-    for (const label of data ?? []) {
-      if (!label.file_path && !label.file_url) continue;
-      try {
-        const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, {
-          id: String(label.id),
-          file_path: label.file_path || "",
-          file_url: label.file_url,
-          shipment_id: label.shipment_id,
-        });
-        const kind = String(label.kind || "INDIA_POST").toUpperCase();
-        const prefix = kind === "MERCHANT" ? "packing-slip" : "barcode";
-        zip.file(`${prefix}-${label.shipment_id || label.id}.pdf`, bytes);
-      } catch {
-        continue;
-      }
-    }
-    const bytes = await zip.generateAsync({ type: "uint8array" });
-    return new NextResponse(Buffer.from(bytes), {
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": "attachment; filename=labels.zip",
-      },
-    });
+    const body = await request.json().catch(() => ({}));
+    const ids = parseBulkPrintIds((body as { ids?: unknown }).ids);
+    const prepared = await prepareBulkShippingSlips(supabase, ctx, ids);
+    return labelPdfFileResponse(prepared.merged.pdf, "shipping-slips.pdf", "attachment");
   }
 
   if (key === "POST labels/bulk-print") {

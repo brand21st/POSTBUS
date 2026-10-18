@@ -58,34 +58,15 @@ function documentsStatus(row: LabelRecord) {
   return "PROCESSING";
 }
 
-async function downloadLabelsZip(ids: string[]) {
+async function downloadMergedShippingSlips(ids: string[]) {
   const response = await fetch("/api/v1/labels/bulk-download", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Accept: "application/pdf" },
     body: JSON.stringify({ ids }),
   });
-  const contentType = response.headers.get("Content-Type") ?? "";
-  if (contentType.includes("application/zip")) {
-    const blob = await response.blob();
-    const href = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = "labels.zip";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(href);
-    return;
-  }
-  let message = "Could not download labels.";
-  try {
-    const payload = (await response.json()) as { message?: string };
-    message = payload.message || message;
-  } catch {
-    message = response.ok ? message : "The server returned an unexpected response.";
-  }
-  throw new ApiError(message, response.status);
+  const { blob, filename } = await readPdfResponse(response, "shipping-slips.pdf");
+  await downloadPdfBlob(blob, filename);
 }
 
 function shipmentIdOf(row: LabelRecord) {
@@ -284,8 +265,8 @@ export default function LabelsPage() {
     .filter((id) => (selected.length ? selected.includes(id) : kind === "INCOMPLETE"));
 
   const bulk = useMutation({
-    mutationFn: downloadLabelsZip,
-    onSuccess: () => toast.success("Barcode and packing slip files downloaded."),
+    mutationFn: downloadMergedShippingSlips,
+    onSuccess: () => toast.success("Shipping slips downloaded as one PDF."),
     onError: (error: Error) => toast.error(error.message),
   });
 

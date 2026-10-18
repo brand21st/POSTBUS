@@ -8,13 +8,18 @@ export function wantsBrowserPdfPreview(request: Request) {
   return !url.searchParams.has("raw") && accept.includes("text/html");
 }
 
-export function labelPdfFileResponse(bytes: Buffer | Uint8Array, filename: string) {
+export function labelPdfFileResponse(
+  bytes: Buffer | Uint8Array,
+  filename: string,
+  disposition: "inline" | "attachment" = "inline"
+) {
   const body = Buffer.from(bytes);
+  const safe = safeFilename(filename);
   return new Response(body, {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${safeFilename(filename)}"`,
+      "Content-Disposition": `${disposition}; filename="${safe}"`,
       "Content-Length": String(body.byteLength),
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, no-store",

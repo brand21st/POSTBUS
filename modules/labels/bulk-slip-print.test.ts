@@ -151,6 +151,35 @@ describe("parseBulkPrintIds", () => {
   });
 });
 
+describe("prepareBulkShippingSlips", () => {
+  beforeEach(() => {
+    officialReady = true;
+    missingBarcode = false;
+  });
+
+  it("merges one 4x6 page per shipment", async () => {
+    const { prepareBulkShippingSlips } = await import("@/modules/labels/bulk-slip-print");
+    const prepared = await prepareBulkShippingSlips(supabase() as never, ctx, ["lab-a", "lab-b", "lab-c"]);
+    expect(prepared.shipmentIds).toEqual(["ship-a", "ship-b", "ship-c"]);
+    expect(prepared.merged.pageCount).toBe(3);
+    expect(prepared.merged.widthPt).toBe(288);
+    expect(prepared.merged.heightPt).toBe(432);
+    const loaded = await PDFDocument.load(prepared.merged.pdf);
+    expect(loaded.getPageCount()).toBe(3);
+    expect(loaded.getPage(0).getWidth()).toBe(288);
+    expect(loaded.getPage(2).getHeight()).toBe(432);
+  });
+
+  it("fails when a barcode is not ready", async () => {
+    missingBarcode = true;
+    officialReady = false;
+    const { prepareBulkShippingSlips } = await import("@/modules/labels/bulk-slip-print");
+    await expect(prepareBulkShippingSlips(supabase() as never, ctx, ["lab-a", "lab-b"])).rejects.toMatchObject({
+      message: "Generate the India Post label first.",
+    });
+  });
+});
+
 describe("printBulkShippingSlips", () => {
   beforeEach(() => {
     printCalls.length = 0;
