@@ -23,3 +23,23 @@ export function isMerchantApiOpenForOrg(organizationId?: string | null) {
   if (!list.length) return false;
   return list.includes(organizationId.toLowerCase());
 }
+
+export function isMerchantWebhooksProcessEnabled() {
+  return optional(process.env.MERCHANT_WEBHOOKS_ENABLED).toLowerCase() !== "false";
+}
+
+export function merchantWebhooksOrgAllowlist() {
+  return optional(process.env.MERCHANT_WEBHOOKS_ORG_ALLOWLIST)
+    .split(/[,\s]+/)
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => UUID.test(value));
+}
+
+/** Empty allowlist disables outbound webhooks for every organization. */
+export function isMerchantWebhooksOpenForOrg(organizationId?: string | null) {
+  if (!isMerchantWebhooksProcessEnabled()) return false;
+  if (!organizationId) return false;
+  const list = merchantWebhooksOrgAllowlist();
+  if (!list.length) return false;
+  return list.includes(organizationId.toLowerCase());
+}

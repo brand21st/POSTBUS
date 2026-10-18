@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { isMerchantApiOpenForOrg, isMerchantApiProcessEnabled, merchantApiOrgAllowlist } from "@/modules/merchant-api/flags";
+import {
+  isMerchantApiOpenForOrg,
+  isMerchantApiProcessEnabled,
+  isMerchantWebhooksOpenForOrg,
+  merchantApiOrgAllowlist,
+} from "@/modules/merchant-api/flags";
 
 const ORG_A = "11111111-1111-4111-8111-111111111111";
 const ORG_B = "22222222-2222-4222-8222-222222222222";
@@ -7,6 +12,8 @@ const ORG_B = "22222222-2222-4222-8222-222222222222";
 afterEach(() => {
   delete process.env.MERCHANT_API_ENABLED;
   delete process.env.MERCHANT_API_ORG_ALLOWLIST;
+  delete process.env.MERCHANT_WEBHOOKS_ENABLED;
+  delete process.env.MERCHANT_WEBHOOKS_ORG_ALLOWLIST;
 });
 
 describe("merchant API rollout flags", () => {
@@ -29,5 +36,11 @@ describe("merchant API rollout flags", () => {
     process.env.MERCHANT_API_ENABLED = "false";
     process.env.MERCHANT_API_ORG_ALLOWLIST = ORG_A;
     expect(isMerchantApiOpenForOrg(ORG_A)).toBe(false);
+  });
+
+  it("keeps outbound webhooks closed when the allowlist is empty", () => {
+    process.env.MERCHANT_WEBHOOKS_ENABLED = "true";
+    process.env.MERCHANT_WEBHOOKS_ORG_ALLOWLIST = "";
+    expect(isMerchantWebhooksOpenForOrg(ORG_A)).toBe(false);
   });
 });

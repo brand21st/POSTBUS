@@ -31,6 +31,7 @@ import {
   getMerchantTracking,
   listMerchantShipments,
 } from "@/modules/merchant-api/shipments";
+import { dispatchMerchantWebhooks } from "@/modules/merchant-api/webhook-routes";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -283,6 +284,15 @@ export async function handleMerchantV1(request: NextRequest, slugs: string[]) {
       status = 200;
       response.headers.set("X-Request-Id", requestId);
       return response;
+    }
+
+    const webhook = await dispatchMerchantWebhooks(request, supabase, ctx, method, slugs);
+    if (webhook) {
+      if (webhook.status === 404 && webhook.data == null) {
+        throw new MerchantApiError(MERCHANT_ERROR_CODES.RESOURCE_NOT_FOUND, "Unknown Merchant API route.");
+      }
+      status = webhook.status;
+      return merchantOk(webhook.data, requestId, webhook.status);
     }
 
     throw new MerchantApiError(MERCHANT_ERROR_CODES.RESOURCE_NOT_FOUND, "Unknown Merchant API route.");

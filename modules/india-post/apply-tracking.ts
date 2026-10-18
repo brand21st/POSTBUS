@@ -285,7 +285,7 @@ export async function applyIndiaPostTracking(
         : snapshot.rtoInitiatedAt,
   };
 
-  return {
+  const result: ApplyTrackingResult = {
     inserted: !duplicate,
     duplicate,
     statusUpdated: Boolean(plan.applyStatus),
@@ -295,6 +295,33 @@ export async function applyIndiaPostTracking(
     snapshot: next,
     whatsappEvents: duplicate ? [] : plan.whatsappEvents,
   };
+  await publishAppliedTracking(supabase, snapshot, result, event);
+  return result;
+}
+
+async function publishAppliedTracking(
+  supabase: SupabaseClient,
+  snapshot: ShipmentTrackingSnapshot,
+  result: ApplyTrackingResult,
+  event: TrackingEventInput
+) {
+  try {
+    const { publishTrackingResult } = await import("@/modules/webhooks/publish");
+    await publishTrackingResult(supabase, {
+      organizationId: snapshot.organizationId,
+      shipmentId: snapshot.id,
+      orderId: snapshot.orderId,
+      inserted: result.inserted,
+      previousStatus: snapshot.status,
+      nextStatus: result.shipmentStatus ?? snapshot.status,
+      previousOperational: snapshot.operationalStatus,
+      nextOperational: result.operationalStatus,
+      eventCode: event.eventCode,
+      occurredAt: event.occurredAt,
+    });
+  } catch {
+    // Webhook fan-out must not break tracking ingestion.
+  }
 }
 
 export async function ingestBulkTrackingArticle(

@@ -341,6 +341,20 @@ export async function createManualOrder(
     // VaChat knowledge is optional; the order should still be created.
   }
 
+  if ((input.source ?? "MANUAL") !== "API") {
+    try {
+      const { publishOrderCreated } = await import("@/modules/webhooks/publish");
+      await publishOrderCreated(supabase, {
+        organizationId: ctx.organizationId,
+        orderId: order.id,
+        orderNumber,
+        status: input.status ?? "READY",
+      });
+    } catch {
+      // Webhook fan-out must not break order creation.
+    }
+  }
+
   return { ...order, createShipment: Boolean(input.createShipment), shipment: input.shipment };
 }
 

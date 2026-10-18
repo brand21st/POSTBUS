@@ -142,7 +142,7 @@ export function permissionForTenantRoute(
 
   if (root === "api-keys" || root === "merchant-api") return "api_keys.manage";
 
-  if (path === "webhooks") return "webhooks.manage";
+  if (root === "webhooks") return "webhooks.manage";
 
   if (path === "audit-logs") return "audit.read";
 

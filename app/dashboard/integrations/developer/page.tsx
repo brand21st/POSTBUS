@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
+import { DeveloperWebhooksPanel } from "@/app/dashboard/integrations/developer/developer-webhooks";
 
 const SCOPES = [
   { id: "orders:read", label: "orders:read", hint: "List and get orders" },
@@ -25,6 +26,8 @@ const SCOPES = [
   { id: "shipments:book", label: "shipments:book", hint: "Request India Post booking" },
   { id: "tracking:read", label: "tracking:read", hint: "Read tracking events" },
   { id: "labels:read", label: "labels:read", hint: "Download shipping labels" },
+  { id: "webhooks:read", label: "webhooks:read", hint: "List webhook subscriptions and deliveries" },
+  { id: "webhooks:manage", label: "webhooks:manage", hint: "Create, rotate, test, and retry webhooks" },
 ] as const;
 
 type ApiKeyRow = {
@@ -48,6 +51,8 @@ type Usage = {
     response_status: number;
     duration_ms: number | null;
     created_at: string;
+    request_id?: string;
+    key_prefix?: string | null;
   }>;
 };
 
@@ -88,7 +93,7 @@ export default function DeveloperPortalPage() {
   });
   const prompt = useQuery({
     queryKey: ["merchant-api-ai-prompt"],
-    queryFn: () => api<{ prompt: string }>("/api/v1/merchant-api/ai-prompt"),
+    queryFn: () => api<{ prompt: string; prompts?: Record<string, string> }>("/api/v1/merchant-api/ai-prompt?kind=all"),
   });
   const reference = useQuery({
     queryKey: ["merchant-api-docs-ref"],
@@ -162,8 +167,10 @@ export default function DeveloperPortalPage() {
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="keys">API keys</TabsTrigger>
-          <TabsTrigger value="docs">Documentation</TabsTrigger>
-          <TabsTrigger value="usage">Usage</TabsTrigger>
+          <TabsTrigger value="docs">API reference</TabsTrigger>
+          <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
+          <TabsTrigger value="usage">API logs</TabsTrigger>
+          <TabsTrigger value="guides">Integration guides</TabsTrigger>
           <TabsTrigger value="ai">AI integration</TabsTrigger>
         </TabsList>
 
@@ -179,6 +186,12 @@ export default function DeveloperPortalPage() {
               </p>
               <p>Create orders, then book India Post in a separate call. Creating an order does not book a shipment.</p>
               <p>Map Google Sheet columns in your script. PostBus does not store a sheet column mapper.</p>
+              <p>
+                Public docs:{" "}
+                <a className="text-brand underline" href="/developers" target="_blank" rel="noreferrer">
+                  postbus.in/developers
+                </a>
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -257,6 +270,39 @@ export default function DeveloperPortalPage() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="webhooks" className="space-y-4">
+          <DeveloperWebhooksPanel />
+        </TabsContent>
+
+        <TabsContent value="guides" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Same API for every integration</CardTitle>
+              <CardDescription>
+                CRM, ERP, Google Sheets, n8n, Make, Zapier, and custom apps all use /api/merchant/v1. There are no native
+                plugins unless listed here.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <p>
+                <a className="text-brand underline" href="/developers/integrations">
+                  Integration guides
+                </a>
+              </p>
+              <p>
+                <a className="text-brand underline" href="/developers/quickstart">
+                  Quick start
+                </a>
+              </p>
+              <p>
+                <a className="text-brand underline" href="/developers/webhooks">
+                  Webhook verification
+                </a>
+              </p>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="docs" className="space-y-4">
@@ -340,7 +386,8 @@ export default function DeveloperPortalPage() {
                         {row.method} {row.endpoint}
                       </span>
                       <span className="text-muted">
-                        {row.response_status} · {formatDate(row.created_at, true)}
+                        {row.response_status} · {row.duration_ms ?? "—"}ms · {row.key_prefix ?? "key"} · {row.request_id} ·{" "}
+                        {formatDate(row.created_at, true)}
                       </span>
                     </div>
                   ))}
@@ -361,16 +408,25 @@ export default function DeveloperPortalPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Button
-                size="sm"
-                onClick={() => prompt.data?.prompt && copyText(prompt.data.prompt, "AI prompt")}
-                disabled={!prompt.data?.prompt}
-              >
-                <Copy className="size-4" />
-                Copy AI integration prompt
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {(["sheets", "crm", "erp", "custom"] as const).map((kind) => (
+                  <Button
+                    key={kind}
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      const text = prompt.data?.prompts?.[kind] ?? prompt.data?.prompt;
+                      if (text) copyText(text, `${kind} prompt`);
+                    }}
+                    disabled={!prompt.data}
+                  >
+                    <Copy className="size-4" />
+                    Copy {kind} prompt
+                  </Button>
+                ))}
+              </div>
               <pre className="max-h-[28rem] overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-card p-4 text-sm">
-                {prompt.data?.prompt ?? "Loading prompt…"}
+                {prompt.data?.prompts?.sheets ?? prompt.data?.prompt ?? "Loading prompt…"}
               </pre>
             </CardContent>
           </Card>

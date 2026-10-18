@@ -18,6 +18,8 @@ Dashboard `/api/v1` is session-only and is not this API.
 | `shipments:book` | `POST /orders/{id}/book` |
 | `tracking:read` | Tracking events |
 | `labels:read` | Label PDF download |
+| `webhooks:read` | List subscriptions and deliveries |
+| `webhooks:manage` | Create, update, disable, rotate, test, retry |
 
 ## Success envelope
 
@@ -45,7 +47,9 @@ Label download returns `application/pdf` instead of JSON.
 }
 ```
 
-Codes: `INVALID_API_KEY`, `API_KEY_REVOKED`, `API_KEY_EXPIRED`, `INSUFFICIENT_SCOPE`, `RESOURCE_NOT_FOUND`, `VALIDATION_ERROR`, `DUPLICATE_ORDER`, `IDEMPOTENCY_CONFLICT`, `BOOKING_NOT_ALLOWED`, `RATE_LIMIT_EXCEEDED`, `UPSTREAM_SERVICE_UNAVAILABLE`, `INTERNAL_ERROR`.
+Codes: `INVALID_API_KEY`, `API_KEY_REVOKED`, `API_KEY_EXPIRED`, `INSUFFICIENT_SCOPE`, `MERCHANT_API_DISABLED`, `RESOURCE_NOT_FOUND`, `VALIDATION_ERROR`, `DUPLICATE_ORDER`, `IDEMPOTENCY_CONFLICT`, `BOOKING_NOT_ALLOWED`, `RATE_LIMIT_EXCEEDED`, `UPSTREAM_SERVICE_UNAVAILABLE`, `INTERNAL_ERROR`.
+
+`MERCHANT_API_DISABLED` (403) means the workspace is not on `MERCHANT_API_ORG_ALLOWLIST`, or `MERCHANT_API_ENABLED=false`.
 
 ## Idempotency
 
@@ -133,3 +137,31 @@ HTTP 429 includes `Retry-After`.
 Orders: `IMPORTED`, `READY`, `PROCESSING`, `BOOKED`, `SHIPPED`, `IN_TRANSIT`, `DELIVERED`, `FAILED`, `CANCELLED`.
 
 Shipment booking requested: typically `QUEUED` or `BOOKING`. Physical booking: `BOOKED` after India Post confirmation.
+
+## Webhooks
+
+Outbound webhooks are delivered only when `MERCHANT_WEBHOOKS_ORG_ALLOWLIST` includes the organization. Delivery is at-least-once. Deduplicate on `id`.
+
+Envelope `api_version` is `2026-10-18`. REST responses still use `api_version: v1`.
+
+Events: `order.created`, `order.updated`, `shipment.booking_requested` (alias `shipment.created`), `shipment.booked`, `shipment.booking_failed` (alias `shipment.failed`), `tracking.updated`, `shipment.out_for_delivery`, `shipment.delivered`, `shipment.exception` (`data.status` is `NDR` or `RTO`), `webhook.test`.
+
+`shipment.exception` is not a database status. `RTO_DELIVERED` does not emit `shipment.delivered`.
+
+Signature:
+
+```
+canonical = timestamp + "." + event_id + "." + raw_body
+X-PostBus-Signature: v1=<hex hmac-sha256(secret, canonical)>
+```
+
+Headers: `X-PostBus-Event-Id`, `X-PostBus-Event-Type`, `X-PostBus-Timestamp`, `X-PostBus-Signature`. Reject timestamps older than 5 minutes. Compare signatures in constant time. Redirects are not followed. HTTPS public destinations only.
+
+Management:
+
+- `GET/POST /webhook-subscriptions`
+- `GET/PATCH/DELETE /webhook-subscriptions/{id}` (DELETE disables, keeps history)
+- `GET /webhook-subscriptions/{id}/deliveries`
+- `POST /webhook-subscriptions/{id}/test`
+- `POST /webhook-subscriptions/{id}/rotate-secret`
+- `POST /webhook-subscriptions/{id}/deliveries/{deliveryId}/retry`

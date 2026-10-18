@@ -193,6 +193,88 @@ paths:
                 type: string
                 format: binary
         "404": { description: Label not generated yet }
+  /webhook-subscriptions:
+    get:
+      tags: [Webhooks]
+      summary: List webhook subscriptions
+      responses:
+        "200": { description: Subscriptions for the authenticated organization }
+    post:
+      tags: [Webhooks]
+      summary: Create a webhook subscription
+      description: Returns the signing secret once. URL must be public HTTPS.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, format: uri }
+                description: { type: string }
+                events:
+                  type: array
+                  items: { type: string }
+      responses:
+        "201": { description: Subscription plus one-time secret }
+  /webhook-subscriptions/{subscriptionId}:
+    get:
+      tags: [Webhooks]
+      parameters:
+        - in: path
+          name: subscriptionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Subscription without the secret }
+    patch:
+      tags: [Webhooks]
+      parameters:
+        - in: path
+          name: subscriptionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Updated subscription }
+    delete:
+      tags: [Webhooks]
+      summary: Disable the subscription and keep delivery history
+      parameters:
+        - in: path
+          name: subscriptionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Disabled }
+  /webhook-subscriptions/{subscriptionId}/deliveries:
+    get:
+      tags: [Webhooks]
+      parameters:
+        - in: path
+          name: subscriptionId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Delivery attempts }
+  /webhook-subscriptions/{subscriptionId}/test:
+    post:
+      tags: [Webhooks]
+      summary: Queue a webhook.test event
+      responses:
+        "202": { description: Test event recorded }
+  /webhook-subscriptions/{subscriptionId}/rotate-secret:
+    post:
+      tags: [Webhooks]
+      summary: Rotate the signing secret
+      responses:
+        "200": { description: New secret returned once }
+  /webhook-subscriptions/{subscriptionId}/deliveries/{deliveryId}/retry:
+    post:
+      tags: [Webhooks]
+      summary: Requeue a delivery
+      responses:
+        "202": { description: Delivery set back to PENDING }
 components:
   securitySchemes:
     bearerAuth:

@@ -35,6 +35,12 @@ export async function merchantApiUsage(supabase: SupabaseClient, organizationId:
     .limit(100);
 
   const rows = data ?? [];
+  const keyIds = [...new Set(rows.map((row) => row.api_key_id).filter((id): id is string => Boolean(id)))];
+  const prefixes = new Map<string, string>();
+  if (keyIds.length) {
+    const { data: keys } = await supabase.from("api_keys").select("id, key_prefix").in("id", keyIds);
+    for (const key of keys ?? []) prefixes.set(key.id, key.key_prefix);
+  }
   const total = rows.length;
   const failed = rows.filter((row) => Number(row.response_status) >= 400).length;
   return {
@@ -49,6 +55,8 @@ export async function merchantApiUsage(supabase: SupabaseClient, organizationId:
       duration_ms: row.duration_ms,
       request_id: row.request_id,
       created_at: row.created_at,
+      api_key_id: row.api_key_id,
+      key_prefix: prefixes.get(row.api_key_id as string) ?? null,
     })),
   };
 }

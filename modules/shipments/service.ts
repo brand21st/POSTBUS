@@ -237,6 +237,16 @@ export async function createShipmentsForOrders(
           ...(extras?.heightCm != null ? { height_cm: extras.heightCm } : {}),
         })
         .eq("id", current.id);
+      if (!recovering && currentStatus !== "QUEUED") {
+        const { publishBookingRequested } = await import("@/modules/webhooks/publish");
+        await publishBookingRequested(supabase, {
+          organizationId: ctx.organizationId,
+          shipmentId: current.id,
+          orderId: order.id,
+          orderNumber: order.order_number as string | undefined,
+          previousStatus: currentStatus,
+        });
+      }
       const job = await createBackgroundJob(supabase, {
         organizationId: ctx.organizationId,
         jobType: "shipment-booking",
@@ -276,6 +286,17 @@ export async function createShipmentsForOrders(
 
     if (shipError || !shipment) {
       throw new AppError(ERROR_CODES.SHIPMENT_FAILED, shipError?.message || "Shipment create failed.");
+    }
+
+    if (enqueueBooking) {
+      const { publishBookingRequested } = await import("@/modules/webhooks/publish");
+      await publishBookingRequested(supabase, {
+        organizationId: ctx.organizationId,
+        shipmentId: shipment.id,
+        orderId: order.id,
+        orderNumber: order.order_number as string | undefined,
+        previousStatus: "NEW",
+      });
     }
 
     if (action === "processing") {

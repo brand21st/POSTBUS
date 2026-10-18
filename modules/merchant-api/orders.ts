@@ -96,6 +96,18 @@ export async function createMerchantOrder(
   }
 
   const order = await getOrder(supabase, actor(ctx), created.id);
+  try {
+    const { publishOrderCreated } = await import("@/modules/webhooks/publish");
+    await publishOrderCreated(supabase, {
+      organizationId: ctx.organizationId,
+      orderId: created.id,
+      orderNumber: created.order_number as string | undefined,
+      externalOrderId: body.external_order_id ?? null,
+      status: (created.status as string | undefined) ?? "READY",
+    });
+  } catch {
+    // Webhook fan-out must not break Merchant API order creation.
+  }
   return { duplicate: false, order: publicOrderDto(order as Record<string, unknown>, body.external_order_id ?? null) };
 }
 

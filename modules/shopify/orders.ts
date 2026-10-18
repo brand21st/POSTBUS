@@ -2161,13 +2161,28 @@ export async function upsertShopifyOrder(
         after: snapshot.bookingConflict,
       });
     }
-    await refreshShopifyLineItems(supabase, {
-      organizationId: input.organizationId,
-      orderId: existing.order_id as string,
-      orderStatus: existingOrder?.status,
-      lineItems,
-    });
-    return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string };
+      await refreshShopifyLineItems(supabase, {
+        organizationId: input.organizationId,
+        orderId: existing.order_id as string,
+        orderStatus: existingOrder?.status,
+        lineItems,
+      });
+      if (existingOrder?.status && existingOrder.status !== orderStatus) {
+        try {
+          const { publishOrderUpdated } = await import("@/modules/webhooks/publish");
+          await publishOrderUpdated(supabase, {
+            organizationId: input.organizationId,
+            orderId: existing.order_id as string,
+            orderNumber: shopifyOrderNumber(input.remote, sourceId),
+            externalOrderId: sourceId,
+            previousStatus: existingOrder.status,
+            status: orderStatus,
+          });
+        } catch {
+          // Webhook fan-out must not break Shopify import.
+        }
+      }
+      return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string };
   }
 
   if (!isUnfulfilledShopifyOrder(input.remote)) {
@@ -2297,14 +2312,26 @@ export async function upsertShopifyOrder(
   } catch {
     // Vachat confirmation is optional; the Shopify import should still succeed.
   }
-  try {
-    const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
-    scheduleMerchantKnowledgeSync(supabase, input.organizationId);
-  } catch {
-    // VaChat knowledge is optional; the Shopify import should still succeed.
-  }
+    try {
+      const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
+      scheduleMerchantKnowledgeSync(supabase, input.organizationId);
+    } catch {
+      // VaChat knowledge is optional; the Shopify import should still succeed.
+    }
+    try {
+      const { publishOrderCreated } = await import("@/modules/webhooks/publish");
+      await publishOrderCreated(supabase, {
+        organizationId: input.organizationId,
+        orderId: order.id,
+        orderNumber: shopifyOrderNumber(input.remote, sourceId),
+        externalOrderId: sourceId,
+        status: orderStatus,
+      });
+    } catch {
+      // Webhook fan-out must not break Shopify import.
+    }
 
-  const workspace = await loadWorkspaceParcelDefaults(supabase, input.organizationId);
+    const workspace = await loadWorkspaceParcelDefaults(supabase, input.organizationId);
   const parcelExtras = shopifyResolvedShipmentDims(lineItems, workspace);
   const shipmentCtx = {
     userId: input.userId ?? "",

@@ -20,5 +20,6 @@ describe("merchant API keys", () => {
     expect(normalizeScopes(["orders:read", "orders:read", "not-a-scope"])).toEqual(["orders:read"]);
     expect(hasScope(["orders:write"], "shipments:book")).toBe(false);
     expect(hasScope(["shipments:book"], "shipments:book")).toBe(true);
+    expect(hasScope(["orders:write"], "webhooks:manage")).toBe(false);
   });
 });

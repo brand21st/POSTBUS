@@ -59,6 +59,8 @@ export const createApiKeySchema = z.object({
         "shipments:book",
         "tracking:read",
         "labels:read",
+        "webhooks:read",
+        "webhooks:manage",
       ])
     )
     .min(1),

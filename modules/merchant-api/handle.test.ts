@@ -245,4 +245,13 @@ describe("handleMerchantV1", () => {
     expect((await response.json()).error.code).toBe("INSUFFICIENT_SCOPE");
     expect(mocks.getMerchantLabel).not.toHaveBeenCalled();
   });
+
+  it("denies webhook listing without webhooks:read", async () => {
+    auth.ctx.scopes = ["orders:read"];
+    const response = await handleMerchantV1(
+      req("GET", "http://localhost/api/merchant/v1/webhook-subscriptions"),
+      ["webhook-subscriptions"]
+    );
+    expect((await response.json()).error.code).toBe("INSUFFICIENT_SCOPE");
+  });
 });

@@ -55,7 +55,20 @@ export async function markShipmentBookingFailed(
     .is("booked_at", null)
     .in("status", [...BOOKING_CLAIMABLE_STATUSES, "BOOKING"]);
   if (organizationId) query = query.eq("organization_id", organizationId);
-  await query;
+  const { data } = await query.select("id, organization_id, order_id, last_error_code").maybeSingle();
+  if (data?.organization_id) {
+    try {
+      const { publishBookingFailed } = await import("@/modules/webhooks/publish");
+      await publishBookingFailed(supabase, {
+        organizationId: data.organization_id,
+        shipmentId: data.id,
+        orderId: data.order_id,
+        errorCode: data.last_error_code ?? code,
+      });
+    } catch {
+      // Webhook fan-out must not break booking failure persistence.
+    }
+  }
 }
 
 async function persistBookedShipment(
@@ -131,6 +144,17 @@ async function persistBookedShipment(
     shipmentId: input.shipmentId,
     barcodeRef: barcodeLogRef(input.barcode),
   });
+  try {
+    const { publishShipmentBooked } = await import("@/modules/webhooks/publish");
+    await publishShipmentBooked(supabase, {
+      organizationId: input.organizationId,
+      shipmentId: input.shipmentId,
+      orderId: input.orderId,
+      awb: input.articleId || input.barcode,
+    });
+  } catch {
+    // Webhook fan-out must not break a successful BOOKED persist.
+  }
   return true;
 }
 

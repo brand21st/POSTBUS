@@ -7,7 +7,6 @@ import { getSystemHealth } from "@/lib/api/health";
 import { canAssignMemberRole } from "@/lib/api/v1-permissions";
 import {
   createApiKeySchema,
-  createWebhookEndpointSchema,
   memberInviteSchema,
   updateOrganizationPoliciesSchema,
   updateOrganizationSchema,
@@ -25,7 +24,6 @@ import {
   uploadOrganizationLogo,
   type OrganizationIdentityRow,
 } from "@/modules/organizations/branding";
-import { WEBHOOK_EVENTS } from "@/types/domain";
 import {
   mapOrganizationPolicies,
   normalizePolicyKeywords,
@@ -440,40 +438,64 @@ export async function handleWorkspaceRoutes(
     return { revoked: true };
   }
 
-  if (key === "GET webhooks") {
-    const { data } = await supabase
-      .from("webhook_endpoints")
-      .select("id, url, events, is_active, created_at, updated_at, encrypted_secret")
-      .eq("organization_id", ctx.organizationId);
-    return {
-      items: (data ?? []).map((item) => ({
-        id: item.id,
-        url: item.url,
-        events: item.events,
-        is_active: item.is_active,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-        needsSecretRotation: !item.encrypted_secret,
-      })),
-    };
-  }
-
-  if (key === "POST webhooks") {
-    const body = createWebhookEndpointSchema.parse(await request.json());
-    const secret = randomToken(16);
-    const { data, error } = await supabase
-      .from("webhook_endpoints")
-      .insert({
-        organization_id: ctx.organizationId,
+  if (slugs[0] === "webhooks") {
+    const {
+      createWebhookSubscription,
+      disableWebhookSubscription,
+      getWebhookSubscription,
+      listRecentWebhookDeliveries,
+      listWebhookDeliveries,
+      listWebhookSubscriptions,
+      retryWebhookDelivery,
+      rotateWebhookSecret,
+      sendWebhookTest,
+      updateWebhookSubscription,
+    } = await import("@/modules/webhooks/subscriptions");
+    const id = slugs[1];
+    const action = slugs[2];
+    const deliveryId = slugs[3];
+    if (method === "GET" && !id) return listWebhookSubscriptions(supabase, ctx.organizationId);
+    if (method === "POST" && !id) {
+      const body = (await request.json().catch(() => ({}))) as {
+        url?: string;
+        events?: string[];
+        description?: string | null;
+      };
+      if (!body.url) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "url is required.");
+      return createWebhookSubscription(supabase, ctx.organizationId, {
         url: body.url,
-        secret_hash: hashSecret(secret),
-        encrypted_secret: encryptSecret(secret),
-        events: body.events ?? [...WEBHOOK_EVENTS],
-      })
-      .select("id, url, events, is_active, created_at, updated_at")
-      .single();
-    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-    return { ...data, secret, needsSecretRotation: false };
+        events: body.events,
+        description: body.description,
+      });
+    }
+    if (method === "GET" && id === "deliveries") return listRecentWebhookDeliveries(supabase, ctx.organizationId);
+    if (!id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Webhook subscription was not found.");
+    if (method === "GET" && !action) return getWebhookSubscription(supabase, ctx.organizationId, id);
+    if (method === "PATCH" && !action) {
+      const body = (await request.json().catch(() => ({}))) as {
+        url?: string;
+        events?: string[];
+        description?: string | null;
+        enabled?: boolean;
+      };
+      return updateWebhookSubscription(supabase, ctx.organizationId, id, body);
+    }
+    if (method === "DELETE" && !action) return disableWebhookSubscription(supabase, ctx.organizationId, id);
+    if (method === "GET" && action === "deliveries") {
+      return listWebhookDeliveries(
+        supabase,
+        ctx.organizationId,
+        id,
+        request.nextUrl.searchParams.get("cursor"),
+        Number(request.nextUrl.searchParams.get("limit") ?? "20")
+      );
+    }
+    if (method === "POST" && action === "test") return sendWebhookTest(supabase, ctx.organizationId, id);
+    if (method === "POST" && action === "rotate-secret") return rotateWebhookSecret(supabase, ctx.organizationId, id);
+    if (method === "POST" && action === "deliveries" && deliveryId && slugs[4] === "retry") {
+      return retryWebhookDelivery(supabase, ctx.organizationId, id, deliveryId);
+    }
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Unknown webhook route.");
   }
 
   if (key === "GET audit-logs") {

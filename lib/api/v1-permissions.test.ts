@@ -177,6 +177,7 @@ describe("permissionForTenantRoute", () => {
       "api_keys.manage"
     );
     expect(permissionForTenantRoute("GET", "webhooks", ["webhooks"])).toBe("webhooks.manage");
+    expect(permissionForTenantRoute("POST", "webhooks/abc/test", ["webhooks", "abc", "test"])).toBe("webhooks.manage");
     expect(permissionForTenantRoute("GET", "audit-logs", ["audit-logs"])).toBe("audit.read");
     expect(permissionForTenantRoute("PATCH", "automation", ["automation"])).toBe("automation.manage");
     expect(permissionForTenantRoute("GET", "automation", ["automation"])).toBeUndefined();

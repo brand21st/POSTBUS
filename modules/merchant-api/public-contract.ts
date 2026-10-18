@@ -10,6 +10,8 @@ export const MERCHANT_PUBLIC_CAPABILITIES = [
   "shipments.read",
   "tracking.read",
   "labels.read",
+  "webhooks.read",
+  "webhooks.manage",
 ] as const;
 
 export function merchantPublicSchema() {

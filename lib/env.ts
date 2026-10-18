@@ -72,6 +72,9 @@ export const env = {
   // Merchant Public API. Empty MERCHANT_API_ORG_ALLOWLIST disables every org. Set MERCHANT_API_ENABLED=false to kill the API without a DB rollback.
   merchantApiEnabled: optional(process.env.MERCHANT_API_ENABLED).toLowerCase() !== "false",
   merchantApiOrgAllowlist: optional(process.env.MERCHANT_API_ORG_ALLOWLIST),
+  // Outbound merchant webhooks. Empty allowlist sends nothing. MERCHANT_WEBHOOKS_ENABLED=false stops fan-out.
+  merchantWebhooksEnabled: optional(process.env.MERCHANT_WEBHOOKS_ENABLED).toLowerCase() !== "false",
+  merchantWebhooksOrgAllowlist: optional(process.env.MERCHANT_WEBHOOKS_ORG_ALLOWLIST),
 };
 
 assertStagingAuthIsolation({

@@ -926,66 +926,6 @@ async function shopifyFulfillment(
 }
 
 async function deliverWebhooks(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
-  const { data: deliveries } = await supabase
-    .from("webhook_deliveries")
-    .select("*, webhook_endpoints(*)")
-    .eq("organization_id", payload.organizationId)
-    .eq("status", "PENDING")
-    .limit(20);
-
-  for (const delivery of deliveries ?? []) {
-    const endpoint = delivery.webhook_endpoints as {
-      url?: string;
-      encrypted_secret?: string | null;
-    } | null;
-    if (!endpoint?.url) continue;
-    const timestamp = String(Date.now());
-    const body = JSON.stringify(delivery.payload);
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "X-PostBus-Timestamp": timestamp,
-    };
-    if (endpoint.encrypted_secret) {
-      try {
-        const { decryptSecret } = await import("@/lib/security/crypto");
-        const { signWebhook } = await import("@/modules/webhooks/outgoing");
-        const secret = decryptSecret(endpoint.encrypted_secret);
-        headers["X-PostBus-Signature"] = signWebhook(secret, timestamp, body);
-      } catch (error) {
-        await supabase
-          .from("webhook_deliveries")
-          .update({
-            status: "FAILED",
-            last_error: error instanceof Error ? error.message : "Could not sign webhook payload.",
-            attempt_count: delivery.attempt_count + 1,
-          })
-          .eq("id", delivery.id);
-        continue;
-      }
-    }
-    try {
-      const response = await fetch(endpoint.url, {
-        method: "POST",
-        headers,
-        body,
-      });
-      await supabase
-        .from("webhook_deliveries")
-        .update({
-          status: response.ok ? "DELIVERED" : "FAILED",
-          response_code: response.status,
-          attempt_count: delivery.attempt_count + 1,
-        })
-        .eq("id", delivery.id);
-    } catch (error) {
-      await supabase
-        .from("webhook_deliveries")
-        .update({
-          status: "FAILED",
-          last_error: error instanceof Error ? error.message : "delivery failed",
-          attempt_count: delivery.attempt_count + 1,
-        })
-        .eq("id", delivery.id);
-    }
-  }
+  const { runWebhookProcessing } = await import("@/modules/webhooks/deliver");
+  await runWebhookProcessing(supabase, payload.organizationId);
 }

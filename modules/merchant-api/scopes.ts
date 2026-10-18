@@ -5,6 +5,8 @@ export const MERCHANT_API_SCOPES = [
   "shipments:book",
   "tracking:read",
   "labels:read",
+  "webhooks:read",
+  "webhooks:manage",
 ] as const;
 
 export type MerchantApiScope = (typeof MERCHANT_API_SCOPES)[number];
