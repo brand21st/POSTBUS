@@ -14,7 +14,7 @@ import {
 } from "@/modules/labels/page-presets";
 import type { LabelTemplate } from "@/modules/labels/template-schema";
 
-const MAX_LABELS = 100;
+export const MAX_LABELS = 100;
 
 export type MultiUpDisposition = "inline" | "attachment" | "print";
 
