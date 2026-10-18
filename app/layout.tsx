@@ -4,6 +4,7 @@ import { Geist } from "next/font/google";
 import { siteEntityGraph, serializeJsonLd } from "@/lib/seo/json-ld";
 import { absoluteUrl } from "@/lib/seo/metadata";
 import { siteConfig } from "@/lib/site-config";
+import { TawkChat } from "@/components/analytics/tawk-chat";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
@@ -88,6 +89,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           dangerouslySetInnerHTML={{ __html: serializeJsonLd(siteEntityGraph()) }}
         />
         <Providers>{children}</Providers>
+        <TawkChat />
       </body>
     </html>
   );
