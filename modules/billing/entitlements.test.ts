@@ -57,10 +57,15 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForApi("GET", "tracking", ["tracking"])).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForApi("PATCH", "tracking-pages", ["tracking-pages"])).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForApi("POST", "labels/bulk-download", ["labels", "bulk-download"])).toBe(FEATURE.bulk);
+    expect(lockedFeatureForApi("POST", "labels/bulk-print", ["labels", "bulk-print"])).toBe(FEATURE.bulk);
     expect(lockedFeatureForApi("POST", "bookings/validate", ["bookings", "validate"])).toBe(FEATURE.bulk);
     expect(lockedFeatureForApi("GET", "automation", ["automation"])).toBeNull();
     expect(lockedFeatureForApi("PATCH", "automation", ["automation"])).toBe(FEATURE.automation);
     expect(lockedFeatureForApi("POST", "integrations/shopify", ["integrations", "shopify"])).toBe(FEATURE.shopify);
+    expect(lockedFeatureForApi("POST", "label-template/multi-sheet", ["label-template", "multi-sheet"])).toBe(
+      FEATURE.packing
+    );
+    expect(lockedFeatureForApi("GET", "labels", ["labels"])).toBeNull();
   });
 
   it("locks automation toggles until the matching plan feature is included", () => {

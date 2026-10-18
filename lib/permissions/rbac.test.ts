@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { hasPermission, permissionsFor } from "@/lib/permissions/rbac";
 
 describe("rbac", () => {
@@ -24,6 +25,11 @@ describe("rbac", () => {
 
   it("lists permissions for a role", () => {
     expect(permissionsFor("VIEWER")).not.toContain("orders.write");
+    expect(permissionsFor("VIEWER")).not.toContain("labels.write");
+    expect(hasPermission("VIEWER", permissionForTenantRoute("POST", "labels/bulk-print", ["labels", "bulk-print"])!)).toBe(
+      false
+    );
+    expect(hasPermission("OPERATOR", "labels.write")).toBe(true);
     expect(permissionsFor("OWNER")).toContain("org.billing");
   });
 });

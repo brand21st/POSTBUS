@@ -197,6 +197,9 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "print-jobs/job-1/complete", ["print-jobs", "job-1", "complete"])).toBe(
       "labels.write"
     );
+    expect(permissionForTenantRoute("POST", "print-jobs/job-1/reprint", ["print-jobs", "job-1", "reprint"])).toBe(
+      "labels.write"
+    );
     expect(permissionForTenantRoute("POST", "labels/abc/print", ["labels", "abc", "print"])).toBe(
       "labels.write"
     );
@@ -210,6 +213,10 @@ describe("permissionForTenantRoute", () => {
     expect(
       permissionForTenantRoute("POST", "labels/retry-incomplete", ["labels", "retry-incomplete"])
     ).toBe("labels.write");
+    expect(permissionForTenantRoute("POST", "labels/bulk-print", ["labels", "bulk-print"])).toBe("labels.write");
+    expect(permissionForTenantRoute("POST", "labels/bulk-download", ["labels", "bulk-download"])).toBe(
+      "labels.read"
+    );
     expect(
       permissionForTenantRoute("POST", "labels/abc/packing-slip", ["labels", "abc", "packing-slip"])
     ).toBe("labels.write");

@@ -55,14 +55,14 @@ export async function handlePrintDevicePublicRoutes(request: NextRequest, path: 
 
   if (path === "print-devices/jobs/claim" && request.method === "POST") {
     const device = await authenticatePrintDevice(supabase, request.headers.get("authorization"));
-    return claimNextPrintJob(supabase, device, { printers: device.printers });
+    return claimNextPrintJob(supabase, device, { printers: device.printers, source: "device" });
   }
   const jobMatch = path.match(/^print-devices\/jobs\/([^/]+)(\/pdf)?$/);
   if (jobMatch) {
     const device = await authenticatePrintDevice(supabase, request.headers.get("authorization"));
     const jobId = jobMatch[1];
     if (jobMatch[2] && request.method === "GET") {
-      const { bytes, filename } = await loadPrintJobPdf(supabase, device, jobId);
+      const { bytes, filename } = await loadPrintJobPdf(supabase, device, jobId, { source: "device" });
       return new NextResponse(new Uint8Array(bytes), {
         headers: {
           "Content-Type": "application/pdf",
@@ -82,7 +82,7 @@ export async function handlePrintDevicePublicRoutes(request: NextRequest, path: 
       return completePrintJob(supabase, device, jobId, {
         status: body.status,
         errorMessage: body.errorMessage ?? body.error,
-      });
+      }, { source: "device" });
     }
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
   }

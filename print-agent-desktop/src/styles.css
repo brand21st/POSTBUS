@@ -45,6 +45,17 @@ header p { margin: 4px 0 0; color: #d4d4d8; font-size: 13px; }
 
 h1 { margin: 0; font-size: 20px; font-weight: 650; }
 
+.header-version {
+  flex-shrink: 0;
+  border: 1px solid #3f3f46;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  color: #e4e4e7;
+}
+
 main {
   width: min(880px, 100%);
   margin: 0 auto;
@@ -152,6 +163,42 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   font-size: 32px;
   letter-spacing: 0.12em;
   font-weight: 650;
+}
+
+.status-grid {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+
+.status-grid div {
+  display: grid;
+  gap: 2px;
+}
+
+.status-grid dt {
+  color: #71717a;
+  font-size: 12px;
+}
+
+.status-grid dd {
+  margin: 0;
+  font-weight: 550;
+}
+
+.label-preview {
+  display: block;
+  width: 100%;
+  height: 280px;
+  margin-top: 14px;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.queues {
+  margin: 10px 0 0;
+  word-break: break-word;
 }
 
 .empty { padding: 18px 0 4px; color: #52525b; }

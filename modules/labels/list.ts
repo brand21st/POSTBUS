@@ -31,30 +31,40 @@ type LabelGroupRow = {
   total_count: number | string;
 };
 
+function sanitizeLabelSearch(value?: string | null) {
+  const trimmed = String(value || "")
+    .trim()
+    .slice(0, 80)
+    .replace(/[%_\\]/g, "");
+  return trimmed || null;
+}
+
 export async function listGroupedLabels(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  query: { page: number; pageSize: number; kind?: string | null }
+  query: { page: number; pageSize: number; kind?: string | null; q?: string | null }
 ) {
   const page = Math.max(1, query.page || 1);
   const pageSize = Math.max(1, Math.min(query.pageSize || 20, 100));
   const kind = normalizeLabelKindFilter(query.kind);
+  const search = sanitizeLabelSearch(query.q);
   const offset = (page - 1) * pageSize;
 
-  const { data, error } = await supabase.rpc("label_shipment_groups", {
+  const rpcArgs: Record<string, unknown> = {
     p_organization_id: ctx.organizationId,
     p_kind: kind,
     p_limit: pageSize,
     p_offset: offset,
-  });
+    p_search: search,
+  };
+  const { data, error } = await supabase.rpc("label_shipment_groups", rpcArgs);
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
   const groups = (data ?? []) as LabelGroupRow[];
   let total = Number(groups[0]?.total_count ?? 0);
   if (!groups.length && offset > 0) {
     const probe = await supabase.rpc("label_shipment_groups", {
-      p_organization_id: ctx.organizationId,
-      p_kind: kind,
+      ...rpcArgs,
       p_limit: 1,
       p_offset: 0,
     });

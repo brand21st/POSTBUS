@@ -122,17 +122,15 @@ pub fn refresh_credential(base: &str) -> Result<Option<DeviceCredential>, String
     }
 }
 
-pub fn heartbeat(base: &str, printers: &[String], selected_printer: Option<&str>) -> Result<(), String> {
+fn with_access<T>(
+    base: &str,
+    mut op: impl FnMut(&str) -> Result<T, String>,
+) -> Result<T, String> {
     let Some(current) = load_credential()? else {
-        return Ok(());
+        return Err("This computer is not connected to PostBus.".into());
     };
-    let body = json!({
-        "agentVersion": env!("CARGO_PKG_VERSION"),
-        "printers": printers,
-        "selectedPrinter": selected_printer
-    });
-    match post_raw(base, "print-devices/heartbeat", Some(&current.access_token), body.clone()) {
-        Ok(_) => Ok(()),
+    match op(&current.access_token) {
+        Ok(value) => Ok(value),
         Err(message) if message.contains("disconnected") => {
             delete_credential()?;
             Err(message)
@@ -140,13 +138,26 @@ pub fn heartbeat(base: &str, printers: &[String], selected_printer: Option<&str>
         Err(message) if message.contains("not connected") => {
             refresh_credential(base)?;
             let Some(refreshed) = load_credential()? else {
-                return Ok(());
+                return Err("This computer is not connected to PostBus.".into());
             };
-            post_raw(base, "print-devices/heartbeat", Some(&refreshed.access_token), body)?;
-            Ok(())
+            op(&refreshed.access_token)
         }
         Err(message) => Err(message),
     }
+}
+
+pub fn heartbeat(base: &str, printers: &[String], selected_printer: Option<&str>) -> Result<(), String> {
+    if load_credential()?.is_none() {
+        return Ok(());
+    }
+    let body = json!({
+        "agentVersion": env!("CARGO_PKG_VERSION"),
+        "printers": printers,
+        "selectedPrinter": selected_printer
+    });
+    with_access(base, |token| {
+        post_raw(base, "print-devices/heartbeat", Some(token), body.clone()).map(|_| ())
+    })
 }
 
 pub fn disconnect(base: &str) -> Result<(), String> {
@@ -162,6 +173,7 @@ pub struct ClaimedJob {
     pub job: ClaimJob,
     pub paper_size: Option<String>,
     pub copies: Option<u32>,
+    pub orientation: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -172,45 +184,28 @@ pub struct ClaimJob {
 }
 
 pub fn claim_job(base: &str) -> Result<Option<ClaimedJob>, String> {
-    let Some(current) = load_credential()? else {
+    if load_credential()?.is_none() {
         return Ok(None);
-    };
-    match post_raw(base, "print-devices/jobs/claim", Some(&current.access_token), json!({})) {
+    }
+    with_access(base, |token| match post_raw(base, "print-devices/jobs/claim", Some(token), json!({})) {
         Ok(value) if value.is_null() => Ok(None),
         Ok(value) => serde_json::from_value(value).map_err(|_| "PostBus returned an unexpected response.".to_string()),
-        Err(message) if message.contains("not connected") => {
-            refresh_credential(base)?;
-            let Some(refreshed) = load_credential()? else {
-                return Ok(None);
-            };
-            match post_raw(base, "print-devices/jobs/claim", Some(&refreshed.access_token), json!({})) {
-                Ok(value) if value.is_null() => Ok(None),
-                Ok(value) => serde_json::from_value(value).map_err(|_| "PostBus returned an unexpected response.".to_string()),
-                Err(error) => Err(error),
-            }
-        }
-        Err(message) => Err(message),
-    }
+        Err(error) => Err(error),
+    })
 }
 
 pub fn job_pdf(base: &str, job_id: &str) -> Result<Vec<u8>, String> {
-    let Some(current) = load_credential()? else {
-        return Err("This computer is not connected to PostBus.".into());
-    };
-    get_bytes(base, &format!("print-devices/jobs/{job_id}/pdf"), &current.access_token)
+    with_access(base, |token| get_bytes(base, &format!("print-devices/jobs/{job_id}/pdf"), token))
 }
 
 pub fn complete_job(base: &str, job_id: &str, status: &str, error_message: Option<&str>) -> Result<(), String> {
-    let Some(current) = load_credential()? else {
+    if load_credential()?.is_none() {
         return Ok(());
-    };
-    post_raw(
-        base,
-        &format!("print-devices/jobs/{job_id}"),
-        Some(&current.access_token),
-        json!({ "status": status, "errorMessage": error_message }),
-    )?;
-    Ok(())
+    }
+    let body = json!({ "status": status, "errorMessage": error_message });
+    with_access(base, |token| {
+        post_raw(base, &format!("print-devices/jobs/{job_id}"), Some(token), body.clone()).map(|_| ())
+    })
 }
 
 pub fn computer_name() -> String {

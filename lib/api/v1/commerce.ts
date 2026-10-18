@@ -3,6 +3,19 @@ import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { hasPermission } from "@/lib/permissions/rbac";
+import { assertBrowserOrigin } from "@/lib/security/origin";
+import {
+  parseBulkPrintIds,
+  printBulkShippingSlips,
+} from "@/modules/labels/bulk-slip-print";
+import {
+  claimManualPrintKey,
+  printRequestFingerprint,
+  releaseManualPrintKey,
+  requirePrintIdempotencyKey,
+  storeManualPrintKey,
+} from "@/modules/print/manual-idempotency";
 import { orIlike } from "@/lib/api/filters";
 import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { getAnalytics } from "@/modules/dashboard/analytics";
@@ -344,7 +357,8 @@ export async function handleCommerceRoutes(
     const page = Number(request.nextUrl.searchParams.get("page") || 1);
     const pageSize = Number(request.nextUrl.searchParams.get("pageSize") || 20);
     const kind = request.nextUrl.searchParams.get("kind");
-    return listGroupedLabels(supabase, ctx, { page, pageSize, kind });
+    const q = request.nextUrl.searchParams.get("q");
+    return listGroupedLabels(supabase, ctx, { page, pageSize, kind, q });
   }
 
   if (method === "GET" && slugs[0] === "labels" && slugs[2] === "download") {
@@ -497,6 +511,39 @@ export async function handleCommerceRoutes(
         "Content-Disposition": "attachment; filename=labels.zip",
       },
     });
+  }
+
+  if (key === "POST labels/bulk-print") {
+    assertBrowserOrigin(request, true);
+    if (!hasPermission(ctx.role, "labels.write")) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "You do not have permission to print labels.");
+    }
+    const body = await request.json().catch(() => ({}));
+    const ids = parseBulkPrintIds((body as { ids?: unknown }).ids);
+    const rawKey = requirePrintIdempotencyKey(request.headers.get("idempotency-key"));
+    const fingerprint = printRequestFingerprint({
+      action: "bulk-slip-print",
+      ids: [...ids].sort(),
+    });
+    const claimed = await claimManualPrintKey(supabase, ctx.organizationId, rawKey, fingerprint);
+    if (claimed.cached) return claimed.cached;
+    try {
+      const printed = await printBulkShippingSlips(supabase, ctx, ids, { idempotencyKey: claimed.key });
+      const result = {
+        labelId: printed.labelId,
+        pageCount: printed.pageCount,
+        slipCount: printed.slipCount,
+        job: printed.job,
+        connected: printed.connected,
+        downloadPath: printed.downloadPath,
+        message: printed.message,
+      };
+      await storeManualPrintKey(supabase, ctx.organizationId, claimed.key, result);
+      return result;
+    } catch (error) {
+      await releaseManualPrintKey(supabase, ctx.organizationId, claimed.key);
+      throw error;
+    }
   }
 
   if (key === "GET manifests") {

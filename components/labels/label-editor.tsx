@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Button } from "@/components/ui/button";
 import { asPaginated } from "@/lib/dashboard/records";
 import { fetchLabelPdfBlob } from "@/lib/labels/preview";
+import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
 import { api } from "@/lib/hooks/use-api";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
 import { PdfRasterPreview } from "@/components/labels/pdf-raster-preview";
@@ -39,31 +40,37 @@ export function LabelEditor() {
   };
 
   const printOfficial = async () => {
-    const response = await fetch("/api/v1/label-template/print-test", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ copies: 1 }),
-    });
-    const contentType = response.headers.get("Content-Type") ?? "";
-    if (contentType.includes("application/pdf")) {
-      const blob = await response.blob();
-      window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
-      return;
+    const key = beginClientPrint("print-test");
+    if (!key) return;
+    try {
+      const response = await fetch("/api/v1/label-template/print-test", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+        body: JSON.stringify({ copies: 1 }),
+      });
+      const contentType = response.headers.get("Content-Type") ?? "";
+      if (contentType.includes("application/pdf")) {
+        const blob = await response.blob();
+        window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+        return;
+      }
+      const payload = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        data?: { connected?: boolean; downloadPath?: string; message?: string };
+      };
+      if (!response.ok || payload.success === false) {
+        toast.error(payload.message || "Could not print the India Post label.");
+        return;
+      }
+      if (!payload.data?.connected && payload.data?.downloadPath) {
+        window.open(payload.data.downloadPath, "_blank", "noopener,noreferrer");
+      }
+      toast.success(payload.data?.message || payload.message || "Queued for the Print Agent.");
+    } finally {
+      endClientPrint("print-test");
     }
-    const payload = (await response.json()) as {
-      success?: boolean;
-      message?: string;
-      data?: { connected?: boolean; downloadPath?: string; message?: string };
-    };
-    if (!response.ok || payload.success === false) {
-      toast.error(payload.message || "Could not print the India Post label.");
-      return;
-    }
-    if (!payload.data?.connected && payload.data?.downloadPath) {
-      window.open(payload.data.downloadPath, "_blank", "noopener,noreferrer");
-    }
-    toast.success(payload.data?.message || payload.message || "India Post label sent to the printer.");
   };
 
   return (

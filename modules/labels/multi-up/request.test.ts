@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseMultiUpRequest } from "@/modules/labels/multi-up/request";
+import { MAX_LABELS, normalizeMultiUpDisposition, parseMultiUpRequest } from "@/modules/labels/multi-up/request";
 import { pagePreset, sheetPreset } from "@/modules/labels/page-presets";
 
 const sheet = {
@@ -60,5 +60,21 @@ describe("multi-up sheet request", () => {
     expect(parsed.sheet.widthMm).toBe(a4.widthMm);
     expect(parsed.sheet.heightMm).toBe(a4.heightMm);
     expect(parsed.sheet.labelWidthMm).toBeNull();
+  });
+
+  it("normalizes missing and invalid dispositions to inline", () => {
+    expect(normalizeMultiUpDisposition({})).toBe("inline");
+    expect(normalizeMultiUpDisposition({ disposition: "PRINT" })).toBe("inline");
+    expect(normalizeMultiUpDisposition({ disposition: "print" })).toBe("print");
+    expect(normalizeMultiUpDisposition({ disposition: "attachment" })).toBe("attachment");
+  });
+
+  it("rejects more than 100 labels on a sheet", () => {
+    expect(() =>
+      parseMultiUpRequest({
+        items: [{ orderId: "246072", copies: MAX_LABELS + 1 }],
+        sheet: { ...sheet, paperSize: "A4" },
+      })
+    ).toThrow(/up to 100 labels/);
   });
 });
