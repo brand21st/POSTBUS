@@ -1,5 +1,6 @@
 export const INDIA_POST_TIMEOUT_MS = {
   login: 20_000,
+  refresh: 20_000,
   search: 15_000,
   book: 10_000,
   label: 20_000,

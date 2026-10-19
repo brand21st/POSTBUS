@@ -3,8 +3,21 @@ import { timed } from "@/lib/jobs/timing";
 import { decryptSecret, encryptSecret } from "@/lib/security/crypto";
 import { indiaPostBookingFileUrl, indiaPostBookingUrl, indiaPostOfficesFromPincodeResponse, indiaPostSessionUrl } from "@/modules/india-post/endpoints";
 import { indiaPostBookingHasArticleOutcomes, indiaPostFormatBookingFailure, indiaPostJoinMessages } from "@/modules/india-post/error-text";
-import { createIndiaPostLoginError } from "@/modules/india-post/login-auth";
+import {
+  createIndiaPostLoginError,
+  createIndiaPostRefreshError,
+  isConfirmedIndiaPostRefreshAuthFailure,
+  isIndiaPostRefreshError,
+} from "@/modules/india-post/login-auth";
 import { INDIA_POST_TIMEOUT_MS, indiaPostTimeoutSignal } from "@/modules/india-post/http";
+import { logError, logInfo } from "@/lib/logger";
+import {
+  accessTokenStillValid,
+  INDIA_POST_REFRESH_PATH,
+  parseIndiaPostSessionTokens,
+  refreshTokenStillValid,
+  type IndiaPostSessionTokens,
+} from "@/modules/india-post/session-tokens";
 import { chunkIds } from "@/modules/india-post/booking-batch";
 import { INDIA_POST_TRACKING_BULK_LIMIT } from "@/modules/india-post/spec";
 import {
@@ -14,6 +27,16 @@ import {
 } from "@/modules/india-post/tracking-response";
 import type { ProviderEnvironment } from "@/types/domain";
 import { tariffRequest, type TariffInput } from "@/modules/india-post/tariff-contract";
+
+function isTimeoutError(error: unknown) {
+  const row = error as { name?: string; code?: string } | null;
+  return (
+    row?.name === "AbortError" ||
+    row?.name === "TimeoutError" ||
+    row?.code === "ABORT_ERR" ||
+    row?.code === "ETIMEDOUT"
+  );
+}
 
 export type ShippingProvider = {
   validateShipment(input: Record<string, unknown>): Promise<void>;
@@ -89,24 +112,67 @@ export class IndiaPostProvider implements ShippingProvider {
           : "India Post authentication failed."
       );
     }
-    const tokens = json.data as {
-      access_token: string;
-      refresh_token: string;
-      id_token: string;
-      expires_in: number;
-      refresh_expires_in: number;
-    };
+    const tokens = parseIndiaPostSessionTokens(json);
+    if (!tokens) {
+      throw createIndiaPostLoginError(response.status, "India Post authentication failed.");
+    }
     this.rememberSession(tokens);
     return tokens;
   }
 
-  private rememberSession(tokens: {
-    access_token: string;
-    refresh_token?: string;
-    id_token?: string;
-    expires_in: number;
-    refresh_expires_in?: number;
-  }) {
+  async refreshSession() {
+    this.assertConnected();
+    if (!this.connection.encrypted_refresh_token) {
+      throw createIndiaPostRefreshError(400, "Invalid refresh token");
+    }
+    const refreshToken = decryptSecret(this.connection.encrypted_refresh_token);
+    logInfo("india_post.auth.refresh_attempted", {
+      connectionId: (this.connection as { id?: string }).id,
+    });
+    let response: Response;
+    try {
+      response = await fetch(this.sessionUrl(INDIA_POST_REFRESH_PATH), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${refreshToken}` },
+        signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.refresh),
+      });
+    } catch (error) {
+      logError("india_post.auth.refresh_failed", {
+        connectionId: (this.connection as { id?: string }).id,
+        reason: isTimeoutError(error) ? "timeout" : "network",
+      });
+      throw error;
+    }
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok || !json?.success) {
+      const message =
+        typeof json?.error?.message === "string" && json.error.message.trim()
+          ? json.error.message
+          : typeof json?.message === "string" && json.message.trim()
+            ? json.message
+            : "India Post refresh failed.";
+      logError("india_post.auth.refresh_failed", {
+        connectionId: (this.connection as { id?: string }).id,
+        status: response.status,
+      });
+      throw createIndiaPostRefreshError(response.status, message);
+    }
+    const tokens = parseIndiaPostSessionTokens(json);
+    if (!tokens) {
+      logError("india_post.auth.refresh_failed", {
+        connectionId: (this.connection as { id?: string }).id,
+        reason: "malformed",
+      });
+      throw createIndiaPostRefreshError(response.status, "India Post refresh token was rejected.");
+    }
+    this.rememberSession(tokens);
+    logInfo("india_post.auth.refresh_succeeded", {
+      connectionId: (this.connection as { id?: string }).id,
+    });
+    return tokens;
+  }
+
+  private rememberSession(tokens: IndiaPostSessionTokens) {
     this.connection.encrypted_access_token = encryptSecret(tokens.access_token);
     this.connection.expires_at = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
     this.connection.encrypted_refresh_token = tokens.refresh_token
@@ -122,16 +188,38 @@ export class IndiaPostProvider implements ShippingProvider {
     }
   }
 
+  private invalidateAccessToken() {
+    this.connection.encrypted_access_token = null;
+    this.connection.expires_at = null;
+  }
+
+  private canRefresh() {
+    return Boolean(this.connection.encrypted_refresh_token) && refreshTokenStillValid(this.connection.refresh_expires_at);
+  }
+
   private async token() {
-    if (
-      this.connection.encrypted_access_token &&
-      this.connection.expires_at &&
-      new Date(this.connection.expires_at).getTime() - Date.now() > 60_000
-    ) {
-      return decryptSecret(this.connection.encrypted_access_token);
+    const session = await this.ensureSession();
+    return session.access_token;
+  }
+
+  private async withAuthRetry<T>(run: (token: string) => Promise<T>): Promise<T> {
+    const first = await this.token();
+    try {
+      return await run(first);
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 401) throw error;
+      this.invalidateAccessToken();
+      const next = await this.token();
+      try {
+        return await run(next);
+      } catch (retryError) {
+        logError("india_post.auth.auth_retry_exhausted", {
+          connectionId: (this.connection as { id?: string }).id,
+          status: (retryError as { status?: number })?.status,
+        });
+        throw retryError;
+      }
     }
-    const tokens = await this.login();
-    return tokens.access_token;
   }
 
   async validateShipment(input: Record<string, unknown>) {
@@ -141,16 +229,17 @@ export class IndiaPostProvider implements ShippingProvider {
       (error as { code?: string }).code = "INVALID_PINCODE";
       throw error;
     }
-    const token = await this.token();
-    const response = await fetch(
-      `${this.sessionUrl("/pincode-search")}?pincode=${pincode}&office-type=post`,
-      { headers: { Authorization: `Bearer ${token}` }, signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search) }
-    );
-    if (!response.ok) {
-      const error = new Error("Pincode validation failed.");
-      (error as { status?: number }).status = response.status;
-      throw error;
-    }
+    await this.withAuthRetry(async (token) => {
+      const response = await fetch(
+        `${this.sessionUrl("/pincode-search")}?pincode=${pincode}&office-type=post`,
+        { headers: { Authorization: `Bearer ${token}` }, signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search) }
+      );
+      if (!response.ok) {
+        const error = new Error("Pincode validation failed.");
+        (error as { status?: number }).status = response.status;
+        throw error;
+      }
+    });
   }
 
   async getTariff(input: TariffInput) {
@@ -179,8 +268,7 @@ export class IndiaPostProvider implements ShippingProvider {
   async ensureSession() {
     if (
       this.connection.encrypted_access_token &&
-      this.connection.expires_at &&
-      new Date(this.connection.expires_at).getTime() - Date.now() > 60_000
+      accessTokenStillValid(this.connection.expires_at)
     ) {
       return {
         reused: true as const,
@@ -188,50 +276,66 @@ export class IndiaPostProvider implements ShippingProvider {
         tokens: null,
       };
     }
+    if (this.canRefresh()) {
+      try {
+        const tokens = await this.refreshSession();
+        return { reused: false as const, access_token: tokens.access_token, tokens };
+      } catch (error) {
+        if (isTimeoutError(error)) throw error;
+        const malformedEnvelope =
+          isIndiaPostRefreshError(error) && /refresh token was rejected/i.test(error.message);
+        if (!isConfirmedIndiaPostRefreshAuthFailure(error) && !malformedEnvelope) throw error;
+        logInfo("india_post.auth.auth01_fallback", {
+          connectionId: (this.connection as { id?: string }).id,
+        });
+      }
+    }
     const tokens = await this.login();
     return { reused: false as const, access_token: tokens.access_token, tokens };
   }
 
   async bookShipment(input: Record<string, unknown>) {
     this.assertConnected();
-    const token = await this.token();
     const customId = this.connection.bulk_customer_id;
     if (!customId) {
       throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post customer ID is missing.");
     }
-    const response = await fetch(indiaPostBookingUrl(this.environment(), customId), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ articles: input.articles }),
-      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
+    return this.withAuthRetry(async (token) => {
+      const response = await fetch(indiaPostBookingUrl(this.environment(), customId), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ articles: input.articles }),
+        signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
+      });
+      const json = await response.json().catch(() => ({}));
+      this.assertBookingResponse(response, json);
+      return json;
     });
-    const json = await response.json().catch(() => ({}));
-    this.assertBookingResponse(response, json);
-    return json;
   }
 
   async bookShipmentFile(articles: unknown[]) {
     this.assertConnected();
-    const token = await this.token();
     const customId = this.connection.bulk_customer_id;
     if (!customId) {
       throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post customer ID is missing.");
     }
-    const file = new File([JSON.stringify({ articles })], "articles.json", { type: "application/json" });
-    const body = new FormData();
-    body.append("file", file);
-    const response = await fetch(indiaPostBookingFileUrl(this.environment(), customId), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body,
-      signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
+    return this.withAuthRetry(async (token) => {
+      const file = new File([JSON.stringify({ articles })], "articles.json", { type: "application/json" });
+      const body = new FormData();
+      body.append("file", file);
+      const response = await fetch(indiaPostBookingFileUrl(this.environment(), customId), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body,
+        signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
+      });
+      const json = await response.json().catch(() => ({}));
+      this.assertBookingResponse(response, json);
+      return json;
     });
-    const json = await response.json().catch(() => ({}));
-    this.assertBookingResponse(response, json);
-    return json;
   }
 
   private assertBookingResponse(response: Response, json: unknown) {
@@ -247,18 +351,19 @@ export class IndiaPostProvider implements ShippingProvider {
   async searchPostOffices(pincode: string) {
     const pin = pincode.replace(/\D/g, "").slice(0, 6);
     if (!/^\d{6}$/.test(pin)) return [];
-    const token = await this.token();
-    const response = await fetch(
-      `${this.sessionUrl("/pincode-search")}?pincode=${pin}&office-type=post`,
-      { headers: { Authorization: `Bearer ${token}` }, signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search) }
-    );
-    const json = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error("Unable to fetch India Post offices. Please try again.");
-      (error as { status?: number }).status = response.status;
-      throw error;
-    }
-    return indiaPostOfficesFromPincodeResponse(json);
+    return this.withAuthRetry(async (token) => {
+      const response = await fetch(
+        `${this.sessionUrl("/pincode-search")}?pincode=${pin}&office-type=post`,
+        { headers: { Authorization: `Bearer ${token}` }, signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.search) }
+      );
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error("Unable to fetch India Post offices. Please try again.");
+        (error as { status?: number }).status = response.status;
+        throw error;
+      }
+      return indiaPostOfficesFromPincodeResponse(json);
+    });
   }
 
   async generateLabel(input: Record<string, unknown>) {
@@ -270,7 +375,6 @@ export class IndiaPostProvider implements ShippingProvider {
         entityId: Array.isArray(input) ? undefined : input.shipmentId,
       },
       async () => {
-    const token = await this.token();
     const articles = Array.isArray(input)
       ? input
       : Array.isArray(input.payload)
@@ -280,6 +384,7 @@ export class IndiaPostProvider implements ShippingProvider {
       !Array.isArray(input) && Number(input.timeoutMs) > 0
         ? Number(input.timeoutMs)
         : INDIA_POST_TIMEOUT_MS.label;
+    return this.withAuthRetry(async (token) => {
     const response = await fetch(this.sessionUrl("/label/create/domestic"), {
       method: "POST",
       headers: {
@@ -311,6 +416,7 @@ export class IndiaPostProvider implements ShippingProvider {
       throw error;
     }
     return buffer;
+    });
       }
     );
   }
@@ -322,9 +428,38 @@ export class IndiaPostProvider implements ShippingProvider {
     );
   }
 
+  async trackArticle(barcode: string) {
+    const article = String(barcode ?? "").trim();
+    if (!article) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Tracking number is required.");
+    }
+    return this.withAuthRetry(async (token) => {
+      const response = await fetch(this.sessionUrl(`/tracking/${encodeURIComponent(article)}`), {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.track),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error("India Post tracking request failed.");
+        (error as { status?: number }).status = response.status;
+        (error as { code?: string }).code = `HTTP_${response.status}`;
+        throw error;
+      }
+      const parsed = parseBulkTrackingResponse(body);
+      return {
+        success: parsed.success !== false,
+        data: parsed.data ?? [],
+      };
+    });
+  }
+
   async trackShipment(barcodes: string[]) {
     const unique = [...new Set(barcodes.map((code) => String(code ?? "").trim()).filter(Boolean))];
-    const token = await this.token();
+    return this.withAuthRetry((token) => this.trackShipmentWithToken(unique, token));
+  }
+
+  private async trackShipmentWithToken(unique: string[], token: string) {
     const data: unknown[] = [];
     let lastJson: { success?: boolean; message?: string; data?: unknown[]; error?: { message?: string } } = { data: [] };
     for (const bulk of chunkIds(unique, INDIA_POST_TRACKING_BULK_LIMIT)) {
@@ -353,6 +488,7 @@ export class IndiaPostProvider implements ShippingProvider {
         }
         const error = new Error(message);
         (error as { status?: number; code?: string; retryAfterMs?: number }).status = response.status;
+        (error as { code?: string }).code = `HTTP_${response.status}`;
         if (response.status === 429) {
           (error as { code?: string }).code = "HTTP_429";
           const retryAfterMs = retryAfterMsFromHeader(response.headers.get("retry-after"));

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { classifyProviderError } from "@/lib/jobs/retry";
 import {
   createIndiaPostLoginError,
+  createIndiaPostRefreshError,
   isConfirmedIndiaPostLoginAuthFailure,
+  isConfirmedIndiaPostRefreshAuthFailure,
   isConfirmedTrackingAuthFailureJob,
   tagTrackingLoginAuthFailure,
 } from "@/modules/india-post/login-auth";
@@ -75,5 +77,18 @@ describe("India Post login authentication classification", () => {
         last_error: "rate limited",
       })
     ).toBe(false);
+  });
+
+  it("tags AUTH02 invalid refresh separately from tracking 403 entitlement", () => {
+    const refresh = createIndiaPostRefreshError(400, "Invalid refresh token");
+    expect(refresh.indiaPostOperation).toBe("refresh");
+    expect(isConfirmedIndiaPostRefreshAuthFailure(refresh)).toBe(true);
+    expect(isConfirmedIndiaPostLoginAuthFailure(refresh)).toBe(false);
+    const tracking = Object.assign(new Error("You are not authorized to access this API"), {
+      status: 403,
+      code: "HTTP_403",
+    });
+    expect(isConfirmedIndiaPostRefreshAuthFailure(tracking)).toBe(false);
+    expect(isConfirmedIndiaPostLoginAuthFailure(tracking)).toBe(false);
   });
 });

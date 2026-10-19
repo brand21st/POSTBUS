@@ -19,6 +19,9 @@ function database(overrides: Partial<TariffConnection> = {}, failWrite = false) 
         return { data: table === "orders" ? null : { ...connection }, error: null };
       },
     }; return chain;
+  }, rpc: async (name: string) => {
+    if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
+    return { data: null, error: null };
   } } as unknown as SupabaseClient;
   return { db, operations, connection };
 }
@@ -134,6 +137,24 @@ describe("mocked authenticated tariff lookup", () => {
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer cached-token");
     expect(operations.every((op) => op.table === "india_post_connections" && !op.update)).toBe(true);
   });
+  it("refreshes an expired access token with AUTH02 only", async () => {
+    const { db, connection, operations } = database({
+      expires_at: "2000-01-01",
+      encrypted_refresh_token: encryptSecret("keep-refresh"),
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes("TokenWithRtoken")) {
+        return new Response(JSON.stringify({ success: true, data: { access_token: "new-token", expires_in: 900 } }));
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await tariffSession(db, "org-1", connection.id);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/access/login"))).toBe(false);
+    const write = operations.find((op) => op.update)!;
+    expect(write.update).not.toHaveProperty("encrypted_refresh_token");
+    expect(write.update?.encrypted_access_token).not.toContain("new-token");
+  });
   it("serializes concurrent expired sessions and persists encrypted tokens", async () => {
     const { db, connection, operations } = database({ expires_at: "2000-01-01" });
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ success: true, data: { access_token: "new-token", expires_in: 900 } })));
@@ -141,7 +162,11 @@ describe("mocked authenticated tariff lookup", () => {
     await Promise.all([tariffSession(db, "org-1", connection.id), tariffSession(db, "org-1", connection.id)]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const write = operations.find((op) => op.update)!;
-    expect(write.filters).toEqual([["organization_id", "org-1"], ["id", "connection-1"]]);
+    expect(write.filters).toEqual([
+      ["id", "connection-1"],
+      ["organization_id", "org-1"],
+      ["session_lock_token", "session-lock-token"],
+    ]);
     expect(write.update?.encrypted_access_token).not.toContain("new-token");
   });
   it("fails closed on token persistence errors", async () => {

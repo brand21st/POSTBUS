@@ -1,9 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { encryptSecret, decryptSecret } from "@/lib/security/crypto";
-import { withProcessSessionLock } from "@/modules/india-post/session";
+import { decryptSecret } from "@/lib/security/crypto";
+import { persistIndiaPostTokens, withProcessSessionLock } from "@/modules/india-post/session";
 import { IndiaPostProvider } from "@/modules/india-post/provider";
+import { withIndiaPostSessionLock } from "@/modules/india-post/session-lock";
 import { manualTariffSchema, orderTariffSchema, tariffEstimateKey, tariffInputSchema, normalizeTariff, type TariffInput, type TariffQuote } from "@/modules/india-post/tariff-contract";
 
 export function tariffError(category: string, message: string, code: ConstructorParameters<typeof AppError>[0] = ERROR_CODES.PROVIDER_ERROR) {
@@ -83,7 +84,8 @@ export function resolveTariffInput(body: unknown, connection: TariffConnection, 
 // Only the trusted tenant route supplies this server-side client and organization.
 // Do not use the booking session helper: quotes must never acquire its booking lock.
 export async function tariffSession(db: SupabaseClient, organizationId: string, connectionId: string, rejectedToken?: string) {
-  return withProcessSessionLock(connectionId, async () => {
+  return withProcessSessionLock(connectionId, () =>
+    withIndiaPostSessionLock(db, { connectionId, organizationId }, async (lockToken) => {
     const connection = await loadTariffConnection(db, organizationId);
     if (connection.id !== connectionId) throw tariffError("INDIA_POST_AUTH_FAILED", "India Post connection changed. Please retry.");
     if (rejectedToken && connection.encrypted_access_token && decryptSecret(connection.encrypted_access_token) === rejectedToken) {
@@ -96,19 +98,19 @@ export async function tariffSession(db: SupabaseClient, organizationId: string, 
     catch { throw tariffError("INDIA_POST_AUTH_FAILED", "India Post authentication failed. Check your connection settings."); }
     if (!session.access_token || (session.tokens && (!Number.isFinite(session.tokens.expires_in) || session.tokens.expires_in <= 60))) throw tariffError("INDIA_POST_AUTH_FAILED", "India Post returned an invalid authentication session.");
     if (session.tokens) {
-      const tokens = session.tokens;
-      const { data, error } = await db.from("india_post_connections").update({
-        encrypted_access_token: encryptSecret(tokens.access_token),
-        encrypted_refresh_token: tokens.refresh_token ? encryptSecret(tokens.refresh_token) : null,
-        encrypted_id_token: tokens.id_token ? encryptSecret(tokens.id_token) : null,
-        expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-        refresh_expires_at: tokens.refresh_expires_in ? new Date(Date.now() + tokens.refresh_expires_in * 1000).toISOString() : null,
-        last_refreshed_at: new Date().toISOString(),
-      }).eq("organization_id", organizationId).eq("id", connectionId).select("id").maybeSingle();
-      if (error || !data) throw tariffError("INTERNAL_ERROR", "Unable to save the India Post session. Please retry.");
+      try {
+        await persistIndiaPostTokens(
+          db,
+          { id: connectionId, organization_id: organizationId, sessionLockToken: lockToken },
+          session.tokens
+        );
+      } catch {
+        throw tariffError("INTERNAL_ERROR", "Unable to save the India Post session. Please retry.");
+      }
     }
     return { provider, accessToken: session.access_token };
-  });
+    })
+  );
 }
 async function readTariff(session: { provider: { getTariff(input: TariffInput): Promise<unknown> }; accessToken: string }, db: SupabaseClient, organizationId: string, connectionId: string, input: TariffInput) {
   try { return { session, raw: await session.provider.getTariff(input) }; }
