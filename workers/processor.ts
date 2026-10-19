@@ -160,6 +160,33 @@ export async function processJob(queue: string, payload: JobPayload) {
       const { processAiImageJob } = await import("@/modules/ai-image/process");
       await processAiImageJob(supabase, payload.organizationId, aiImageJobId);
     }
+    else if (queue === "gst-draft") {
+      const { data: job } = await supabase.from("background_jobs").select("progress").eq("id", jobId).maybeSingle();
+      const progress = (job?.progress ?? {}) as { type?: "GSTR1" | "GSTR3B"; month?: number; year?: number };
+      if (!progress.type || !progress.month || !progress.year) {
+        throw Object.assign(new Error("GST draft period is missing."), { code: "VALIDATION_ERROR" });
+      }
+      const { prepareGstReturn } = await import("@/modules/ai-accountant/gst-service");
+      await prepareGstReturn(supabase, payload.organizationId, {
+        type: progress.type,
+        month: progress.month,
+        year: progress.year,
+      });
+    }
+    else if (queue === "accounting-rebuild") {
+      const { data: job } = await supabase.from("background_jobs").select("progress").eq("id", jobId).maybeSingle();
+      const progress = (job?.progress ?? {}) as { from?: string; to?: string };
+      const { syncLedger } = await import("@/modules/ai-accountant/ledger/post");
+      const { fiscalYearPeriod, istDate, isIsoDate } = await import("@/modules/ai-accountant/period");
+      const today = istDate();
+      await syncLedger(supabase, payload.organizationId, {
+        from: isIsoDate(progress.from) ? progress.from : fiscalYearPeriod(today).from,
+        to: isIsoDate(progress.to) ? progress.to : today,
+      });
+    }
+    else if (queue === "cod-report-extract") {
+      // COD ingest currently runs inline; this lane keeps PDF extraction off the booking worker.
+    }
     else if (queue === "india-post-events") {
       const { processIndiaPostInboxEvent } = await import("@/modules/india-post/webhook");
       if (!payload.entityId) {

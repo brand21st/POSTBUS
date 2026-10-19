@@ -48,6 +48,10 @@ export async function POST(request: NextRequest) {
       const { sweepAbandonedSignups } = await import("@/modules/vachat/abandoned-signup");
       await sweepAbandonedSignups(createAdminClient());
     }
+    if (hasAdminClient() && (!jobTypes || jobTypes.includes("accounting-rebuild"))) {
+      const { enqueueDueLedgerSyncJobs } = await import("@/modules/ai-accountant/ledger/schedule");
+      await enqueueDueLedgerSyncJobs(createAdminClient());
+    }
     return NextResponse.json({ success: true, data: await drainDueJobs(limit, jobTypes) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not drain background jobs.";

@@ -18,6 +18,9 @@ export const QUEUE_NAMES = {
   vachatNotify: "vachat-notify",
   invoiceGeneration: "invoice-generation",
   supportIngest: "support-ingest",
+  codReportExtract: "cod-report-extract",
+  gstDraft: "gst-draft",
+  accountingRebuild: "accounting-rebuild",
 } as const;
 
 const queues = new Map<string, Queue>();

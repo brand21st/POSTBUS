@@ -123,6 +123,17 @@ export function permissionForTenantRoute(
 
   if (key === "PATCH organizations") return "org.manage";
 
+  if (root === "addons") {
+    if (method === "GET") return undefined;
+    return "org.manage";
+  }
+
+  if (root === "ai-accountant") {
+    // Asking the assistant and previewing a COD file read books without changing them.
+    if (key === "POST ai-accountant/assistant" || key === "POST ai-accountant/cod/preview") return "accounting.read";
+    return method === "GET" ? "accounting.read" : "accounting.write";
+  }
+
   if (root === "ai-credits") return "orders.read";
 
   if (root === "billing") {
