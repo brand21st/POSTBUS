@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newOrderFormSchema, newOrderShipmentPayload } from "@/app/dashboard/orders/new/page";
+import { inventorySkuFromName, newOrderFormSchema, newOrderShipmentPayload } from "@/app/dashboard/orders/new/page";
 
 const filledOrder = {
   customerName: "",
@@ -40,6 +40,11 @@ const filledOrder = {
 };
 
 describe("new order form", () => {
+  it("builds an inventory SKU from a custom product name", () => {
+    expect(inventorySkuFromName("Cotton saree")).toBe("COTTON-SAREE");
+    expect(inventorySkuFromName("   ")).toBe("ITEM");
+  });
+
   it("uses processing only for the Processing submit and leaves Book now unchanged", () => {
     expect(newOrderShipmentPayload(filledOrder.shipment, "processing")).toMatchObject({
       ...filledOrder.shipment,

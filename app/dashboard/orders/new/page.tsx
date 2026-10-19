@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Lock, Minus, Plus, Trash2 } from "lucide-react";
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
@@ -183,6 +183,20 @@ function positiveNumber(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
+function postageAmount(estimatedTotal: number, codCharges: number) {
+  return Math.round((estimatedTotal - codCharges) * 100) / 100;
+}
+
+export function inventorySkuFromName(name: string) {
+  const slug = name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return slug || "ITEM";
+}
+
 function submitActionFromEvent(event?: BaseSyntheticEvent): SubmitAction {
   const submitter = (event?.nativeEvent as SubmitEvent | undefined)?.submitter;
   return submitter instanceof HTMLButtonElement && submitter.value === "processing" ? "processing" : "book";
@@ -197,6 +211,7 @@ export function newOrderShipmentPayload(shipment: FormValues["shipment"], action
 
 export default function NewOrderPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const indiaPost = useIndiaPost();
   const catalog = useQuery({
     queryKey: ["products", "order-picker"],
@@ -235,6 +250,7 @@ export default function NewOrderPage() {
   });
 
   const serviceTouched = useRef(false);
+  const pendingProductFocus = useRef(false);
   const customerPanel = useRef<HTMLDetailsElement>(null);
   const items = useFieldArray({ control: form.control, name: "lineItems" });
   // React Hook Form watch() is incompatible with the compiler memoization pass.
@@ -246,10 +262,15 @@ export default function NewOrderPage() {
   const extraCodRaw = form.watch("extraCodCharge");
   const submitLock = useRef(false);
   const [activeSubmitAction, setActiveSubmitAction] = useState<SubmitAction | null>(null);
-  const [tariffEstimate, setTariffEstimate] = useState<TariffEstimateStatus>({ visible: false, text: "—" });
+  const [tariffEstimate, setTariffEstimate] = useState<TariffEstimateStatus>({ visible: false, text: "—", codCharges: null, estimatedTotal: null });
   const updateTariffEstimate = useCallback((status: TariffEstimateStatus) => {
     setTariffEstimate((current) =>
-      current.visible === status.visible && current.text === status.text ? current : status
+      current.visible === status.visible &&
+      current.text === status.text &&
+      current.codCharges === status.codCharges &&
+      current.estimatedTotal === status.estimatedTotal
+        ? current
+        : status
     );
   }, []);
   const lineItemValues = form.watch("lineItems");
@@ -280,10 +301,28 @@ export default function NewOrderPage() {
   }
 
   function addLineItem() {
+    const index = items.fields.length;
+    if (catalogItems.length) pendingProductFocus.current = true;
     items.append(
       { title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0, productId: undefined },
-      { shouldFocus: true, focusName: `lineItems.${items.fields.length}.title` }
+      { shouldFocus: catalogItems.length === 0, focusName: `lineItems.${index}.title` }
     );
+  }
+
+  useEffect(() => {
+    if (!pendingProductFocus.current) return;
+    pendingProductFocus.current = false;
+    const field = items.fields[items.fields.length - 1];
+    if (!field) return;
+    document.getElementById(`item-${field.id}-product`)?.focus();
+  }, [items.fields]);
+
+  function applyProductRecord(index: number, product: Pick<ProductRecord, "id" | "name" | "sku" | "price" | "weightGrams">) {
+    form.setValue(`lineItems.${index}.productId`, product.id, { shouldDirty: true, shouldValidate: true });
+    form.setValue(`lineItems.${index}.title`, product.name, { shouldDirty: true, shouldValidate: true });
+    form.setValue(`lineItems.${index}.sku`, product.sku, { shouldDirty: true });
+    form.setValue(`lineItems.${index}.unitPrice`, product.price, { shouldDirty: true });
+    form.setValue(`lineItems.${index}.weightGrams`, product.weightGrams, { shouldDirty: true });
   }
 
   function applyCatalogProduct(index: number, productId: string) {
@@ -293,12 +332,54 @@ export default function NewOrderPage() {
     }
     const product = catalogById.get(productId);
     if (!product) return;
-    form.setValue(`lineItems.${index}.productId`, product.id, { shouldDirty: true });
-    form.setValue(`lineItems.${index}.title`, product.name, { shouldDirty: true });
-    form.setValue(`lineItems.${index}.sku`, product.sku, { shouldDirty: true });
-    form.setValue(`lineItems.${index}.unitPrice`, product.price, { shouldDirty: true });
-    form.setValue(`lineItems.${index}.weightGrams`, product.weightGrams, { shouldDirty: true });
+    applyProductRecord(index, product);
   }
+
+  function setCustomProductName(index: number, name: string) {
+    form.setValue(`lineItems.${index}.title`, name, { shouldDirty: true, shouldValidate: true });
+    if (form.getValues(`lineItems.${index}.productId`)) {
+      form.setValue(`lineItems.${index}.productId`, undefined, { shouldDirty: true });
+    }
+  }
+
+  const saveInventory = useMutation({
+    mutationFn: async (index: number) => {
+      const row = form.getValues(`lineItems.${index}`);
+      const name = row.title.trim();
+      if (!name) throw new Error("Enter a product name.");
+      const sku = row.sku?.trim() || inventorySkuFromName(name);
+      return api<ProductRecord>("/api/v1/products", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          sku,
+          price: Number(row.unitPrice || 0),
+          weightGrams: Math.max(0, Math.round(Number(row.weightGrams || 0))),
+          openingStock: 0,
+          prepaidEnabled: true,
+          codEnabled: true,
+          returnAvailable: true,
+          storeVisible: false,
+        }),
+      });
+    },
+    onSuccess: (product, index) => {
+      queryClient.setQueryData<Paginated<ProductRecord>>(["products", "order-picker"], (current) => {
+        const items = current?.items ?? [];
+        if (items.some((item) => item.id === product.id)) return current;
+        return {
+          page: current?.page ?? 1,
+          pageSize: current?.pageSize ?? 100,
+          total: (current?.total ?? items.length) + 1,
+          items: [product, ...items],
+        };
+      });
+      applyProductRecord(index, product);
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
+      toast.success("Saved to inventory.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const catalogCodPreview = catalogCodAdvancePaid(
     (lineItemValues ?? []).map((item) => {
@@ -745,40 +826,76 @@ export default function NewOrderPage() {
               const titleError = form.formState.errors.lineItems?.[index]?.title?.message;
               const row = lineItemValues?.[index];
               const lineTotal = Number(row?.quantity || 0) * Number(row?.unitPrice || 0);
+              const fromInventory = Boolean(row?.productId);
+              const typedName = row?.title?.trim() ?? "";
+              const canSaveToInventory =
+                !fromInventory &&
+                Boolean(typedName) &&
+                Number(row?.unitPrice) > 0 &&
+                Number(row?.weightGrams) > 0;
+              const saveToInventory = canSaveToInventory ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="xs"
+                  className="mt-1 h-auto px-0 font-medium"
+                  disabled={saveInventory.isPending}
+                  onClick={() => saveInventory.mutate(index)}
+                >
+                  {saveInventory.isPending && saveInventory.variables === index ? "Saving…" : "Save to inventory"}
+                </Button>
+              ) : null;
               return (
+                <div key={field.id} className="rounded-xl border border-border transition-colors duration-300 lg:rounded-none lg:border-0">
                 <div
-                  key={field.id}
                   className={cn(
-                    "grid grid-cols-2 gap-x-2 gap-y-3 rounded-xl border border-border p-3 sm:grid-cols-4 lg:items-start lg:gap-y-0 lg:rounded-none lg:border-0 lg:px-3 lg:py-2.5",
+                    "grid grid-cols-2 gap-x-2 gap-y-3 p-3 transition-colors duration-300 sm:grid-cols-4 lg:items-center lg:gap-y-0 lg:px-3 lg:py-2",
+                    fromInventory && "bg-brand/[0.04]",
                     LINE_ITEM_GRID
                   )}
                 >
                   <div className="col-span-2 sm:col-span-4 lg:col-span-1">
-                    <LineLabel htmlFor={`item-${field.id}-title`}>Product</LineLabel>
+                    <LineLabel htmlFor={catalogItems.length ? `item-${field.id}-product` : `item-${field.id}-title`}>Product</LineLabel>
                     {catalogItems.length ? (
+                      <>
+                      <input
+                        className="sr-only"
+                        tabIndex={-1}
+                        aria-hidden
+                        {...form.register(`lineItems.${index}.title`)}
+                      />
                       <Combobox
-                        className="mb-1 h-8 [&_input]:h-8"
-                        placeholder="Inventory product (optional)"
+                        id={`item-${field.id}-product`}
+                        className="h-8 [&_input]:h-8"
+                        placeholder="Product name or saved product"
                         emptyText="No matching products"
+                        aria-invalid={Boolean(titleError)}
                         options={[
-                          { value: "", label: "Custom item" },
+                          ...(typedName && !fromInventory
+                            ? [{ value: "__custom__", label: typedName, group: "This order" }]
+                            : []),
                           ...catalogItems.map((product) => ({
                             value: product.id,
-                            label: `${product.name} · ${product.sku}`,
+                            label: product.name,
+                            detail: product.sku,
+                            group: "Inventory",
                           })),
                         ]}
-                        value={row?.productId ?? ""}
-                        onChange={(value) => applyCatalogProduct(index, value)}
+                        value={fromInventory ? row?.productId : typedName ? "__custom__" : ""}
+                        onInput={(name) => setCustomProductName(index, name)}
+                        onChange={(value) => applyCatalogProduct(index, !value || value === "__custom__" ? "" : value)}
                       />
-                    ) : null}
-                    <Input
-                      id={`item-${field.id}-title`}
-                      className="h-8"
-                      placeholder="e.g. Cotton saree"
-                      aria-invalid={Boolean(titleError)}
-                      disabled={Boolean(row?.productId)}
-                      {...form.register(`lineItems.${index}.title`)}
-                    />
+                      </>
+                    ) : (
+                      <Input
+                        id={`item-${field.id}-title`}
+                        className="h-8"
+                        placeholder="e.g. Cotton saree"
+                        aria-invalid={Boolean(titleError)}
+                        {...form.register(`lineItems.${index}.title`)}
+                      />
+                    )}
+                    {saveToInventory}
                     {titleError ? <p className="mt-1 text-xs text-error">{titleError}</p> : null}
                   </div>
 
@@ -800,7 +917,10 @@ export default function NewOrderPage() {
                         type="button"
                         aria-label="Decrease quantity"
                         disabled={Number(row?.quantity || 1) <= 1}
-                        onClick={() => stepQuantity(index, -1)}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          stepQuantity(index, -1);
+                        }}
                         className="flex w-8 shrink-0 items-center justify-center text-muted transition-colors hover:bg-surface-soft hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
                       >
                         <Minus className="size-3.5" />
@@ -819,7 +939,10 @@ export default function NewOrderPage() {
                       <button
                         type="button"
                         aria-label="Increase quantity"
-                        onClick={() => stepQuantity(index, 1)}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          stepQuantity(index, 1);
+                        }}
                         className="flex w-8 shrink-0 items-center justify-center text-muted transition-colors hover:bg-surface-soft hover:text-foreground"
                       >
                         <Plus className="size-3.5" />
@@ -883,6 +1006,7 @@ export default function NewOrderPage() {
                       <Trash2 className="size-4" />
                     </Button>
                   </div>
+                </div>
                 </div>
               );
             })}
@@ -1008,13 +1132,21 @@ export default function NewOrderPage() {
             </div>
             </Expand>
       <TariffEstimateCard
-        draft={{ service: selectedService, destinationPincode: tariffDestinationPincode, weightGrams: positiveNumber(shipmentWeight) ?? (lineItemValues?.length && lineItemValues.every((item) => Number(item.weightGrams) > 0) ? totalWeight : undefined), lengthCm: positiveNumber(shipmentLength), widthCm: positiveNumber(shipmentWidth), heightCm: positiveNumber(shipmentHeight) }}
+        draft={{
+          service: selectedService,
+          destinationPincode: tariffDestinationPincode,
+          weightGrams: positiveNumber(shipmentWeight) ?? (lineItemValues?.length && lineItemValues.every((item) => Number(item.weightGrams) > 0) ? totalWeight : undefined),
+          lengthCm: positiveNumber(shipmentLength),
+          widthCm: positiveNumber(shipmentWidth),
+          heightCm: positiveNumber(shipmentHeight),
+          ...(paymentStatus === "COD" && Number.isFinite(finalCodAmount) && finalCodAmount > 0 ? { codAmount: finalCodAmount } : {}),
+        }}
         onEstimate={updateTariffEstimate}
       />
         </CardContent>
       </Card>
       </div>
-      <aside className="hidden xl:block">
+      <aside>
         <div className="sticky top-4 space-y-2.5 rounded-2xl border border-border bg-card p-3 shadow-sm">
           <h2 className="text-sm font-semibold text-ink">Summary</h2>
           <p className="flex justify-between text-sm">
@@ -1025,16 +1157,33 @@ export default function NewOrderPage() {
             <span className="text-muted">Total</span>
             <span className="font-medium tabular-nums">{formatCurrency(orderTotal)}</span>
           </p>
-          {tariffEstimate.visible ? (
+          {tariffEstimate.visible && paymentStatus === "COD" ? (
+            <>
+              <p className="flex justify-between gap-3 text-sm" aria-live="polite">
+                <span className="text-muted">Shipping tariff</span>
+                <span className="font-medium tabular-nums">
+                  {tariffEstimate.estimatedTotal != null && tariffEstimate.codCharges != null
+                    ? formatCurrency(postageAmount(tariffEstimate.estimatedTotal, tariffEstimate.codCharges))
+                    : tariffEstimate.text}
+                </span>
+              </p>
+              <p className="flex justify-between gap-3 text-sm">
+                <span className="text-muted">India Post COD service charge</span>
+                <span className="font-medium tabular-nums">
+                  {tariffEstimate.codCharges != null ? formatCurrency(tariffEstimate.codCharges) : "—"}
+                </span>
+              </p>
+            </>
+          ) : tariffEstimate.visible ? (
             <p className="flex justify-between gap-3 text-sm" aria-live="polite">
               <span className="text-muted">Shipping tariff</span>
               <span className="font-medium tabular-nums">{tariffEstimate.text}</span>
             </p>
           ) : null}
           {paymentStatus === "COD" ? (
-            <p className="flex justify-between text-sm">
-              <span className="text-muted">Final COD</span>
-              <span className="font-medium tabular-nums">{formatCurrency(finalCodAmount)}</span>
+            <p className="flex justify-between text-sm font-semibold text-emerald-500 dark:text-emerald-300">
+              <span>Final COD</span>
+              <span className="tabular-nums">{formatCurrency(finalCodAmount)}</span>
             </p>
           ) : paymentStatus === "PARTIAL" ? (
             <p className="flex justify-between text-sm">
@@ -1082,7 +1231,9 @@ function Expand({ open, children }: { open: boolean; children: ReactNode }) {
         open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
       )}
     >
-      <div className={cn("min-h-0 overflow-hidden", !open && "pointer-events-none")}>{children}</div>
+      <div className="min-h-0 overflow-hidden" inert={!open}>
+        {children}
+      </div>
     </div>
   );
 }

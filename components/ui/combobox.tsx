@@ -4,12 +4,13 @@ import * as React from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type ComboboxOption = { value: string; label?: string; group?: string };
+export type ComboboxOption = { value: string; label?: string; detail?: string; group?: string };
 
 type ComboboxProps = {
   options: ComboboxOption[];
   value?: string;
   onChange: (value: string) => void;
+  onInput?: (value: string) => void;
   onBlur?: () => void;
   placeholder?: string;
   emptyText?: string;
@@ -29,6 +30,7 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
     options,
     value,
     onChange,
+    onInput,
     onBlur,
     placeholder = "Search…",
     emptyText = "No matches found",
@@ -48,11 +50,14 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
   const [activeIndex, setActiveIndex] = React.useState(0);
+  const [openAbove, setOpenAbove] = React.useState(false);
 
   React.useImperativeHandle(forwardedRef, () => inputRef.current as HTMLInputElement);
 
   const selected = options.find((option) => option.value === value);
-  const selectedLabel = selected?.label ?? selected?.value ?? "";
+  const selectedLabel = selected
+    ? [selected.label ?? selected.value, selected.detail].filter(Boolean).join(" · ")
+    : "";
 
   const filtered = React.useMemo(() => {
     const term = normalize(query);
@@ -60,14 +65,31 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
     const starts: ComboboxOption[] = [];
     const contains: ComboboxOption[] = [];
     for (const option of options) {
-      const label = normalize(option.label ?? option.value);
+      const label = normalize([option.label ?? option.value, option.detail].filter(Boolean).join(" "));
       if (label.startsWith(term)) starts.push(option);
       else if (label.includes(term)) contains.push(option);
     }
     return [...starts, ...contains];
   }, [options, query]);
 
-  const grouped = !normalize(query) && options.some((option) => option.group);
+  const liveCustom =
+    onInput && query.trim()
+      ? { value: "__custom__", label: query.trim(), group: "This order" }
+      : null;
+  const listOptions = liveCustom
+    ? [liveCustom, ...filtered.filter((option) => option.value !== "__custom__")]
+    : filtered;
+  const grouped = !normalize(query) && listOptions.some((option) => option.group);
+
+  React.useLayoutEffect(() => {
+    if (!open) return;
+    const input = inputRef.current?.getBoundingClientRect();
+    const list = listRef.current;
+    if (!input || !list) return;
+    const spaceBelow = window.innerHeight - input.bottom;
+    const needed = Math.min(list.scrollHeight, 288) + 8;
+    setOpenAbove(spaceBelow < needed && input.top > spaceBelow);
+  }, [open, listOptions.length]);
 
   const openList = React.useCallback(() => {
     if (disabled) return;
@@ -94,7 +116,7 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
     if (!open) return;
     const node = listRef.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`);
     node?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, open]);
+  }, [activeIndex, open, listOptions.length]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -114,7 +136,7 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
     if (!open) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex((index) => Math.min(index + 1, filtered.length - 1));
+      setActiveIndex((index) => Math.min(index + 1, listOptions.length - 1));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setActiveIndex((index) => Math.max(index - 1, 0));
@@ -123,15 +145,15 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
       setActiveIndex(0);
     } else if (event.key === "End") {
       event.preventDefault();
-      setActiveIndex(filtered.length - 1);
+      setActiveIndex(listOptions.length - 1);
     } else if (event.key === "Enter") {
       event.preventDefault();
-      commit(filtered[activeIndex]);
+      commit(listOptions[activeIndex]);
     } else if (event.key === "Escape") {
       event.preventDefault();
       close();
     } else if (event.key === "Tab") {
-      if (normalize(query) && filtered[activeIndex]) onChange(filtered[activeIndex].value);
+      if (normalize(query) && listOptions[activeIndex]) onChange(listOptions[activeIndex].value);
       close();
     }
   }
@@ -139,7 +161,7 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
   let lastGroup: string | undefined;
 
   return (
-    <div ref={rootRef} className={cn("relative", className)}>
+    <div ref={rootRef} className={cn("relative", open && "z-30", className)}>
       <div className="relative">
         {open ? (
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
@@ -156,14 +178,16 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
           aria-controls={listId}
           aria-autocomplete="list"
           aria-invalid={ariaInvalid}
-          aria-activedescendant={open && filtered[activeIndex] ? `${listId}-${activeIndex}` : undefined}
+          aria-activedescendant={open && listOptions[activeIndex] ? `${listId}-${activeIndex}` : undefined}
           disabled={disabled}
           placeholder={open ? selectedLabel || placeholder : placeholder}
           value={open ? query : selectedLabel}
           onChange={(event) => {
-            setQuery(event.target.value);
+            const next = event.target.value;
+            setQuery(next);
             setActiveIndex(0);
             if (!open) setOpen(true);
+            onInput?.(next);
           }}
           onFocus={openList}
           onClick={() => {
@@ -181,10 +205,13 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
           tabIndex={-1}
           aria-label={open ? "Close list" : "Open list"}
           disabled={disabled}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => {
+          onPointerDown={(event) => {
+            event.preventDefault();
             if (open) close();
-            else inputRef.current?.focus();
+            else {
+              openList();
+              inputRef.current?.focus();
+            }
           }}
           className="absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted transition-colors hover:text-foreground disabled:pointer-events-none"
         >
@@ -197,13 +224,16 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
           ref={listRef}
           id={listId}
           role="listbox"
-          className="absolute z-50 mt-1 max-h-72 w-full overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover p-1 text-foreground shadow-[0_1px_2px_rgb(9_9_11/0.05),0_12px_40px_rgb(9_9_11/0.08)]"
+          className={cn(
+            "absolute z-50 max-h-72 w-full overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover p-1 text-foreground shadow-[0_1px_2px_rgb(9_9_11/0.05),0_12px_40px_rgb(9_9_11/0.08)]",
+            openAbove ? "bottom-full mb-1" : "mt-1"
+          )}
           onPointerDown={(event) => event.preventDefault()}
         >
-          {filtered.length === 0 ? (
+          {listOptions.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-muted">{emptyText}</p>
           ) : (
-            filtered.map((option, index) => {
+            listOptions.map((option, index) => {
               const showGroup = grouped && option.group && option.group !== lastGroup;
               lastGroup = option.group;
               const isSelected = option.value === value;
@@ -229,7 +259,10 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
                     )}
                   >
                     {isSelected ? <Check className="absolute left-2 size-4 text-brand" /> : null}
-                    {option.label ?? option.value}
+                    <span className="min-w-0 flex-1 truncate">{option.label ?? option.value}</span>
+                    {option.detail ? (
+                      <span className="ml-3 shrink-0 text-xs tabular-nums text-muted">{option.detail}</span>
+                    ) : null}
                   </div>
                 </React.Fragment>
               );
