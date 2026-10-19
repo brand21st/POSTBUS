@@ -72,7 +72,7 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
     return [...starts, ...contains];
   }, [options, query]);
 
-  const liveCustom =
+  const liveCustom: ComboboxOption | null =
     onInput && query.trim()
       ? { value: "__custom__", label: query.trim(), group: "This order" }
       : null;

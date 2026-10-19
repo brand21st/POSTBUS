@@ -121,12 +121,10 @@ async function readTariff(session: { provider: { getTariff(input: TariffInput): 
 
 export async function executeTariff(db: SupabaseClient, organizationId: string, connection: TariffConnection, input: TariffInput) {
   try {
-    let session = await tariffSession(db, organizationId, connection.id);
+    const session = await tariffSession(db, organizationId, connection.id);
     let raw: unknown;
     try {
-      const loaded = await readTariff(session, db, organizationId, connection.id, input);
-      session = loaded.session;
-      raw = loaded.raw;
+      raw = (await readTariff(session, db, organizationId, connection.id, input)).raw;
     } catch (error) {
       const status = (error as { status?: number })?.status;
       if (status !== 400 || !(input.codAmount != null && input.codAmount > 0)) throw error;
