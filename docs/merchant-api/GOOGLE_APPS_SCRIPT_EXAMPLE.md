@@ -2,12 +2,16 @@
 
 This is a reference merchants copy into their own Google account. PostBus does not host the script.
 
+Dashboard setup: `/dashboard/integrations/google-sheets`
+
 Store secrets in **Project Settings → Script properties**:
 
 - `POSTBUS_API_KEY` — `pb_live_…`
 - `POSTBUS_API_BASE` — `https://www.postbus.in/api/merchant/v1`
 
 Do not put the key in cells.
+
+Reload the sheet after saving to get the **PostBus** menu (`onOpen`). Use **Write column headers**, then **Import orders**. Do not put **Book pending rows** on a time-driven trigger.
 
 ```javascript
 var COLUMN_MAP = {
@@ -29,6 +33,41 @@ var COLUMN_MAP = {
   last_error: "Last Error"
 };
 
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("PostBus")
+    .addItem("Write column headers", "setupHeaders")
+    .addItem("Import orders", "importOrders")
+    .addSeparator()
+    .addItem("Book pending rows", "bookPending")
+    .addItem("Sync tracking", "syncTracking")
+    .addToUi();
+}
+
+function setupHeaders() {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var headers = [
+    COLUMN_MAP.external_order_id,
+    COLUMN_MAP.customer_name,
+    COLUMN_MAP.phone,
+    COLUMN_MAP.line1,
+    COLUMN_MAP.city,
+    COLUMN_MAP.state,
+    COLUMN_MAP.pincode,
+    COLUMN_MAP.product_name,
+    COLUMN_MAP.quantity,
+    COLUMN_MAP.unit_price,
+    COLUMN_MAP.payment_status,
+    COLUMN_MAP.weight_grams,
+    COLUMN_MAP.postbus_order_id,
+    COLUMN_MAP.awb,
+    COLUMN_MAP.tracking_url,
+    COLUMN_MAP.last_error
+  ];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.setFrozenRows(1);
+}
+
 function postbusProps_() {
   var p = PropertiesService.getScriptProperties();
   return {
@@ -39,7 +78,7 @@ function postbusProps_() {
 
 function postbusFetch_(path, method, body, idempotencyKey) {
   var props = postbusProps_();
-  if (!props.key) throw new Error("Set POSTBUS_API_KEY in Script Properties.");
+  if (!props.key) throw new Error("Set POSTBUS_API_KEY in Project Settings → Script properties.");
   var headers = {
     Authorization: "Bearer " + props.key,
     "Content-Type": "application/json"
@@ -92,13 +131,14 @@ function importOrders() {
       var sheetRow = offset + 2;
       var existing = cell_(row, indexMap, COLUMN_MAP.postbus_order_id);
       if (existing) return;
+      var phone = String(cell_(row, indexMap, COLUMN_MAP.phone) || "").replace(/\D/g, "").slice(-10);
       var externalId = String(cell_(row, indexMap, COLUMN_MAP.external_order_id) || ("SHEET-" + sheet.getSheetId() + "-" + sheetRow));
       try {
         var created = postbusFetch_("/orders", "post", {
           external_order_id: externalId,
           customer: {
             name: String(cell_(row, indexMap, COLUMN_MAP.customer_name)),
-            phone: String(cell_(row, indexMap, COLUMN_MAP.phone))
+            phone: phone
           },
           shipping_address: {
             line1: String(cell_(row, indexMap, COLUMN_MAP.line1)),
@@ -120,6 +160,9 @@ function importOrders() {
         if (indexMap[COLUMN_MAP.external_order_id] != null) {
           sheet.getRange(sheetRow, indexMap[COLUMN_MAP.external_order_id] + 1).setValue(externalId);
         }
+        if (indexMap[COLUMN_MAP.last_error] != null) {
+          sheet.getRange(sheetRow, indexMap[COLUMN_MAP.last_error] + 1).setValue("");
+        }
       } catch (error) {
         if (indexMap[COLUMN_MAP.last_error] != null) {
           sheet.getRange(sheetRow, indexMap[COLUMN_MAP.last_error] + 1).setValue(String(error));
@@ -140,11 +183,21 @@ function bookPending() {
     var last = sheet.getLastRow();
     if (last < 2) return;
     var values = sheet.getRange(2, 1, last - 1, sheet.getLastColumn()).getValues();
-    values.forEach(function (row) {
+    values.forEach(function (row, offset) {
+      var sheetRow = offset + 2;
       var orderId = cell_(row, indexMap, COLUMN_MAP.postbus_order_id);
       var awb = cell_(row, indexMap, COLUMN_MAP.awb);
       if (!orderId || awb) return;
-      postbusFetch_("/orders/" + orderId + "/book", "post", {}, "book:" + orderId);
+      try {
+        postbusFetch_("/orders/" + orderId + "/book", "post", {}, "book:" + orderId);
+        if (indexMap[COLUMN_MAP.last_error] != null) {
+          sheet.getRange(sheetRow, indexMap[COLUMN_MAP.last_error] + 1).setValue("");
+        }
+      } catch (error) {
+        if (indexMap[COLUMN_MAP.last_error] != null) {
+          sheet.getRange(sheetRow, indexMap[COLUMN_MAP.last_error] + 1).setValue(String(error));
+        }
+      }
     });
   } finally {
     lock.releaseLock();
@@ -163,16 +216,25 @@ function syncTracking() {
     values.forEach(function (row, offset) {
       var orderId = cell_(row, indexMap, COLUMN_MAP.postbus_order_id);
       if (!orderId) return;
-      var order = postbusFetch_("/orders/" + orderId, "get");
-      var shipment = order.shipments && order.shipments[0];
-      if (!shipment || !shipment.id) return;
-      var tracking = postbusFetch_("/shipments/" + shipment.id + "/tracking", "get");
       var sheetRow = offset + 2;
-      if (indexMap[COLUMN_MAP.awb] != null) {
-        sheet.getRange(sheetRow, indexMap[COLUMN_MAP.awb] + 1).setValue(tracking.awb || "");
-      }
-      if (indexMap[COLUMN_MAP.tracking_url] != null) {
-        sheet.getRange(sheetRow, indexMap[COLUMN_MAP.tracking_url] + 1).setValue(tracking.tracking_url || "");
+      try {
+        var order = postbusFetch_("/orders/" + orderId, "get");
+        var shipment = order.shipments && order.shipments[0];
+        if (!shipment || !shipment.id) return;
+        var tracking = postbusFetch_("/shipments/" + shipment.id + "/tracking", "get");
+        if (indexMap[COLUMN_MAP.awb] != null) {
+          sheet.getRange(sheetRow, indexMap[COLUMN_MAP.awb] + 1).setValue(tracking.awb || shipment.barcode || "");
+        }
+        if (indexMap[COLUMN_MAP.tracking_url] != null) {
+          sheet.getRange(sheetRow, indexMap[COLUMN_MAP.tracking_url] + 1).setValue(tracking.tracking_url || "");
+        }
+        if (indexMap[COLUMN_MAP.last_error] != null) {
+          sheet.getRange(sheetRow, indexMap[COLUMN_MAP.last_error] + 1).setValue("");
+        }
+      } catch (error) {
+        if (indexMap[COLUMN_MAP.last_error] != null) {
+          sheet.getRange(sheetRow, indexMap[COLUMN_MAP.last_error] + 1).setValue(String(error));
+        }
       }
     });
   } finally {
@@ -180,5 +242,3 @@ function syncTracking() {
   }
 }
 ```
-
-Installable time-driven triggers can call `importOrders` and `syncTracking`. Do not automatically retry `bookPending` without the idempotency key shown above.

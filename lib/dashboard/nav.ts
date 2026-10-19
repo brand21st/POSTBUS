@@ -98,6 +98,10 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
             ? "Customer order link"
             : segment === "support"
               ? "Support Center"
+              : segment === "developer"
+                ? "Developer API"
+              : segment === "google-sheets"
+                ? "Google Sheets"
               : segment.replace(/-/g, " "),
       href,
     });

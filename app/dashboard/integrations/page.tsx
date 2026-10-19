@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Plug } from "lucide-react";
+import { GoogleSheetsLogo } from "@/components/brand/google-sheets-logo";
 import { IndiaPostLogo } from "@/components/brand/india-post-logo";
 import { ShopifyLogo } from "@/components/brand/shopify-logo";
 import { WatiLogo } from "@/components/brand/wati-logo";
@@ -72,7 +73,7 @@ export default function IntegrationsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Integrations"
-        description="Shopify, India Post, Wati, PostBus WhatsApp, and merchant Vachat are live. WooCommerce stays reserved."
+        description="Shopify, India Post, Google Sheets, Wati, PostBus WhatsApp, merchant Vachat, and the Developer API."
       />
 
       {me.data?.merchantApi?.enabled ? (
@@ -90,6 +91,23 @@ export default function IntegrationsPage() {
         </CardContent>
       </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <GoogleSheetsLogo />
+          </CardTitle>
+          <CardDescription className="mt-1">
+            Import orders from a Google Sheet with Apps Script. Book India Post in a separate menu action.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-between">
+          <p className="text-xs text-muted">Runs in your Google account. PostBus does not store the sheet.</p>
+          <Link href="/dashboard/integrations/google-sheets" className={buttonVariants({ size: "sm" })}>
+            Set up Apps Script
+          </Link>
+        </CardContent>
+      </Card>
 
       {query.isLoading ? (
         <div className="grid gap-4 md:grid-cols-2">

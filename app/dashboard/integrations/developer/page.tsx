@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, KeyRound } from "lucide-react";
 import { toast } from "sonner";
@@ -75,7 +76,13 @@ export default function DeveloperPortalPage() {
   const me = useMe();
   const queryClient = useQueryClient();
   const [name, setName] = useState("Google Apps Script");
-  const [scopes, setScopes] = useState<string[]>(["orders:read"]);
+  const [scopes, setScopes] = useState<string[]>([
+    "orders:read",
+    "orders:write",
+    "shipments:read",
+    "shipments:book",
+    "tracking:read",
+  ]);
   const [revealed, setRevealed] = useState<string | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
 
@@ -185,7 +192,12 @@ export default function DeveloperPortalPage() {
                 Authenticate with <code className="rounded bg-surface-soft px-1">Authorization: Bearer pb_live_…</code>
               </p>
               <p>Create orders, then book India Post in a separate call. Creating an order does not book a shipment.</p>
-              <p>Map Google Sheet columns in your script. PostBus does not store a sheet column mapper.</p>
+              <p>
+                Map Google Sheet columns in your script. PostBus does not store a sheet column mapper.{" "}
+                <Link href="/dashboard/integrations/google-sheets" className="text-brand underline">
+                  Open Google Sheets setup
+                </Link>
+              </p>
               <p>
                 Public docs:{" "}
                 <a className="text-brand underline" href="/developers" target="_blank" rel="noreferrer">
