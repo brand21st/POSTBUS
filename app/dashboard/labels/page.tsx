@@ -348,7 +348,9 @@ export default function LabelsPage() {
           const { blob } = await fetchLabelPdf(labelId, "shipping-slip");
           return blob;
         },
-        printPdf: (blob) => printPdfBlob(blob),
+        printPdf: async (blob) => {
+          await printPdfBlob(blob);
+        },
         queueAgentPrint: async (shipmentId) => {
           const key = beginClientPrint(`custom-print:${shipmentId}`);
           if (!key) throw new Error("This print is already in progress.");
