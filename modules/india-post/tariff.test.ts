@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptSecret } from "@/lib/security/crypto";
-import { tariffInputSchema, tariffRequest, normalizeTariff, usableTariffDraft, type TariffInput } from "./tariff-contract";
+import { tariffEstimateKey, tariffInputSchema, tariffRequest, normalizeTariff, usableTariffDraft, type TariffInput } from "./tariff-contract";
 import { executeTariff, resolveTariffInput, saveTariffEstimate, tariffSession, tariffOrderDefaults, loadTariffOrder, type TariffConnection } from "./tariff";
 
 const input: TariffInput = { service: "BUSINESS_PARCEL", sourcePincode: "400001", destinationPincode: "110001", weightGrams: 550, lengthCm: 20, widthCm: 15, heightCm: 10 };
@@ -42,9 +42,19 @@ describe("tariff contract", () => {
     const path = tariffRequest({ ...input, service: "SP_INLAND_PARCEL", insuranceValue: 1000, proofOfDelivery: true });
     expect(path).toContain("/speed-post/tariffs?product-code=SP"); expect(path).toContain("INS=1000&POD=YES");
   });
-  it("omits optional services", () => { expect(tariffRequest(input)).not.toMatch(/ins|INS|POD|COD/); });
+  it("omits optional services", () => { expect(tariffRequest(input)).not.toMatch(/ins|INS|POD|COD/); expect(tariffRequest({ ...input, codAmount: 0 })).not.toMatch(/[?&]cod=/i); });
+  it("sends a positive COD amount with service-specific casing and a distinct estimate key", () => {
+    const bp = tariffRequest({ ...input, codAmount: 799 });
+    expect(new URL(bp, "https://example.test").searchParams.get("cod")).toBe("799");
+    expect(bp).not.toMatch(/[?&]COD=/);
+    const sp = tariffRequest({ ...input, service: "SP_INLAND_PARCEL", codAmount: 799.5 });
+    expect(new URL(sp, "https://example.test").searchParams.get("COD")).toBe("799.5");
+    expect(sp).not.toMatch(/[?&]cod=/);
+    expect(tariffEstimateKey({ ...input, codAmount: 799 })).toBe("v1|BUSINESS_PARCEL|400001|110001|550|20|15|10|||799");
+    expect(tariffEstimateKey(input)).toBe("v1|BUSINESS_PARCEL|400001|110001|550|20|15|10|||");
+  });
   it.each([0, -1, 1.5, NaN, Infinity, 35001])("rejects invalid weight %s", (weightGrams) => expect(tariffInputSchema.safeParse({ ...input, weightGrams }).success).toBe(false));
-  it.each([{}, { lengthCm: 0 }, { widthCm: 8 }, { heightCm: 151 }, { destinationPincode: "abc" }, { service: "EXPRESS" }, { proofOfDelivery: true }, { insuranceValue: -1 }])("rejects missing or invalid inputs %j", (patch) => expect(tariffInputSchema.safeParse(Object.keys(patch).length ? { ...input, ...patch } : {}).success).toBe(false));
+  it.each([{}, { lengthCm: 0 }, { widthCm: 8 }, { heightCm: 151 }, { destinationPincode: "abc" }, { service: "EXPRESS" }, { proofOfDelivery: true }, { insuranceValue: -1 }, { codAmount: -1 }])("rejects missing or invalid inputs %j", (patch) => expect(tariffInputSchema.safeParse(Object.keys(patch).length ? { ...input, ...patch } : {}).success).toBe(false));
   it("accepts Speed Post parcel estimates at 500 g and still limits documents", () => {
     expect(tariffInputSchema.safeParse({ ...input, service: "SP_INLAND_PARCEL", weightGrams: 500 }).success).toBe(true);
     expect(tariffInputSchema.safeParse({ ...input, service: "SP_INLAND_DOC", weightGrams: 500, lengthCm: 42, widthCm: 29, heightCm: 2 }).success).toBe(true);
@@ -93,7 +103,7 @@ describe("tenant and read-only input resolution", () => {
       update: {
         india_post_estimate_amount: 152,
         india_post_estimated_at: "2026-10-16T00:00:00.000Z",
-        india_post_estimate_key: "v1|BUSINESS_PARCEL|400001|110001|550|20|15|10||",
+        india_post_estimate_key: "v1|BUSINESS_PARCEL|400001|110001|550|20|15|10|||",
       },
       filters: [["organization_id", "org-1"], ["id", "order-1"]],
     });
@@ -103,6 +113,17 @@ describe("tenant and read-only input resolution", () => {
 });
 
 describe("mocked authenticated tariff lookup", () => {
+  it("retries a COD quote without the COD parameter when India Post rejects it", async () => {
+    const { db, connection } = database();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("bad query", { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...response, cod_charges: null, final_amount: 152 })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(executeTariff(db, "org-1", connection, { ...input, codAmount: 800 })).resolves.toMatchObject({ estimatedTotal: 152, codCharges: null });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("cod=800");
+    expect(String(fetchMock.mock.calls[1][0])).not.toMatch(/[?&]cod=/i);
+  });
   it("reuses token and makes only a tariff GET with actual weight", async () => {
     const { db, connection, operations } = database();
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(response)));

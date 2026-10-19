@@ -73,7 +73,7 @@ export function tariffOrderDefaults(order: TariffOrder, connection: TariffConnec
 }
 export function resolveTariffInput(body: unknown, connection: TariffConnection, order?: TariffOrder): TariffInput {
   const parsed = (order ? orderTariffSchema : manualTariffSchema).safeParse(body);
-  const categories: Record<string, string> = { service: "INVALID_SERVICE", weightGrams: "INVALID_WEIGHT", lengthCm: "INVALID_DIMENSIONS", widthCm: "INVALID_DIMENSIONS", heightCm: "INVALID_DIMENSIONS", destinationPincode: "INVALID_PINCODE" };
+  const categories: Record<string, string> = { service: "INVALID_SERVICE", weightGrams: "INVALID_WEIGHT", lengthCm: "INVALID_DIMENSIONS", widthCm: "INVALID_DIMENSIONS", heightCm: "INVALID_DIMENSIONS", destinationPincode: "INVALID_PINCODE", codAmount: "VALIDATION_ERROR" };
   if (!parsed.success) throw tariffError(categories[String(parsed.error.issues[0]?.path[0])] ?? "VALIDATION_ERROR", "Check the quote fields; only supported tariff inputs are accepted.", ERROR_CODES.VALIDATION_ERROR);
   const input = tariffInputSchema.safeParse({ ...(order ? tariffOrderDefaults(order, connection) : {}), ...parsed.data, sourcePincode: tariffSourcePincode(connection, parsed.data.senderOffice) });
   if (!input.success) throw tariffError(categories[String(input.error.issues[0]?.path[0])] ?? "VALIDATION_ERROR", input.error.issues[0]?.message ?? "Enter valid parcel details.", ERROR_CODES.VALIDATION_ERROR);
@@ -110,15 +110,28 @@ export async function tariffSession(db: SupabaseClient, organizationId: string, 
     return { provider, accessToken: session.access_token };
   });
 }
+async function readTariff(session: { provider: { getTariff(input: TariffInput): Promise<unknown> }; accessToken: string }, db: SupabaseClient, organizationId: string, connectionId: string, input: TariffInput) {
+  try { return { session, raw: await session.provider.getTariff(input) }; }
+  catch (error) {
+    if ((error as { status?: number })?.status !== 401) throw error;
+    const refreshed = await tariffSession(db, organizationId, connectionId, session.accessToken);
+    return { session: refreshed, raw: await refreshed.provider.getTariff(input) };
+  }
+}
+
 export async function executeTariff(db: SupabaseClient, organizationId: string, connection: TariffConnection, input: TariffInput) {
   try {
     let session = await tariffSession(db, organizationId, connection.id);
     let raw: unknown;
-    try { raw = await session.provider.getTariff(input); }
-    catch (error) {
-      if ((error as { status?: number })?.status !== 401) throw error;
-      session = await tariffSession(db, organizationId, connection.id, session.accessToken);
-      raw = await session.provider.getTariff(input);
+    try {
+      const loaded = await readTariff(session, db, organizationId, connection.id, input);
+      session = loaded.session;
+      raw = loaded.raw;
+    } catch (error) {
+      const status = (error as { status?: number })?.status;
+      if (status !== 400 || !(input.codAmount != null && input.codAmount > 0)) throw error;
+      const withoutCod = { ...input, codAmount: undefined };
+      raw = (await readTariff(session, db, organizationId, connection.id, withoutCod)).raw;
     }
     try { return normalizeTariff(raw, input); }
     catch { throw tariffError("INDIA_POST_INVALID_RESPONSE", "India Post returned an invalid estimate. Please try again."); }

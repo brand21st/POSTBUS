@@ -1181,7 +1181,7 @@ export default function NewOrderPage() {
             </p>
           ) : null}
           {paymentStatus === "COD" ? (
-            <p className="flex justify-between text-sm font-semibold text-emerald-500 dark:text-emerald-300">
+            <p className="flex justify-between text-sm font-semibold text-[#0D3311] dark:text-[#0D3311]">
               <span>Final COD</span>
               <span className="tabular-nums">{formatCurrency(finalCodAmount)}</span>
             </p>
