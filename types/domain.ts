@@ -220,6 +220,9 @@ export const JOB_TYPES = [
   "invoice-generation",
   "support-ingest",
   "ai-image",
+  "cod-report-extract",
+  "gst-draft",
+  "accounting-rebuild",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
@@ -259,7 +262,9 @@ export type Permission =
   | "support.reply"
   | "support.assign"
   | "support.manage"
-  | "support.settings";
+  | "support.settings"
+  | "accounting.read"
+  | "accounting.write";
 
 export const SUPPORT_TICKET_STATUSES = [
   "open",

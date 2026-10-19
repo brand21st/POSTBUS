@@ -114,6 +114,18 @@ describe("permissionForTenantRoute", () => {
       "shipments.write"
     );
     expect(permissionForTenantRoute("POST", "manifests", ["manifests"])).toBe("manifests.write");
+    expect(permissionForTenantRoute("GET", "addons", ["addons"])).toBeUndefined();
+    expect(permissionForTenantRoute("POST", "addons/ai-accountant/checkout", ["addons", "ai-accountant", "checkout"])).toBe(
+      "org.manage"
+    );
+    expect(permissionForTenantRoute("GET", "ai-accountant", ["ai-accountant"])).toBe("accounting.read");
+    expect(permissionForTenantRoute("POST", "ai-accountant/assistant", ["ai-accountant", "assistant"])).toBe(
+      "accounting.read"
+    );
+    expect(permissionForTenantRoute("POST", "ai-accountant/expenses", ["ai-accountant", "expenses"])).toBe("accounting.write");
+    expect(
+      permissionForTenantRoute("POST", "ai-accountant/journal/x/reverse", ["ai-accountant", "journal", "x", "reverse"])
+    ).toBe("accounting.write");
   });
 
   it("protects admin surfaces and keeps status reads open to members", () => {
