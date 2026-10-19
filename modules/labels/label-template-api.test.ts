@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/lib/api/context";
 import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
 import { retryIncompleteLabelById, retryIncompleteLabelsByIds } from "@/modules/labels/retry";
-import { indiaPostLabelTemplate, type LabelTemplate } from "@/modules/labels/template-schema";
+import { applyPaperSize, indiaPostLabelTemplate, type LabelTemplate } from "@/modules/labels/template-schema";
 import { createCustomTextElement } from "@/modules/labels/custom-blocks";
 
 const encoded: string[] = [];
@@ -392,6 +392,14 @@ describe("label template API", () => {
     expect(persisted.at(-1)).toEqual({ kind: "CUSTOM_SHIPPING", shipmentId: "ship-1" });
     expect(snapshots.at(-1)).toMatchObject({ page: { widthMm: 105, heightMm: 148 } });
     expect(printCalls.at(-1)?.paperSize).toBe("A6");
+  });
+
+  it("queues custom-print on 4x6 when the shipping slip template is 4x6", async () => {
+    template = applyPaperSize(template, "4x6");
+    await call("PUT", "label-template", { template });
+    await call("POST", "label-template/custom-print", { shipmentId: "ship-1" });
+    expect(snapshots.at(-1)).toMatchObject({ page: { paperSize: "4x6", widthMm: 102, heightMm: 152 } });
+    expect(printCalls.at(-1)?.paperSize).toBe("4x6");
   });
 
   it("prints the official India Post label on A6 without a custom PDF", async () => {
