@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Loader2, Package, Scale, Sparkles, Zap } from "lucide-react";
+import { AlertCircle, Check, Loader2, Package, Scale, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
 import { orderNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
@@ -27,13 +28,6 @@ type Props = {
   order: OrderRecord;
   disabled?: boolean;
 };
-
-const DIMENSION_PRESETS = [
-  { label: "Small Box", length: 15, width: 10, height: 5 },
-  { label: "Medium Box", length: 20, width: 15, height: 10 },
-  { label: "Apparel / Polybag", length: 25, width: 20, height: 5 },
-  { label: "Large Box", length: 30, width: 25, height: 15 },
-] as const;
 
 const WEIGHT_PRESETS = [
   { label: "250g", weight: 250 },
@@ -229,13 +223,6 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
     });
   };
 
-  const applyDimensionPreset = (preset: (typeof DIMENSION_PRESETS)[number]) => {
-    setLengthInput(String(preset.length));
-    setWidthInput(String(preset.width));
-    setHeightInput(String(preset.height));
-    setFormError(null);
-  };
-
   const applyWeightPreset = (preset: (typeof WEIGHT_PRESETS)[number]) => {
     setBoxWeightInput(String(preset.weight));
     setFormError(null);
@@ -396,38 +383,26 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                 </p>
               ) : null}
 
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-muted">
-                  <Sparkles className="size-3 text-amber-500" />
-                  <span>Quick box size</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {DIMENSION_PRESETS.map((preset) => {
-                    const selected =
-                      Number(lengthInput) === preset.length &&
-                      Number(widthInput) === preset.width &&
-                      Number(heightInput) === preset.height;
-                    return (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        onClick={() => applyDimensionPreset(preset)}
-                        className={cn(
-                          "rounded-lg border px-2 py-1 text-[11px] font-medium transition active:scale-95",
-                          selected
-                            ? "border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-600 dark:bg-amber-950/50 dark:text-amber-200"
-                            : "border-border bg-surface-soft text-ink hover:border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                        )}
-                      >
-                        {preset.label}
-                        <span className="ml-1 tabular-nums text-muted">
-                          {preset.length}×{preset.width}×{preset.height}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <ShipmentPackPresets
+                weightGrams={Number(boxWeightInput) || undefined}
+                lengthCm={Number(lengthInput) || undefined}
+                widthCm={Number(widthInput) || undefined}
+                heightCm={Number(heightInput) || undefined}
+                serviceCode={serviceCode}
+                onApplySize={(size) => {
+                  setLengthInput(String(size.lengthCm));
+                  setWidthInput(String(size.widthCm));
+                  setHeightInput(String(size.heightCm));
+                  setFormError(null);
+                }}
+                onApply={(pack) => {
+                  setLengthInput(String(pack.lengthCm));
+                  setWidthInput(String(pack.widthCm));
+                  setHeightInput(String(pack.heightCm));
+                  setBoxWeightInput(String(Math.round(pack.weightGrams)));
+                  setFormError(null);
+                }}
+              />
 
               {/* Dimension Inputs */}
               <div className="grid grid-cols-3 gap-2.5">

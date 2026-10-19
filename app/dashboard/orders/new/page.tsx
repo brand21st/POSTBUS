@@ -934,6 +934,11 @@ export default function NewOrderPage() {
               widthCm={Number(shipmentWidth) || undefined}
               heightCm={Number(shipmentHeight) || undefined}
               serviceCode={selectedService}
+              onApplySize={(size) => {
+                form.setValue("shipment.lengthCm", size.lengthCm, { shouldDirty: true });
+                form.setValue("shipment.widthCm", size.widthCm, { shouldDirty: true });
+                form.setValue("shipment.heightCm", size.heightCm, { shouldDirty: true });
+              }}
               onApply={(pack) => {
                 serviceTouched.current = true;
                 form.setValue("shipment.weightGrams", pack.weightGrams, { shouldDirty: true });

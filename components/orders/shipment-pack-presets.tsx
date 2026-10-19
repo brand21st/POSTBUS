@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { Bookmark, Package, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,11 +16,21 @@ import {
 
 const QUERY_KEY = ["shipment-presets"];
 
-export type PackApply = {
-  weightGrams: number;
+export const BUILTIN_BOX_SIZES = [
+  { label: "Small Box", lengthCm: 15, widthCm: 10, heightCm: 5 },
+  { label: "Medium Box", lengthCm: 20, widthCm: 15, heightCm: 10 },
+  { label: "Apparel / Polybag", lengthCm: 25, widthCm: 20, heightCm: 5 },
+  { label: "Large Box", lengthCm: 30, widthCm: 25, heightCm: 15 },
+] as const;
+
+export type BoxSize = {
   lengthCm: number;
   widthCm: number;
   heightCm: number;
+};
+
+export type PackApply = BoxSize & {
+  weightGrams: number;
   serviceCode: string;
 };
 
@@ -35,13 +45,67 @@ function trimNum(value: number) {
   return String(Number(value.toFixed(1))).replace(/\.0$/, "");
 }
 
+function sameSize(left: BoxSize, right: BoxSize) {
+  return (
+    Number(left.lengthCm) === Number(right.lengthCm) &&
+    Number(left.widthCm) === Number(right.widthCm) &&
+    Number(left.heightCm) === Number(right.heightCm)
+  );
+}
+
 function samePack(left: PackApply, right: PackApply) {
   return (
     Math.round(left.weightGrams) === Math.round(right.weightGrams) &&
-    Number(left.lengthCm) === Number(right.lengthCm) &&
-    Number(right.widthCm) === Number(left.widthCm) &&
-    Number(left.heightCm) === Number(right.heightCm) &&
+    sameSize(left, right) &&
     left.serviceCode === right.serviceCode
+  );
+}
+
+function PresetChip({
+  label,
+  tone,
+  selected,
+  onApply,
+  onRemove,
+}: {
+  label: string;
+  tone: "box" | "saved";
+  selected: boolean;
+  onApply: () => void;
+  onRemove?: () => void;
+}) {
+  const Icon = tone === "box" ? Package : Bookmark;
+  return (
+    <div
+      className={cn(
+        "flex max-w-full items-center rounded-full border",
+        tone === "box" &&
+          (selected
+            ? "border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-600 dark:bg-amber-950/50 dark:text-amber-200"
+            : "border-border bg-surface-soft text-ink"),
+        tone === "saved" &&
+          (selected ? "border-brand bg-brand/10 text-ink" : "border-border bg-surface-soft text-ink")
+      )}
+    >
+      <button
+        type="button"
+        className="inline-flex min-w-0 items-center gap-1 px-2 py-1 text-left text-[11px] font-medium leading-4"
+        onClick={onApply}
+      >
+        <Icon className={cn("size-3 shrink-0", tone === "box" ? "text-amber-600" : "text-brand")} aria-hidden />
+        <span className="truncate">{label}</span>
+      </button>
+      {onRemove ? (
+        <button
+          type="button"
+          className="mr-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-muted hover:bg-rose-50 hover:text-error"
+          aria-label={`Remove ${label}`}
+          onClick={onRemove}
+        >
+          <X className="size-3" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -52,6 +116,7 @@ export function ShipmentPackPresets({
   heightCm,
   serviceCode,
   onApply,
+  onApplySize,
 }: {
   weightGrams?: number;
   lengthCm?: number;
@@ -59,17 +124,24 @@ export function ShipmentPackPresets({
   heightCm?: number;
   serviceCode?: string;
   onApply: (pack: PackApply) => void;
+  onApplySize: (size: BoxSize) => void;
 }) {
   const queryClient = useQueryClient();
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
-  const current: PackApply | null =
-    Number(weightGrams) > 0 && Number(lengthCm) > 0 && Number(widthCm) > 0 && Number(heightCm) > 0 && serviceCode
+  const sizeCurrent: BoxSize | null =
+    Number(lengthCm) > 0 && Number(widthCm) > 0 && Number(heightCm) > 0
       ? {
-          weightGrams: Number(weightGrams),
           lengthCm: Number(lengthCm),
           widthCm: Number(widthCm),
           heightCm: Number(heightCm),
+        }
+      : null;
+  const current: PackApply | null =
+    sizeCurrent && Number(weightGrams) > 0 && serviceCode
+      ? {
+          ...sizeCurrent,
+          weightGrams: Number(weightGrams),
           serviceCode,
         }
       : null;
@@ -147,57 +219,50 @@ export function ShipmentPackPresets({
   }
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-medium text-muted">Pack sizes</p>
-        {!naming ? (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="inline-flex items-center gap-1 text-xs font-medium text-muted">
+          <Package className="size-3.5 text-amber-600" aria-hidden />
+          Pack sizes
+        </p>
+        {naming && current ? (
+          <>
+            <Input
+              className="h-8 min-w-0 flex-1 text-xs"
+              value={name}
+              maxLength={40}
+              autoFocus
+              placeholder="Preset name"
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  submitName();
+                }
+                if (event.key === "Escape") setNaming(false);
+              }}
+            />
+            <Button type="button" size="sm" className="h-8" disabled={create.isPending} onClick={submitName}>
+              Save
+            </Button>
+            <Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => setNaming(false)}>
+              Cancel
+            </Button>
+          </>
+        ) : (
           <Button
             type="button"
             variant="secondary"
             size="sm"
-            className="h-11 sm:h-9"
+            className="ml-auto h-8"
             disabled={!canSave || create.isPending}
             onClick={startSave}
           >
             <Plus className="size-3.5" aria-hidden />
             Save preset
           </Button>
-        ) : null}
+        )}
       </div>
-
-      {naming && current ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Input
-            className="h-11 sm:h-9"
-            value={name}
-            maxLength={40}
-            autoFocus
-            placeholder="Preset name"
-            onChange={(event) => setName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                submitName();
-              }
-              if (event.key === "Escape") setNaming(false);
-            }}
-          />
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              className="h-11 flex-1 sm:h-9 sm:flex-none"
-              disabled={create.isPending}
-              onClick={submitName}
-            >
-              Save
-            </Button>
-            <Button type="button" variant="secondary" size="sm" className="h-11 flex-1 sm:h-9 sm:flex-none" onClick={() => setNaming(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : null}
 
       {list.isPending ? <p className="text-xs text-muted">Loading pack sizes…</p> : null}
       {list.isError ? (
@@ -206,60 +271,50 @@ export function ShipmentPackPresets({
         </p>
       ) : null}
 
-      {!list.isPending && !presets.length && !naming ? (
-        <p className="text-xs text-muted">Save a pack size to reuse weight and box size.</p>
-      ) : null}
-
-      {presets.length ? (
-        <div className="flex flex-wrap gap-1.5">
-          {presets.map((preset) => {
-            const pack: PackApply = {
-              weightGrams: preset.weightGrams,
-              lengthCm: preset.lengthCm,
-              widthCm: preset.widthCm,
-              heightCm: preset.heightCm,
-              serviceCode: preset.serviceCode,
-            };
-            const selected = preset.id === activeId;
-            return (
-              <div
-                key={preset.id}
-                className={cn(
-                  "group relative flex max-w-full items-stretch rounded-full border",
-                  selected ? "border-brand bg-brand/5" : "border-border bg-surface-soft"
-                )}
-              >
-                <button
-                  type="button"
-                  className="min-w-0 px-3 py-2 text-left sm:py-1.5"
-                  onClick={() => {
-                    onApply(pack);
-                    touch.mutate(preset.id);
-                  }}
-                >
-                  <span className="block truncate text-xs font-semibold text-ink">{preset.name}</span>
-                  <span className="block truncate text-[11px] text-muted">
-                    {Math.round(preset.weightGrams)} g · {trimNum(preset.lengthCm)}×{trimNum(preset.widthCm)}×
-                    {trimNum(preset.heightCm)}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:text-error opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
-                  aria-label={`Remove ${preset.name}`}
-                  onClick={() => {
-                    const ok = window.confirm(`Remove pack size “${preset.name}”?`);
-                    if (!ok) return;
-                    remove.mutate(preset.id);
-                  }}
-                >
-                  <X className="size-3.5" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
+      <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+        {BUILTIN_BOX_SIZES.map((size) => {
+          const selected = Boolean(
+            sizeCurrent &&
+              sameSize(sizeCurrent, size) &&
+              !presets.some((preset) => preset.id === activeId && sameSize(preset, size))
+          );
+          return (
+            <PresetChip
+              key={size.label}
+              tone="box"
+              label={`${size.label} ${size.lengthCm}×${size.widthCm}×${size.heightCm}`}
+              selected={selected}
+              onApply={() => onApplySize(size)}
+            />
+          );
+        })}
+        {presets.map((preset) => {
+          const pack: PackApply = {
+            weightGrams: preset.weightGrams,
+            lengthCm: preset.lengthCm,
+            widthCm: preset.widthCm,
+            heightCm: preset.heightCm,
+            serviceCode: preset.serviceCode,
+          };
+          return (
+            <PresetChip
+              key={preset.id}
+              tone="saved"
+              label={`${preset.name} · ${Math.round(preset.weightGrams)} g · ${trimNum(preset.lengthCm)}×${trimNum(preset.widthCm)}×${trimNum(preset.heightCm)}`}
+              selected={preset.id === activeId}
+              onApply={() => {
+                onApply(pack);
+                touch.mutate(preset.id);
+              }}
+              onRemove={() => {
+                const ok = window.confirm(`Remove pack size “${preset.name}”?`);
+                if (!ok) return;
+                remove.mutate(preset.id);
+              }}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
