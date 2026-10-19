@@ -7,7 +7,7 @@ import { Logo } from "@/components/layout/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { aiAccountantNav, helpNav, isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
+import { helpNav, isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
 import { useSupportUnread } from "@/lib/hooks/use-support-unread";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -56,18 +56,7 @@ export function Sidebar({
       </div>
 
       <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label="Dashboard">
-        {sidebarNav.flatMap((item) => {
-          const extra =
-            item.href === "/dashboard/integrations" &&
-            (me?.addons ?? []).some(
-              (addon) =>
-                addon.slug === "ai-accountant" &&
-                (addon.accessMode === "FULL" || addon.accessMode === "READ_ONLY")
-            )
-              ? [aiAccountantNav]
-              : [];
-          return [item, ...extra];
-        }).map((item) => {
+        {sidebarNav.map((item) => {
           const active = isNavItemActive(item.href, pathname);
           const Icon = item.icon;
           const lockedFeature = trial ? null : lockedFeatureForPath(item.href);
