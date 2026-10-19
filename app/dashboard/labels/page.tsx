@@ -7,7 +7,7 @@ import { runPrintShippingSlip } from "@/lib/print/print-shipping-slip";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Download, LayoutGrid, Printer, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
+import { Check, Download, Printer, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -21,7 +21,6 @@ import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
 import type { MemberRole } from "@/types/domain";
 import { FEATURE } from "@/modules/billing/entitlements";
-import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import {
   defaultLabelTemplatePage,
   templatePageSizeLabel,
@@ -58,34 +57,15 @@ function documentsStatus(row: LabelRecord) {
   return "PROCESSING";
 }
 
-async function downloadLabelsZip(ids: string[]) {
+async function downloadMergedShippingSlips(ids: string[]) {
   const response = await fetch("/api/v1/labels/bulk-download", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Accept: "application/pdf" },
     body: JSON.stringify({ ids }),
   });
-  const contentType = response.headers.get("Content-Type") ?? "";
-  if (contentType.includes("application/zip")) {
-    const blob = await response.blob();
-    const href = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = "labels.zip";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(href);
-    return;
-  }
-  let message = "Could not download labels.";
-  try {
-    const payload = (await response.json()) as { message?: string };
-    message = payload.message || message;
-  } catch {
-    message = response.ok ? message : "The server returned an unexpected response.";
-  }
-  throw new ApiError(message, response.status);
+  const { blob, filename } = await readPdfResponse(response, "shipping-slips.pdf");
+  await downloadPdfBlob(blob, filename);
 }
 
 function shipmentIdOf(row: LabelRecord) {
@@ -256,7 +236,6 @@ export default function LabelsPage() {
   const me = useMe();
   const canWriteLabels = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "labels.write");
   const canBulk = entitlements.allows(FEATURE.bulk);
-  const canPacking = entitlements.allows(FEATURE.packing);
   const canOfficialIndiaPostLabel = !entitlements.loading && entitlements.showsOfficialIndiaPostLabel;
 
   const query = useQuery({
@@ -284,8 +263,8 @@ export default function LabelsPage() {
     .filter((id) => (selected.length ? selected.includes(id) : kind === "INCOMPLETE"));
 
   const bulk = useMutation({
-    mutationFn: downloadLabelsZip,
-    onSuccess: () => toast.success("Barcode and packing slip files downloaded."),
+    mutationFn: downloadMergedShippingSlips,
+    onSuccess: () => toast.success("Shipping slips downloaded as one PDF."),
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -367,8 +346,8 @@ export default function LabelsPage() {
           const { blob } = await fetchLabelPdf(labelId, "shipping-slip");
           return blob;
         },
-        printPdf: (blob) => {
-          printPdfBlob(blob);
+        printPdf: async (blob) => {
+          await printPdfBlob(blob);
         },
         queueAgentPrint: async (shipmentId) => {
           const key = beginClientPrint(`custom-print:${shipmentId}`);
@@ -376,6 +355,8 @@ export default function LabelsPage() {
           try {
             return await api<{
               message?: string;
+              connected?: boolean;
+              downloadPath?: string;
               job?: { printerName?: string | null; printer_name?: string | null };
             }>("/api/v1/label-template/custom-print", {
               method: "POST",
@@ -477,7 +458,9 @@ export default function LabelsPage() {
             (shipmentId || labelId);
         const slipDownloadBusy = downloadShippingSlip.isPending && downloadShippingSlip.variables === labelId;
         const slipPrintBusy =
-          printShippingSlip.isPending && printShippingSlip.variables?.shipmentId === shipmentId;
+          printShippingSlip.isPending &&
+          printShippingSlip.variables?.labelId === labelId &&
+          printShippingSlip.variables?.shipmentId === shipmentId;
         const labelBusy = labelPreviewBusy || labelDownloadBusy;
         const slipBusy = slipPreviewBusy || slipDownloadBusy || slipPrintBusy;
         const indiaReady =
@@ -548,7 +531,7 @@ export default function LabelsPage() {
                 }
               >
                 <Printer className="size-4" />
-                {slipPrintBusy ? "Sending…" : "Print Slip"}
+                {slipPrintBusy ? "Sending…" : "Print Shipping Slip"}
               </Button>
             ) : null}
           </div>
@@ -618,14 +601,6 @@ export default function LabelsPage() {
                 Shipping templates
               </Button>
             </Link>
-            {multiUpPrintEnabled() && canPacking ? (
-              <Link href="/dashboard/labels/multi-print">
-                <Button type="button" variant="secondary">
-                  <LayoutGrid className="size-4" />
-                  Multi print
-                </Button>
-              </Link>
-            ) : null}
             <Button
               type="button"
               variant="secondary"

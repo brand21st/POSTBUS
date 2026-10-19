@@ -24,6 +24,29 @@ describe("runPrintShippingSlip", () => {
     expect(result).toEqual({ mode: "agent", message: "Queued for HP LaserJet" });
   });
 
+  it("prints the shipping-slip PDF when custom-print reports the agent is offline", async () => {
+    const blob = new Blob(["pdf"]);
+    const fetchSlipPdf = vi.fn(async () => blob);
+    const printPdf = vi.fn();
+    const queueAgentPrint = vi.fn(async () => ({
+      connected: false,
+      downloadPath: "/api/v1/labels/lab-1/download",
+      message: "Print Agent offline.",
+    }));
+    const result = await runPrintShippingSlip({
+      connected: true,
+      shipmentId: "ship-1",
+      labelId: "lab-1",
+      fetchSlipPdf,
+      printPdf,
+      queueAgentPrint,
+    });
+    expect(queueAgentPrint).toHaveBeenCalledWith("ship-1");
+    expect(fetchSlipPdf).toHaveBeenCalledWith("lab-1");
+    expect(printPdf).toHaveBeenCalledWith(blob);
+    expect(result).toEqual({ mode: "browser", message: "Opened the browser print dialog" });
+  });
+
   it("prints the shipping-slip PDF in the browser when the agent is offline", async () => {
     const blob = new Blob(["pdf"]);
     const fetchSlipPdf = vi.fn(async (labelId: string) => {

@@ -1,5 +1,7 @@
 export type AgentPrintResult = {
   message?: string;
+  connected?: boolean;
+  downloadPath?: string;
   job?: { printerName?: string | null; printer_name?: string | null };
 };
 
@@ -18,6 +20,11 @@ export async function runPrintShippingSlip(input: {
     return { mode: "browser" as const, message: "Opened the browser print dialog" };
   }
   const queued = await input.queueAgentPrint(input.shipmentId);
+  if (queued.connected === false) {
+    const blob = await input.fetchSlipPdf(input.labelId);
+    await input.printPdf(blob);
+    return { mode: "browser" as const, message: "Opened the browser print dialog" };
+  }
   const queue =
     queued.job?.printerName || queued.job?.printer_name || input.queueName?.trim() || "";
   return {
