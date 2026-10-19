@@ -17,13 +17,20 @@ import {
   Settings,
   LifeBuoy,
   Clapperboard,
+  Calculator,
 } from "lucide-react";
+
+export type NavChildItem = {
+  label: string;
+  href: string;
+};
 
 export type NavItem = {
   label: string;
   href: string;
   icon: ComponentType<{ className?: string }>;
   tour?: string;
+  children?: NavChildItem[];
 };
 
 export const sidebarNav: NavItem[] = [
@@ -33,7 +40,13 @@ export const sidebarNav: NavItem[] = [
   { label: "Inventory", href: "/dashboard/inventory", icon: Package },
   { label: "Shipments", href: "/dashboard/shipments", icon: Truck, tour: "nav-shipments" },
   { label: "NDR & RTO", href: "/dashboard/ndr-rto", icon: PackageX },
-  { label: "Labels", href: "/dashboard/labels", icon: Tag, tour: "nav-labels" },
+  {
+    label: "Labels",
+    href: "/dashboard/labels",
+    icon: Tag,
+    tour: "nav-labels",
+    children: [{ label: "Multi print", href: "/dashboard/labels/multi-print" }],
+  },
   { label: "Invoices", href: "/dashboard/invoices", icon: Receipt },
   { label: "Manifest", href: "/dashboard/manifests", icon: ClipboardList },
   { label: "Tracking", href: "/dashboard/tracking", icon: Radio },
@@ -43,6 +56,12 @@ export const sidebarNav: NavItem[] = [
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
+
+export const aiAccountantNav: NavItem = {
+  label: "AI Accountant",
+  href: "/dashboard/ai-accountant",
+  icon: Calculator,
+};
 
 export const tutorialsNav: NavItem = {
   label: "Tutorials",
@@ -102,6 +121,8 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
                 ? "Developer API"
               : segment === "google-sheets"
                 ? "Google Sheets"
+              : segment === "ai-accountant"
+                ? "AI Accountant"
               : segment.replace(/-/g, " "),
       href,
     });

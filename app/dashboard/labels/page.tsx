@@ -7,7 +7,7 @@ import { runPrintShippingSlip } from "@/lib/print/print-shipping-slip";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Download, LayoutGrid, Printer, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
+import { Check, Download, Printer, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -21,7 +21,6 @@ import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
 import type { MemberRole } from "@/types/domain";
 import { FEATURE } from "@/modules/billing/entitlements";
-import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import {
   defaultLabelTemplatePage,
   templatePageSizeLabel,
@@ -237,7 +236,6 @@ export default function LabelsPage() {
   const me = useMe();
   const canWriteLabels = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "labels.write");
   const canBulk = entitlements.allows(FEATURE.bulk);
-  const canPacking = entitlements.allows(FEATURE.packing);
   const canOfficialIndiaPostLabel = !entitlements.loading && entitlements.showsOfficialIndiaPostLabel;
 
   const query = useQuery({
@@ -357,6 +355,8 @@ export default function LabelsPage() {
           try {
             return await api<{
               message?: string;
+              connected?: boolean;
+              downloadPath?: string;
               job?: { printerName?: string | null; printer_name?: string | null };
             }>("/api/v1/label-template/custom-print", {
               method: "POST",
@@ -458,7 +458,9 @@ export default function LabelsPage() {
             (shipmentId || labelId);
         const slipDownloadBusy = downloadShippingSlip.isPending && downloadShippingSlip.variables === labelId;
         const slipPrintBusy =
-          printShippingSlip.isPending && printShippingSlip.variables?.shipmentId === shipmentId;
+          printShippingSlip.isPending &&
+          printShippingSlip.variables?.labelId === labelId &&
+          printShippingSlip.variables?.shipmentId === shipmentId;
         const labelBusy = labelPreviewBusy || labelDownloadBusy;
         const slipBusy = slipPreviewBusy || slipDownloadBusy || slipPrintBusy;
         const indiaReady =
@@ -529,7 +531,7 @@ export default function LabelsPage() {
                 }
               >
                 <Printer className="size-4" />
-                {slipPrintBusy ? "Sending…" : "Print Slip"}
+                {slipPrintBusy ? "Sending…" : "Print Shipping Slip"}
               </Button>
             ) : null}
           </div>
@@ -599,14 +601,6 @@ export default function LabelsPage() {
                 Shipping templates
               </Button>
             </Link>
-            {multiUpPrintEnabled() && canPacking ? (
-              <Link href="/dashboard/labels/multi-print">
-                <Button type="button" variant="secondary">
-                  <LayoutGrid className="size-4" />
-                  Multi print
-                </Button>
-              </Link>
-            ) : null}
             <Button
               type="button"
               variant="secondary"

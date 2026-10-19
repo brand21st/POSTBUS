@@ -7,11 +7,12 @@ import { Logo } from "@/components/layout/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { helpNav, isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
+import { aiAccountantNav, helpNav, isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
 import { useSupportUnread } from "@/lib/hooks/use-support-unread";
 import { initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { lockedFeatureForPath } from "@/modules/billing/entitlements";
+import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import type { MeResponse } from "@/types/api";
 
 export function Sidebar({
@@ -55,36 +56,80 @@ export function Sidebar({
       </div>
 
       <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label="Dashboard">
-        {sidebarNav.map((item) => {
+        {sidebarNav.flatMap((item) => {
+          const extra =
+            item.href === "/dashboard/integrations" &&
+            (me?.addons ?? []).some(
+              (addon) =>
+                addon.slug === "ai-accountant" &&
+                (addon.accessMode === "FULL" || addon.accessMode === "READ_ONLY")
+            )
+              ? [aiAccountantNav]
+              : [];
+          return [item, ...extra];
+        }).map((item) => {
           const active = isNavItemActive(item.href, pathname);
           const Icon = item.icon;
           const lockedFeature = trial ? null : lockedFeatureForPath(item.href);
           const locked = Boolean(lockedFeature && !features.includes(lockedFeature));
+          const children = (item.children ?? []).filter((child) => {
+            if (child.href === "/dashboard/labels/multi-print") return multiUpPrintEnabled();
+            return true;
+          });
+          const showChildren = !collapsed && children.length > 0 && active;
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              prefetch={false}
-              data-tour={item.tour}
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
-                collapsed && "justify-center px-0",
-                active
-                  ? "bg-rose-100 text-brand-dark"
-                  : "text-muted hover:bg-surface-soft hover:text-foreground",
-                locked && !active && "text-muted/70"
-              )}
-            >
-              <Icon className={cn("size-4 shrink-0", locked && "blur-[0.5px]")} />
-              <span className={cn(collapsed && "sr-only", locked && "blur-[1px]")}>{item.label}</span>
-              {item.href === "/dashboard/support" && supportUnread.count > 0 && !collapsed ? (
-                <Badge variant="brand" className="ml-auto h-5 min-w-5 px-1.5">
-                  {supportUnread.count > 99 ? "99+" : supportUnread.count}
-                </Badge>
+            <div key={item.href} className="space-y-0.5">
+              <Link
+                href={item.href}
+                prefetch={false}
+                data-tour={item.tour}
+                onClick={onNavigate}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
+                  collapsed && "justify-center px-0",
+                  active
+                    ? "bg-rose-100 text-brand-dark"
+                    : "text-muted hover:bg-surface-soft hover:text-foreground",
+                  locked && !active && "text-muted/70"
+                )}
+              >
+                <Icon className={cn("size-4 shrink-0", locked && "blur-[0.5px]")} />
+                <span className={cn(collapsed && "sr-only", locked && "blur-[1px]")}>{item.label}</span>
+                {item.href === "/dashboard/support" && supportUnread.count > 0 && !collapsed ? (
+                  <Badge variant="brand" className="ml-auto h-5 min-w-5 px-1.5">
+                    {supportUnread.count > 99 ? "99+" : supportUnread.count}
+                  </Badge>
+                ) : null}
+                {locked && !collapsed ? <Lock className="ml-auto size-3.5 shrink-0 text-muted" /> : null}
+              </Link>
+              {showChildren ? (
+                <div className="ml-4 space-y-0.5 border-l border-border pl-3">
+                  {children.map((child) => {
+                    const childActive = pathname === child.href || pathname.startsWith(`${child.href}/`);
+                    const childLockedFeature = trial ? null : lockedFeatureForPath(child.href);
+                    const childLocked = Boolean(childLockedFeature && !features.includes(childLockedFeature));
+                    return (
+                      <Link
+                        key={child.href}
+                        href={child.href}
+                        prefetch={false}
+                        onClick={onNavigate}
+                        className={cn(
+                          "flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                          childActive
+                            ? "bg-rose-50 text-brand-dark"
+                            : "text-muted hover:bg-surface-soft hover:text-foreground",
+                          childLocked && !childActive && "text-muted/70"
+                        )}
+                      >
+                        <span className={cn(childLocked && "blur-[1px]")}>{child.label}</span>
+                        {childLocked ? <Lock className="ml-auto size-3.5 shrink-0 text-muted" /> : null}
+                      </Link>
+                    );
+                  })}
+                </div>
               ) : null}
-              {locked && !collapsed ? <Lock className="ml-auto size-3.5 shrink-0 text-muted" /> : null}
-            </Link>
+            </div>
           );
         })}
       </nav>
