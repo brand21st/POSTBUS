@@ -43,6 +43,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { asPaginated } from "@/lib/dashboard/records";
 import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
+import { downloadPdfFile } from "@/lib/print/download-pdf";
 import { ApiError, api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
@@ -375,6 +376,7 @@ export function MultiPrintScreen() {
   const [items, setItems] = useState<CopyRow[]>([]);
   const [sheetPage, setSheetPage] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewBlob = useRef<Blob | null>(null);
   const [busy, setBusy] = useState<"preview" | "download" | "print" | null>(null);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>("labels");
   const [showPdfPreview, setShowPdfPreview] = useState(false);
@@ -849,6 +851,7 @@ export function MultiPrintScreen() {
     try {
       const result = await postSheet({ ...requestBody(), disposition: "inline" });
       if (!(result instanceof Blob)) return;
+      previewBlob.current = result;
       const href = URL.createObjectURL(result);
       setPreviewUrl((current) => {
         if (current) URL.revokeObjectURL(current);
@@ -863,18 +866,13 @@ export function MultiPrintScreen() {
     }
   }
 
-  function saveSheetPdf(href: string) {
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = "shipping-labels.pdf";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+  async function saveSheetPdf(source: Blob) {
+    downloadPdfFile(source, "shipping-labels.pdf");
   }
 
   function downloadPreview() {
-    if (previewUrl) {
-      saveSheetPdf(previewUrl);
+    if (previewBlob.current) {
+      void saveSheetPdf(previewBlob.current);
       return;
     }
     void download();
@@ -885,9 +883,7 @@ export function MultiPrintScreen() {
     try {
       const result = await postSheet({ ...requestBody(), disposition: "attachment" });
       if (!(result instanceof Blob)) return;
-      const href = URL.createObjectURL(result);
-      saveSheetPdf(href);
-      URL.revokeObjectURL(href);
+      await saveSheetPdf(result);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not download the sheet.");
     } finally {
