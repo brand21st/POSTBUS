@@ -36,4 +36,27 @@ describe("originsMatch", () => {
     });
     expect(() => assertBrowserOrigin(same, true)).not.toThrow();
   });
+
+  it("accepts the public PostBus host when the container origin is internal", () => {
+    const download = new NextRequest("http://localhost:3000/api/v1/label-template/multi-sheet", {
+      method: "POST",
+      headers: {
+        Origin: "https://www.postbus.in",
+        "x-forwarded-host": "www.postbus.in",
+        "x-forwarded-proto": "https",
+      },
+    });
+    expect(() => assertBrowserOrigin(download, false)).not.toThrow();
+  });
+
+  it("accepts a same-origin browser fetch even when Host is rewritten", () => {
+    const download = new NextRequest("http://localhost:3000/api/v1/label-template/multi-sheet", {
+      method: "POST",
+      headers: {
+        Origin: "https://www.postbus.in",
+        "sec-fetch-site": "same-origin",
+      },
+    });
+    expect(() => assertBrowserOrigin(download, false)).not.toThrow();
+  });
 });
