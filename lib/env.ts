@@ -69,7 +69,7 @@ export const env = {
   coolifyApiToken: optional(process.env.COOLIFY_API_TOKEN),
   // Reversible storefront rollout. Leave unset until the marketplace migration is verified.
   storefrontMarketplaceEnabled: optional(process.env.STOREFRONT_MARKETPLACE_ENABLED).toLowerCase() === "true",
-  // Merchant Public API. Empty MERCHANT_API_ORG_ALLOWLIST disables every org. Set MERCHANT_API_ENABLED=false to kill the API without a DB rollback.
+  // Merchant Public API. Empty MERCHANT_API_ORG_ALLOWLIST disables every org. Set * or all to open every workspace. MERCHANT_API_ENABLED=false kills the API without a DB rollback.
   merchantApiEnabled: optional(process.env.MERCHANT_API_ENABLED).toLowerCase() !== "false",
   merchantApiOrgAllowlist: optional(process.env.MERCHANT_API_ORG_ALLOWLIST),
   // Outbound merchant webhooks. Empty allowlist sends nothing. MERCHANT_WEBHOOKS_ENABLED=false stops fan-out.

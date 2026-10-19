@@ -38,6 +38,22 @@ describe("merchant API rollout flags", () => {
     expect(isMerchantApiOpenForOrg(ORG_A)).toBe(false);
   });
 
+  it("opens every org when the allowlist is * or all", () => {
+    process.env.MERCHANT_API_ENABLED = "true";
+    process.env.MERCHANT_API_ORG_ALLOWLIST = "*";
+    expect(merchantApiOrgAllowlist()).toEqual(["*"]);
+    expect(isMerchantApiOpenForOrg(ORG_A)).toBe(true);
+    expect(isMerchantApiOpenForOrg(ORG_B)).toBe(true);
+    process.env.MERCHANT_API_ORG_ALLOWLIST = "ALL";
+    expect(isMerchantApiOpenForOrg(ORG_A)).toBe(true);
+  });
+
+  it("still kills the API when allowlist is * but MERCHANT_API_ENABLED=false", () => {
+    process.env.MERCHANT_API_ENABLED = "false";
+    process.env.MERCHANT_API_ORG_ALLOWLIST = "*";
+    expect(isMerchantApiOpenForOrg(ORG_A)).toBe(false);
+  });
+
   it("keeps outbound webhooks closed when the allowlist is empty", () => {
     process.env.MERCHANT_WEBHOOKS_ENABLED = "true";
     process.env.MERCHANT_WEBHOOKS_ORG_ALLOWLIST = "";

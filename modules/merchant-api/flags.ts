@@ -8,19 +8,26 @@ export function isMerchantApiProcessEnabled() {
   return optional(process.env.MERCHANT_API_ENABLED).toLowerCase() !== "false";
 }
 
+function isAllowAllToken(value: string) {
+  return value === "*" || value === "all";
+}
+
 export function merchantApiOrgAllowlist() {
-  return optional(process.env.MERCHANT_API_ORG_ALLOWLIST)
+  const raw = optional(process.env.MERCHANT_API_ORG_ALLOWLIST);
+  if (isAllowAllToken(raw.toLowerCase())) return ["*"];
+  return raw
     .split(/[,\s]+/)
     .map((value) => value.trim().toLowerCase())
     .filter((value) => UUID.test(value));
 }
 
-/** Empty allowlist disables every organization. Kill switch: MERCHANT_API_ENABLED=false. */
+/** Empty allowlist disables every organization. `*` or `all` opens every workspace. Kill switch: MERCHANT_API_ENABLED=false. */
 export function isMerchantApiOpenForOrg(organizationId?: string | null) {
   if (!isMerchantApiProcessEnabled()) return false;
   if (!organizationId) return false;
   const list = merchantApiOrgAllowlist();
   if (!list.length) return false;
+  if (list.includes("*")) return true;
   return list.includes(organizationId.toLowerCase());
 }
 
