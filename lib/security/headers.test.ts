@@ -14,11 +14,9 @@ describe("security headers", () => {
     expect(csp).toContain("https://player.vimeo.com");
     expect(csp).toContain("https://www.facebook.com");
     expect(csp).toContain("https://www.instagram.com");
-    expect(csp).toContain("https://embed.tawk.to");
-    expect(csp).toContain("https://*.tawk.to");
-    expect(csp).toContain("wss://*.tawk.to");
-    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://embed.tawk.to https://*.tawk.to");
-    expect(csp).toContain("form-action 'self' https://*.tawk.to");
+    expect(csp).not.toContain("tawk.to");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
+    expect(csp).toContain("form-action 'self'");
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("upgrade-insecure-requests");
 

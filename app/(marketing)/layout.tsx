@@ -3,7 +3,6 @@ import { ClarityScript } from "@/components/analytics/clarity-script";
 import { GoogleAnalytics } from "@/components/analytics/google-analytics";
 import { Footer } from "@/components/layout/footer";
 import { Navbar } from "@/components/layout/navbar";
-import { WhatsappSupportButton } from "@/components/layout/whatsapp-support-button";
 
 export default function MarketingLayout({ children }: { children: ReactNode }) {
   return (
@@ -15,7 +14,6 @@ export default function MarketingLayout({ children }: { children: ReactNode }) {
         {children}
       </main>
       <Footer />
-      <WhatsappSupportButton />
     </>
   );
 }

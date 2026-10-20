@@ -64,11 +64,6 @@ html {
   scroll-behavior: smooth;
 }
 
-iframe[title="Chat widget"],
-iframe[title="Visit tawk.to"] {
-  color-scheme: light;
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
