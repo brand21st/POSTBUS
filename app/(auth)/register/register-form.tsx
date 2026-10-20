@@ -4,12 +4,20 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Mail } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { IndiaMobileInput, IndiaWhatsappField } from "@/components/auth/india-whatsapp-field";
 import { OtpInput } from "@/components/auth/otp-input";
 import { RegisterPincodeLookup } from "@/components/auth/register-pincode-lookup";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -35,10 +43,13 @@ function messageOf(error: unknown, fallback: string) {
   return error instanceof ApiError ? error.message : fallback;
 }
 
+const EMAIL_CONFIRM_COPY =
+  "Check your email and click the confirmation link. After it is verified you will land on your dashboard.";
+
 function PasswordRegister() {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const form = useForm<RegisterAccountInput, unknown, RegisterAccountValues>({
@@ -48,16 +59,13 @@ function PasswordRegister() {
 
   async function onSubmit(values: RegisterAccountValues) {
     setFormError(null);
-    setInfo(null);
     try {
       const result = await api<RegisterResult>("/api/v1/auth/register", {
         method: "POST",
         body: JSON.stringify(values),
       });
       if (result.needsEmailConfirmation) {
-        setInfo(
-          "Check your email and click the confirmation link. After it is verified you will land on your dashboard."
-        );
+        setConfirmOpen(true);
         return;
       }
       router.replace("/dashboard");
@@ -68,6 +76,7 @@ function PasswordRegister() {
   }
 
   return (
+    <>
     <form className="mt-7 space-y-5" onSubmit={form.handleSubmit(onSubmit)}>
       <div className="space-y-2">
         <Label htmlFor="name">Name</Label>
@@ -141,11 +150,30 @@ function PasswordRegister() {
         ) : null}
       </div>
       {formError ? <p className="text-sm text-error">{formError}</p> : null}
-      {info ? <p className="text-sm text-success">{info}</p> : null}
       <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
         {form.formState.isSubmitting ? "Creating account…" : "Create account"}
       </Button>
     </form>
+    <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <DialogContent
+        overlayClassName="animate-in fade-in duration-200"
+        className="max-w-md animate-in fade-in zoom-in-95 duration-200"
+      >
+        <DialogHeader className="items-center pr-0 text-center sm:text-center">
+          <div className="mb-1 flex size-12 items-center justify-center rounded-full bg-brand/10 text-brand">
+            <Mail className="size-6" aria-hidden />
+          </div>
+          <DialogTitle>Check your email</DialogTitle>
+          <DialogDescription>{EMAIL_CONFIRM_COPY}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="sm:justify-center">
+          <Button type="button" className="w-full sm:w-auto" onClick={() => setConfirmOpen(false)}>
+            Got it
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
