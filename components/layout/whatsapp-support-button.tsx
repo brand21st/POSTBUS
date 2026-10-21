@@ -28,7 +28,8 @@ function openWhatsApp(text: string) {
 
 export function WhatsappSupportButton() {
   const pathname = usePathname();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [teaserHidden, setTeaserHidden] = useState(false);
   const [message, setMessage] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const openedByUser = useRef(false);
@@ -53,6 +54,10 @@ export function WhatsappSupportButton() {
   function toggle() {
     openedByUser.current = true;
     setOpen((current) => !current);
+  }
+
+  function dismissBanner() {
+    setTeaserHidden(true);
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -147,15 +152,25 @@ export function WhatsappSupportButton() {
               </button>
             </form>
           </section>
-        ) : (
-          <button
-            type="button"
-            onClick={toggle}
-            className="max-w-[15.5rem] rounded-2xl rounded-br-sm border border-black/5 bg-white px-3.5 py-2.5 text-left shadow-[0_10px_28px_rgb(15_23_42/0.16)] transition hover:bg-[#f7fff9] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25D366]"
-          >
-            <span className="block text-sm font-semibold text-ink">{ASK_TITLE}</span>
-            <span className="text-xs text-muted">{ASK_SUBTITLE}</span>
-          </button>
+        ) : teaserHidden ? null : (
+          <div className="relative max-w-[15.5rem] pr-1.5 pt-1.5">
+            <button
+              type="button"
+              onClick={toggle}
+              className="w-full rounded-2xl rounded-br-sm border border-black/5 bg-white px-3.5 py-2.5 pr-8 text-left shadow-[0_10px_28px_rgb(15_23_42/0.16)] transition hover:bg-[#f7fff9] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25D366]"
+            >
+              <span className="block text-sm font-semibold text-ink">{ASK_TITLE}</span>
+              <span className="text-xs text-muted">{ASK_SUBTITLE}</span>
+            </button>
+            <button
+              type="button"
+              onClick={dismissBanner}
+              className="absolute top-0 right-0 flex size-5 items-center justify-center rounded-full border border-black/10 bg-white text-muted shadow-sm transition hover:bg-zinc-100 hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25D366]"
+              aria-label="Close banner"
+            >
+              <CloseIcon className="size-3" />
+            </button>
+          </div>
         )}
         <button
           type="button"
