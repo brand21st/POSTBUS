@@ -132,6 +132,7 @@ export default function IndiaPostPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [replaceSecrets, setReplaceSecrets] = useState(false);
+  const [highlightConnection, setHighlightConnection] = useState(false);
 
   const query = useIndiaPost();
 
@@ -151,6 +152,16 @@ export default function IndiaPostPage() {
     config?.eventsWebhookUrl ?? config?.events_webhook_url ?? "",
     form.customerId
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== "#india-post-connection") return;
+    const el = document.getElementById("india-post-connection");
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlightConnection(true);
+    const timer = window.setTimeout(() => setHighlightConnection(false), 2400);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!config) return;
@@ -807,7 +818,10 @@ export default function IndiaPostPage() {
 
       <IndiaPostGuideBanner selectedService={form.defaultServiceCode} />
 
-      <Card>
+      <Card
+        id="india-post-connection"
+        className={cn(highlightConnection && "ring-2 ring-brand ring-offset-2 ring-offset-background")}
+      >
         <CardHeader className="pb-4">
           <CardTitle>Connection</CardTitle>
           <CardDescription>

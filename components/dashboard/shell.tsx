@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { MobileNav } from "@/components/dashboard/mobile-nav";
+import { IndiaPostOnboardingHost } from "@/components/dashboard/india-post-onboarding-host";
 import { ProductTour } from "@/components/dashboard/product-tour";
 import { NewOrderAlerts } from "@/components/dashboard/new-order-alerts";
 import { WebusbJobListener } from "@/components/dashboard/webusb-job-listener";
@@ -141,6 +142,7 @@ export function DashboardShell({
                 : "mx-auto w-full min-w-0 max-w-[1280px]"
             }
           >
+            {me.data && !confirmedLoss ? <IndiaPostOnboardingHost /> : null}
             {transientAuth ? (
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted">
                 <p>Connection issue. Retrying your session without signing you out…</p>

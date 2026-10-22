@@ -11,6 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTransientAuthClass } from "@/lib/auth/session/classify";
 import { getRequestAuthUser } from "@/lib/supabase/request-auth";
 import { isMerchantApiOpenForOrg } from "@/modules/merchant-api/flags";
+import { dismissIndiaPostOnboardingForUser } from "@/lib/dashboard/india-post-onboarding";
 
 export async function handleSessionRoutes(
   request: NextRequest,
@@ -47,6 +48,7 @@ export async function handleSessionRoutes(
         fullName: profile?.full_name,
         avatarUrl: profile?.avatar_url,
         whatsappNumber: profile?.whatsapp_number ?? null,
+        indiaPostOnboardingDismissedAt: profile?.india_post_onboarding_dismissed_at ?? null,
       },
       organization,
       role: ensured.role,
@@ -63,6 +65,21 @@ export async function handleSessionRoutes(
         enabled: isMerchantApiOpenForOrg(organization?.id),
       },
     };
+  }
+
+  if (key === "PATCH me") {
+    const auth = await getRequestAuthUser();
+    const user = auth.user;
+    if (auth.classification && isTransientAuthClass(auth.classification)) {
+      throw new AppError(
+        ERROR_CODES.AUTH_UNAVAILABLE,
+        "Authentication is temporarily unavailable. Try again shortly."
+      );
+    }
+    if (!user) throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
+    const body = await request.json().catch(() => ({}));
+    z.object({ indiaPostOnboardingDismissedAt: z.literal(true) }).parse(body);
+    return dismissIndiaPostOnboardingForUser(supabase, user.id);
   }
 
   if (key === "POST organizations") {
