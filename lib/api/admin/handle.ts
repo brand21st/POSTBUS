@@ -362,8 +362,8 @@ async function countWorkspaces(supabase: AdminClient, q: string) {
   ];
   const results = await Promise.all(queries);
   counts.all = results[0]?.count ?? 0;
-  ADMIN_ACCOUNT_STATUSES.forEach((status, index) => {
-    counts[status] = results[index + 1]?.count ?? 0;
+  ADMIN_ACCOUNT_STATUSES.forEach((accountStatus, index) => {
+    counts[accountStatus] = results[index + 1]?.count ?? 0;
   });
   return counts;
 }
@@ -481,14 +481,16 @@ async function handleAccounts(
       countAccountSignups(supabase, q),
       countAbandonedSignups(supabase, q),
     ]);
+    const filteredWorkspaceTotal =
+      status === "ACTIVE" ||
+      status === "BLOCKED" ||
+      status === "SUSPENDED" ||
+      status === "HOLD" ||
+      status === "DISABLED"
+        ? workspaceCounts[status]
+        : workspaceCounts.all;
     const listTotal =
-      tab === "signups"
-        ? signupTotal
-        : tab === "abandoned"
-          ? abandonedTotal
-          : status
-            ? workspaceCounts[status]
-            : workspaceCounts.all;
+      tab === "signups" ? signupTotal : tab === "abandoned" ? abandonedTotal : filteredWorkspaceTotal;
     const range = listPageRange(page, pageSize, listTotal);
 
     let accounts: Array<Record<string, unknown>> = [];
