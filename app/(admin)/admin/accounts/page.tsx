@@ -240,8 +240,8 @@ export default function AdminAccountsPage() {
       />
 
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        <div className="flex flex-col gap-3 border-b border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap rounded-lg bg-surface-soft p-0.5">
+        <div className="flex min-w-0 flex-col gap-3 border-b border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="grid w-full min-w-0 grid-cols-3 rounded-lg bg-surface-soft p-0.5 sm:max-w-xl sm:flex-1">
             {(
               [
                 { id: "workspaces", label: "Workspaces", count: workspaceCount, icon: Building2 },
@@ -257,15 +257,15 @@ export default function AdminAccountsPage() {
                   type="button"
                   onClick={() => setTab(item.id)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+                    "inline-flex min-w-0 w-full items-center justify-center gap-1 rounded-md px-1.5 py-1.5 text-xs font-medium transition-colors sm:gap-1.5 sm:px-2.5 sm:text-sm",
                     active ? "bg-card text-ink shadow-sm" : "text-muted hover:text-ink"
                   )}
                 >
-                  <Icon className="size-3.5" />
-                  {item.label}
+                  <Icon className="size-3.5 shrink-0" />
+                  <span className="truncate">{item.label}</span>
                   <span
                     className={cn(
-                      "rounded-full px-1.5 text-[11px] tabular-nums",
+                      "shrink-0 rounded-full px-1.5 text-[11px] tabular-nums",
                       active ? "bg-surface-soft text-ink" : "bg-card text-muted",
                       (item.id === "signups" || item.id === "abandoned") &&
                         item.count > 0 &&
@@ -304,7 +304,7 @@ export default function AdminAccountsPage() {
               })}
             </div>
           ) : (
-            <p className="text-xs text-muted">
+            <p className="hidden text-xs text-muted sm:block">
               {tab === "abandoned"
                 ? "Started signup and have not confirmed email yet."
                 : "People who registered, with or without a workspace."}
