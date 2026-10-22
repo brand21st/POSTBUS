@@ -13,6 +13,9 @@ function config(overrides: Partial<PlatformVachatConfig> = {}): PlatformVachatCo
     lastError: null,
     lastTestPhone: null,
     supportEnabled: false,
+    signupWelcomeEnabled: false,
+    signupWelcomeTemplateName: "",
+    signupWelcomeTemplateLanguage: "en",
     eventSettings: {
       order_confirmation: false,
       processing: false,

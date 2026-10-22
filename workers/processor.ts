@@ -103,6 +103,7 @@ export async function processJob(queue: string, payload: JobPayload) {
       const { sendVachatNotice, sendVachatSessionText, vachatEventFromJobProgress, vachatIdsFromJob } = await import(
         "@/modules/vachat/send"
       );
+      const { vachatNotifyJobKind } = await import("@/modules/vachat/notify-job");
       const { data: job } = await supabase
         .from("background_jobs")
         .select("progress")
@@ -117,15 +118,17 @@ export async function processJob(queue: string, payload: JobPayload) {
         templateName?: string;
         language?: string;
         variables?: string[];
+        userId?: string;
         extras?: { interactive_payload?: Record<string, unknown>; image_url?: string };
       };
-      if (progress.kind === "session_text" && progress.source === "support") {
+      const jobKind = vachatNotifyJobKind(progress);
+      if (jobKind === "support") {
         const { deliverQueuedSupportMessage } = await import("@/modules/support/send");
         await deliverQueuedSupportMessage(supabase, payload.organizationId, progress);
-      } else if (progress.kind === "support_template") {
-        const { deliverQueuedSupportMessage } = await import("@/modules/support/send");
-        await deliverQueuedSupportMessage(supabase, payload.organizationId, progress);
-      } else if (progress.kind === "session_text") {
+      } else if (jobKind === "signup_welcome") {
+        const { deliverSignupWelcome } = await import("@/modules/vachat/signup-welcome");
+        await deliverSignupWelcome(supabase, payload.organizationId, progress);
+      } else if (jobKind === "session_text") {
         await sendVachatSessionText(String(progress.to ?? ""), String(progress.text ?? ""));
       } else {
         const ids = vachatIdsFromJob(job?.progress, payload.entityId);

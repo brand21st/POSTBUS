@@ -1,4 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+
+const enqueueSignupWelcome = vi.fn(async () => ({ queued: false }));
+
+vi.mock("@/modules/vachat/signup-welcome", () => ({
+  enqueueSignupWelcome: (...args: unknown[]) => enqueueSignupWelcome(...args),
+}));
+
 import { ensureActiveWorkspace } from "@/modules/organizations/service";
 
 function membership(id: string, name: string, createdAt: string) {
@@ -30,6 +37,7 @@ function supabaseMock(rpc: ReturnType<typeof vi.fn>, membershipsForList: unknown
 
 describe("ensureActiveWorkspace", () => {
   it("creates one workspace when the user has none", async () => {
+    enqueueSignupWelcome.mockClear();
     const rpc = vi.fn().mockResolvedValue({
       data: { id: "org-1", name: "Priya", slug: "priya" },
       error: null,
@@ -57,6 +65,9 @@ describe("ensureActiveWorkspace", () => {
     expect(rpc).toHaveBeenCalledWith("create_organization_for_user", { p_name: "Priya" });
     expect(result.current?.id).toBe("org-1");
     expect(result.memberships).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(enqueueSignupWelcome).toHaveBeenCalledWith("user-1", "org-1");
+    });
   });
 
   it("uses the business name for a new WhatsApp OTP workspace", async () => {
@@ -87,6 +98,7 @@ describe("ensureActiveWorkspace", () => {
   });
 
   it("does not create a second workspace when memberships already exist", async () => {
+    enqueueSignupWelcome.mockClear();
     const rpc = vi.fn();
     const supabase = supabaseMock(rpc, [membership("org-1", "One", "2026-09-21T00:00:00Z")]);
 
@@ -97,6 +109,7 @@ describe("ensureActiveWorkspace", () => {
     expect(rpc).not.toHaveBeenCalled();
     expect(result.memberships).toHaveLength(1);
     expect(result.current?.id).toBe("org-1");
+    expect(enqueueSignupWelcome).not.toHaveBeenCalled();
   });
 
   it("exposes only the active workspace when several exist", async () => {

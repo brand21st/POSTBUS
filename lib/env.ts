@@ -54,6 +54,8 @@ export const env = {
   vachatApiKey: optional(process.env.VACHAT_API_KEY),
   vachatApiBaseUrl: optional(process.env.VACHAT_API_BASE_URL),
   vachatWebhookSecret: optional(process.env.VACHAT_WEBHOOK_SECRET),
+  vachatSignupWelcomeTemplateName: optional(process.env.VACHAT_SIGNUP_WELCOME_TEMPLATE_NAME),
+  vachatSignupWelcomeTemplateLanguage: optional(process.env.VACHAT_SIGNUP_WELCOME_TEMPLATE_LANGUAGE) || "en",
   // Coolify persistent volume destination. Relative DB paths are resolved under this root.
   labelStoragePath: optional(process.env.LABEL_STORAGE_PATH) || "/data/labels",
   // Default on. Set POSTBUS_UNICODE_LABEL_RENDERING=false to use Helvetica-only Postbus PDFs.
