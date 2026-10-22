@@ -33,6 +33,12 @@ import {
 } from "@/modules/vachat/admin-settings";
 import { getRazorpayConfig, publicRazorpayStatus } from "@/modules/razorpay/config";
 import { handleAdminTutorials } from "@/lib/api/admin/tutorials";
+import { latestLastActiveAt } from "@/lib/admin/user-presence";
+import {
+  ADMIN_ACCOUNT_STATUSES,
+  listPageRange,
+  parseAdminAccountListParams,
+} from "@/lib/admin/account-list";
 
 const planSchema = z.object({
   slug: z.string().min(2).optional(),
@@ -314,12 +320,68 @@ function signupSearchFilter(q: string) {
   return `full_name.ilike."${pattern}",email.ilike."${pattern}",whatsapp_number.ilike."${pattern}",pincode.ilike."${pattern}",city.ilike."${pattern}"`;
 }
 
-async function listAccountSignups(supabase: ReturnType<typeof createAdminClient>, q: string) {
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+function applyOrgSearch<T extends { ilike: (column: string, pattern: string) => T }>(query: T, q: string) {
+  return q ? query.ilike("name", `%${q}%`) : query;
+}
+
+async function countAccountSignups(supabase: AdminClient, q: string) {
+  let query = supabase.from("profiles").select("id", { count: "exact", head: true });
+  const filter = signupSearchFilter(q);
+  if (filter) query = query.or(filter);
+  const { count } = await query;
+  return count ?? 0;
+}
+
+async function countAbandonedSignups(supabase: AdminClient, q: string) {
+  let query = supabase.from("admin_abandoned_signups").select("id", { count: "exact", head: true });
+  const filter = signupSearchFilter(q);
+  if (filter) query = query.or(filter);
+  const { count } = await query;
+  return count ?? 0;
+}
+
+async function countWorkspaces(supabase: AdminClient, q: string) {
+  const counts = {
+    all: 0,
+    ACTIVE: 0,
+    BLOCKED: 0,
+    SUSPENDED: 0,
+    HOLD: 0,
+    DISABLED: 0,
+  };
+  const queries = [
+    applyOrgSearch(supabase.from("organizations").select("id", { count: "exact", head: true }), q),
+    ...ADMIN_ACCOUNT_STATUSES.map((status) =>
+      applyOrgSearch(
+        supabase.from("organizations").select("id", { count: "exact", head: true }).eq("account_status", status),
+        q
+      )
+    ),
+  ];
+  const results = await Promise.all(queries);
+  counts.all = results[0]?.count ?? 0;
+  ADMIN_ACCOUNT_STATUSES.forEach((status, index) => {
+    counts[status] = results[index + 1]?.count ?? 0;
+  });
+  return counts;
+}
+
+async function listAccountSignups(
+  supabase: AdminClient,
+  q: string,
+  page: number,
+  pageSize: number,
+  knownTotal?: number
+) {
+  const total = knownTotal ?? (await countAccountSignups(supabase, q));
+  const range = listPageRange(page, pageSize, total);
   let query = supabase
     .from("profiles")
-    .select("id, email, full_name, whatsapp_number, pincode, city, created_at, active_organization_id")
+    .select("id, email, full_name, whatsapp_number, pincode, city, created_at, last_active_at, active_organization_id")
     .order("created_at", { ascending: false })
-    .limit(50);
+    .range(range.from, range.to);
   const filter = signupSearchFilter(q);
   if (filter) query = query.or(filter);
   const { data: profiles } = await query;
@@ -351,16 +413,56 @@ async function listAccountSignups(supabase: ReturnType<typeof createAdminClient>
     }
   }
 
-  return (profiles ?? []).map((profile) => ({
-    id: profile.id,
-    fullName: profile.full_name ?? null,
-    email: profile.email ?? null,
-    whatsappNumber: profile.whatsapp_number ?? null,
-    pincode: profile.pincode ?? null,
-    city: profile.city ?? null,
-    createdAt: profile.created_at,
-    organization: orgByUser.get(profile.id) ?? null,
-  }));
+  return {
+    total: range.total,
+    page: range.page,
+    items: (profiles ?? []).map((profile) => ({
+      id: profile.id,
+      fullName: profile.full_name ?? null,
+      email: profile.email ?? null,
+      whatsappNumber: profile.whatsapp_number ?? null,
+      pincode: profile.pincode ?? null,
+      city: profile.city ?? null,
+      createdAt: profile.created_at,
+      lastActiveAt: profile.last_active_at ?? null,
+      organization: orgByUser.get(profile.id) ?? null,
+    })),
+  };
+}
+
+async function listAbandonedSignups(
+  supabase: AdminClient,
+  q: string,
+  page: number,
+  pageSize: number,
+  knownTotal?: number
+) {
+  const total = knownTotal ?? (await countAbandonedSignups(supabase, q));
+  const range = listPageRange(page, pageSize, total);
+  let query = supabase
+    .from("admin_abandoned_signups")
+    .select("id, email, full_name, whatsapp_number, pincode, city, created_at")
+    .order("created_at", { ascending: false })
+    .range(range.from, range.to);
+  const filter = signupSearchFilter(q);
+  if (filter) query = query.or(filter);
+  const { data: rows } = await query;
+  return {
+    total: range.total,
+    page: range.page,
+    items: (rows ?? []).map((row) => ({
+      id: row.id,
+      fullName: row.full_name ?? null,
+      email: row.email ?? null,
+      whatsappNumber: row.whatsapp_number ?? null,
+      pincode: row.pincode ?? null,
+      city: row.city ?? null,
+      createdAt: row.created_at,
+      lastActiveAt: null,
+      organization: null,
+      needsEmailConfirmation: true as const,
+    })),
+  };
 }
 
 async function handleAccounts(
@@ -373,30 +475,82 @@ async function handleAccounts(
   if (method === "GET" && slugs.length === 1) {
     const url = new URL(request.url);
     const q = url.searchParams.get("q")?.trim() ?? "";
-    const status = url.searchParams.get("status") ?? "";
-    let query = supabase
-      .from("organizations")
-      .select("id, name, slug, account_status, created_at, created_by")
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (status) query = query.eq("account_status", status);
-    if (q) query = query.ilike("name", `%${q}%`);
-    const { data: orgs } = await query;
-    const ids = (orgs ?? []).map((row) => row.id);
-    const { data: subs } = ids.length
-      ? await supabase
-          .from("subscriptions")
-          .select("organization_id, status, billing_cycle, amount_paise, plan_id, plans!plan_id(name, slug)")
-          .in("organization_id", ids)
-          .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"])
-      : { data: [] as never[] };
-    const byOrg = new Map((subs ?? []).map((row) => [row.organization_id, row]));
-    return {
-      accounts: (orgs ?? []).map((org) => ({
+    const { tab, page, pageSize, status } = parseAdminAccountListParams(url.searchParams);
+    const [workspaceCounts, signupTotal, abandonedTotal] = await Promise.all([
+      countWorkspaces(supabase, q),
+      countAccountSignups(supabase, q),
+      countAbandonedSignups(supabase, q),
+    ]);
+    const listTotal =
+      tab === "signups"
+        ? signupTotal
+        : tab === "abandoned"
+          ? abandonedTotal
+          : status
+            ? workspaceCounts[status]
+            : workspaceCounts.all;
+    const range = listPageRange(page, pageSize, listTotal);
+
+    let accounts: Array<Record<string, unknown>> = [];
+    let signups: Awaited<ReturnType<typeof listAccountSignups>>["items"] = [];
+    if (tab === "signups") {
+      signups = (await listAccountSignups(supabase, q, range.page, pageSize, signupTotal)).items;
+    } else if (tab === "abandoned") {
+      signups = (await listAbandonedSignups(supabase, q, range.page, pageSize, abandonedTotal)).items;
+    } else {
+      let query = applyOrgSearch(
+        supabase
+          .from("organizations")
+          .select("id, name, slug, account_status, created_at, created_by")
+          .order("created_at", { ascending: false })
+          .range(range.from, range.to),
+        q
+      );
+      if (status) query = query.eq("account_status", status);
+      const { data: orgs } = await query;
+      const ids = (orgs ?? []).map((row) => row.id);
+      const { data: subs } = ids.length
+        ? await supabase
+            .from("subscriptions")
+            .select("organization_id, status, billing_cycle, amount_paise, plan_id, plans!plan_id(name, slug)")
+            .in("organization_id", ids)
+            .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"])
+        : { data: [] as never[] };
+      const { data: members } = ids.length
+        ? await supabase.from("organization_members").select("organization_id, user_id").in("organization_id", ids)
+        : { data: [] as never[] };
+      const memberUserIds = [...new Set((members ?? []).map((row) => row.user_id))];
+      const { data: memberProfiles } = memberUserIds.length
+        ? await supabase.from("profiles").select("id, last_active_at").in("id", memberUserIds)
+        : { data: [] as never[] };
+      const lastByUser = new Map((memberProfiles ?? []).map((row) => [row.id, row.last_active_at ?? null]));
+      const lastByOrg = new Map<string, string | null>();
+      for (const row of members ?? []) {
+        lastByOrg.set(
+          row.organization_id,
+          latestLastActiveAt([lastByOrg.get(row.organization_id), lastByUser.get(row.user_id)])
+        );
+      }
+      const byOrg = new Map((subs ?? []).map((row) => [row.organization_id, row]));
+      accounts = (orgs ?? []).map((org) => ({
         ...org,
+        lastActiveAt: lastByOrg.get(org.id) ?? null,
         subscription: byOrg.get(org.id) ?? null,
-      })),
-      signups: await listAccountSignups(supabase, q),
+      }));
+    }
+
+    return {
+      accounts,
+      signups,
+      totals: {
+        workspaces: workspaceCounts.all,
+        signups: signupTotal,
+        abandoned: abandonedTotal,
+        statuses: workspaceCounts,
+      },
+      page: range.page,
+      pageSize,
+      tab,
     };
   }
 

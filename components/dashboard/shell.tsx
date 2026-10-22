@@ -12,6 +12,7 @@ import { Topbar } from "@/components/dashboard/topbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use-api";
 import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
+import { useUserPresenceHeartbeat } from "@/lib/hooks/use-user-presence-heartbeat";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { PlanLock } from "@/components/billing/plan-lock";
 import {
@@ -79,6 +80,7 @@ export function DashboardShell({
 
   const confirmedLoss = isConfirmedSessionLoss(me.error);
   const transientAuth = isTransientApiAuthError(me.error);
+  useUserPresenceHeartbeat(Boolean(me.data) && !confirmedLoss);
 
   useEffect(() => {
     if (

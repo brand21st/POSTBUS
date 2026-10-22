@@ -3,15 +3,18 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, Search, UserPlus } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight, MailWarning, Search, UserPlus } from "lucide-react";
 import { AccountAdminActions } from "@/components/admin/account-actions";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ADMIN_ACCOUNT_PAGE_SIZE } from "@/lib/admin/account-list";
+import { isUserOnline } from "@/lib/admin/user-presence";
 import { api } from "@/lib/hooks/use-api";
-import { formatDate, formatRelative, initials } from "@/lib/format";
+import { formatDate, formatNumber, formatRelative, initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type AccountRow = {
@@ -20,6 +23,7 @@ type AccountRow = {
   slug: string;
   account_status: string;
   created_at: string;
+  lastActiveAt?: string | null;
   subscription?: {
     status?: string;
     billing_cycle?: string;
@@ -36,11 +40,93 @@ type SignupRow = {
   pincode: string | null;
   city: string | null;
   createdAt: string;
+  lastActiveAt?: string | null;
   organization: { id: string; name: string; slug: string } | null;
 };
 
-type TabId = "workspaces" | "signups";
+type TabId = "workspaces" | "signups" | "abandoned";
 type StatusFilter = "all" | "ACTIVE" | "BLOCKED" | "SUSPENDED" | "HOLD" | "DISABLED";
+
+type AccountsResponse = {
+  accounts: AccountRow[];
+  signups: SignupRow[];
+  totals?: {
+    workspaces: number;
+    signups: number;
+    abandoned?: number;
+    statuses?: Record<StatusFilter, number>;
+  };
+  page?: number;
+  pageSize?: number;
+};
+
+function AccountsPager({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, total);
+  if (total === 0) return null;
+  return (
+    <div className="flex flex-col gap-2 border-t border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs tabular-nums text-muted">
+        Showing {formatNumber(from)}–{formatNumber(to)} of {formatNumber(total)}
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          <ChevronLeft className="size-4" />
+          Previous
+        </Button>
+        <span className="text-xs tabular-nums text-muted">
+          {formatNumber(page)} / {formatNumber(pageCount)}
+        </span>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={page >= pageCount}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Next
+          <ChevronRight className="size-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ActiveTimeCell({ lastActiveAt, now }: { lastActiveAt?: string | null; now: number }) {
+  const online = isUserOnline(lastActiveAt, now);
+  return (
+    <td
+      className="whitespace-nowrap px-3 py-2 text-xs"
+      title={lastActiveAt ? formatDate(lastActiveAt, true) : "Never seen"}
+    >
+      {online ? (
+        <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700">
+          <span className="size-1.5 rounded-full bg-emerald-500" />
+          Online
+        </span>
+      ) : (
+        <span className="text-muted">{lastActiveAt ? formatRelative(lastActiveAt) : "Never"}</span>
+      )}
+    </td>
+  );
+}
 
 const STATUS_FILTERS: Array<{ id: StatusFilter; label: string }> = [
   { id: "all", label: "All" },
@@ -61,42 +147,72 @@ export default function AdminAccountsPage() {
   const [debounced, setDebounced] = useState("");
   const [tab, setTab] = useState<TabId>("workspaces");
   const [status, setStatus] = useState<StatusFilter>("all");
+  const [workspacePage, setWorkspacePage] = useState(1);
+  const [signupPage, setSignupPage] = useState(1);
+  const [abandonedPage, setAbandonedPage] = useState(1);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(q.trim()), 300);
     return () => window.clearTimeout(timer);
   }, [q]);
 
+  useEffect(() => {
+    setWorkspacePage(1);
+    setSignupPage(1);
+    setAbandonedPage(1);
+  }, [debounced]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const page = tab === "signups" ? signupPage : tab === "abandoned" ? abandonedPage : workspacePage;
   const query = useQuery({
-    queryKey: ["admin", "accounts", debounced],
-    queryFn: () =>
-      api<{ accounts: AccountRow[]; signups: SignupRow[] }>(
-        `/api/admin/accounts?q=${encodeURIComponent(debounced)}`
-      ),
+    queryKey: ["admin", "accounts", debounced, tab, page, status],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        q: debounced,
+        tab,
+        page: String(page),
+        pageSize: String(ADMIN_ACCOUNT_PAGE_SIZE),
+      });
+      if (tab === "workspaces" && status !== "all") params.set("status", status);
+      return api<AccountsResponse>(`/api/admin/accounts?${params.toString()}`);
+    },
+    refetchInterval: 15_000,
+    placeholderData: (previousData, previousQuery) => {
+      const prevKey = previousQuery?.queryKey;
+      if (!previousData || !Array.isArray(prevKey)) return undefined;
+      if (prevKey[2] !== debounced || prevKey[3] !== tab) return undefined;
+      return previousData;
+    },
   });
   const signups = query.data?.signups ?? [];
   const accounts = query.data?.accounts ?? [];
+  const totals = query.data?.totals;
+  const workspaceCount = totals?.workspaces ?? accounts.length;
+  const signupCount = totals?.signups ?? signups.length;
+  const abandonedCount = totals?.abandoned ?? (tab === "abandoned" ? signups.length : 0);
 
   const statusCounts = useMemo(() => {
-    const counts: Record<StatusFilter, number> = {
-      all: accounts.length,
+    const empty: Record<StatusFilter, number> = {
+      all: workspaceCount,
       ACTIVE: 0,
       BLOCKED: 0,
       SUSPENDED: 0,
       HOLD: 0,
       DISABLED: 0,
     };
-    for (const account of accounts) {
-      const key = account.account_status as StatusFilter;
-      if (key in counts) counts[key] += 1;
-    }
-    return counts;
-  }, [accounts]);
+    return { ...empty, ...(totals?.statuses ?? {}) };
+  }, [totals?.statuses, workspaceCount]);
 
-  const visibleAccounts = useMemo(
-    () => (status === "all" ? accounts : accounts.filter((account) => account.account_status === status)),
-    [accounts, status]
-  );
+  const visibleAccounts = accounts;
+  const listTotal =
+    tab === "signups" ? signupCount : tab === "abandoned" ? abandonedCount : status === "all" ? workspaceCount : statusCounts[status];
+  const setPage =
+    tab === "signups" ? setSignupPage : tab === "abandoned" ? setAbandonedPage : setWorkspacePage;
 
   const visibleFilters = STATUS_FILTERS.filter((filter) => filter.id === "all" || statusCounts[filter.id] > 0);
 
@@ -108,7 +224,7 @@ export default function AdminAccountsPage() {
         description={
           query.isLoading
             ? "Loading workspaces and signups"
-            : `${accounts.length} workspace${accounts.length === 1 ? "" : "s"} · ${signups.length} new signup${signups.length === 1 ? "" : "s"}`
+            : `${formatNumber(workspaceCount)} workspace${workspaceCount === 1 ? "" : "s"} · ${formatNumber(signupCount)} signup${signupCount === 1 ? "" : "s"} · ${formatNumber(abandonedCount)} abandoned`
         }
         actions={
           <label className="relative block w-full sm:w-80">
@@ -125,11 +241,12 @@ export default function AdminAccountsPage() {
 
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="flex flex-col gap-3 border-b border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex rounded-lg bg-surface-soft p-0.5">
+          <div className="flex flex-wrap rounded-lg bg-surface-soft p-0.5">
             {(
               [
-                { id: "workspaces", label: "Workspaces", count: accounts.length, icon: Building2 },
-                { id: "signups", label: "Signups", count: signups.length, icon: UserPlus },
+                { id: "workspaces", label: "Workspaces", count: workspaceCount, icon: Building2 },
+                { id: "signups", label: "Signups", count: signupCount, icon: UserPlus },
+                { id: "abandoned", label: "Abandoned", count: abandonedCount, icon: MailWarning },
               ] as const
             ).map((item) => {
               const Icon = item.icon;
@@ -150,10 +267,13 @@ export default function AdminAccountsPage() {
                     className={cn(
                       "rounded-full px-1.5 text-[11px] tabular-nums",
                       active ? "bg-surface-soft text-ink" : "bg-card text-muted",
-                      item.id === "signups" && item.count > 0 && !active && "bg-rose-100 text-brand-dark"
+                      (item.id === "signups" || item.id === "abandoned") &&
+                        item.count > 0 &&
+                        !active &&
+                        "bg-rose-100 text-brand-dark"
                     )}
                   >
-                    {item.count}
+                    {formatNumber(item.count)}
                   </span>
                 </button>
               );
@@ -168,20 +288,27 @@ export default function AdminAccountsPage() {
                   <button
                     key={filter.id}
                     type="button"
-                    onClick={() => setStatus(filter.id)}
+                    onClick={() => {
+                      setStatus(filter.id);
+                      setWorkspacePage(1);
+                    }}
                     className={cn(
                       "rounded-full px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
                       active ? "bg-ink text-white" : "bg-surface-soft text-muted hover:text-ink"
                     )}
                   >
                     {filter.label}
-                    <span className="ml-1 opacity-70">{statusCounts[filter.id]}</span>
+                    <span className="ml-1 opacity-70">{formatNumber(statusCounts[filter.id])}</span>
                   </button>
                 );
               })}
             </div>
           ) : (
-            <p className="text-xs text-muted">People who registered, with or without a workspace.</p>
+            <p className="text-xs text-muted">
+              {tab === "abandoned"
+                ? "Started signup and have not confirmed email yet."
+                : "People who registered, with or without a workspace."}
+            </p>
           )}
         </div>
 
@@ -191,20 +318,36 @@ export default function AdminAccountsPage() {
               <Skeleton key={index} className="h-10 w-full" />
             ))}
           </div>
-        ) : tab === "signups" ? (
+        ) : tab === "signups" || tab === "abandoned" ? (
           signups.length === 0 ? (
             <EmptyState
-              icon={UserPlus}
-              title={debounced ? "No signups match" : "No new signups"}
-              description={debounced ? "Try a different name, email, WhatsApp, PIN, or city." : "New registrations will appear here."}
+              icon={tab === "abandoned" ? MailWarning : UserPlus}
+              title={
+                debounced
+                  ? tab === "abandoned"
+                    ? "No abandoned signups match"
+                    : "No signups match"
+                  : tab === "abandoned"
+                    ? "No abandoned signups"
+                    : "No new signups"
+              }
+              description={
+                debounced
+                  ? "Try a different name, email, WhatsApp, PIN, or city."
+                  : tab === "abandoned"
+                    ? "People who start signup but have not confirmed email will appear here."
+                    : "New registrations will appear here."
+              }
               className="border-0 py-12 shadow-none"
             />
           ) : (
-            <div className="overflow-x-auto">
+            <div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-surface-soft/60 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">
                   <tr>
                     <th className="px-3 py-2">Person</th>
+                    <th className="px-3 py-2">Active</th>
                     <th className="hidden px-3 py-2 sm:table-cell">WhatsApp</th>
                     <th className="hidden px-3 py-2 sm:table-cell">PIN</th>
                     <th className="hidden px-3 py-2 sm:table-cell">City</th>
@@ -226,6 +369,7 @@ export default function AdminAccountsPage() {
                           </div>
                         </div>
                       </td>
+                      <ActiveTimeCell lastActiveAt={signup.lastActiveAt} now={now} />
                       <td className="hidden whitespace-nowrap px-3 py-2 tabular-nums text-muted sm:table-cell">
                         {signup.whatsappNumber || "—"}
                       </td>
@@ -255,6 +399,8 @@ export default function AdminAccountsPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
+              <AccountsPager page={page} pageSize={ADMIN_ACCOUNT_PAGE_SIZE} total={listTotal} onPageChange={setPage} />
             </div>
           )
         ) : visibleAccounts.length === 0 ? (
@@ -269,13 +415,15 @@ export default function AdminAccountsPage() {
             className="border-0 py-12 shadow-none"
           />
         ) : (
-          <div className="overflow-x-auto">
+          <div>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface-soft/60 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">
                 <tr>
                   <th className="px-3 py-2">Account</th>
                   <th className="px-3 py-2">Status</th>
                   <th className="hidden px-3 py-2 sm:table-cell">Plan</th>
+                  <th className="px-3 py-2">Active</th>
                   <th className="hidden px-3 py-2 md:table-cell">Created</th>
                   <th className="w-10 px-2 py-2 text-right">
                     <span className="sr-only">Actions</span>
@@ -300,6 +448,7 @@ export default function AdminAccountsPage() {
                       <StatusBadge value={account.account_status} />
                     </td>
                     <td className="hidden px-3 py-2 text-muted sm:table-cell">{planName(account) ?? "—"}</td>
+                    <ActiveTimeCell lastActiveAt={account.lastActiveAt} now={now} />
                     <td
                       className="hidden whitespace-nowrap px-3 py-2 text-xs text-muted md:table-cell"
                       title={formatDate(account.created_at)}
@@ -318,6 +467,8 @@ export default function AdminAccountsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
+              <AccountsPager page={page} pageSize={ADMIN_ACCOUNT_PAGE_SIZE} total={listTotal} onPageChange={setPage} />
           </div>
         )}
       </div>

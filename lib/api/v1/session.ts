@@ -12,6 +12,7 @@ import { isTransientAuthClass } from "@/lib/auth/session/classify";
 import { getRequestAuthUser } from "@/lib/supabase/request-auth";
 import { isMerchantApiOpenForOrg } from "@/modules/merchant-api/flags";
 import { dismissIndiaPostOnboardingForUser } from "@/lib/dashboard/india-post-onboarding";
+import { shouldWritePresence } from "@/lib/admin/user-presence";
 
 export async function handleSessionRoutes(
   request: NextRequest,
@@ -65,6 +66,35 @@ export async function handleSessionRoutes(
         enabled: isMerchantApiOpenForOrg(organization?.id),
       },
     };
+  }
+
+  if (key === "POST me/presence") {
+    const auth = await getRequestAuthUser();
+    const user = auth.user;
+    if (auth.classification && isTransientAuthClass(auth.classification)) {
+      throw new AppError(
+        ERROR_CODES.AUTH_UNAVAILABLE,
+        "Authentication is temporarily unavailable. Try again shortly."
+      );
+    }
+    if (!user) throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
+    const { data: profile, error: readError } = await supabase
+      .from("profiles")
+      .select("last_active_at")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (readError) {
+      throw new AppError(ERROR_CODES.PROFILE_UNAVAILABLE, "Could not record activity.");
+    }
+    if (!shouldWritePresence(profile?.last_active_at ?? null)) {
+      return { ok: true as const, skipped: true as const };
+    }
+    const lastActiveAt = new Date().toISOString();
+    const { error } = await supabase.from("profiles").update({ last_active_at: lastActiveAt }).eq("id", user.id);
+    if (error) {
+      throw new AppError(ERROR_CODES.PROFILE_UNAVAILABLE, "Could not record activity.");
+    }
+    return { ok: true as const, lastActiveAt };
   }
 
   if (key === "PATCH me") {
