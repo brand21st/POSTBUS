@@ -10,7 +10,7 @@ export type VachatLogStatus =
   | "skipped";
 
 export type VachatLogWrite = {
-  organizationId: string;
+  organizationId?: string | null;
   orderId?: string | null;
   shipmentId?: string | null;
   event: string;
@@ -26,22 +26,36 @@ export async function upsertVachatNotificationLog(
   supabase: SupabaseClient,
   row: VachatLogWrite
 ) {
-  const { error } = await supabase.from("vachat_notification_logs").upsert(
-    {
-      organization_id: row.organizationId,
-      order_id: row.orderId ?? null,
-      shipment_id: row.shipmentId ?? null,
-      event: row.event,
-      phone: row.phone ?? null,
-      external_ref: row.externalRef,
-      status: row.status,
-      error: row.error ?? null,
-      vachat_message_id: row.vachatMessageId ?? null,
-      whatsapp_message_id: row.whatsappMessageId ?? null,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "organization_id,external_ref" }
-  );
+  const payload = {
+    organization_id: row.organizationId ?? null,
+    order_id: row.orderId ?? null,
+    shipment_id: row.shipmentId ?? null,
+    event: row.event,
+    phone: row.phone ?? null,
+    external_ref: row.externalRef,
+    status: row.status,
+    error: row.error ?? null,
+    vachat_message_id: row.vachatMessageId ?? null,
+    whatsapp_message_id: row.whatsappMessageId ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  if (!row.organizationId) {
+    const { data: existing } = await supabase
+      .from("vachat_notification_logs")
+      .select("id")
+      .is("organization_id", null)
+      .eq("external_ref", row.externalRef)
+      .maybeSingle();
+    if (existing?.id) {
+      const { error } = await supabase.from("vachat_notification_logs").update(payload).eq("id", existing.id);
+      return error;
+    }
+    const { error } = await supabase.from("vachat_notification_logs").insert(payload);
+    return error;
+  }
+  const { error } = await supabase.from("vachat_notification_logs").upsert(payload, {
+    onConflict: "organization_id,external_ref",
+  });
   return error;
 }
 

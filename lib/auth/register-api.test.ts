@@ -3,9 +3,14 @@ import { NextRequest } from "next/server";
 
 const signUp = vi.fn();
 const eq = vi.fn();
+const enqueueAbandonedSignup = vi.fn();
 
 vi.mock("@/lib/security/rate-limit", () => ({
   rateLimit: () => ({ ok: true, remaining: 7 }),
+}));
+
+vi.mock("@/modules/vachat/abandoned-signup", () => ({
+  enqueueAbandonedSignup: (...args: unknown[]) => enqueueAbandonedSignup(...args),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -42,6 +47,8 @@ describe("POST /api/v1/auth/register", () => {
   beforeEach(() => {
     signUp.mockReset();
     eq.mockReset();
+    enqueueAbandonedSignup.mockReset();
+    enqueueAbandonedSignup.mockResolvedValue({ queued: true });
     eq.mockResolvedValue({ error: null });
   });
 
@@ -89,6 +96,8 @@ describe("POST /api/v1/auth/register", () => {
       })
     );
     expect(eq).toHaveBeenCalledWith("id", "user-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(enqueueAbandonedSignup).not.toHaveBeenCalled();
   });
 
   it("skips profile update when email confirmation is required", async () => {
@@ -100,5 +109,6 @@ describe("POST /api/v1/auth/register", () => {
     const json = await (await post(validBody)).json();
     expect(json.data.needsEmailConfirmation).toBe(true);
     expect(eq).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(enqueueAbandonedSignup).toHaveBeenCalledWith("user-1"));
   });
 });

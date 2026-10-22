@@ -38,6 +38,9 @@ function activeConfig() {
     signupWelcomeEnabled: true,
     signupWelcomeTemplateName: "signup_hello",
     signupWelcomeTemplateLanguage: "en",
+    abandonedSignupEnabled: false,
+    abandonedSignupTemplateName: "",
+    abandonedSignupTemplateLanguage: "en",
     source: "env" as const,
   };
 }

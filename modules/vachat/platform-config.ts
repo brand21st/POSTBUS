@@ -6,7 +6,7 @@ import { parseVachatBaseUrl } from "@/modules/vachat/signature";
 import { WATI_NOTIFY_EVENTS, type WatiNotifyEvent } from "@/modules/wati/notify";
 
 export const PLATFORM_VACHAT_COLUMNS =
-  "vachat_enabled, vachat_support_enabled, vachat_api_base_url, encrypted_vachat_api_key, encrypted_vachat_webhook_secret, vachat_webhook_endpoint_id, vachat_last_verified_at, vachat_last_error, vachat_event_settings, vachat_last_test_phone, vachat_signup_welcome_enabled, vachat_signup_welcome_template_name";
+  "vachat_enabled, vachat_support_enabled, vachat_api_base_url, encrypted_vachat_api_key, encrypted_vachat_webhook_secret, vachat_webhook_endpoint_id, vachat_last_verified_at, vachat_last_error, vachat_event_settings, vachat_last_test_phone, vachat_signup_welcome_enabled, vachat_signup_welcome_template_name, vachat_abandoned_signup_enabled, vachat_abandoned_signup_template_name";
 
 export type VachatEventSettings = Record<WatiNotifyEvent, boolean>;
 
@@ -46,6 +46,9 @@ export type PlatformVachatConfig = {
   signupWelcomeEnabled: boolean;
   signupWelcomeTemplateName: string;
   signupWelcomeTemplateLanguage: string;
+  abandonedSignupEnabled: boolean;
+  abandonedSignupTemplateName: string;
+  abandonedSignupTemplateLanguage: string;
   source: "database" | "env" | "mixed" | "none";
 };
 
@@ -62,6 +65,8 @@ type SettingsRow = {
   vachat_last_test_phone?: string | null;
   vachat_signup_welcome_enabled?: boolean | null;
   vachat_signup_welcome_template_name?: string | null;
+  vachat_abandoned_signup_enabled?: boolean | null;
+  vachat_abandoned_signup_template_name?: string | null;
 };
 
 function decryptOptional(payload?: string | null) {
@@ -146,6 +151,15 @@ export async function getPlatformVachatConfig(): Promise<PlatformVachatConfig> {
       typeof row?.vachat_signup_welcome_enabled === "boolean"
         ? row.vachat_signup_welcome_enabled
         : Boolean(row?.vachat_signup_welcome_template_name?.trim() || env.vachatSignupWelcomeTemplateName),
+    abandonedSignupTemplateName:
+      row?.vachat_abandoned_signup_template_name?.trim() || env.vachatAbandonedSignupTemplateName,
+    abandonedSignupTemplateLanguage: env.vachatAbandonedSignupTemplateLanguage,
+    abandonedSignupEnabled:
+      typeof row?.vachat_abandoned_signup_enabled === "boolean"
+        ? row.vachat_abandoned_signup_enabled
+        : Boolean(
+            row?.vachat_abandoned_signup_template_name?.trim() || env.vachatAbandonedSignupTemplateName
+          ),
     source,
   };
 }
@@ -182,6 +196,7 @@ export function publicPlatformVachatStatus(config: PlatformVachatConfig) {
     lastTestPhone: config.lastTestPhone,
     eventSettings: config.eventSettings,
     signupWelcomeEnabled: config.signupWelcomeEnabled,
+    abandonedSignupEnabled: config.abandonedSignupEnabled,
     source: config.source,
     platformManaged: connected,
   };

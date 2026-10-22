@@ -36,6 +36,9 @@ describe("sendVachatAuthenticationTemplate", () => {
       signupWelcomeEnabled: false,
       signupWelcomeTemplateName: "",
       signupWelcomeTemplateLanguage: "en",
+      abandonedSignupEnabled: false,
+      abandonedSignupTemplateName: "",
+      abandonedSignupTemplateLanguage: "en",
       eventSettings: {
         order_confirmation: false,
         processing: false,
@@ -72,6 +75,9 @@ describe("sendVachatAuthenticationTemplate", () => {
       signupWelcomeEnabled: false,
       signupWelcomeTemplateName: "",
       signupWelcomeTemplateLanguage: "en",
+      abandonedSignupEnabled: false,
+      abandonedSignupTemplateName: "",
+      abandonedSignupTemplateLanguage: "en",
       eventSettings: {
         order_confirmation: false,
         processing: false,
@@ -127,6 +133,9 @@ describe("sendVachatAuthenticationTemplate", () => {
       signupWelcomeEnabled: false,
       signupWelcomeTemplateName: "",
       signupWelcomeTemplateLanguage: "en",
+      abandonedSignupEnabled: false,
+      abandonedSignupTemplateName: "",
+      abandonedSignupTemplateLanguage: "en",
       eventSettings: {
         order_confirmation: false,
         processing: false,

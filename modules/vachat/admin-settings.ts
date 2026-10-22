@@ -33,6 +33,7 @@ const saveSchema = z.object({
     })
     .optional(),
   signupWelcomeEnabled: z.boolean().optional(),
+  abandonedSignupEnabled: z.boolean().optional(),
   templates: z
     .object({
       order_confirmation_template_name: z.string().nullable().optional(),
@@ -42,6 +43,7 @@ const saveSchema = z.object({
       shipment_delayed_template_name: z.string().nullable().optional(),
       delivered_template_name: z.string().nullable().optional(),
       signup_welcome_template_name: z.string().nullable().optional(),
+      abandoned_signup_template_name: z.string().nullable().optional(),
       notification_settings: z.record(z.string(), z.boolean()).optional(),
       template_language: z.string().optional(),
     })
@@ -88,7 +90,11 @@ async function vachatApi(
 function templateSyncPayload(body: z.infer<typeof saveSchema>, settings: ReturnType<typeof parseVachatEventSettings>) {
   const templates = body.templates;
   if (!templates) return null;
-  const { signup_welcome_template_name: _signupWelcome, ...orderTemplates } = templates;
+  const {
+    signup_welcome_template_name: _signupWelcome,
+    abandoned_signup_template_name: _abandonedSignup,
+    ...orderTemplates
+  } = templates;
   const names = [
     orderTemplates.order_confirmation_template_name,
     orderTemplates.processing_template_name,
@@ -145,6 +151,7 @@ export async function loadPlatformVachatSettings() {
     templates: {
       ...(templates ?? {}),
       signup_welcome_template_name: config.signupWelcomeTemplateName || null,
+      abandoned_signup_template_name: config.abandonedSignupTemplateName || null,
     },
     templatesLoadError,
   };
@@ -165,6 +172,7 @@ export async function savePlatformVachatSettings(
     body.enabled === undefined &&
     !body.eventSettings &&
     body.signupWelcomeEnabled === undefined &&
+    body.abandonedSignupEnabled === undefined &&
     !body.templates &&
     body.apiBaseUrl == null &&
     body.lastTestPhone == null;
@@ -197,6 +205,13 @@ export async function savePlatformVachatSettings(
   const signupTemplateName = body.templates?.signup_welcome_template_name;
   if (signupTemplateName !== undefined) {
     patch.vachat_signup_welcome_template_name = signupTemplateName?.trim() || null;
+  }
+  if (typeof body.abandonedSignupEnabled === "boolean") {
+    patch.vachat_abandoned_signup_enabled = body.abandonedSignupEnabled;
+  }
+  const abandonedTemplateName = body.templates?.abandoned_signup_template_name;
+  if (abandonedTemplateName !== undefined) {
+    patch.vachat_abandoned_signup_template_name = abandonedTemplateName?.trim() || null;
   }
   const { error } = await supabase.from("platform_settings").update(patch).eq("id", 1);
   if (error) {

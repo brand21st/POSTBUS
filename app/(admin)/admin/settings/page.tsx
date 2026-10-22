@@ -56,6 +56,7 @@ type VachatSettings = {
     lastTestPhone: string | null;
     eventSettings: Record<VachatEventKey, boolean>;
     signupWelcomeEnabled?: boolean;
+    abandonedSignupEnabled?: boolean;
     source: string;
     templateSyncError?: string | null;
   identity?: {
@@ -71,6 +72,7 @@ type VachatSettings = {
       shipment_delayed_template_name?: string | null;
       delivered_template_name?: string | null;
       signup_welcome_template_name?: string | null;
+      abandoned_signup_template_name?: string | null;
       approved_templates?: Array<{ name: string; language: string }>;
     } | null;
     templatesLoadError?: string | null;
@@ -174,7 +176,9 @@ export default function AdminSettingsPage() {
   const [vachatEnabled, setVachatEnabled] = useState<boolean | null>(null);
   const [assignOrderId, setAssignOrderId] = useState("");
   const [vachatTestPhone, setVachatTestPhone] = useState("");
-  const [eventDraft, setEventDraft] = useState<Partial<Record<VachatEventKey | "signup_welcome", boolean>>>({});
+  const [eventDraft, setEventDraft] = useState<
+    Partial<Record<VachatEventKey | "signup_welcome" | "abandoned_signup", boolean>>
+  >({});
   const [templateDraft, setTemplateDraft] = useState<Partial<Record<string, string>>>({});
   const resolvedKeyId = keyId || data?.keyId || "";
   const resolvedVachatUrl = vachatUrl || vachat?.apiBaseUrl || "https://cloud.vachat.in";
@@ -329,12 +333,22 @@ export default function AdminSettingsPage() {
               templateDraft.signup_welcome_template_name ??
               vachat?.templates?.signup_welcome_template_name ??
               null,
+            abandoned_signup_template_name:
+              templateDraft.abandoned_signup_template_name ??
+              vachat?.templates?.abandoned_signup_template_name ??
+              null,
           },
           signupWelcomeEnabled:
             eventDraft.signup_welcome ??
             vachat?.signupWelcomeEnabled ??
             Boolean(
               templateDraft.signup_welcome_template_name ?? vachat?.templates?.signup_welcome_template_name
+            ),
+          abandonedSignupEnabled:
+            eventDraft.abandoned_signup ??
+            vachat?.abandonedSignupEnabled ??
+            Boolean(
+              templateDraft.abandoned_signup_template_name ?? vachat?.templates?.abandoned_signup_template_name
             ),
           lastTestPhone: resolvedTestPhone || null,
         }),
@@ -846,7 +860,9 @@ export default function AdminSettingsPage() {
                 options.unshift({ value, label: value });
               }
               const checked =
-                eventDraft.signup_welcome ?? vachat?.signupWelcomeEnabled ?? Boolean(value);
+                eventDraft.signup_welcome ??
+                vachat?.signupWelcomeEnabled ??
+                Boolean(value);
               return (
                 <div className="space-y-2 rounded-md border px-3 py-2">
                   <div className="flex items-center justify-between gap-3">
@@ -868,6 +884,50 @@ export default function AdminSettingsPage() {
                     value={value}
                     onChange={(next) =>
                       setTemplateDraft((prev) => ({ ...prev, signup_welcome_template_name: next }))
+                    }
+                    placeholder="Select an approved template"
+                    emptyText={approved.length ? "No matching template" : "No approved templates loaded"}
+                  />
+                </div>
+              );
+            })()}
+            {(() => {
+              const approved: Array<{ name: string; language: string }> =
+                vachat?.templates?.approved_templates ?? [];
+              const value =
+                templateDraft.abandoned_signup_template_name ??
+                vachat?.templates?.abandoned_signup_template_name ??
+                "";
+              const options = approved.map((tpl) => ({
+                value: tpl.name,
+                label: `${tpl.name} (${tpl.language})`,
+              }));
+              if (value && !options.some((opt) => opt.value === value)) {
+                options.unshift({ value, label: value });
+              }
+              const checked =
+                eventDraft.abandoned_signup ?? vachat?.abandonedSignupEnabled ?? Boolean(value);
+              return (
+                <div className="space-y-2 rounded-md border px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="vachat-ev-abandoned_signup" className="text-sm">
+                      Abandoned Signup
+                    </Label>
+                    <input
+                      id="vachat-ev-abandoned_signup"
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(change) =>
+                        setEventDraft((prev) => ({ ...prev, abandoned_signup: change.target.checked }))
+                      }
+                    />
+                  </div>
+                  <Combobox
+                    id="vachat-tpl-abandoned_signup"
+                    options={options}
+                    value={value}
+                    onChange={(next) =>
+                      setTemplateDraft((prev) => ({ ...prev, abandoned_signup_template_name: next }))
                     }
                     placeholder="Select an approved template"
                     emptyText={approved.length ? "No matching template" : "No approved templates loaded"}

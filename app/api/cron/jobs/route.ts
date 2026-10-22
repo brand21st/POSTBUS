@@ -44,6 +44,10 @@ export async function POST(request: NextRequest) {
     if (shouldEnqueueTracking && hasAdminClient()) {
       await enqueueDueTrackingSyncJobs(createAdminClient());
     }
+    if (hasAdminClient()) {
+      const { sweepAbandonedSignups } = await import("@/modules/vachat/abandoned-signup");
+      await sweepAbandonedSignups(createAdminClient());
+    }
     return NextResponse.json({ success: true, data: await drainDueJobs(limit, jobTypes) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not drain background jobs.";
