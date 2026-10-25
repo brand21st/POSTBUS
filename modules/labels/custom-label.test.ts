@@ -27,6 +27,8 @@ import {
   parseLabelTemplate,
   selectLabelTemplate,
   withDefaultNamedTemplate,
+  withDuplicatedNamedTemplate,
+  nextNamedTemplateCopyName,
   withEditorDraft,
 } from "@/modules/labels/template-schema";
 
@@ -140,6 +142,26 @@ describe("india post barcode block", () => {
     expect(next.library?.find((item) => item.id === "default")?.isDefault).toBe(false);
     expect(withDefaultNamedTemplate(packing, "missing")).toBe(packing);
     expect(withDefaultNamedTemplate(indiaPostLabelTemplate(), "india")).toEqual(indiaPostLabelTemplate());
+  });
+
+  it("duplicates a named template without changing the default", () => {
+    expect(nextNamedTemplateCopyName(["India Post"], "India Post")).toBe("India Post (copy)");
+    expect(nextNamedTemplateCopyName(["India Post", "India Post (copy)"], "India Post")).toBe("India Post (copy 2)");
+    const packing = defaultLabelTemplate("A6");
+    const india = indiaPostLabelTemplate();
+    packing.library = [
+      { id: "default", name: "Default", isDefault: true, page: packing.page, elements: packing.elements },
+      { id: "india", name: "India Post", isDefault: false, page: india.page, elements: india.elements },
+    ];
+    const next = withDuplicatedNamedTemplate(packing, "india", "india-copy");
+    expect(defaultLabelTemplateId(next)).toBe("default");
+    const copy = next.library?.find((item) => item.id === "india-copy");
+    expect(copy?.name).toBe("India Post (copy)");
+    expect(copy?.isDefault).toBe(false);
+    expect(copy?.page.widthMm).toBe(india.page.widthMm);
+    expect(copy?.elements).toEqual(india.elements);
+    expect(copy?.elements).not.toBe(india.elements);
+    expect(withDuplicatedNamedTemplate(packing, "missing", "x")).toBe(packing);
   });
 
   it("labels the Default template paper size for the Shipping Slip badge", () => {

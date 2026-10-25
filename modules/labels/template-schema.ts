@@ -404,6 +404,61 @@ export function withDefaultNamedTemplate(template: LabelTemplate, id: string): L
   };
 }
 
+export function listedNamedTemplates(template: LabelTemplate): NamedLabelTemplate[] {
+  if (template.library?.length) return template.library;
+  return [
+    {
+      id: "active",
+      name: "Current template",
+      isDefault: true,
+      page: template.page,
+      elements: template.elements,
+    },
+  ];
+}
+
+export function nextNamedTemplateCopyName(existingNames: string[], sourceName: string) {
+  const base = sourceName.trim() || "Template";
+  const used = new Set(existingNames);
+  let candidate = `${base} (copy)`;
+  let n = 2;
+  while (used.has(candidate)) {
+    candidate = `${base} (copy ${n})`;
+    n += 1;
+  }
+  return candidate;
+}
+
+export function duplicateNamedTemplate(
+  source: NamedLabelTemplate,
+  existingNames: string[],
+  id: string
+): NamedLabelTemplate {
+  return {
+    id,
+    name: nextNamedTemplateCopyName(existingNames, source.name),
+    isDefault: false,
+    page: structuredClone(source.page),
+    elements: structuredClone(source.elements),
+  };
+}
+
+export function withDuplicatedNamedTemplate(template: LabelTemplate, sourceId: string, id: string): LabelTemplate {
+  const library = listedNamedTemplates(template);
+  const source = library.find((item) => item.id === sourceId);
+  if (!source) return template;
+  const copy = duplicateNamedTemplate(
+    source,
+    library.map((item) => item.name),
+    id
+  );
+  return {
+    ...template,
+    templateVersion: Math.max(template.templateVersion, 5),
+    library: [...library, copy],
+  };
+}
+
 export function defaultLabelTemplatePage(template: LabelTemplate) {
   return selectLabelTemplate(template, defaultLabelTemplateId(template)).page;
 }
