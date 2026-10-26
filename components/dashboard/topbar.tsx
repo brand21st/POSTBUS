@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { breadcrumbs, isResourceIdSegment } from "@/lib/dashboard/nav";
 import { formatRelative, initials } from "@/lib/format";
-import { orderNumber, shipmentNumber } from "@/lib/dashboard/records";
+import { orderNumber, salesInvoiceNumber, shipmentNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { useNotifications } from "@/lib/hooks/use-notifications";
@@ -44,6 +44,7 @@ export function Topbar({
   const crumbs = useMemo(() => breadcrumbs(pathname), [pathname]);
   const orderCrumbId = crumbs.find((crumb) => crumb.resourceId && crumb.href.startsWith("/dashboard/orders/"))?.label;
   const shipmentCrumbId = crumbs.find((crumb) => crumb.resourceId && crumb.href.startsWith("/dashboard/shipments/"))?.label;
+  const invoiceCrumbId = crumbs.find((crumb) => crumb.resourceId && crumb.href.startsWith("/dashboard/invoices/"))?.label;
   const order = useQuery({
     queryKey: ["order", orderCrumbId],
     queryFn: () => api<OrderRecord>(`/api/v1/orders/${orderCrumbId}`),
@@ -56,8 +57,16 @@ export function Topbar({
     enabled: Boolean(shipmentCrumbId && isResourceIdSegment(shipmentCrumbId)),
     staleTime: 30_000,
   });
+  const salesInvoice = useQuery({
+    queryKey: ["sales-invoice", invoiceCrumbId],
+    queryFn: () =>
+      api<{ invoiceNumber: string | null; orderNumber: string }>(`/api/v1/sales-invoices/${invoiceCrumbId}`),
+    enabled: Boolean(invoiceCrumbId && isResourceIdSegment(invoiceCrumbId)),
+    staleTime: 30_000,
+  });
   const orderCrumbLabel = order.data ? orderNumber(order.data) : null;
   const shipmentCrumbLabel = shipment.data ? shipmentNumber(shipment.data) : null;
+  const invoiceCrumbLabel = salesInvoice.data ? salesInvoiceNumber(salesInvoice.data) : null;
   const indiaPost = useIndiaPost();
   const defaultServiceLabel = indiaPostServiceLabel(
     indiaPost.data?.defaultServiceCode ?? "SP_INLAND_PARCEL"
@@ -154,7 +163,9 @@ export function Topbar({
                 ? orderCrumbLabel ?? "…"
                 : crumb.resourceId && crumb.href.startsWith("/dashboard/shipments/")
                   ? shipmentCrumbLabel ?? "…"
-                  : crumb.label}
+                  : crumb.resourceId && crumb.href.startsWith("/dashboard/invoices/")
+                    ? invoiceCrumbLabel ?? "…"
+                    : crumb.label}
             </Link>
           </span>
         ))}

@@ -135,7 +135,7 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
   if (path === "dashboard/analytics" || (slugs[0] === "dashboard" && slugs[1] === "analytics")) {
     return FEATURE.analytics;
   }
-  if (slugs[0] === "invoices" || slugs[0] === "invoice-template") return FEATURE.invoices;
+  if (slugs[0] === "invoices" || slugs[0] === "invoice-template" || slugs[0] === "sales-invoices" || slugs[0] === "sales-invoice-settings") return FEATURE.invoices;
   if (slugs[0] === "tracking" || slugs[0] === "tracking-pages") return FEATURE.trackingPage;
   if (slugs[0] === "automation" && method !== "GET") return FEATURE.automation;
   if (slugs[0] === "manifests" && method !== "GET") return FEATURE.manifests;

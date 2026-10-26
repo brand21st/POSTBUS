@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  customerBillTo,
   formatShipmentNumber,
   organizationInvoiceParty,
 } from "@/modules/invoices/data";
@@ -12,7 +13,7 @@ describe("invoice data helpers", () => {
     expect(formatShipmentNumber(0)).toBe("");
   });
 
-  it("uses the organization identity for Bill To", () => {
+  it("formats the store address for the invoice header", () => {
     expect(
       organizationInvoiceParty(
         {
@@ -32,5 +33,27 @@ describe("invoice data helpers", () => {
       email: "billing@aurimo.in",
       lines: ["Kolenchery, Near Post Office", "Ernakulam, Kerala, 682311"],
     });
+  });
+
+  it("uses the customer billing address, and the ship-to address when billing is missing", () => {
+    const shipping = {
+      name: "Bijesh",
+      phone: "9000000000",
+      email: "",
+      lines: ["Madappally House", "Wayanad, Kerala, 673591"],
+    };
+    expect(
+      customerBillTo({
+        billing: { name: "Bijesh", line1: "Harbour Road", city: "Kochi", state: "Kerala", pincode: "682001" },
+        shipping,
+        customerName: "Bijesh",
+      })
+    ).toEqual({
+      name: "Bijesh",
+      phone: "9000000000",
+      email: "",
+      lines: ["Harbour Road", "Kochi, Kerala, 682001"],
+    });
+    expect(customerBillTo({ billing: null, shipping, customerName: "Bijesh" })).toEqual(shipping);
   });
 });

@@ -52,6 +52,7 @@ describe("plan entitlements", () => {
 
   it("locks matching write APIs", () => {
     expect(lockedFeatureForApi("GET", "dashboard/analytics", ["dashboard", "analytics"])).toBe(FEATURE.analytics);
+    expect(lockedFeatureForApi("GET", "sales-invoices", ["sales-invoices"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("GET", "invoices", ["invoices"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("PUT", "invoice-template", ["invoice-template"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("GET", "tracking", ["tracking"])).toBe(FEATURE.trackingPage);

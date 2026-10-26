@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  salesInvoiceNumber,
   canFulfillOrder,
   canFulfillOrderAction,
   canMarkDelivered,
@@ -15,6 +16,16 @@ import {
   orderStageMenu,
   shopifyPendingBookingBlocked,
 } from "@/lib/dashboard/records";
+
+describe("salesInvoiceNumber", () => {
+  it("uses the invoice number, then the order number, then a short id", () => {
+    expect(salesInvoiceNumber({ invoiceNumber: "INV/26-27/00001", orderNumber: "#1001", id: "f0a76df8-e552-4f80-99b5-c69a02b5f97e" })).toBe(
+      "INV/26-27/00001"
+    );
+    expect(salesInvoiceNumber({ invoiceNumber: null, orderNumber: "#2990", id: "f0a76df8-e552-4f80-99b5-c69a02b5f97e" })).toBe("#2990");
+    expect(salesInvoiceNumber({ id: "f0a76df8-e552-4f80-99b5-c69a02b5f97e" })).toBe("f0a76df8");
+  });
+});
 
 describe("itemSummary", () => {
   it("returns an em dash when there are no line items", () => {

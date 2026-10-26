@@ -246,6 +246,8 @@ describe("permissionForTenantRoute", () => {
     ).toBe("shipments.write");
     expect(permissionForTenantRoute("GET", "label-template", ["label-template"])).toBe("labels.read");
     expect(permissionForTenantRoute("PUT", "label-template", ["label-template"])).toBe("labels.write");
+    expect(permissionForTenantRoute("GET", "sales-invoices", ["sales-invoices"])).toBe("orders.read");
+    expect(permissionForTenantRoute("POST", "sales-invoices/abc/issue", ["sales-invoices", "abc", "issue"])).toBe("orders.write");
     expect(permissionForTenantRoute("GET", "invoices", ["invoices"])).toBe("orders.read");
     expect(permissionForTenantRoute("GET", "invoices/abc/download", ["invoices", "abc", "download"])).toBe(
       "orders.read"

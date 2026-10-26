@@ -60,6 +60,7 @@ export async function processJob(queue: string, payload: JobPayload) {
     if (queue === "shipment-booking") await bookShipment(supabase, payload);
     else if (queue === "label-generation") await generateLabel(supabase, payload);
     else if (queue === "invoice-generation") await generateInvoice(supabase, payload);
+    else if (queue === "sales-invoice-issue") await issueSalesInvoiceJob(supabase, payload);
     else if (queue === "manifest-generation") await generateManifest(supabase, payload);
     else if (queue === "tracking-sync") await syncTracking(supabase, payload);
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
@@ -510,6 +511,14 @@ async function generateInvoice(supabase: ReturnType<typeof createAdminClient>, p
   }
   const { generateShippingInvoice } = await import("@/modules/invoices/service");
   await generateShippingInvoice(supabase, payload.organizationId, payload.entityId);
+}
+
+async function issueSalesInvoiceJob(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  if (!payload.entityId) {
+    throw Object.assign(new Error("Order is missing."), { code: "VALIDATION_ERROR" });
+  }
+  const { runAutoSalesInvoice } = await import("@/modules/sales-invoices/auto");
+  await runAutoSalesInvoice(supabase, payload.organizationId, payload.entityId, payload.userId);
 }
 
 async function generateLabel(

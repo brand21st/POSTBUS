@@ -46,6 +46,7 @@ describe("invoice PDF", () => {
 
     expect(items.some((item) => item.str === "SHP-000013")).toBe(true);
     expect(items.some((item) => item.str.includes("58379dbb"))).toBe(false);
+    expect(items.some((item) => item.str.includes("PostBus"))).toBe(false);
 
     const subtotal = items.find((item) => item.str === "Subtotal");
     const summaryTotal = items

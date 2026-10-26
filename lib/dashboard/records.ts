@@ -64,6 +64,22 @@ export function shipmentNumber(shipment: {
   return pickString(shipment.trackingNumber, shipment.tracking_number, shipment.barcode, shipment.id.slice(0, 8));
 }
 
+export function salesInvoiceNumber(invoice: {
+  invoiceNumber?: string | null;
+  invoice_number?: string | null;
+  orderNumber?: string | null;
+  order_number?: string | null;
+  id?: string;
+}) {
+  return pickString(
+    invoice.invoiceNumber,
+    invoice.invoice_number,
+    invoice.orderNumber,
+    invoice.order_number,
+    invoice.id?.slice(0, 8)
+  );
+}
+
 export function createdAt(record: { createdAt?: string; created_at?: string }) {
   return record.createdAt ?? record.created_at ?? null;
 }

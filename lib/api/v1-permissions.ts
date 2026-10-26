@@ -54,6 +54,10 @@ export function permissionForTenantRoute(
     return method === "GET" ? "orders.read" : "orders.write";
   }
 
+  if (root === "sales-invoices" || root === "sales-invoice-settings") {
+    return method === "GET" ? "orders.read" : "orders.write";
+  }
+
   if (root === "invoices") {
     if (method === "POST" && (slugs[2] === "retry" || slugs[2] === "regenerate")) return "orders.write";
     return "orders.read";

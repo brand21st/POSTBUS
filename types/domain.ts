@@ -218,6 +218,7 @@ export const JOB_TYPES = [
   "wati-notify",
   "vachat-notify",
   "invoice-generation",
+  "sales-invoice-issue",
   "support-ingest",
   "ai-image",
   "cod-report-extract",

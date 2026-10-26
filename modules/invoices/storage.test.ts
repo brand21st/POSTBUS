@@ -46,6 +46,13 @@ describe("invoice filesystem storage", () => {
     }
   });
 
+  it("accepts a sales invoice path and rejects another organization's sales file", () => {
+    expect(resolveSafeInvoicePath(`sales/${org}/${invoice}.pdf`, org, "/data/invoices")).toContain(`${path.sep}sales${path.sep}`);
+    expect(() =>
+      resolveSafeInvoicePath(`sales/${org}/${invoice}.pdf`, "33333333-3333-4333-8333-333333333333", "/data/invoices")
+    ).toThrow(AppError);
+  });
+
   it("rejects a path that belongs to another organization", () => {
     expect(() =>
       resolveSafeInvoicePath(`${org}/${invoice}.pdf`, "33333333-3333-4333-8333-333333333333", "/data/invoices")
