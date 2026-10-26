@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, RefreshCw, RotateCcw, Truck } from "lucide-react";
+import { ClipboardList, ExternalLink, RefreshCw, RotateCcw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
@@ -26,7 +26,7 @@ import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-sta
 import { FEATURE } from "@/modules/billing/entitlements";
 import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 import { indiaPostServiceLabel, type MemberRole } from "@/types/domain";
-import type { ShipmentRecord, TrackingEvent } from "@/types/api";
+import type { ShipmentManifestLink, ShipmentRecord, TrackingEvent } from "@/types/api";
 
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -38,7 +38,10 @@ export default function ShipmentDetailPage() {
 
   const shipment = useQuery({
     queryKey: ["shipment", params.id],
-    queryFn: () => api<ShipmentRecord & { events?: TrackingEvent[] }>(`/api/v1/shipments/${params.id}`),
+    queryFn: () =>
+      api<ShipmentRecord & { events?: TrackingEvent[]; manifest?: ShipmentManifestLink | null }>(
+        `/api/v1/shipments/${params.id}`
+      ),
     enabled: Boolean(params.id),
     refetchInterval: (current) => (shipmentNeedsLiveTracking(current.state.data) ? 15_000 : false),
     refetchIntervalInBackground: true,
@@ -220,6 +223,15 @@ export default function ShipmentDetailPage() {
         description={`Created ${formatDate(record.createdAt ?? record.created_at, true)}`}
         actions={
           <div className="flex flex-wrap gap-2">
+            {record.manifest ? (
+              <Link
+                className={buttonVariants({ variant: "secondary" })}
+                href={`/dashboard/manifests/${record.manifest.id}`}
+              >
+                <ClipboardList className="size-4" />
+                {record.manifest.number ?? "Draft manifest"}
+              </Link>
+            ) : null}
             {canSync && article ? (
               <Button type="button" variant="secondary" onClick={() => sync.mutate(false)} disabled={sync.isPending}>
                 <RefreshCw className="size-4" />

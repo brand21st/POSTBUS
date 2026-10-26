@@ -33,7 +33,6 @@ import { persistLabelPdf } from "@/modules/labels/persist";
 import { findReadyIndiaPostLabel } from "@/modules/labels/ready";
 import { runPool } from "@/lib/async/pool";
 import { inlineLabelTimeoutMs } from "@/modules/india-post/http";
-import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { JobPayload } from "@/lib/queue/queues";
 import type { AutomationSettings } from "@/types/api";
 
@@ -593,116 +592,24 @@ async function generateLabel(
 }
 
 async function generateManifest(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
-  const day = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-  const name = `Manifest ${day}`;
-  const dayStart = `${day}T00:00:00+05:30`;
-
-  const { data: shipments } = await supabase
-    .from("shipments")
-    .select("id, barcode, tracking_number, service_code, tariff_amount, orders(order_number)")
-    .eq("organization_id", payload.organizationId)
-    .not("barcode", "is", null)
-    .not("booked_at", "is", null)
-    .gte("booked_at", dayStart)
-    .in("status", ["BOOKED", "LABEL_PENDING", "LABEL_READY", "MANIFEST_PENDING", "MANIFEST_READY"])
-    .order("booked_at", { ascending: true });
-
-  if (!shipments?.length) {
-    return;
-  }
-
-  const pdf = await PDFDocument.create();
-  const page = pdf.addPage([595, 842]);
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  page.drawText(`PostBus pickup manifest  ${day}`, { x: 40, y: 800, size: 16, font });
-  page.drawText("Kolenchery SO drop-off  |  India Post", { x: 40, y: 780, size: 10, font });
-  shipments.forEach((item, index) => {
-    const order = item.orders as { order_number?: string } | null;
-    page.drawText(
-      `${index + 1}. ${item.barcode ?? ""}  ${order?.order_number ?? ""}  ${item.service_code ?? ""}`,
-      { x: 40, y: 750 - index * 16, size: 10, font }
-    );
-  });
-  const bytes = await pdf.save();
-
-  const { data: existing } = await supabase
-    .from("manifests")
-    .select("id")
-    .eq("organization_id", payload.organizationId)
-    .eq("name", name)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const path = `${payload.organizationId}/manifest-${day}.pdf`;
-  await supabase.storage.from("manifests").upload(path, bytes, {
-    contentType: "application/pdf",
-    upsert: true,
-  });
-  const { data: signed } = await supabase.storage
-    .from("manifests")
-    .createSignedUrl(path, 60 * 60 * 24 * 7);
-
-  const fields = {
-    status: "READY",
-    file_path: path,
-    file_url: signed?.signedUrl ?? null,
-    shipment_count: shipments.length,
-    updated_at: new Date().toISOString(),
-  };
-
-  const manifest = existing
-    ? (
-        await supabase.from("manifests").update(fields).eq("id", existing.id).select().single()
-      ).data
-    : (
-        await supabase
-          .from("manifests")
-          .insert({
-            organization_id: payload.organizationId,
-            name,
-            ...fields,
-          })
-          .select()
-          .single()
-      ).data;
-
-  if (!manifest) {
-    throw Object.assign(new Error("Could not save the pickup manifest."), {
-      code: "PROVIDER_ERROR",
-    });
-  }
-
-  await supabase.from("manifest_shipments").delete().eq("manifest_id", manifest.id);
-  await supabase.from("manifest_shipments").insert(
-    shipments.map((item) => ({
-      organization_id: payload.organizationId,
-      manifest_id: manifest.id,
-      shipment_id: item.id,
-    }))
-  );
-  await supabase
-    .from("shipments")
-    .update({ status: "MANIFEST_READY" })
-    .in(
-      "id",
-      shipments.map((item) => item.id)
-    );
+  const { assignToDraft, sweepEligible } = await import("@/modules/manifests/service");
+  // Label jobs enqueue one shipment; "Add ready shipments" and legacy jobs sweep the workspace.
+  const { added } =
+    payload.entityType === "shipment" && payload.entityId
+      ? await assignToDraft(supabase, payload.organizationId, [payload.entityId])
+      : await sweepEligible(supabase, payload.organizationId, { userId: payload.userId ?? null });
+  if (!added.length) return;
 
   const automation = await loadAutomation(supabase, payload.organizationId);
   if (automation.autoShopifyFulfillment) {
     const { createBackgroundJob } = await import("@/modules/jobs/service");
-    for (const item of shipments) {
+    // Only newly manifested shipments: re-runs must not fan out fulfillment again.
+    for (const shipmentId of added) {
       await createBackgroundJob(supabase, {
         organizationId: payload.organizationId,
         jobType: "shopify-fulfillment",
         entityType: "shipment",
-        entityId: item.id,
+        entityId: shipmentId,
       });
     }
   }

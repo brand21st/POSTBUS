@@ -20,7 +20,6 @@ import { orIlike } from "@/lib/api/filters";
 import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
-import { createBackgroundJob } from "@/modules/jobs/service";
 import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
 import { bulkOrderStatusSchema, confirmShopifyPaymentSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import {
@@ -505,30 +504,6 @@ export async function handleCommerceRoutes(
       await releaseManualPrintKey(supabase, ctx.organizationId, claimed.key);
       throw error;
     }
-  }
-
-  if (key === "GET manifests") {
-    const page = Number(request.nextUrl.searchParams.get("page") || 1);
-    const pageSize = 20;
-    const from = (page - 1) * pageSize;
-    const { data, count } = await supabase
-      .from("manifests")
-      .select("*", { count: "exact" })
-      .eq("organization_id", ctx.organizationId)
-      .order("created_at", { ascending: false })
-      .range(from, from + pageSize - 1);
-    return { items: data ?? [], page, pageSize, total: count ?? 0 };
-  }
-
-  if (key === "POST manifests") {
-    const job = await createBackgroundJob(supabase, {
-      organizationId: ctx.organizationId,
-      jobType: "manifest-generation",
-      entityType: "organization",
-      entityId: ctx.organizationId,
-      userId: ctx.userId,
-    });
-    return { queued: true, jobId: job.id };
   }
 
   if (key === "GET tracking") {

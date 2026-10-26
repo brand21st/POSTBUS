@@ -523,17 +523,33 @@ export type LabelRecord = {
   barcode_status?: string | null;
 };
 
-export type ManifestRecord = {
-  id: string;
-  name?: string;
-  status?: string;
-  shipmentCount?: number;
-  shipment_count?: number;
-  fileUrl?: string | null;
-  file_url?: string | null;
-  createdAt?: string;
-  created_at?: string;
+export type {
+  ManifestSummary as ManifestRecord,
+  ManifestDetail,
+  ManifestLine,
+  ManifestTotals,
+} from "@/modules/manifests/service";
+
+export type ManifestListResponse = Paginated<import("@/modules/manifests/service").ManifestSummary> & {
+  summary: { openDrafts: number; awaitingManifest: number; unscannedAfterHandover: number };
 };
+
+export type ManifestEligibleShipment = {
+  shipmentId: string;
+  barcode: string;
+  status: string;
+  orderNumber: string | null;
+  consignee: string | null;
+  pincode: string | null;
+  serviceLabel: string;
+  weightGrams: number;
+  bookedAt: string | null;
+  officeId: string | null;
+  officeName: string | null;
+  hasLabel: boolean;
+};
+
+export type ShipmentManifestLink = { id: string; number: string | null; status: string; date: string };
 
 export type TrackingEvent = {
   id?: string;

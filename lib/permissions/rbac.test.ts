@@ -30,6 +30,9 @@ describe("rbac", () => {
       false
     );
     expect(hasPermission("OPERATOR", "labels.write")).toBe(true);
+    expect(hasPermission("OPERATOR", "manifests.write")).toBe(true);
+    expect(hasPermission("VIEWER", "manifests.read")).toBe(true);
+    expect(hasPermission("VIEWER", "manifests.write")).toBe(false);
     expect(permissionsFor("OWNER")).toContain("org.billing");
   });
 });

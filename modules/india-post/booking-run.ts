@@ -110,6 +110,10 @@ async function persistBookedShipment(
       ...(input.persistDefaults?.weight && input.payload
         ? { weight_grams: input.payload.physical_weight }
         : {}),
+      // Groups the shipment onto the right per-office pickup manifest.
+      ...(input.payload?.pickup_dropoff_office_id
+        ? { booking_office_id: String(input.payload.pickup_dropoff_office_id) }
+        : {}),
     })
     .eq("id", input.shipmentId)
     .eq("organization_id", input.organizationId)

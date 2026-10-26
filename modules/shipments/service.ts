@@ -417,8 +417,10 @@ export async function getShipment(supabase: SupabaseClient, ctx: TenantContext, 
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipment not found.");
+  const { manifestForShipment } = await import("@/modules/manifests/service");
   return {
     ...mapShipment(data),
+    manifest: await manifestForShipment(supabase, ctx.organizationId, id),
     events: nestedRows(data.tracking_events).map((row) => ({
       id: String(row.id ?? ""),
       eventCode: row.event_code ?? row.eventCode ?? null,

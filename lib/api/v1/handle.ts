@@ -8,6 +8,7 @@ import { handleInboundWebhook, isInboundWebhookPath } from "@/lib/api/v1/inbound
 import { handleIntegrationRoutes } from "@/lib/api/v1/integrations";
 import { handleInvoiceRoutes } from "@/lib/api/v1/invoices";
 import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
+import { handleManifestRoutes } from "@/lib/api/v1/manifests";
 import { handlePrintAgentRoutes, handlePrintStationRoutes, isPrintAgentApiPath } from "@/lib/api/v1/print";
 import { handlePrintDevicePublicRoutes, handlePrintDeviceTenantRoutes, isPrintDevicePublicPath } from "@/lib/api/v1/print-devices";
 import { handleSessionRoutes } from "@/lib/api/v1/session";
@@ -87,6 +88,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
     (await handleLabelTemplateRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleInvoiceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleInventoryRoutes(request, supabase, ctx, key, method, slugs)) ??
+    (await handleManifestRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleCommerceRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handleIntegrationRoutes(request, supabase, ctx, key)) ??
     (await handleMerchantTutorials(request, supabase, slugs, method)) ??

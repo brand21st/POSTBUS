@@ -18,6 +18,7 @@ const SUCCESS = new Set([
   "PRINTED",
   "SUBMITTED",
   "CONFIRMED",
+  "HANDED_OVER",
 ]);
 
 const WARNING = new Set([
@@ -59,7 +60,7 @@ const ERROR = new Set([
   "EXPIRED",
 ]);
 
-const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY", "WHATSAPP"]);
+const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY", "WHATSAPP", "CLOSED"]);
 
 /** Order status READY is shown as Unfulfilled until packing/booking starts. */
 export function orderStatusBadgeValue(status?: string | null) {
