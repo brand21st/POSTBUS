@@ -64,6 +64,14 @@ export function shipmentNumber(shipment: {
   return pickString(shipment.trackingNumber, shipment.tracking_number, shipment.barcode, shipment.id.slice(0, 8));
 }
 
+export function labelTemplateName(
+  template: { library?: Array<{ id: string; name?: string | null }> | null } | null | undefined,
+  id: string
+) {
+  const name = template?.library?.find((item) => item.id === id)?.name?.trim();
+  return name || "Template";
+}
+
 export function salesInvoiceNumber(invoice: {
   invoiceNumber?: string | null;
   invoice_number?: string | null;

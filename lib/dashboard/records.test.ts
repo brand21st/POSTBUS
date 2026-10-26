@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  labelTemplateName,
   salesInvoiceNumber,
   canFulfillOrder,
   canFulfillOrderAction,
@@ -16,6 +17,18 @@ import {
   orderStageMenu,
   shopifyPendingBookingBlocked,
 } from "@/lib/dashboard/records";
+
+describe("labelTemplateName", () => {
+  it("uses the saved template name", () => {
+    expect(
+      labelTemplateName(
+        { library: [{ id: "a9151c2f-0207-41ee-ad36-b94377af158a", name: "India Post" }] },
+        "a9151c2f-0207-41ee-ad36-b94377af158a"
+      )
+    ).toBe("India Post");
+    expect(labelTemplateName({ library: [] }, "a9151c2f-0207-41ee-ad36-b94377af158a")).toBe("Template");
+  });
+});
 
 describe("salesInvoiceNumber", () => {
   it("uses the invoice number, then the order number, then a short id", () => {
