@@ -65,6 +65,8 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
     "shipments.write",
     "labels.read",
     "labels.write",
+    "manifests.read",
+    "manifests.write",
     "tracking.read",
   ],
   VIEWER: [

@@ -97,7 +97,7 @@ export function permissionForTenantRoute(
   }
 
   if (root === "manifests") {
-    return method === "POST" ? "manifests.write" : "manifests.read";
+    return method === "GET" ? "manifests.read" : "manifests.write";
   }
 
   if (path === "tracking") return "tracking.read";

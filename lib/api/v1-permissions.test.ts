@@ -114,6 +114,11 @@ describe("permissionForTenantRoute", () => {
       "shipments.write"
     );
     expect(permissionForTenantRoute("POST", "manifests", ["manifests"])).toBe("manifests.write");
+    expect(permissionForTenantRoute("GET", "manifests/abc/export", ["manifests", "abc", "export"])).toBe("manifests.read");
+    expect(permissionForTenantRoute("POST", "manifests/abc/close", ["manifests", "abc", "close"])).toBe("manifests.write");
+    expect(
+      permissionForTenantRoute("DELETE", "manifests/abc/shipments/def", ["manifests", "abc", "shipments", "def"])
+    ).toBe("manifests.write");
     expect(permissionForTenantRoute("GET", "addons", ["addons"])).toBeUndefined();
     expect(permissionForTenantRoute("POST", "addons/ai-accountant/checkout", ["addons", "ai-accountant", "checkout"])).toBe(
       "org.manage"
