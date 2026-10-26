@@ -11,6 +11,7 @@ import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
 import { IndiaPostWatchTutorialLink } from "@/components/integrations/india-post-watch-tutorial-link";
 import { ShopifyWatchTutorialLink } from "@/components/integrations/shopify-watch-tutorial-link";
 import { VachatSignupLink } from "@/components/integrations/vachat-signup-link";
+import { AiAccountantCard } from "@/components/addons/ai-accountant-card";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -73,8 +74,10 @@ export default function IntegrationsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Integrations"
-        description="Shopify, India Post, Google Sheets, Wati, PostBus WhatsApp, merchant Vachat, and the Developer API."
+        description="Shopify, India Post, Google Sheets, Wati, PostBus WhatsApp, merchant Vachat, Developer API, and paid add-ons."
       />
+
+      <AiAccountantCard />
 
       {me.data?.merchantApi?.enabled ? (
       <Card>

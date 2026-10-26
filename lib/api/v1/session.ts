@@ -6,6 +6,7 @@ import {
   ensureActiveWorkspace,
   listMemberships,
 } from "@/modules/organizations/service";
+import { listOrganizationAddonEntitlements } from "@/modules/addons/entitlements";
 import { getOrganizationEntitlements } from "@/modules/billing/entitlements";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTransientAuthClass } from "@/lib/auth/session/classify";
@@ -42,6 +43,7 @@ export async function handleSessionRoutes(
     const entitlements = organization
       ? await getOrganizationEntitlements(supabase, organization.id)
       : null;
+    const addons = organization ? await listOrganizationAddonEntitlements(supabase, organization.id) : [];
     return {
       user: {
         id: user.id,
@@ -65,6 +67,13 @@ export async function handleSessionRoutes(
       merchantApi: {
         enabled: isMerchantApiOpenForOrg(organization?.id),
       },
+      addons: addons
+        .filter((row) => row.access_mode === "FULL" || row.access_mode === "READ_ONLY")
+        .map((row) => ({
+          slug: row.addon_slug,
+          accessMode: row.access_mode,
+          status: row.status,
+        })),
     };
   }
 

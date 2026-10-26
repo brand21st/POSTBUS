@@ -16,7 +16,9 @@ export async function POST(request: NextRequest) {
   }
   try {
     const result = await runBillingSweep(createAdminClient());
-    return NextResponse.json({ success: true, data: result });
+    const { runAddonBillingSweep } = await import("@/modules/addons/cron");
+    const addons = await runAddonBillingSweep(createAdminClient());
+    return NextResponse.json({ success: true, data: { ...result, addons } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Billing sweep failed.";
     logError("billing.cron_failed", { message });
