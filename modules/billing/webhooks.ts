@@ -4,6 +4,7 @@ import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/b
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
 import {
   activateSubscription,
+  applyCheckoutIntent,
   periodsMatch,
   unixToDate,
   unixToDateOrNull,
@@ -460,12 +461,21 @@ export async function processRazorpayEvent(
 
   if (event === "payment.captured") {
     const orderId = paymentEntity.order_id ? String(paymentEntity.order_id) : razorpayOrderId || null;
-    const paid =
+    let paid =
       subscription ?? (orderId ? await loadSubscriptionByOrderId(supabase, orderId) : null);
     const domain = await classifyPlatformRazorpayPayment(supabase, {
       razorpayOrderId: orderId,
       subscriptionMatched: Boolean(paid),
     });
+    // One-time checkout: the chosen plan waits on the PENDING payment until captured.
+    if (domain === "SUBSCRIPTION" && paid && !razorpaySubscriptionId && orderId) {
+      paid = await applyCheckoutIntent(
+        supabase,
+        paid,
+        orderId,
+        paymentEntity.amount != null ? Number(paymentEntity.amount) : null
+      );
+    }
     if (domain === "AI_CREDITS") {
       if (!orderId) return { ignored: true };
       const { fulfillCapturedAiCreditPayment } = await import("@/modules/ai-credits/service");

@@ -13,7 +13,6 @@ import {
   createRazorpayPlan,
   fetchRazorpayPayment,
   pauseRazorpaySubscription,
-  resumeRazorpaySubscription,
 } from "@/modules/razorpay/client";
 import { verifyCheckoutSignature, verifyOrderCheckoutSignature } from "@/modules/razorpay/signature";
 
@@ -217,58 +216,36 @@ export async function startCheckout(
     email: input.email,
   }).catch(() => null);
   const now = new Date();
-  const period = periodForCycle(input.billingCycle, now);
-  const checkoutPatch = {
-    plan_id: plan.id,
-    billing_cycle: input.billingCycle,
-    amount_paise: amount,
-    order_limit: plan.monthly_order_limit,
-  };
-  let live = await getLiveSubscription(supabase, input.organizationId);
+  // The chosen plan lives on the PENDING payment row until payment is verified
+  // (applyCheckoutIntent). Writing it to the live subscription here would grant
+  // the plan to anyone who opens checkout and closes it.
+  const live = await getLiveSubscription(supabase, input.organizationId);
   let subscriptionId = live?.id;
   if (live) {
-    await supabase
-      .from("subscriptions")
-      .update({
-        ...checkoutPatch,
-        razorpay_customer_id: customerId ?? live.razorpay_customer_id,
-      })
-      .eq("id", live.id);
+    if (customerId && customerId !== live.razorpay_customer_id) {
+      await supabase.from("subscriptions").update({ razorpay_customer_id: customerId }).eq("id", live.id);
+    }
   } else {
+    // Not live until paid: a TRIAL row here would unlock every feature for a full period.
     const { data, error } = await supabase
       .from("subscriptions")
       .insert({
         organization_id: input.organizationId,
-        ...checkoutPatch,
-        status: "TRIAL",
-        started_at: now.toISOString(),
+        plan_id: plan.id,
+        billing_cycle: input.billingCycle,
+        amount_paise: amount,
+        order_limit: plan.monthly_order_limit,
+        status: "EXPIRED",
         current_period_start: now.toISOString(),
-        current_period_end: period.end.toISOString(),
-        renews_at: period.end.toISOString(),
+        current_period_end: now.toISOString(),
         razorpay_customer_id: customerId,
       })
       .select("id")
       .single();
-    const duplicateLive =
-      error?.code === "23505" || /one_live_per_org|duplicate key/i.test(error?.message ?? "");
-    if (duplicateLive) {
-      live = await getLiveSubscription(supabase, input.organizationId);
-      if (!live) {
-        throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not start subscription.");
-      }
-      subscriptionId = live.id;
-      await supabase
-        .from("subscriptions")
-        .update({
-          ...checkoutPatch,
-          razorpay_customer_id: customerId ?? live.razorpay_customer_id,
-        })
-        .eq("id", live.id);
-    } else if (error || !data) {
+    if (error || !data) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not start subscription.");
-    } else {
-      subscriptionId = data.id;
     }
+    subscriptionId = data.id;
   }
   const order = await createRazorpayOrder({
     amountPaise: amount,
@@ -299,7 +276,7 @@ export async function startCheckout(
     organizationId: input.organizationId,
     subscriptionId: subscriptionId!,
     fromStatus: live?.status ?? null,
-    toStatus: live?.status ?? "TRIAL",
+    toStatus: live?.status ?? "EXPIRED",
     fromPlanId: live?.plan_id ?? null,
     toPlanId: plan.id,
     reason: "checkout_started",
@@ -398,19 +375,36 @@ export async function verifyCheckout(
     });
     return { verified: true, creditsRemaining: credits.remaining };
   }
-  const { data: subscription } = await supabase
-    .from("subscriptions")
-    .select(SUBSCRIPTION_WITH_PLAN)
+  const { data: pendingPayment } = await supabase
+    .from("payments")
+    .select("subscription_id")
     .eq("organization_id", input.organizationId)
     .eq("razorpay_order_id", orderId)
+    .not("subscription_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
-  if (!subscription) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Checkout order not found.");
+  const { data: found } = pendingPayment?.subscription_id
+    ? await supabase
+        .from("subscriptions")
+        .select(SUBSCRIPTION_WITH_PLAN)
+        .eq("organization_id", input.organizationId)
+        .eq("id", pendingPayment.subscription_id)
+        .maybeSingle()
+    : await supabase
+        .from("subscriptions")
+        .select(SUBSCRIPTION_WITH_PLAN)
+        .eq("organization_id", input.organizationId)
+        .eq("razorpay_order_id", orderId)
+        .maybeSingle();
+  if (!found) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Checkout order not found.");
+  const subscription = await applyCheckoutIntent(supabase, found as SubscriptionRow, orderId, Number(payment.amount));
   const expectedAmount = Number(subscription.amount_paise);
   if (Number(payment.amount) !== expectedAmount) {
     throw new AppError(ERROR_CODES.FORBIDDEN, "Paid amount does not match the selected plan.");
   }
   await activateSubscription(supabase, {
-    subscription: subscription as SubscriptionRow,
+    subscription,
     paymentId: input.paymentId,
     amountPaise: Number(payment.amount),
     method: payment.method ? String(payment.method) : null,
@@ -429,6 +423,56 @@ export async function verifyCheckout(
     metadata: { paymentId: input.paymentId, razorpayOrderId: orderId },
   });
   return { verified: true, status: "ACTIVE" };
+}
+
+/**
+ * Copy the plan chosen at checkout (kept on the PENDING payment row) onto the
+ * subscription. Call only after the payment for `razorpayOrderId` is proven.
+ * Returns the subscription unchanged when there is no pending intent or the
+ * paid amount does not match it.
+ */
+export async function applyCheckoutIntent(
+  supabase: SupabaseClient,
+  subscription: SubscriptionRow,
+  razorpayOrderId: string | null | undefined,
+  paidAmountPaise?: number | null
+): Promise<SubscriptionRow> {
+  if (!razorpayOrderId) return subscription;
+  const { data: intent } = await supabase
+    .from("payments")
+    .select("plan_id, billing_cycle, amount_paise")
+    .eq("subscription_id", subscription.id)
+    .eq("razorpay_order_id", razorpayOrderId)
+    .eq("status", "PENDING")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const cycle = intent?.billing_cycle;
+  if (!intent?.plan_id || (cycle !== "monthly" && cycle !== "yearly")) return subscription;
+  if (paidAmountPaise != null && Number(intent.amount_paise) !== Number(paidAmountPaise)) return subscription;
+  const unchanged =
+    intent.plan_id === subscription.plan_id &&
+    cycle === subscription.billing_cycle &&
+    Number(intent.amount_paise) === Number(subscription.amount_paise);
+  if (unchanged) return subscription;
+  const { data: plan } = await supabase.from("plans").select("monthly_order_limit").eq("id", intent.plan_id).maybeSingle();
+  await supabase
+    .from("subscriptions")
+    .update({
+      plan_id: intent.plan_id,
+      billing_cycle: cycle,
+      amount_paise: Number(intent.amount_paise),
+      order_limit: plan?.monthly_order_limit ?? subscription.order_limit,
+      pending_plan_id: null,
+      pending_billing_cycle: null,
+    })
+    .eq("id", subscription.id);
+  const { data: refreshed } = await supabase
+    .from("subscriptions")
+    .select(SUBSCRIPTION_WITH_PLAN)
+    .eq("id", subscription.id)
+    .maybeSingle();
+  return (refreshed as SubscriptionRow | null) ?? subscription;
 }
 
 export async function activateSubscription(
@@ -713,31 +757,16 @@ export async function changePlan(
   const nextAmount = amountForCycle(plan, cycle);
   const upgrade = nextAmount > currentAmount || (live.plan_id === plan.id && cycle === "yearly" && live.billing_cycle === "monthly");
   if (upgrade) {
-    await supabase
-      .from("subscriptions")
-      .update({
-        plan_id: plan.id,
-        billing_cycle: cycle,
-        amount_paise: nextAmount,
-        order_limit: plan.monthly_order_limit,
-        pending_plan_id: null,
-        pending_billing_cycle: null,
-      })
-      .eq("id", live.id);
-    await supabase
-      .from("billing_usage")
-      .update({ order_limit: plan.monthly_order_limit })
-      .eq("subscription_id", live.id)
-      .eq("period_start", (live.current_period_start ?? "").slice(0, 10));
-  } else {
-    await supabase
-      .from("subscriptions")
-      .update({
-        pending_plan_id: plan.id,
-        pending_billing_cycle: cycle,
-      })
-      .eq("id", live.id);
+    // Nothing is charged here, so an upgrade must go through checkout.
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Upgrades need payment. Choose the plan under Pay for a plan.");
   }
+  await supabase
+    .from("subscriptions")
+    .update({
+      pending_plan_id: plan.id,
+      pending_billing_cycle: cycle,
+    })
+    .eq("id", live.id);
   await writeSubscriptionHistory(supabase, {
     organizationId: input.organizationId,
     subscriptionId: live.id,
@@ -745,20 +774,20 @@ export async function changePlan(
     toStatus: live.status,
     fromPlanId: live.plan_id,
     toPlanId: plan.id,
-    reason: upgrade ? "upgrade" : "downgrade_scheduled",
+    reason: "downgrade_scheduled",
     actor: input.userId,
   });
   await writeBillingAudit(supabase, {
     actorId: input.userId,
     actorType: "USER",
-    action: upgrade ? "subscription.upgraded" : "subscription.downgrade_scheduled",
+    action: "subscription.downgrade_scheduled",
     targetType: "subscription",
     targetId: live.id,
     organizationId: input.organizationId,
     ip: input.ip,
     metadata: { planId: plan.id, billingCycle: cycle },
   });
-  return { applied: upgrade ? "immediate" : "period_end", plan: mapPlan(plan), billingCycle: cycle };
+  return { applied: "period_end", plan: mapPlan(plan), billingCycle: cycle };
 }
 
 export async function cancelSubscription(
@@ -810,18 +839,25 @@ export async function resumeSubscription(
 ) {
   const live = await getLiveSubscription(supabase, input.organizationId);
   if (!live) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "No subscription to resume.");
-  if (live.razorpay_subscription_id && live.status === "PAUSED") {
-    await resumeRazorpaySubscription(live.razorpay_subscription_id);
+  // Only undo a scheduled cancellation. Status stays as it was: forcing ACTIVE
+  // here turned trials and unpaid subscriptions into paid ones that never expire.
+  if (live.status === "PAUSED") {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "This subscription was paused by PostBus support. Contact support to resume it.");
+  }
+  if (!live.cancel_at_period_end) return { status: live.status };
+  if (live.razorpay_subscription_id) {
+    // Razorpay cannot undo a cancellation, so renewals would silently stop.
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This cancellation cannot be undone. Pay for a plan again when the current period ends.");
   }
   await supabase
     .from("subscriptions")
-    .update({ status: "ACTIVE", cancel_at_period_end: false, cancelled_at: null })
+    .update({ cancel_at_period_end: false, cancelled_at: null })
     .eq("id", live.id);
   await writeSubscriptionHistory(supabase, {
     organizationId: input.organizationId,
     subscriptionId: live.id,
     fromStatus: live.status,
-    toStatus: "ACTIVE",
+    toStatus: live.status,
     reason: "resumed",
     actor: input.userId,
   });
@@ -834,7 +870,7 @@ export async function resumeSubscription(
     organizationId: input.organizationId,
     ip: input.ip,
   });
-  return { status: "ACTIVE" };
+  return { status: live.status };
 }
 
 export async function pauseSubscriptionAdmin(

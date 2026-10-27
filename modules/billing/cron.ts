@@ -15,7 +15,10 @@ export async function runBillingSweep(supabase: SupabaseClient) {
 
   let expired = 0;
   for (const row of expiring ?? []) {
-    const shouldExpire = row.cancel_at_period_end || row.status === "TRIAL" || row.status === "PAYMENT_FAILED";
+    // One-time checkout buys a single period; only Razorpay recurring subscriptions renew themselves.
+    const oneTimePeriod = !row.razorpay_subscription_id;
+    const shouldExpire =
+      row.cancel_at_period_end || oneTimePeriod || row.status === "TRIAL" || row.status === "PAYMENT_FAILED";
     if (!shouldExpire) continue;
     await supabase.from("subscriptions").update({ status: "EXPIRED" }).eq("id", row.id);
     await writeSubscriptionHistory(supabase, {
