@@ -186,13 +186,6 @@ export function SupportWorkspace() {
     setMobilePane("chat");
   }, [conversationFromUrl]);
 
-  useEffect(() => {
-    if (selectedId || !items.length) return;
-    if (!conversationFromUrl && !qFromUrl) return;
-    setSelectedId(items[0].id);
-    setMobilePane("chat");
-  }, [conversationFromUrl, items, qFromUrl, selectedId]);
-
   const conversationsQuery = useQuery({
     queryKey: ["support", "conversations", filter, category, searchQuery],
     queryFn: () =>
@@ -328,6 +321,13 @@ export function SupportWorkspace() {
 
   const items = conversationsQuery.data?.items ?? [];
   const selected = items.find((row) => row.id === selectedId) ?? null;
+
+  useEffect(() => {
+    if (selectedId || !items.length) return;
+    if (!conversationFromUrl && !qFromUrl) return;
+    setSelectedId(items[0].id);
+    setMobilePane("chat");
+  }, [conversationFromUrl, items, qFromUrl, selectedId]);
   const context = contextQuery.data as {
     conversation?: { windowOpen?: boolean; windowRemainingMs?: number; phoneDigits?: string; customerName?: string | null };
     ticket?: {
