@@ -352,7 +352,7 @@ export default function AdminAccountsPage() {
                     <th className="hidden px-3 py-2 sm:table-cell">PIN</th>
                     <th className="hidden px-3 py-2 sm:table-cell">City</th>
                     <th className="px-3 py-2">Workspace</th>
-                    <th className="hidden px-3 py-2 md:table-cell">Signed up</th>
+                    <th className="hidden px-3 py-2 md:table-cell">Created</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -389,11 +389,9 @@ export default function AdminAccountsPage() {
                           <span className="text-xs text-muted">No workspace</span>
                         )}
                       </td>
-                      <td
-                        className="hidden whitespace-nowrap px-3 py-2 text-xs text-muted md:table-cell"
-                        title={formatDate(signup.createdAt)}
-                      >
-                        {formatRelative(signup.createdAt)}
+                      <td className="hidden whitespace-nowrap px-3 py-2 text-xs md:table-cell">
+                        <div className="tabular-nums text-ink">{formatDate(signup.createdAt, true)}</div>
+                        <div className="text-muted">{formatRelative(signup.createdAt)}</div>
                       </td>
                     </tr>
                   ))}
