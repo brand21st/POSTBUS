@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
+import { searchPhoneNeedles } from "@/lib/phone/india-whatsapp";
+import { hasPermission } from "@/lib/permissions/rbac";
 import { getSystemHealth } from "@/lib/api/health";
 import { canAssignMemberRole } from "@/lib/api/v1-permissions";
 import {
@@ -511,12 +513,26 @@ export async function handleWorkspaceRoutes(
   if (key === "GET search") {
     const q = (request.nextUrl.searchParams.get("q") || "").trim();
     if (q.length < 2) return { items: [] };
+    const phoneNeedles = searchPhoneNeedles(q);
     const orderFilter = orIlike(["order_number", "source_order_id"], q);
     const shipmentFilter = orIlike(["barcode", "tracking_number"], q);
-    const customerFilter = orIlike(["name", "phone", "email"], q);
-    if (!orderFilter && !shipmentFilter && !customerFilter) return { items: [] };
+    const customerFilter = [
+      orIlike(["name", "phone", "email"], q),
+      ...phoneNeedles.map((needle) => orIlike(["phone"], needle)),
+    ]
+      .filter(Boolean)
+      .join(",") || null;
+    const supportFilter = [
+      orIlike(["customer_name"], q),
+      orIlike(["phone_digits"], q),
+      ...phoneNeedles.map((needle) => orIlike(["phone_digits"], needle)),
+    ]
+      .filter(Boolean)
+      .join(",") || null;
+    const canReadSupport = hasPermission(ctx.role, "support.read");
+    if (!orderFilter && !shipmentFilter && !customerFilter && !(canReadSupport && supportFilter)) return { items: [] };
 
-    const [orderResult, shipmentResult, customerResult] = await Promise.all([
+    const [orderResult, shipmentResult, customerResult, supportResult] = await Promise.all([
       orderFilter
         ? supabase
             .from("orders")
@@ -541,8 +557,17 @@ export async function handleWorkspaceRoutes(
             .or(customerFilter)
             .limit(8)
         : Promise.resolve({ data: [], error: null }),
+      canReadSupport && supportFilter
+        ? supabase
+            .from("support_conversations")
+            .select("id, customer_name, phone_digits")
+            .eq("organization_id", ctx.organizationId)
+            .or(supportFilter)
+            .order("last_message_at", { ascending: false, nullsFirst: false })
+            .limit(8)
+        : Promise.resolve({ data: [], error: null }),
     ]);
-    const queryError = orderResult.error || shipmentResult.error || customerResult.error;
+    const queryError = orderResult.error || shipmentResult.error || customerResult.error || supportResult.error;
     if (queryError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, queryError.message);
 
     const customers = customerResult.data ?? [];
@@ -605,6 +630,18 @@ export async function handleWorkspaceRoutes(
           subtitle: [item.phone, item.email].filter(Boolean).join(" · "),
           href: `/dashboard/orders?q=${encodeURIComponent(item.phone || item.name)}`,
         })),
+        ...(supportResult.data ?? []).map((item) => {
+          const phone = item.phone_digits || "";
+          return {
+            id: item.id,
+            type: "support",
+            title: item.customer_name || (phone ? `+91 ${phone}` : "Support chat"),
+            subtitle: [phone, "Support"].filter(Boolean).join(" · "),
+            href: `/dashboard/support?conversation=${encodeURIComponent(item.id)}${
+              phone ? `&q=${encodeURIComponent(phone)}` : ""
+            }`,
+          };
+        }),
       ],
     };
   }

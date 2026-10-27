@@ -3,6 +3,7 @@ import {
   extractIndiaMobileDigits,
   indiaMobileInputDigits,
   isIndiaWhatsappInput,
+  searchPhoneNeedles,
   toIndiaWhatsappE164,
 } from "./india-whatsapp";
 
@@ -52,5 +53,18 @@ describe("indiaMobileInputDigits", () => {
     expect(indiaMobileInputDigits("+91 98765 43210")).toBe("9876543210");
     expect(indiaMobileInputDigits("919876543210")).toBe("9876543210");
     expect(indiaMobileInputDigits("9876543210123")).toBe("9876543210");
+  });
+});
+
+describe("searchPhoneNeedles", () => {
+  it("returns the national number for +91 and 91 prefixes", () => {
+    expect(searchPhoneNeedles("+91 98765 43210")).toEqual(["9876543210", "919876543210"]);
+    expect(searchPhoneNeedles("9876543210")).toEqual(["9876543210"]);
+  });
+
+  it("keeps partial digit queries and ignores names", () => {
+    expect(searchPhoneNeedles("98765")).toEqual(["98765"]);
+    expect(searchPhoneNeedles("Rahul")).toEqual([]);
+    expect(searchPhoneNeedles("  ")).toEqual([]);
   });
 });

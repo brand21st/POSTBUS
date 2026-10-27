@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { SupportWorkspace } from "@/components/support/support-workspace";
 
@@ -6,5 +7,9 @@ export const metadata: Metadata = {
 };
 
 export default function SupportCenterPage() {
-  return <SupportWorkspace />;
+  return (
+    <Suspense fallback={null}>
+      <SupportWorkspace />
+    </Suspense>
+  );
 }

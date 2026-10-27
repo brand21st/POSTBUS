@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -144,21 +145,24 @@ const OFF_TIPS = [
 
 export function SupportWorkspace() {
   const me = useMe();
+  const searchParams = useSearchParams();
+  const conversationFromUrl = searchParams.get("conversation");
+  const qFromUrl = searchParams.get("q") ?? "";
   const role = (me.data?.role ?? "VIEWER") as MemberRole;
   const organizationId = me.data?.organization?.id;
   const queryClient = useQueryClient();
   const [view, setView] = useState<"inbox" | "tickets" | "settings">("inbox");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
   const [category, setCategory] = useState<string>("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [mobilePane, setMobilePane] = useState<"list" | "chat">("list");
+  const [selectedId, setSelectedId] = useState<string | null>(conversationFromUrl);
+  const [mobilePane, setMobilePane] = useState<"list" | "chat">(conversationFromUrl ? "chat" : "list");
   const [contextOpen, setContextOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [templateName, setTemplateName] = useState("");
   const [note, setNote] = useState("");
   const [merchantKey, setMerchantKey] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState(qFromUrl);
+  const [searchQuery, setSearchQuery] = useState(qFromUrl);
 
   const settingsQuery = useQuery({
     queryKey: ["support", "settings"],
@@ -170,6 +174,24 @@ export function SupportWorkspace() {
     }, SUPPORT_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
+
+  useEffect(() => {
+    if (qFromUrl) setSearchInput(qFromUrl);
+  }, [qFromUrl]);
+
+  useEffect(() => {
+    if (!conversationFromUrl) return;
+    setSelectedId(conversationFromUrl);
+    setView("inbox");
+    setMobilePane("chat");
+  }, [conversationFromUrl]);
+
+  useEffect(() => {
+    if (selectedId || !items.length) return;
+    if (!conversationFromUrl && !qFromUrl) return;
+    setSelectedId(items[0].id);
+    setMobilePane("chat");
+  }, [conversationFromUrl, items, qFromUrl, selectedId]);
 
   const conversationsQuery = useQuery({
     queryKey: ["support", "conversations", filter, category, searchQuery],

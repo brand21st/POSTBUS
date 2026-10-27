@@ -44,3 +44,15 @@ export function isIndiaWhatsappInput(value: string): boolean {
 export function indiaMobileInputDigits(value: string): string {
   return extractIndiaMobileDigits(value) ?? digitsOnly(value).slice(0, 10);
 }
+
+/** Digit needles for search: partial digits plus a normalized 10-digit Indian mobile. */
+export function searchPhoneNeedles(value?: string | null): string[] {
+  const text = String(value ?? "").trim();
+  if (!text) return [];
+  const needles = new Set<string>();
+  const digits = digitsOnly(text);
+  const national = extractIndiaMobileDigits(text);
+  if (national) needles.add(national);
+  if (digits.length >= 2 && digits !== national) needles.add(digits);
+  return [...needles];
+}
