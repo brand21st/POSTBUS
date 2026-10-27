@@ -5,12 +5,18 @@ import { encryptSecret, decryptSecret } from "@/lib/security/crypto";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { merchantWooError, WooCommerceRequestError, wooRequest, wooRequestUrl } from "@/modules/woocommerce/client";
 import { decideWooAuthCallback, publicWooConnection, WOO_ORDER_TOPICS } from "@/modules/woocommerce/connect";
-import { mapWooOrder, type WooRemoteOrder } from "@/modules/woocommerce/map-order";
+import { mapWooOrder, mergeWooMeasures, wooParcelFromLines, type WooRemoteOrder } from "@/modules/woocommerce/map-order";
 import { mapWooPayment } from "@/modules/woocommerce/payment";
 import { isPostbusEchoUpdate, shouldApplyWooOrder, verifyWooWebhookSignature, wooWebhookSignature } from "@/modules/woocommerce/signature";
 import { redactWooText, wooHasMorePages, wooOrderListQuery } from "@/modules/woocommerce/sync-window";
 import { shouldAddTrackingNote, wooStatusForStage, wooTrackingBody } from "@/modules/woocommerce/tracking";
-import { normalizeWooLengthToCm, normalizeWooWeightToGrams, readWooMeasurementUnits } from "@/modules/woocommerce/units";
+import {
+  clampWooParcelCm,
+  normalizeWooLengthToCm,
+  normalizeWooWeightToGrams,
+  readWooMeasurementUnits,
+  WOO_PARCEL_CM,
+} from "@/modules/woocommerce/units";
 import { parseWooWebhookPath } from "@/modules/woocommerce/webhooks";
 
 vi.mock("node:dns/promises", () => ({
@@ -198,6 +204,9 @@ describe("WooCommerce orders", () => {
     const initial = wooOrderListQuery({ importDays: 7 }, 1);
     expect(initial.after).toBeTruthy();
     expect(initial.modified_after).toBeUndefined();
+    const forcedCatchUp = wooOrderListQuery({ incremental: false, importDays: 90 }, 1);
+    expect(forcedCatchUp.after).toBeTruthy();
+    expect(forcedCatchUp.modified_after).toBeUndefined();
   });
 
   it("normalizes store measurement units", () => {
@@ -216,6 +225,26 @@ describe("WooCommerce orders", () => {
     });
     expect(mapped.lines[0].weightGrams).toBe(250);
     expect(mapped.lines[0].lengthCm).toBe(10);
+  });
+
+  it("falls back to parent product shipping when the variation is empty", () => {
+    const merged = mergeWooMeasures(
+      { weight: "", dimensions: { length: "", width: "", height: "" } },
+      { weight: "0.4", dimensions: { length: "20", width: "15", height: "8" } }
+    );
+    expect(merged.weight).toBe("0.4");
+    expect(merged.dimensions).toEqual({ length: "20", width: "15", height: "8" });
+  });
+
+  it("builds a parcel box from product weight and size", () => {
+    const parcel = wooParcelFromLines([
+      { quantity: 2, weightGrams: 250, lengthCm: 20, widthCm: 15, heightCm: 8 },
+    ]);
+    expect(parcel.weightGrams).toBe(500);
+    expect(parcel).toEqual(
+      expect.objectContaining({ lengthCm: 20, widthCm: 15, heightCm: 8 })
+    );
+    expect(clampWooParcelCm(10, WOO_PARCEL_CM.length.min, WOO_PARCEL_CM.length.max)).toBe(14);
   });
 });
 

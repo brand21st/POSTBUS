@@ -3,7 +3,13 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { decryptSecret, hashSecret } from "@/lib/security/crypto";
 import { getWooOrder } from "@/modules/woocommerce/client";
 import { credentialsFromConnection } from "@/modules/woocommerce/connect";
-import { markWooOrderDeleted, upsertWooCommerceOrder, wooSettings, type WooConnectionRow } from "@/modules/woocommerce/orders";
+import {
+  loadWooProductMeasures,
+  markWooOrderDeleted,
+  upsertWooCommerceOrder,
+  wooSettings,
+  type WooConnectionRow,
+} from "@/modules/woocommerce/orders";
 import { isPostbusEchoUpdate, shouldApplyWooOrder, verifyWooWebhookSignature } from "@/modules/woocommerce/signature";
 import { enqueueWooWebhookJob } from "@/modules/woocommerce/sync-job";
 
@@ -131,6 +137,7 @@ export async function processWooWebhookJob(
     nextTotal: remote.total,
     meta: remote.meta_data,
   });
+  const measures = await loadWooProductMeasures(creds, [remote]);
   const result = await upsertWooCommerceOrder(supabase, {
     organizationId: input.organizationId,
     storeHost: connection.store_host,
@@ -138,6 +145,7 @@ export async function processWooWebhookJob(
     eligibleStatuses: wooSettings(connection).eligibleStatuses,
     weightUnit: connection.weight_unit,
     dimensionUnit: connection.dimension_unit,
+    measures,
     applyAutomation: !echo,
   });
   await finishDelivery(supabase, input.deliveryId, "PROCESSED");

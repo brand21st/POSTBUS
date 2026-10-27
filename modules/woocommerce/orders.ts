@@ -10,7 +10,14 @@ import {
   type WooCredentials,
   type WooTransport,
 } from "@/modules/woocommerce/client";
-import { mapWooOrder, type WooProductMeasure, type WooRemoteOrder } from "@/modules/woocommerce/map-order";
+import {
+  mapWooOrder,
+  mergeWooMeasures,
+  wooParcelFromLines,
+  type MappedWooOrder,
+  type WooProductMeasure,
+  type WooRemoteOrder,
+} from "@/modules/woocommerce/map-order";
 import { wooHasMorePages, wooOrderListQuery, type WooSyncWindow } from "@/modules/woocommerce/sync-window";
 import { readWooMeasurementUnits } from "@/modules/woocommerce/units";
 
@@ -64,12 +71,42 @@ function tenant(organizationId: string, userId?: string): TenantContext {
   };
 }
 
-async function measuresFor(
+const WOO_PARCEL_LOCKED_ORDER = new Set(["BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED", "CANCELLED"]);
+const WOO_PARCEL_LOCKED_SHIPMENT = new Set([
+  "VALIDATING",
+  "QUEUED",
+  "BOOKING",
+  "BOOKED",
+  "LABEL_PENDING",
+  "LABEL_READY",
+  "MANIFEST_PENDING",
+  "MANIFEST_READY",
+  "IN_TRANSIT",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+  "NDR",
+]);
+
+export async function loadWooProductMeasures(
   creds: WooCredentials,
   orders: WooRemoteOrder[],
   transport?: WooTransport
 ) {
+  const products = new Map<number, WooProductMeasure>();
   const cache = new Map<string, WooProductMeasure>();
+
+  async function parentProduct(productId: number) {
+    if (products.has(productId)) return products.get(productId) ?? {};
+    try {
+      const product = (await getWooProduct(creds, productId, transport)) ?? {};
+      products.set(productId, product);
+      return product;
+    } catch {
+      products.set(productId, {});
+      return {};
+    }
+  }
+
   for (const order of orders) {
     for (const line of order.line_items ?? []) {
       const productId = Number(line.product_id) || 0;
@@ -77,13 +114,16 @@ async function measuresFor(
       if (!productId) continue;
       const key = `${productId}:${variationId}`;
       if (cache.has(key)) continue;
+      const parent = await parentProduct(productId);
+      if (!variationId) {
+        cache.set(key, parent);
+        continue;
+      }
       try {
-        const product = variationId
-          ? await getWooVariation(creds, productId, variationId, transport)
-          : await getWooProduct(creds, productId, transport);
-        cache.set(key, product ?? {});
+        const variation = (await getWooVariation(creds, productId, variationId, transport)) ?? {};
+        cache.set(key, mergeWooMeasures(variation, parent));
       } catch {
-        cache.set(key, {});
+        cache.set(key, parent);
       }
     }
   }
@@ -197,10 +237,15 @@ export async function upsertWooCommerceOrder(
     if (order?.billing_address_id && order.billing_address_id !== order.shipping_address_id) {
       await supabase.from("addresses").update(addressRow(mapped.billing)).eq("id", order.billing_address_id);
     }
+    const { data: existingLines } = await supabase
+      .from("order_line_items")
+      .select("title, sku, weight_grams, weight_edited")
+      .eq("order_id", orderId)
+      .eq("organization_id", input.organizationId);
     await supabase.from("order_line_items").delete().eq("order_id", orderId).eq("organization_id", input.organizationId);
     if (mapped.lines.length) {
       await supabase.from("order_line_items").insert(
-        mapped.lines.map((line) => ({
+        preserveEditedWooLineWeights(mapped.lines, existingLines ?? []).map((line) => ({
           organization_id: input.organizationId,
           order_id: orderId,
           title: line.title,
@@ -208,9 +253,17 @@ export async function upsertWooCommerceOrder(
           quantity: line.quantity,
           unit_price: line.unitPrice,
           weight_grams: line.weightGrams,
+          weight_edited: line.weightEdited,
         }))
       );
     }
+    await applyWooParcelHydrate(supabase, {
+      organizationId: input.organizationId,
+      orderId,
+      orderStatus: mapped.terminal ? "CANCELLED" : mapped.status,
+      mapped,
+      userId: input.userId,
+    });
     if (input.applyAutomation !== false) {
       await maybeAutoShip(supabase, input, mapped, orderId);
     }
@@ -299,6 +352,7 @@ export async function upsertWooCommerceOrder(
         quantity: line.quantity,
         unit_price: line.unitPrice,
         weight_grams: line.weightGrams,
+        weight_edited: false,
       }))
     );
     if (itemsError) throw new Error(itemsError.message);
@@ -322,10 +376,118 @@ export async function upsertWooCommerceOrder(
     after: { source: "WOOCOMMERCE", sourceOrderId: mapped.sourceOrderId },
   });
 
+  await applyWooParcelHydrate(supabase, {
+    organizationId: input.organizationId,
+    orderId,
+    orderStatus: mapped.status,
+    mapped,
+    userId: input.userId,
+  });
   if (input.applyAutomation !== false) {
     await maybeAutoShip(supabase, input, mapped, orderId);
   }
   return { created: true, updated: false, skipped: false, orderId };
+}
+
+function wooWeightKey(title?: string | null, sku?: string | null) {
+  return `${String(title ?? "").trim().toLowerCase()}|${String(sku ?? "").trim().toLowerCase()}`;
+}
+
+function preserveEditedWooLineWeights(
+  lines: MappedWooOrder["lines"],
+  existing: Array<{
+    title?: string | null;
+    sku?: string | null;
+    weight_grams?: number | null;
+    weight_edited?: boolean | null;
+  }>
+) {
+  const edited = new Map<string, number | null>();
+  for (const row of existing) {
+    if (!row.weight_edited) continue;
+    edited.set(wooWeightKey(row.title, row.sku), row.weight_grams ?? null);
+  }
+  return lines.map((line) => {
+    const key = wooWeightKey(line.title, line.sku);
+    if (!edited.has(key)) return { ...line, weightEdited: false };
+    return { ...line, weightGrams: edited.get(key) ?? null, weightEdited: true };
+  });
+}
+
+async function applyWooParcelHydrate(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    orderStatus?: string | null;
+    mapped: MappedWooOrder;
+    userId?: string;
+  }
+) {
+  if (WOO_PARCEL_LOCKED_ORDER.has((input.orderStatus ?? "").toUpperCase())) return;
+  const parcel = wooParcelFromLines(input.mapped.lines);
+  if (parcel.weightGrams == null && parcel.lengthCm == null) return;
+
+  const { data: shipments } = await supabase
+    .from("shipments")
+    .select("id, status, length_cm, width_cm, height_cm, weight_grams")
+    .eq("organization_id", input.organizationId)
+    .eq("order_id", input.orderId);
+  const rows = Array.isArray(shipments) ? shipments : [];
+  const unlocked = rows.filter(
+    (row) => !WOO_PARCEL_LOCKED_SHIPMENT.has(String((row as { status?: string }).status ?? "").toUpperCase())
+  );
+
+  if (!rows.length) {
+    if (parcel.lengthCm == null && parcel.weightGrams == null) return;
+    try {
+      await createShipmentsForOrders(supabase, tenant(input.organizationId, input.userId), [input.orderId], {
+        enqueueBooking: false,
+        runBookingNow: false,
+        setOrderProcessing: false,
+        ...(parcel.weightGrams != null ? { weightGrams: parcel.weightGrams } : {}),
+        ...(parcel.lengthCm != null
+          ? { lengthCm: parcel.lengthCm, widthCm: parcel.widthCm ?? undefined, heightCm: parcel.heightCm ?? undefined }
+          : {}),
+      });
+    } catch {
+      // Parcel hydrate is optional; order import should still succeed.
+    }
+    return;
+  }
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("parcel_weight_mode")
+    .eq("id", input.orderId)
+    .maybeSingle();
+  const autoWeight =
+    String((order as { parcel_weight_mode?: string } | null)?.parcel_weight_mode ?? "auto").toLowerCase() !== "manual";
+
+  for (const row of unlocked as Array<{
+    id: string;
+    length_cm?: number | null;
+    width_cm?: number | null;
+    height_cm?: number | null;
+    weight_grams?: number | null;
+  }>) {
+    const hasDims = Number(row.length_cm) > 0 && Number(row.width_cm) > 0 && Number(row.height_cm) > 0;
+    const patch: Record<string, number> = {};
+    if (!hasDims && parcel.lengthCm != null && parcel.widthCm != null && parcel.heightCm != null) {
+      patch.length_cm = parcel.lengthCm;
+      patch.width_cm = parcel.widthCm;
+      patch.height_cm = parcel.heightCm;
+    }
+    if (autoWeight && parcel.weightGrams != null && parcel.weightGrams >= 1) {
+      patch.weight_grams = parcel.weightGrams;
+    }
+    if (!Object.keys(patch).length) continue;
+    await supabase
+      .from("shipments")
+      .update(patch)
+      .eq("id", row.id)
+      .eq("organization_id", input.organizationId);
+  }
 }
 
 function addressRow(address: {
@@ -430,11 +592,11 @@ export async function syncWooCommercePage(
     customAfter: settings.customAfter,
     customBefore: settings.customBefore,
     lastSuccessfulSyncAt: input.connection.last_successful_sync_at,
-    incremental: Boolean(input.connection.last_successful_sync_at) && !settings.customAfter,
+    incremental: Boolean(input.connection.last_successful_sync_at) && !settings.customAfter && !input.force,
   };
   const page = input.page && input.page > 0 ? input.page : 1;
   const listed = await listWooOrders(input.credentials, wooOrderListQuery(window, page), input.transport);
-  const measures = await measuresFor(input.credentials, listed.orders, input.transport);
+  const measures = await loadWooProductMeasures(input.credentials, listed.orders, input.transport);
   let imported = 0;
   let updated = 0;
   let skipped = 0;

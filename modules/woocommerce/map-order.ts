@@ -1,6 +1,11 @@
 import { normalizeIndiaMobile } from "@/lib/phone/india-whatsapp";
 import { mapWooPayment } from "@/modules/woocommerce/payment";
-import { normalizeWooLengthToCm, normalizeWooWeightToGrams } from "@/modules/woocommerce/units";
+import {
+  clampWooParcelCm,
+  normalizeWooLengthToCm,
+  normalizeWooWeightToGrams,
+  WOO_PARCEL_CM,
+} from "@/modules/woocommerce/units";
 import type { OrderStatus } from "@/types/domain";
 
 export type WooRemoteAddress = {
@@ -84,6 +89,66 @@ function addressOf(address: WooRemoteAddress | undefined, fallbackName: string) 
 
 export function wooRefundAmount(refunds?: Array<{ total?: string | number }>) {
   return (refunds ?? []).reduce((sum, row) => sum + Math.abs(Number(row.total) || 0), 0);
+}
+
+function nonemptyMeasure(value: unknown) {
+  if (value == null) return false;
+  const text = String(value).trim();
+  if (!text) return false;
+  const amount = Number(text);
+  return Number.isFinite(amount) ? amount > 0 : true;
+}
+
+function completeWooDimensions(dimensions?: WooProductMeasure["dimensions"] | null) {
+  return (
+    nonemptyMeasure(dimensions?.length) &&
+    nonemptyMeasure(dimensions?.width) &&
+    nonemptyMeasure(dimensions?.height)
+  );
+}
+
+/** Variation shipping first; empty variation fields fall back to the parent product. */
+export function mergeWooMeasures(
+  primary?: WooProductMeasure | null,
+  fallback?: WooProductMeasure | null
+): WooProductMeasure {
+  const weight = nonemptyMeasure(primary?.weight) ? primary?.weight : fallback?.weight;
+  const dimensions = completeWooDimensions(primary?.dimensions)
+    ? primary?.dimensions
+    : fallback?.dimensions;
+  return { weight: weight ?? undefined, dimensions };
+}
+
+export function wooParcelFromLines(
+  lines: Array<{
+    quantity: number;
+    weightGrams: number | null;
+    lengthCm: number | null;
+    widthCm: number | null;
+    heightCm: number | null;
+  }>
+) {
+  let weightGrams = 0;
+  let maxL = 0;
+  let maxW = 0;
+  let maxH = 0;
+  let hasBox = false;
+  for (const line of lines) {
+    const quantity = Math.max(1, Number(line.quantity) || 1);
+    if (line.weightGrams && line.weightGrams > 0) weightGrams += line.weightGrams * quantity;
+    if (line.lengthCm && line.widthCm && line.heightCm) {
+      hasBox = true;
+      maxL = Math.max(maxL, line.lengthCm);
+      maxW = Math.max(maxW, line.widthCm);
+      maxH = Math.max(maxH, line.heightCm);
+    }
+  }
+  return {
+    weightGrams: weightGrams > 0 ? Math.round(weightGrams) : null,
+    lengthCm: hasBox ? clampWooParcelCm(maxL, WOO_PARCEL_CM.length.min, WOO_PARCEL_CM.length.max) : null,
+    widthCm: hasBox ? clampWooParcelCm(maxW, WOO_PARCEL_CM.width.min, WOO_PARCEL_CM.width.max) : null,
+    heightCm: hasBox ? clampWooParcelCm(maxH, WOO_PARCEL_CM.height.min, WOO_PARCEL_CM.height.max) : null,
+  };
 }
 
 export function variationLabel(line: WooRemoteLine) {

@@ -811,6 +811,14 @@ async function wooCommerceSync(supabase: ReturnType<typeof createAdminClient>, p
     .from("background_jobs")
     .update({ progress: { ...progress, imported, updated, skipped, hasMore: result.hasMore, page: result.nextPage } })
     .eq("id", payload.jobId);
+  await supabase
+    .from("woocommerce_connections")
+    .update({
+      last_sync_at: new Date().toISOString(),
+      last_error: null,
+      ...(result.hasMore ? {} : { last_successful_sync_at: new Date().toISOString() }),
+    })
+    .eq("id", connection.id);
   if (result.hasMore && result.nextPage) {
     await enqueueWooCommerceSync(supabase, {
       organizationId: payload.organizationId,
@@ -821,16 +829,7 @@ async function wooCommerceSync(supabase: ReturnType<typeof createAdminClient>, p
       updated,
       skipped,
     });
-    return;
   }
-  await supabase
-    .from("woocommerce_connections")
-    .update({
-      last_sync_at: new Date().toISOString(),
-      last_successful_sync_at: new Date().toISOString(),
-      last_error: null,
-    })
-    .eq("id", connection.id);
 }
 
 async function wooCommerceTracking(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {

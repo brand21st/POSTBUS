@@ -490,19 +490,31 @@ export async function disconnectWoo(supabase: SupabaseClient, ctx: TenantContext
 
 export async function wooStatus(supabase: SupabaseClient, organizationId: string) {
   const row = await loadWooConnection(supabase, organizationId);
-  const { count } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", organizationId)
-    .eq("source", "WOOCOMMERCE");
-  const { data: automation } = await supabase
-    .from("automation_settings")
-    .select("auto_woocommerce_sync, auto_woocommerce_tracking")
-    .eq("organization_id", organizationId)
-    .maybeSingle();
+  const [{ count }, { data: automation }, { data: syncJob }] = await Promise.all([
+    supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId)
+      .eq("source", "WOOCOMMERCE"),
+    supabase
+      .from("automation_settings")
+      .select("auto_woocommerce_sync, auto_woocommerce_tracking")
+      .eq("organization_id", organizationId)
+      .maybeSingle(),
+    supabase
+      .from("background_jobs")
+      .select("status, last_error, created_at, progress")
+      .eq("organization_id", organizationId)
+      .eq("job_type", "woocommerce-sync")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
   return {
     ...publicWooConnection(row, count ?? 0),
     autoSync: automation?.auto_woocommerce_sync !== false && row?.sync_enabled !== false,
     autoTracking: automation?.auto_woocommerce_tracking === true,
+    syncJobStatus: (syncJob?.status as string | undefined) ?? null,
+    syncJobError: (syncJob?.last_error as string | undefined) ?? null,
   };
 }

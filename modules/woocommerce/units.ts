@@ -30,6 +30,17 @@ export function normalizeWooLengthToCm(value: unknown, unit: string | null | und
   return Math.round(cm * 1000) / 1000;
 }
 
+export const WOO_PARCEL_CM = {
+  length: { min: 14, max: 150 },
+  width: { min: 9, max: 150 },
+  height: { min: 1, max: 150 },
+} as const;
+
+export function clampWooParcelCm(value: number | null | undefined, min: number, max: number) {
+  if (value == null || !Number.isFinite(value) || value <= 0) return null;
+  return Math.min(max, Math.max(min, Math.round(value * 10) / 10));
+}
+
 export function readWooMeasurementUnits(
   settings: Array<{ id?: string; value?: string }> | null | undefined
 ) {
