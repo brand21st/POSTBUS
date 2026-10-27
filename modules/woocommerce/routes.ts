@@ -6,7 +6,9 @@ import {
   completeWooAuthorization,
   connectWooManual,
   disconnectWoo,
+  registerWooWebhooks,
   startWooAuthorization,
+  testWooConnection,
   wooStatus,
 } from "@/modules/woocommerce/connect";
 import { wooSettings } from "@/modules/woocommerce/orders";
@@ -46,6 +48,19 @@ export async function handleWooCommerceIntegrationRoutes(
       consumerKey: String(body.consumerKey ?? body.consumer_key ?? ""),
       consumerSecret: String(body.consumerSecret ?? body.consumer_secret ?? ""),
     });
+  }
+
+  if (key === "POST integrations/woocommerce/test") {
+    const body = await request.json().catch(() => ({}));
+    return testWooConnection(supabase, ctx, {
+      storeUrl: String(body.storeUrl ?? body.store_url ?? ""),
+      consumerKey: String(body.consumerKey ?? body.consumer_key ?? ""),
+      consumerSecret: String(body.consumerSecret ?? body.consumer_secret ?? ""),
+    });
+  }
+
+  if (key === "POST integrations/woocommerce/webhooks") {
+    return registerWooWebhooks(supabase, ctx);
   }
 
   if (key === "POST integrations/woocommerce/sync" || key === "POST integrations/woocommerce/retry") {

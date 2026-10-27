@@ -46,6 +46,7 @@ import {
 } from "@/modules/shopify/oauth";
 import { shopifyReadyToSync } from "@/modules/shopify/orders";
 import { enqueueShopifyOrderSync, latestShopifySyncJob } from "@/modules/shopify/sync-job";
+import { registerWooWebhooks, testWooConnection } from "@/modules/woocommerce/connect";
 import { handleWooCommerceIntegrationRoutes } from "@/modules/woocommerce/routes";
 import { watiClientFromRow } from "@/modules/wati/client";
 import { watiBroadcastName, watiNotifyRecipient } from "@/modules/wati/notify";
@@ -276,6 +277,19 @@ export async function handleIntegrationRoutes(
 ) {
   const wooRoute = await handleWooCommerceIntegrationRoutes(request, supabase, ctx, key);
   if (wooRoute) return wooRoute;
+
+  if (key === "POST integrations/woocommerce/test") {
+    const body = await request.json().catch(() => ({}));
+    return testWooConnection(supabase, ctx, {
+      storeUrl: String(body.storeUrl ?? body.store_url ?? ""),
+      consumerKey: String(body.consumerKey ?? body.consumer_key ?? ""),
+      consumerSecret: String(body.consumerSecret ?? body.consumer_secret ?? ""),
+    });
+  }
+
+  if (key === "POST integrations/woocommerce/webhooks") {
+    return registerWooWebhooks(supabase, ctx);
+  }
 
   if (key === "GET integrations") {
     const [{ data: shopify }, { data: indiaPost }, { data: wati }, { data: vachat }, wooResult, syncJob] =

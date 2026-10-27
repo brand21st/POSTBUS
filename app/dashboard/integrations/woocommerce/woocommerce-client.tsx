@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -49,12 +48,7 @@ type Delivery = {
 const STATUSES = ["processing", "on-hold", "pending", "completed"];
 
 export default function WooCommerceIntegration() {
-  const params = useSearchParams();
   const queryClient = useQueryClient();
-  const [storeUrl, setStoreUrl] = useState("");
-  const [consumerKey, setConsumerKey] = useState("");
-  const [consumerSecret, setConsumerSecret] = useState("");
-  const [showManual, setShowManual] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const connectFormRef = useRef<HTMLFormElement>(null);
   const status = useQuery({
@@ -68,35 +62,54 @@ export default function WooCommerceIntegration() {
   });
   const data = status.data;
   const connected = (data?.status ?? "").toUpperCase() === "CONNECTED";
-  const returned = params.get("success");
+  const webhookCount = data?.webhookIds?.length ?? 0;
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["woocommerce"] });
     void queryClient.invalidateQueries({ queryKey: ["integrations"] });
   };
 
-  const authorize = useMutation({
-    mutationFn: (url: string) =>
-      api<{ authorizeUrl: string }>("/api/v1/integrations/woocommerce/authorize", {
+  const readConnectForm = () => {
+    const form = connectFormRef.current;
+    if (!form) return { storeUrl: "", consumerKey: "", consumerSecret: "" };
+    const fields = new FormData(form);
+    return {
+      storeUrl: String(fields.get("storeUrl") ?? "").trim(),
+      consumerKey: String(fields.get("consumerKey") ?? "").trim(),
+      consumerSecret: String(fields.get("consumerSecret") ?? "").trim(),
+    };
+  };
+
+  const test = useMutation({
+    mutationFn: (input?: { storeUrl: string; consumerKey: string; consumerSecret: string }) =>
+      api<{ ok: boolean; storeHost?: string }>("/api/v1/integrations/woocommerce/test", {
         method: "POST",
-        body: JSON.stringify({ storeUrl: url }),
+        body: JSON.stringify(input ?? {}),
       }),
     onSuccess: (result) => {
-      window.location.href = result.authorizeUrl;
+      toast.success(result.storeHost ? `REST API reached ${result.storeHost}.` : "REST API connection succeeded.");
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const manual = useMutation({
+  const connect = useMutation({
     mutationFn: (input: { storeUrl: string; consumerKey: string; consumerSecret: string }) =>
       api<WooStatus>("/api/v1/integrations/woocommerce/manual", {
         method: "POST",
         body: JSON.stringify(input),
       }),
     onSuccess: () => {
-      setConsumerKey("");
-      setConsumerSecret("");
+      connectFormRef.current?.reset();
       toast.success("WooCommerce store connected.");
+      invalidate();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const webhooks = useMutation({
+    mutationFn: () => api<WooStatus>("/api/v1/integrations/woocommerce/webhooks", { method: "POST" }),
+    onSuccess: () => {
+      toast.success("Order webhooks registered.");
       invalidate();
     },
     onError: (error: Error) => toast.error(error.message),
@@ -132,26 +145,12 @@ export default function WooCommerceIntegration() {
 
   const settings = data?.settings;
 
-  const readConnectForm = () => {
-    const form = connectFormRef.current;
-    if (!form) return { storeUrl: "", consumerKey: "", consumerSecret: "" };
-    const fields = new FormData(form);
-    return {
-      storeUrl: String(fields.get("storeUrl") ?? "").trim(),
-      consumerKey: String(fields.get("consumerKey") ?? "").trim(),
-      consumerSecret: String(fields.get("consumerSecret") ?? "").trim(),
-    };
-  };
-
   return (
     <div className="space-y-6">
       <PageHeader
         title="WooCommerce"
         description="Import WooCommerce orders and book them with your existing India Post account."
       />
-      {returned === "0" ? (
-        <p className="text-sm text-red-600">WooCommerce authorization was cancelled. You can try again or enter API keys.</p>
-      ) : null}
 
       <Card>
         <CardHeader>
@@ -169,19 +168,27 @@ export default function WooCommerceIntegration() {
           <p>Last successful sync: {formatDate(data?.lastSuccessfulSyncAt, true)}</p>
           <p>Orders imported: {(data?.ordersImported ?? 0).toLocaleString("en-IN")}</p>
           <p>Auto sync: {data?.autoSync === false ? "Disabled" : "Enabled"}</p>
-          <p>Webhooks: {(data?.webhookIds?.length ?? 0) > 0 ? "Registered" : "Not registered"}</p>
+          <p>
+            Webhooks:{" "}
+            {webhookCount > 0
+              ? `${webhookCount} registered (order created, updated, deleted)`
+              : "Not registered"}
+          </p>
+          {data?.lastWebhookAt ? <p>Last webhook: {formatDate(data.lastWebhookAt, true)}</p> : null}
           {data?.lastError ? <p className="text-red-600">{data.lastError}</p> : null}
           {connected ? (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => sync.mutate()} disabled={sync.isPending}>Sync now</Button>
-              <Button size="sm" variant="secondary" onClick={() => setShowLogs((value) => !value)}>View sync logs</Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => authorize.mutate(data?.storeUrl || storeUrl)}
-                disabled={!data?.storeUrl && !storeUrl}
-              >
-                Reconnect
+              <Button size="sm" onClick={() => test.mutate()} disabled={test.isPending}>
+                Test connection
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => webhooks.mutate()} disabled={webhooks.isPending}>
+                {webhookCount > 0 ? "Re-register webhooks" : "Register webhooks"}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => sync.mutate()} disabled={sync.isPending}>
+                Sync now
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setShowLogs((value) => !value)}>
+                View sync logs
               </Button>
               <Button size="sm" variant="secondary" onClick={() => disconnect.mutate()} disabled={disconnect.isPending}>
                 Disconnect
@@ -195,7 +202,10 @@ export default function WooCommerceIntegration() {
         <Card>
           <CardHeader>
             <CardTitle>Connect a store</CardTitle>
-            <CardDescription>Use WooCommerce authorization, or enter a Read/Write REST API key.</CardDescription>
+            <CardDescription>
+              Use a Read/Write REST API key from WooCommerce → Settings → Advanced → REST API. PostBus will
+              verify the key, then register order webhooks.
+            </CardDescription>
           </CardHeader>
           <CardContent className="pt-0">
             <form
@@ -203,15 +213,7 @@ export default function WooCommerceIntegration() {
               className="space-y-4"
               onSubmit={(event) => {
                 event.preventDefault();
-                const fields = readConnectForm();
-                setStoreUrl(fields.storeUrl);
-                authorize.mutate(fields.storeUrl);
-              }}
-              onReset={() => {
-                setStoreUrl("");
-                setConsumerKey("");
-                setConsumerSecret("");
-                setShowManual(false);
+                connect.mutate(readConnectForm());
               }}
             >
               <div className="space-y-2">
@@ -219,65 +221,41 @@ export default function WooCommerceIntegration() {
                 <Input
                   id="woo-url"
                   name="storeUrl"
-                  defaultValue=""
+                  defaultValue={data?.storeUrl || ""}
                   placeholder="https://shop.example.com"
                   autoComplete="off"
-                  onChange={(event) => setStoreUrl(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="woo-key">Consumer key</Label>
+                <Input id="woo-key" name="consumerKey" defaultValue="" autoComplete="off" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="woo-secret">Consumer secret</Label>
+                <Input
+                  id="woo-secret"
+                  name="consumerSecret"
+                  type="password"
+                  defaultValue=""
+                  autoComplete="off"
                 />
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button type="submit" disabled={authorize.isPending || !storeUrl}>
-                  Authorize with WooCommerce
-                </Button>
-                <Button type="button" variant="secondary" onClick={() => setShowManual((value) => !value)}>
-                  {showManual ? "Hide manual keys" : "Use API keys instead"}
-                </Button>
                 <Button
-                  type="reset"
+                  type="button"
                   variant="secondary"
-                  onClick={(event) => event.currentTarget.form?.reset()}
+                  onClick={() => test.mutate(readConnectForm())}
+                  disabled={test.isPending}
                 >
+                  Test connection
+                </Button>
+                <Button type="submit" disabled={connect.isPending}>
+                  Connect store
+                </Button>
+                <Button type="reset" variant="secondary">
                   Reset
                 </Button>
               </div>
-              {showManual ? (
-                <div className="space-y-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="woo-key">Consumer key</Label>
-                    <Input
-                      id="woo-key"
-                      name="consumerKey"
-                      defaultValue=""
-                      autoComplete="off"
-                      onChange={(event) => setConsumerKey(event.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="woo-secret">Consumer secret</Label>
-                    <Input
-                      id="woo-secret"
-                      name="consumerSecret"
-                      type="password"
-                      defaultValue=""
-                      autoComplete="off"
-                      onChange={(event) => setConsumerSecret(event.target.value)}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      const fields = readConnectForm();
-                      setConsumerKey(fields.consumerKey);
-                      setConsumerSecret(fields.consumerSecret);
-                      setStoreUrl(fields.storeUrl);
-                      manual.mutate(fields);
-                    }}
-                    disabled={manual.isPending}
-                  >
-                    Connect with API keys
-                  </Button>
-                </div>
-              ) : null}
             </form>
           </CardContent>
         </Card>
