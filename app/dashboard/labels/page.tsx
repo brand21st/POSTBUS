@@ -1,20 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { printPdfBlob } from "@/lib/print/browser-pdf";
 import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
 import { runPrintShippingSlip } from "@/lib/print/print-shipping-slip";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Download, Printer, QrCode, RefreshCw, Tag, Truck } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Download, Printer, QrCode, RefreshCw, Search, Tag, Truck, X } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { LabelCountStrip } from "@/components/labels/label-count-strip";
+import { LabelDateFilter, toLabelDateFilterValue } from "@/components/labels/label-date-filter";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { committedSearchChanged, selectionAfterFilterChange } from "@/lib/dashboard/orders-list-query";
+import {
+  labelsApiSearchParams,
+  labelsListHref,
+  parseLabelsListSearchParams,
+  selectedLabelsCaption,
+  serializeLabelsListSearchParams,
+} from "@/lib/dashboard/labels-list-query";
 import { asPaginated } from "@/lib/dashboard/records";
-import { formatDate } from "@/lib/format";
+import { DEFAULT_LABEL_TIMEZONE, formatZonedDateTime } from "@/modules/labels/date-range";
 import { ApiError, api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
@@ -27,6 +40,9 @@ import {
   type LabelTemplate,
 } from "@/modules/labels/template-schema";
 import type { LabelRecord, Paginated } from "@/types/api";
+
+type LabelTableRow = LabelRecord & { rowNumber: number };
+type LabelSummary = { total: number; today: number; yesterday: number; timezone: string };
 
 function printLabel(status?: string | null) {
   const value = (status ?? "").toUpperCase();
@@ -226,9 +242,13 @@ async function downloadOfficialIndiaPostLabel(input: { shipmentId?: string | nul
   return sourceHeader;
 }
 
-export default function LabelsPage() {
-  const [page, setPage] = useState(1);
-  const [kind, setKind] = useState<"ALL" | "COMPLETE" | "INCOMPLETE">("ALL");
+function LabelsDashboard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const listState = useMemo(() => parseLabelsListSearchParams(searchParams), [searchParams]);
+  const { kind } = listState;
+  const [search, setSearch] = useState(listState.q);
+  const committedSearchRef = useRef(listState.q);
   const [selected, setSelected] = useState<string[]>([]);
   const queryClient = useQueryClient();
   const entitlements = usePlanEntitlements();
@@ -238,15 +258,45 @@ export default function LabelsPage() {
   const canBulk = entitlements.allows(FEATURE.bulk);
   const canOfficialIndiaPostLabel = !entitlements.loading && entitlements.showsOfficialIndiaPostLabel;
 
-  const query = useQuery({
-    queryKey: ["labels", page, kind],
-    queryFn: () => {
-      const params = new URLSearchParams({ page: String(page), pageSize: "20" });
-      if (kind !== "ALL") params.set("kind", kind);
-      return api<Paginated<LabelRecord>>(`/api/v1/labels?${params.toString()}`);
+  const replaceListState = useCallback(
+    (patch: Partial<typeof listState>) => {
+      router.replace(labelsListHref(serializeLabelsListSearchParams({ ...listState, ...patch })), { scroll: false });
     },
+    [listState, router]
+  );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(listState.q), 0);
+    return () => window.clearTimeout(timer);
+  }, [listState.q]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const next = search.trim();
+      if (committedSearchChanged(committedSearchRef.current, next)) {
+        committedSearchRef.current = next;
+        setSelected(selectionAfterFilterChange());
+        replaceListState({ page: 1, q: next });
+        return;
+      }
+      committedSearchRef.current = next;
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [replaceListState, search]);
+
+  const query = useQuery({
+    queryKey: ["labels", "list", listState],
+    queryFn: () => api<Paginated<LabelRecord>>(`/api/v1/labels?${labelsApiSearchParams(listState).toString()}`),
+    placeholderData: keepPreviousData,
     refetchInterval: 5_000,
   });
+
+  const summary = useQuery({
+    queryKey: ["labels", "summary"],
+    queryFn: () => api<LabelSummary>("/api/v1/labels/summary"),
+    refetchInterval: 5_000,
+  });
+  const timezone = summary.data?.timezone ?? DEFAULT_LABEL_TIMEZONE;
 
   const templates = useQuery({
     queryKey: ["label-template"],
@@ -420,15 +470,35 @@ export default function LabelsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const columns: DataTableColumn<LabelRecord>[] = [
+  const rows: LabelTableRow[] = list.items.map((row, index) => ({
+    ...row,
+    rowNumber: (list.page - 1) * list.pageSize + index + 1,
+  }));
+
+  const columns: DataTableColumn<LabelTableRow>[] = [
+    {
+      id: "rowNumber",
+      header: "#",
+      hug: true,
+      width: 56,
+      cell: (row) => <span className="tabular-nums text-sm text-muted">{row.rowNumber}</span>,
+    },
     {
       id: "label",
       header: "Order",
       cell: (row) => (
         <div className="min-w-[7rem]">
           <p className="font-semibold text-foreground">{row.orderNumber ?? row.order_number ?? row.id.slice(0, 8)}</p>
-          <p className="text-xs text-muted">{formatDate(row.createdAt ?? row.created_at, true)}</p>
         </div>
+      ),
+    },
+    {
+      id: "generated",
+      header: "Generated Date",
+      cell: (row) => (
+        <p className="whitespace-nowrap text-sm text-muted">
+          {formatZonedDateTime(row.createdAt ?? row.created_at, timezone, true)}
+        </p>
       ),
     },
     {
@@ -610,42 +680,47 @@ export default function LabelsPage() {
               <RefreshCw className="size-4" />
               {retryIncomplete.isPending ? "Retrying…" : "Retry incomplete"}
             </Button>
-            {canWriteLabels && selected.length > 0 ? (
-              <Button
-                type="button"
-                variant="secondary"
-                title={canBulk ? "Queue selected slips as one PDF" : "Bulk printing is on Pro"}
-                disabled={canBulk ? printAllSlips.isPending : false}
-                onClick={() => {
-                  if (!canBulk) {
-                    window.location.href = "/dashboard/billing";
-                    return;
-                  }
-                  printAllSlips.mutate(selected);
-                }}
-              >
-                <Printer className="size-4" />
-                {printAllSlips.isPending ? "Sending…" : "Print all"}
+            {canBulk ? null : (
+              <Button type="button" variant="secondary" onClick={() => router.push("/dashboard/billing")}>
+                Upgrade plan
               </Button>
-            ) : null}
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={canBulk ? selected.length === 0 || bulk.isPending : false}
-              onClick={() => {
-                if (!canBulk) {
-                  window.location.href = "/dashboard/billing";
-                  return;
-                }
-                bulk.mutate(selected);
-              }}
-            >
-              <Download className="size-4" />
-              {canBulk ? "Bulk download" : "Upgrade plan"}
-            </Button>
+            )}
           </>
         }
       />
+      <LabelCountStrip
+        loading={summary.isLoading}
+        filteredLoading={query.isLoading}
+        total={summary.data?.total}
+        today={summary.data?.today}
+        yesterday={summary.data?.yesterday}
+        filtered={list.total}
+      />
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <LabelDateFilter
+          value={toLabelDateFilterValue(listState)}
+          onChange={(next) => {
+            setSelected(selectionAfterFilterChange());
+            replaceListState({
+              page: 1,
+              date: next.kind,
+              on: next.kind === "custom" ? next.on : null,
+              from: next.kind === "range" ? next.from : null,
+              to: next.kind === "range" ? next.to : null,
+            });
+          }}
+        />
+        <div className="relative w-full max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search order, tracking, or barcode"
+            aria-label="Search labels"
+            className="h-9 pl-9"
+          />
+        </div>
+      </div>
       <div className="flex flex-wrap gap-2">
         {(
           [
@@ -660,37 +735,114 @@ export default function LabelsPage() {
             size="sm"
             variant={kind === value ? "primary" : "secondary"}
             onClick={() => {
-              setKind(value);
-              setPage(1);
-              setSelected([]);
+              setSelected(selectionAfterFilterChange());
+              replaceListState({ kind: value, page: 1 });
             }}
           >
             {label}
           </Button>
         ))}
       </div>
+      {selected.length > 0 ? (
+        <div
+          className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-sm font-semibold text-ink">{selectedLabelsCaption(selected.length)}</p>
+          <div className="flex flex-wrap gap-2">
+            {canWriteLabels ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                title={canBulk ? "Queue selected slips as one PDF" : "Bulk printing is on Pro"}
+                disabled={canBulk ? printAllSlips.isPending : false}
+                onClick={() => {
+                  if (!canBulk) {
+                    router.push("/dashboard/billing");
+                    return;
+                  }
+                  printAllSlips.mutate(selected);
+                }}
+              >
+                <Printer className="size-4" />
+                {printAllSlips.isPending ? "Sending…" : "Print Selected"}
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={canBulk ? bulk.isPending : false}
+              onClick={() => {
+                if (!canBulk) {
+                  router.push("/dashboard/billing");
+                  return;
+                }
+                bulk.mutate(selected);
+              }}
+            >
+              <Download className="size-4" />
+              {canBulk ? (bulk.isPending ? "Downloading…" : "Download Selected") : "Upgrade plan"}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setSelected([])}>
+              <X className="size-4" />
+              Clear Selection
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <DataTable
         columns={columns}
-        data={list.items}
+        data={rows}
         loading={query.isLoading}
+        fetching={query.isFetching}
         error={query.error instanceof Error ? query.error : null}
-        emptyTitle="No labels yet"
-        emptyDescription="When a shipment is booked, the India Post barcode and packing slip appear on one row."
+        emptyTitle={listState.date !== "all" || listState.q || listState.kind !== "ALL" ? "No labels match these filters" : "No labels yet"}
+        emptyDescription={
+          listState.date !== "all" || listState.q || listState.kind !== "ALL"
+            ? "Try a different date, search, or document status."
+            : "When a shipment is booked, the India Post barcode and packing slip appear on one row."
+        }
         emptyAction={
-          <div className="flex items-center gap-2 text-muted">
-            <Tag className="size-4" />
-            Connect India Post to generate labels.
-          </div>
+          listState.date !== "all" || listState.q || listState.kind !== "ALL" ? null : (
+            <div className="flex items-center gap-2 text-muted">
+              <Tag className="size-4" />
+              Connect India Post to generate labels.
+            </div>
+          )
         }
         page={list.page}
         pageSize={list.pageSize}
         total={list.total}
-        onPageChange={setPage}
+        onPageChange={(nextPage) => replaceListState({ page: nextPage })}
         selectable
         selectedIds={selected}
         onSelectionChange={setSelected}
         getRowId={rowKey}
       />
     </div>
+  );
+}
+
+export default function LabelsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-6">
+          <Skeleton className="h-16 w-full" />
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+          </div>
+          <Skeleton className="h-72 w-full" />
+        </div>
+      }
+    >
+      <LabelsDashboard />
+    </Suspense>
   );
 }

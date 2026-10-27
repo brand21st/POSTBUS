@@ -41,7 +41,7 @@ import {
   indiaPostLabelRequestError,
 } from "@/modules/labels/official-fetch";
 import { fetchReceiptPdf } from "@/modules/labels/receipt";
-import { listGroupedLabels } from "@/modules/labels/list";
+import { getLabelDashboardCounts, listGroupedLabels } from "@/modules/labels/list";
 import { getLabelTemplate } from "@/modules/labels/template-service";
 import { defaultLabelTemplateId } from "@/modules/labels/template-schema";
 import {
@@ -352,12 +352,26 @@ export async function handleCommerceRoutes(
     return updateShipmentDimensions(supabase, ctx, slugs[1], body);
   }
 
+  if (key === "GET labels/summary") {
+    return getLabelDashboardCounts(supabase, ctx);
+  }
+
   if (key === "GET labels") {
-    const page = Number(request.nextUrl.searchParams.get("page") || 1);
-    const pageSize = Number(request.nextUrl.searchParams.get("pageSize") || 20);
-    const kind = request.nextUrl.searchParams.get("kind");
-    const q = request.nextUrl.searchParams.get("q");
-    return listGroupedLabels(supabase, ctx, { page, pageSize, kind, q });
+    const params = request.nextUrl.searchParams;
+    const page = Number(params.get("page") || 1);
+    const pageSize = Number(params.get("pageSize") || 20);
+    const kind = params.get("kind");
+    const q = params.get("q");
+    return listGroupedLabels(supabase, ctx, {
+      page,
+      pageSize,
+      kind,
+      q,
+      date: params.get("date"),
+      on: params.get("on"),
+      from: params.get("from"),
+      to: params.get("to"),
+    });
   }
 
   if (method === "GET" && slugs[0] === "labels" && slugs[2] === "download") {

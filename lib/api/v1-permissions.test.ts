@@ -238,6 +238,7 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "labels/bulk-download", ["labels", "bulk-download"])).toBe(
       "labels.read"
     );
+    expect(permissionForTenantRoute("GET", "labels/summary", ["labels", "summary"])).toBe("labels.read");
     expect(
       permissionForTenantRoute("POST", "labels/abc/packing-slip", ["labels", "abc", "packing-slip"])
     ).toBe("labels.write");

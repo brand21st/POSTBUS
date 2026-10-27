@@ -1,6 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { TenantContext } from "@/lib/api/context";
+import {
+  DEFAULT_LABEL_TIMEZONE,
+  normalizeLabelDatePreset,
+  resolveIanaTimezone,
+  resolveLabelDateBounds,
+  type LabelDateFilterInput,
+} from "@/modules/labels/date-range";
 import { filterGroupedLabels, groupLabelsByShipment } from "@/modules/labels/group";
 import { mapLabelRow } from "@/modules/labels/map";
 
@@ -39,16 +46,49 @@ function sanitizeLabelSearch(value?: string | null) {
   return trimmed || null;
 }
 
+export async function loadOrganizationTimezone(supabase: SupabaseClient, organizationId: string) {
+  const { data } = await supabase.from("organizations").select("timezone").eq("id", organizationId).maybeSingle();
+  return resolveIanaTimezone((data as { timezone?: string | null } | null)?.timezone);
+}
+
+export async function getLabelDashboardCounts(supabase: SupabaseClient, ctx: TenantContext) {
+  const timezone = await loadOrganizationTimezone(supabase, ctx.organizationId);
+  const { data, error } = await supabase.rpc("label_dashboard_counts", {
+    p_organization_id: ctx.organizationId,
+    p_timezone: timezone,
+  });
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { total?: number | string; today?: number | string; yesterday?: number | string }
+    | null;
+  return {
+    total: Number(row?.total ?? 0),
+    today: Number(row?.today ?? 0),
+    yesterday: Number(row?.yesterday ?? 0),
+    timezone,
+  };
+}
+
 export async function listGroupedLabels(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  query: { page: number; pageSize: number; kind?: string | null; q?: string | null }
+  query: {
+    page: number;
+    pageSize: number;
+    kind?: string | null;
+    q?: string | null;
+  } & LabelDateFilterInput
 ) {
   const page = Math.max(1, query.page || 1);
   const pageSize = Math.max(1, Math.min(query.pageSize || 20, 100));
   const kind = normalizeLabelKindFilter(query.kind);
   const search = sanitizeLabelSearch(query.q);
   const offset = (page - 1) * pageSize;
+  const needsTimezone = normalizeLabelDatePreset(query.date) !== "all";
+  const timezone = needsTimezone
+    ? await loadOrganizationTimezone(supabase, ctx.organizationId)
+    : DEFAULT_LABEL_TIMEZONE;
+  const bounds = resolveLabelDateBounds(query, timezone);
 
   const rpcArgs: Record<string, unknown> = {
     p_organization_id: ctx.organizationId,
@@ -56,6 +96,8 @@ export async function listGroupedLabels(
     p_limit: pageSize,
     p_offset: offset,
     p_search: search,
+    p_from: bounds?.fromIso ?? null,
+    p_to: bounds?.toIso ?? null,
   };
   const { data, error } = await supabase.rpc("label_shipment_groups", rpcArgs);
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
