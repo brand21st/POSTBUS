@@ -188,6 +188,83 @@ export async function connectWooManual(
   return publicWooConnection(await loadWooConnection(supabase, ctx.organizationId));
 }
 
+export async function testWooConnection(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  input: { storeUrl?: string; consumerKey?: string; consumerSecret?: string },
+  transport?: WooTransport
+) {
+  await assertConnectRate(ctx.organizationId);
+  const consumerKey = (input.consumerKey ?? "").trim();
+  const consumerSecret = (input.consumerSecret ?? "").trim();
+  const storeUrl = (input.storeUrl ?? "").trim();
+  let creds: WooCredentials | null = null;
+  if (consumerKey || consumerSecret || storeUrl) {
+    if (!consumerKey || !consumerSecret) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter the consumer key and consumer secret.");
+    }
+    const checked = await assertPublicHttpsUrl(storeUrl);
+    creds = { storeUrl: storeOriginOf(checked.url), consumerKey, consumerSecret };
+  } else {
+    creds = credentialsFromConnection(await loadWooConnection(supabase, ctx.organizationId));
+  }
+  if (!creds) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enter the store URL and a Read/Write REST API key.");
+  }
+  try {
+    await verifyWooRead(creds, transport);
+  } catch (error) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      error instanceof WooCommerceRequestError ? error.message : "PostBus could not verify that WooCommerce store."
+    );
+  }
+  return { ok: true as const, storeHost: storeHostOf(new URL(creds.storeUrl)) };
+}
+
+export async function registerWooWebhooks(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  transport?: WooTransport
+) {
+  await assertConnectRate(ctx.organizationId);
+  const existing = await loadWooConnection(supabase, ctx.organizationId);
+  const creds = credentialsFromConnection(existing);
+  if (!existing || !creds) {
+    throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Connect a WooCommerce store first.");
+  }
+  const secret = await ensureWebhookSecret(supabase, existing);
+  const previousIds = wooSettings(existing).webhookIds ?? [];
+  for (const id of previousIds) {
+    await deleteWooWebhook(creds, id, transport);
+  }
+  try {
+    const webhookIds = await installWooWebhooks(existing.id, creds, secret, transport);
+    await supabase
+      .from("woocommerce_connections")
+      .update({
+        settings: { ...wooSettings(existing), webhookIds },
+        last_error: null,
+      })
+      .eq("id", existing.id);
+  } catch (error) {
+    const message =
+      error instanceof WooCommerceRequestError && (error.status === 401 || error.status === 403)
+        ? "The API key needs Read/Write permission to register webhooks."
+        : "Connected, but webhooks could not be registered. Check that the key is Read/Write, then try again.";
+    await supabase.from("woocommerce_connections").update({ last_error: message }).eq("id", existing.id);
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, message);
+  }
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId,
+    action: "woocommerce.webhooks_registered",
+    entity_type: "woocommerce_connection",
+    entity_id: existing.id,
+  });
+  return wooStatus(supabase, ctx.organizationId);
+}
+
 async function persistConnected(
   supabase: SupabaseClient,
   organizationId: string,
@@ -218,6 +295,40 @@ async function persistConnected(
   return data as WooConnectionRow & { encrypted_webhook_secret: string };
 }
 
+async function ensureWebhookSecret(supabase: SupabaseClient, row: WooConnectionRow) {
+  if (row.encrypted_webhook_secret) return decryptSecret(row.encrypted_webhook_secret);
+  const webhookSecret = randomToken(32);
+  const { error } = await supabase
+    .from("woocommerce_connections")
+    .update({ encrypted_webhook_secret: encryptSecret(webhookSecret) })
+    .eq("id", row.id);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Could not save the WooCommerce webhook secret.");
+  return webhookSecret;
+}
+
+async function installWooWebhooks(
+  connectionId: string,
+  creds: WooCredentials,
+  secret: string,
+  transport?: WooTransport
+) {
+  const webhookIds: number[] = [];
+  for (const topic of WOO_ORDER_TOPICS) {
+    const id = await createWooWebhook(
+      creds,
+      {
+        name: `PostBus ${topic}`,
+        topic,
+        deliveryUrl: webhookDeliveryUrl(connectionId),
+        secret,
+      },
+      transport
+    );
+    webhookIds.push(id);
+  }
+  return webhookIds;
+}
+
 async function finishConnect(
   supabase: SupabaseClient,
   row: WooConnectionRow & { encrypted_webhook_secret?: string | null },
@@ -226,23 +337,9 @@ async function finishConnect(
   transport?: WooTransport
 ) {
   const secret = row.encrypted_webhook_secret ? decryptSecret(row.encrypted_webhook_secret) : "";
-  const webhookIds: number[] = [];
+  let webhookIds: number[] = [];
   try {
-    if (secret) {
-      for (const topic of WOO_ORDER_TOPICS) {
-        const id = await createWooWebhook(
-          creds,
-          {
-            name: `PostBus ${topic}`,
-            topic,
-            deliveryUrl: webhookDeliveryUrl(row.id),
-            secret,
-          },
-          transport
-        );
-        webhookIds.push(id);
-      }
-    }
+    if (secret) webhookIds = await installWooWebhooks(row.id, creds, secret, transport);
   } catch (error) {
     if (error instanceof WooCommerceRequestError && (error.status === 401 || error.status === 403)) {
       await supabase
@@ -259,7 +356,7 @@ async function finishConnect(
     }
     await supabase
       .from("woocommerce_connections")
-      .update({ last_error: "Connected, but webhooks could not be registered. Use Sync now, then reconnect." })
+      .update({ last_error: "Connected, but webhooks could not be registered. Use Register webhooks, then Sync now." })
       .eq("id", row.id);
   }
   let weightUnit: string | null = null;

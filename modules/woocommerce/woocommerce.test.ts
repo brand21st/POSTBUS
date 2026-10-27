@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { classifyProviderError } from "@/lib/jobs/retry";
-import { isBlockedIp, nextStoreRedirect, parsePublicStoreUrl } from "@/lib/security/outbound-url";
+import { isBlockedIp, nextStoreRedirect, parsePublicStoreUrl, pinnedLookup } from "@/lib/security/outbound-url";
 import { encryptSecret, decryptSecret } from "@/lib/security/crypto";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { merchantWooError, WooCommerceRequestError, wooRequest, wooRequestUrl } from "@/modules/woocommerce/client";
-import { decideWooAuthCallback, publicWooConnection } from "@/modules/woocommerce/connect";
+import { decideWooAuthCallback, publicWooConnection, WOO_ORDER_TOPICS } from "@/modules/woocommerce/connect";
 import { mapWooOrder, type WooRemoteOrder } from "@/modules/woocommerce/map-order";
 import { mapWooPayment } from "@/modules/woocommerce/payment";
 import { isPostbusEchoUpdate, shouldApplyWooOrder, verifyWooWebhookSignature, wooWebhookSignature } from "@/modules/woocommerce/signature";
@@ -16,6 +16,12 @@ import { parseWooWebhookPath } from "@/modules/woocommerce/webhooks";
 vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(async (host: string) => {
     if (host === "shop.example") return [{ address: "93.184.216.34", family: 4 }];
+    if (host === "dual.example") {
+      return [
+        { address: "2a02:4780:3c:542a:14b6:cbb7:3924:4342", family: 6 },
+        { address: "93.184.216.34", family: 4 },
+      ];
+    }
     if (host === "internal.example") return [{ address: "10.1.1.5", family: 4 }];
     throw Object.assign(new Error("not found"), { code: "ENOTFOUND" });
   }),
@@ -82,9 +88,22 @@ describe("WooCommerce connection", () => {
     await expect(assertPublicHttpsUrl("https://shop.example")).resolves.toMatchObject({
       addresses: ["93.184.216.34"],
     });
+    await expect(assertPublicHttpsUrl("https://dual.example")).resolves.toMatchObject({
+      addresses: ["93.184.216.34", "2a02:4780:3c:542a:14b6:cbb7:3924:4342"],
+    });
+    expect(isBlockedIp("")).toBe(true);
+    const answers: unknown[] = [];
+    pinnedLookup(["93.184.216.34"])("shop.example", { all: true }, (...args) => {
+      answers.push(args);
+    });
+    expect(answers[0]).toEqual([null, [{ address: "93.184.216.34", family: 4 }]]);
     const current = new URL("https://shop.example/store");
     expect(() => nextStoreRedirect(current, "https://127.0.0.1/secret")).toThrow(/cannot be used/);
     expect(nextStoreRedirect(current, "/wp-json/wc/v3").host).toBe("shop.example");
+  });
+
+  it("registers order created, updated, and deleted webhooks", () => {
+    expect(WOO_ORDER_TOPICS).toEqual(["order.created", "order.updated", "order.deleted"]);
   });
 
   it("approves, rejects, and dedupes authorization callbacks", () => {

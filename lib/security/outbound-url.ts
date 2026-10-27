@@ -1,3 +1,4 @@
+import type { LookupAddress, LookupOptions } from "node:dns";
 import { lookup } from "node:dns/promises";
 import http from "node:http";
 import https from "node:https";
@@ -12,6 +13,7 @@ const BLOCKED_HOSTS = new Set([
 ]);
 
 export function isBlockedIp(ip: string): boolean {
+  if (typeof ip !== "string" || !ip) return true;
   const kind = isIP(ip);
   if (kind === 4) return isBlockedIpv4(ip);
   if (kind === 6) return isBlockedIpv6(ip);
@@ -140,15 +142,60 @@ export async function assertPublicHttpsUrl(raw: string) {
       "PostBus could not reach that store address. Check the URL and try again."
     );
   }
+  return { url, addresses: publicAddressesFromLookup(records) };
+}
+
+export function publicAddressesFromLookup(records: Array<{ address?: string }>) {
+  const seen = new Set<string>();
+  const v4: string[] = [];
+  const v6: string[] = [];
   for (const record of records) {
-    if (isBlockedIp(record.address)) {
+    const address = record.address;
+    if (typeof address !== "string" || !address) continue;
+    const kind = isIP(address);
+    if (kind === 0) continue;
+    if (isBlockedIp(address)) {
       throw new AppError(
         ERROR_CODES.VALIDATION_ERROR,
         "That store address cannot be used. Use the public HTTPS URL of your WooCommerce store."
       );
     }
+    if (seen.has(address)) continue;
+    seen.add(address);
+    if (kind === 4) v4.push(address);
+    else v6.push(address);
   }
-  return { url, addresses: records.map((record) => record.address) };
+  const addresses = [...v4, ...v6];
+  if (!addresses.length) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      "PostBus could not reach that store address. Check the URL and try again."
+    );
+  }
+  return addresses;
+}
+
+type PinnedLookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  address: string | LookupAddress[],
+  family?: number
+) => void;
+
+export function pinnedLookup(addresses: string[]) {
+  const entries: LookupAddress[] = addresses
+    .filter((address) => isIP(address) !== 0)
+    .map((address) => ({ address, family: isIP(address) === 6 ? 6 : 4 }));
+  return (_hostname: string, options: LookupOptions, callback: PinnedLookupCallback) => {
+    if (!entries.length) {
+      callback(Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }) as NodeJS.ErrnoException, "");
+      return;
+    }
+    if (options.all) {
+      callback(null, entries);
+      return;
+    }
+    callback(null, entries[0].address, entries[0].family);
+  };
 }
 
 export type SafeHttpResult = {
@@ -206,8 +253,6 @@ function requestPinned(
   addresses: string[],
   init: { method: string; headers?: Record<string, string>; body?: string }
 ) {
-  const pin = addresses[0];
-  const family = isIP(pin) === 6 ? 6 : 4;
   return new Promise<SafeHttpResult>((resolve, reject) => {
     const request = https.request(
       {
@@ -218,9 +263,7 @@ function requestPinned(
         path: `${url.pathname}${url.search}`,
         method: init.method,
         headers: init.headers,
-        lookup: (_hostname, _options, callback) => {
-          callback(null, pin, family);
-        },
+        lookup: pinnedLookup(addresses),
       },
       (response: http.IncomingMessage) => {
         const chunks: Buffer[] = [];
