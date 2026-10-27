@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { composePlanFeatures, mergeFullPlanFeatures, ordersFeatureLine, splitPlanFeatures } from "@/modules/billing/plan-features";
+import { composePlanFeatures, displayPlanFeatures, mergeFullPlanFeatures, ordersFeatureLine, splitPlanFeatures } from "@/modules/billing/plan-features";
 
 describe("plan features", () => {
   it("always prepends the order-limit line and keeps custom extras", () => {
@@ -28,5 +28,15 @@ describe("plan features", () => {
     expect(full.features).toContain("Shopify order sync");
     expect(full.features).toContain("Priority support");
     expect(full.features.filter((line) => /orders per billing period/i.test(line))).toHaveLength(1);
+  });
+
+  it("hides Everything-in-this-plan tautologies on that plan's card", () => {
+    expect(displayPlanFeatures(["Everything in Starter", "Shopify order sync"], "starter")).toEqual([
+      "Shopify order sync",
+    ]);
+    expect(displayPlanFeatures(["Everything in Starter", "Priority support"], "pro")).toEqual([
+      "Everything in Starter",
+      "Priority support",
+    ]);
   });
 });

@@ -16,7 +16,7 @@ import {
   startCheckout,
   verifyCheckout,
 } from "@/modules/billing/subscriptions";
-import { getQuotaSnapshot } from "@/modules/billing/usage";
+import { getQuotaSnapshot, subscriptionCoverageEnded } from "@/modules/billing/usage";
 
 const subscribeSchema = z.object({
   planId: z.string().uuid(),
@@ -78,6 +78,7 @@ export async function handleBillingRoutes(
         : usage.orderLimit;
     const remaining =
       trialLimit == null ? usage.remaining : Math.max(0, trialLimit - usage.ordersUsed);
+    const coverageEnded = subscription ? subscriptionCoverageEnded(subscription) : false;
     return {
       configurationRequired: !razorpay.keyId || !razorpay.keySecret,
       configured: Boolean(razorpay.keyId && razorpay.keySecret),
@@ -93,11 +94,13 @@ export async function handleBillingRoutes(
             startedAt: subscription.started_at,
             currentPeriodStart: subscription.current_period_start,
             currentPeriodEnd: subscription.current_period_end,
-            renewsAt: subscription.renews_at,
+            renewsAt: coverageEnded ? null : subscription.renews_at,
             expiresAt: subscription.expires_at,
             cancelAtPeriodEnd: subscription.cancel_at_period_end,
             trialStart: subscription.trial_start,
             trialEnd: subscription.trial_end,
+            razorpaySubscriptionId: subscription.razorpay_subscription_id,
+            coverageEnded,
           }
         : null,
       usage: {

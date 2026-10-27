@@ -5,6 +5,27 @@ import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/b
 export const LIVE_STATUSES = ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"] as const;
 export const BOOKABLE_STATUSES = ["TRIAL", "ACTIVE", "PAST_DUE"] as const;
 
+/** One-time checkout (no Razorpay subscription) or trial/cancel-at-end: coverage stops at period end. */
+export function subscriptionCoverageEnded(
+  row: {
+    status?: string | null;
+    current_period_end?: string | null;
+    expires_at?: string | null;
+    trial_end?: string | null;
+    cancel_at_period_end?: boolean | null;
+    razorpay_subscription_id?: string | null;
+  },
+  now = Date.now()
+) {
+  const end = row.current_period_end || row.expires_at || row.trial_end;
+  if (!end || new Date(end).getTime() > now) return false;
+  const status = (row.status ?? "").toUpperCase();
+  if (status === "TRIAL") return true;
+  if (row.cancel_at_period_end) return true;
+  if (!row.razorpay_subscription_id) return true;
+  return false;
+}
+
 export const ORDER_LIMIT_MESSAGE =
   "You have reached your monthly order limit. Please upgrade your plan to continue processing orders.";
 

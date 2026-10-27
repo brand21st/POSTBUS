@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate, formatNumber, formatPaise } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
+import { subscriptionCoverageEnded } from "@/modules/billing/usage";
 
 type BillingPayload = {
   configurationRequired?: boolean;
@@ -25,7 +26,11 @@ type BillingPayload = {
     currentPeriodStart?: string | null;
     currentPeriodEnd?: string | null;
     renewsAt?: string | null;
+    expiresAt?: string | null;
     cancelAtPeriodEnd?: boolean;
+    trialEnd?: string | null;
+    razorpaySubscriptionId?: string | null;
+    coverageEnded?: boolean;
   } | null;
   usage?: {
     quantity?: number;
@@ -90,10 +95,23 @@ export default function BillingPage() {
     (plan) => plan.id === data?.plan?.id || plan.slug === data?.plan?.slug
   );
   const currentPlanName = catalogPlan?.name ?? data?.plan?.name ?? "No plan";
+  const onTrial = data?.subscription?.status === "TRIAL";
+  const coverageEnded = Boolean(
+    data?.subscription?.coverageEnded ||
+      (data?.subscription &&
+        subscriptionCoverageEnded({
+          status: data.subscription.status,
+          current_period_end: data.subscription.currentPeriodEnd,
+          expires_at: data.subscription.expiresAt,
+          trial_end: data.subscription.trialEnd,
+          cancel_at_period_end: data.subscription.cancelAtPeriodEnd,
+          razorpay_subscription_id: data.subscription.razorpaySubscriptionId,
+        }))
+  );
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Billing" description="Pay for a plan period with Razorpay. Recurring subscriptions can be added later." />
+      <PageHeader title="Billing" description="Choose a plan and pay with Razorpay. One-time checkout covers the selected period." />
 
       {billing.isLoading ? (
         <Skeleton className="h-40" />
@@ -113,7 +131,7 @@ export default function BillingPage() {
                   {currentPlanName}
                   {catalogPlan || data?.plan ? (
                     <span className="rounded-full bg-brand px-2.5 py-0.5 text-[11px] font-semibold text-white">
-                      Current plan
+                      {coverageEnded ? "Period ended" : "Current plan"}
                     </span>
                   ) : null}
                 </CardTitle>
@@ -143,11 +161,11 @@ export default function BillingPage() {
             </Card>
             <Card>
               <CardHeader>
-                <CardDescription>Next payment</CardDescription>
-                <CardTitle className="text-base">{formatDate(data?.subscription?.renewsAt ?? data?.subscription?.currentPeriodEnd)}</CardTitle>
+                <CardDescription>{onTrial ? "Trial ends" : coverageEnded ? "Period ended" : "Next payment"}</CardDescription>
+                <CardTitle className="text-base">{formatDate(onTrial ? data?.subscription?.trialEnd ?? data?.subscription?.currentPeriodEnd : coverageEnded ? data?.subscription?.currentPeriodEnd : data?.subscription?.renewsAt ?? data?.subscription?.currentPeriodEnd)}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <p>Renewal {formatPaise(data?.subscription?.amountPaise)}</p>
+                {onTrial ? <p>No payment is taken during the trial.</p> : coverageEnded ? <p>Pay again to continue this plan.</p> : <p>Renewal {formatPaise(data?.subscription?.amountPaise)}</p>}
                 <p className="text-muted">
                   Period {formatDate(data?.subscription?.currentPeriodStart)} – {formatDate(data?.subscription?.currentPeriodEnd)}
                 </p>
@@ -177,7 +195,7 @@ export default function BillingPage() {
           ) : null}
 
           <div className="flex flex-wrap gap-2">
-            {data?.subscription?.cancelAtPeriodEnd ? (
+            {coverageEnded ? null : data?.subscription?.cancelAtPeriodEnd ? (
               <Button variant="secondary" onClick={() => resume.mutate()} disabled={resume.isPending}>
                 Resume subscription
               </Button>
@@ -216,6 +234,7 @@ export default function BillingPage() {
               currentPlanSlug={data?.plan?.slug}
               currentCycle={data?.subscription?.billingCycle}
               subscriptionStatus={data?.subscription?.status}
+              coverageEnded={coverageEnded}
             />
           </div>
 
@@ -227,7 +246,8 @@ export default function BillingPage() {
               {(payments.data?.payments ?? []).length === 0 ? (
                 <p className="text-sm text-muted">No payments yet.</p>
               ) : (
-                <table className="w-full text-sm">
+                <div className="max-h-80 overflow-auto">
+                <table className="w-full min-w-[32rem] text-sm">
                   <thead>
                     <tr className="text-left text-xs uppercase tracking-wide text-muted">
                       <th className="pb-3">Amount</th>
@@ -249,19 +269,19 @@ export default function BillingPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </CardContent>
           </Card>
 
+          {(invoices.data?.invoices ?? []).length > 0 ? (
           <Card>
             <CardHeader>
               <CardTitle>Invoices</CardTitle>
             </CardHeader>
             <CardContent>
-              {(invoices.data?.invoices ?? []).length === 0 ? (
-                <p className="text-sm text-muted">No invoices have been issued.</p>
-              ) : (
-                <table className="w-full text-sm">
+                <div className="max-h-64 overflow-auto">
+                <table className="w-full min-w-[28rem] text-sm">
                   <thead>
                     <tr className="text-left text-xs uppercase tracking-wide text-muted">
                       <th className="pb-3">Number</th>
@@ -283,9 +303,10 @@ export default function BillingPage() {
                     ))}
                   </tbody>
                 </table>
-              )}
+                </div>
             </CardContent>
           </Card>
+          ) : null}
         </>
       )}
     </div>

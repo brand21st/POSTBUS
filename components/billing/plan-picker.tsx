@@ -3,7 +3,8 @@
 import { CheckoutButton } from "@/components/billing/checkout-button";
 import { buttonVariants } from "@/components/ui/button";
 import { formatPaise } from "@/lib/format";
-import { yearlySavingsPaise } from "@/modules/billing/prices";
+import { displayPlanFeatures } from "@/modules/billing/plan-features";
+import { yearlyListPricePaise, yearlySavingsPaise } from "@/modules/billing/prices";
 import { cn } from "@/lib/utils";
 import { Check } from "lucide-react";
 import Link from "next/link";
@@ -27,6 +28,7 @@ export function PlanPicker({
   currentPlanSlug,
   currentCycle,
   subscriptionStatus,
+  coverageEnded = false,
 }: {
   plans: PublicPlan[];
   cycle: "monthly" | "yearly";
@@ -35,8 +37,9 @@ export function PlanPicker({
   currentPlanSlug?: string | null;
   currentCycle?: "monthly" | "yearly" | null;
   subscriptionStatus?: string | null;
+  coverageEnded?: boolean;
 }) {
-  const hasCurrent = Boolean(currentPlanId || currentPlanSlug);
+  const hasCurrent = Boolean(currentPlanId || currentPlanSlug) && !coverageEnded;
   const trial = (subscriptionStatus ?? "").toUpperCase() === "TRIAL";
 
   return (
@@ -46,11 +49,15 @@ export function PlanPicker({
           Boolean(currentPlanId && currentPlanId === plan.id) ||
           Boolean(currentPlanSlug && currentPlanSlug === plan.slug);
         const sameCycle = !currentCycle || currentCycle === cycle;
-        const paidCurrent = isCurrent && sameCycle && !trial;
+        const paidCurrent = isCurrent && sameCycle && !trial && !coverageEnded;
         const featured = plan.slug === "pro";
-        const highlight = isCurrent || (featured && !hasCurrent);
+        const highlight = (isCurrent && !coverageEnded) || (featured && !hasCurrent);
         const price = cycle === "yearly" ? plan.yearlyPricePaise : plan.monthlyPricePaise;
-        const savings = yearlySavingsPaise(plan.monthlyPricePaise);
+        const savings =
+          cycle === "yearly"
+            ? yearlyListPricePaise(plan.monthlyPricePaise) - plan.yearlyPricePaise
+            : yearlySavingsPaise(plan.monthlyPricePaise);
+        const featureLines = displayPlanFeatures(plan.features, plan.slug);
         return (
           <article
             key={plan.id}
@@ -59,7 +66,11 @@ export function PlanPicker({
               highlight ? "border-brand shadow-[0_0_0_1px_rgba(225,29,72,0.15)]" : "border-border"
             )}
           >
-            {isCurrent ? (
+            {isCurrent && coverageEnded ? (
+              <span className="mb-4 w-fit rounded-full bg-surface-soft px-2.5 py-1 text-[11px] font-semibold text-ink">
+                Renew
+              </span>
+            ) : isCurrent ? (
               <span className="mb-4 w-fit rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white">
                 Current plan
               </span>
@@ -84,7 +95,9 @@ export function PlanPicker({
               <p className="mt-1 text-xs text-muted">Up to {plan.monthlyOrderLimit.toLocaleString("en-IN")} orders/month</p>
             )}
             <ul className="mt-6 space-y-3">
-              {(plan.features.length ? plan.features : [`Up to ${plan.monthlyOrderLimit.toLocaleString("en-IN")} orders/month`]).map(
+              {(featureLines.length
+                ? featureLines
+                : [`Up to ${plan.monthlyOrderLimit.toLocaleString("en-IN")} orders/month`]).map(
                 (point) => (
                   <li key={point} className="flex gap-2 text-sm text-foreground">
                     <Check className="mt-0.5 size-4 shrink-0 text-brand" />
@@ -102,11 +115,13 @@ export function PlanPicker({
                   label={
                     paidCurrent
                       ? "Current plan"
-                      : isCurrent && trial
-                        ? `Pay for ${plan.name}`
-                        : featured
-                          ? "Upgrade to Pro"
-                          : `Choose ${plan.name}`
+                      : isCurrent && coverageEnded
+                        ? `Renew ${plan.name}`
+                        : isCurrent && trial
+                          ? `Pay for ${plan.name}`
+                          : featured
+                            ? "Upgrade to Pro"
+                            : `Choose ${plan.name}`
                   }
                   variant={isCurrent || featured ? "primary" : "secondary"}
                 />
