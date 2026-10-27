@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { shopifyPendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { commercePendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapExcelRowToArticle, mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import type { DraftArticle, DraftPickup, ValidationIssue } from "@/modules/india-post/article-types";
@@ -242,7 +242,7 @@ export async function validateOrdersForBooking(
       });
       continue;
     }
-    if (shopifyPendingBookingBlocked(order)) {
+    if (commercePendingBookingBlocked(order)) {
       const issue: ValidationIssue = {
         orderId: order.id,
         orderNumber: order.order_number,

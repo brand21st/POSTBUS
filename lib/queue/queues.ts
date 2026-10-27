@@ -4,6 +4,8 @@ import type { JobType } from "@/types/domain";
 
 export const QUEUE_NAMES = {
   shopifySync: "shopify-sync",
+  woocommerceSync: "woocommerce-sync",
+  woocommerceTracking: "woocommerce-tracking",
   shipmentBooking: "shipment-booking",
   labelGeneration: "label-generation",
   manifestGeneration: "manifest-generation",

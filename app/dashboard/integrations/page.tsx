@@ -30,7 +30,7 @@ const FALLBACK: IntegrationCard[] = [
   { provider: "SHOPIFY", name: "Shopify", status: "NOT_CONNECTED" },
   { provider: "INDIA_POST", name: "India Post", status: "NOT_CONNECTED" },
   { provider: "WATI", name: "Wati", status: "NOT_CONNECTED" },
-  { provider: "WOOCOMMERCE", name: "WooCommerce", status: "NOT_CONNECTED", comingLater: true },
+  { provider: "WOOCOMMERCE", name: "WooCommerce", status: "NOT_CONNECTED" },
   { provider: "POSTBUS_WHATSAPP", name: "Postbus-Whatsapp Notifications", status: "NOT_CONNECTED" },
   { provider: "VACHAT", name: "Vachat", status: "NOT_CONNECTED" },
 ];
@@ -74,7 +74,7 @@ export default function IntegrationsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Integrations"
-        description="Shopify, India Post, Google Sheets, Wati, PostBus WhatsApp, merchant Vachat, Developer API, and paid add-ons."
+        description="Shopify, WooCommerce, India Post, Google Sheets, Wati, PostBus WhatsApp, merchant Vachat, Developer API, and paid add-ons."
       />
 
       <AiAccountantCard />
@@ -126,27 +126,32 @@ export default function IntegrationsPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {cards.map((card) => {
-            const comingLater = card.comingLater || card.coming_later;
+            const comingLater = Boolean(card.comingLater || card.coming_later);
             const connected = (card.status ?? "").toUpperCase() === "CONNECTED";
+            const provider = (card.provider ?? "").toUpperCase();
             const href =
-              card.provider === "INDIA_POST"
+              provider === "INDIA_POST"
                 ? "/dashboard/integrations/india-post"
-                : card.provider === "SHOPIFY"
+                : provider === "SHOPIFY"
                   ? "/dashboard/integrations/shopify"
-                  : card.provider === "WATI"
+                  : provider === "WOOCOMMERCE"
+                    ? "/dashboard/integrations/woocommerce"
+                  : provider === "WATI"
                     ? "/dashboard/integrations/wati"
-                    : card.provider === "POSTBUS_WHATSAPP"
+                    : provider === "POSTBUS_WHATSAPP"
                       ? "/dashboard/integrations/postbus-whatsapp"
-                    : card.provider === "VACHAT"
+                    : provider === "VACHAT"
                       ? "/dashboard/integrations/vachat"
                     : undefined;
 
             const feature =
-              card.provider === "INDIA_POST"
+              provider === "INDIA_POST"
                 ? FEATURE.indiaPost
-                : card.provider === "SHOPIFY"
+                : provider === "SHOPIFY"
                   ? FEATURE.shopify
-                  : card.provider === "WATI"
+                  : provider === "WOOCOMMERCE"
+                    ? FEATURE.woocommerce
+                  : provider === "WATI"
                     ? FEATURE.wati
                     : null;
             const locked = Boolean(feature && !entitlements.allows(feature));
@@ -154,11 +159,11 @@ export default function IntegrationsPage() {
               ? null
               : card.lastError || card.last_error
                 ? card.lastError ?? card.last_error
-                : card.provider === "POSTBUS_WHATSAPP"
+                : provider === "POSTBUS_WHATSAPP"
                   ? connected
                     ? "Shipment WhatsApp updates from the PostBus number."
                     : "PostBus WhatsApp is not available for this workspace yet."
-                  : card.provider === "VACHAT"
+                  : provider === "VACHAT"
                     ? connected
                       ? "Your VaChat account. PostBus WhatsApp Notifications are paused."
                       : "Connect your own VaChat account for this workspace."
@@ -173,13 +178,13 @@ export default function IntegrationsPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <CardTitle>
-                        {card.provider === "SHOPIFY" ? (
+                        {provider === "SHOPIFY" ? (
                           <ShopifyLogo className="h-6" />
-                        ) : card.provider === "INDIA_POST" ? (
+                        ) : provider === "INDIA_POST" ? (
                           <IndiaPostLogo className="h-6" />
-                        ) : card.provider === "WATI" ? (
+                        ) : provider === "WATI" ? (
                           <WatiLogo className="h-6" />
-                        ) : card.provider === "WOOCOMMERCE" ? (
+                        ) : provider === "WOOCOMMERCE" ? (
                           <WooCommerceLogo className="h-6" />
                         ) : (
                           card.name ?? card.provider
@@ -188,11 +193,11 @@ export default function IntegrationsPage() {
                       {description ? (
                         <CardDescription className="mt-1">{description}</CardDescription>
                       ) : null}
-                      {card.provider === "SHOPIFY" ? (
+                      {provider === "SHOPIFY" ? (
                         <ShopifyWatchTutorialLink className="mt-2" />
-                      ) : card.provider === "INDIA_POST" ? (
+                      ) : provider === "INDIA_POST" ? (
                         <IndiaPostWatchTutorialLink className="mt-2" />
-                      ) : card.provider === "VACHAT" ? (
+                      ) : provider === "VACHAT" ? (
                         <VachatSignupLink className="mt-2" />
                       ) : null}
                     </div>

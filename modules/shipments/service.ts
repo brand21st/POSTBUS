@@ -11,7 +11,7 @@ import {
   isIndiaPostAcceptedStatus,
 } from "@/modules/india-post/booking-status";
 import { resolveDefaultServiceCode, savedParcelContracts } from "@/modules/india-post/contracts";
-import { shopifyPendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { commercePendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { INDIA_POST_SERVICES } from "@/types/domain";
@@ -170,7 +170,7 @@ export async function createShipmentsForOrders(
       skipped.push(order.id);
       continue;
     }
-    if (enqueueBooking && shopifyPendingBookingBlocked(order)) {
+    if (enqueueBooking && commercePendingBookingBlocked(order)) {
       shopifyPendingBlocked.push(String(order.order_number ?? order.id));
       skipped.push(order.id);
       continue;
@@ -459,7 +459,7 @@ export async function retryShipment(
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     linkedOrder = order;
-    if (shopifyPendingBookingBlocked(order ?? {})) {
+    if (commercePendingBookingBlocked(order ?? {})) {
       throw new AppError(
         ERROR_CODES.CONFLICT,
         `${shipment.orderNumber ?? shipment.order_number ?? "This order"} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`

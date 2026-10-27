@@ -12,13 +12,15 @@ import {
   importShopifyWebhookOrder,
   type ShopifyRemoteOrder,
 } from "@/modules/shopify/orders";
+import { parseWooWebhookPath } from "@/modules/woocommerce/webhooks";
 
 export function isInboundWebhookPath(path: string) {
   return Boolean(
     parseIndiaPostWebhookPath(path) ||
       parseWatiWebhookPath(path) ||
       path === "webhooks/shopify" ||
-      path === "integrations/vachat/webhooks"
+      path === "integrations/vachat/webhooks" ||
+      Boolean(parseWooWebhookPath(path))
   );
 }
 
@@ -53,6 +55,32 @@ export async function handleInboundWebhook(request: NextRequest, path: string) {
     return acceptWatiWebhook(createWebhookInboxClient(), {
       connectionId: watiWebhook.connectionId,
       rawBody: raw,
+    });
+  }
+
+  const wooWebhook = parseWooWebhookPath(path);
+  if (wooWebhook && method === "POST") {
+    const { createAdminClient, hasAdminClient } = await import("@/lib/supabase/admin");
+    const { sharedRateLimit } = await import("@/lib/security/shared-rate-limit");
+    if (!hasAdminClient()) {
+      throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Webhook inbox is not configured.");
+    }
+    const ip = request.headers.get("x-forwarded-for") ?? "local";
+    const limited = await sharedRateLimit(`woo-webhook:${ip}`, 120, 60_000);
+    if (!limited.ok) throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
+    const admin = createAdminClient();
+    if (wooWebhook.kind === "auth") {
+      const { acceptWooAuthCallback } = await import("@/modules/woocommerce/routes");
+      return acceptWooAuthCallback(request, admin);
+    }
+    const raw = await request.text();
+    const { acceptWooWebhook } = await import("@/modules/woocommerce/webhooks");
+    return acceptWooWebhook(admin, {
+      connectionId: wooWebhook.connectionId,
+      rawBody: raw,
+      signature: request.headers.get("x-wc-webhook-signature"),
+      topic: request.headers.get("x-wc-webhook-topic") || "",
+      deliveryId: request.headers.get("x-wc-webhook-delivery-id"),
     });
   }
 

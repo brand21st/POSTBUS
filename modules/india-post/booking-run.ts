@@ -23,7 +23,7 @@ import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { persistIndiaPostTokens } from "@/modules/india-post/session";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
-import { shopifyPendingBookingBlocked } from "@/lib/dashboard/records";
+import { commercePendingBookingBlocked } from "@/lib/dashboard/records";
 import { withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
 import { classifyProviderError } from "@/lib/jobs/retry";
 import { logInfo, logError } from "@/lib/logger";
@@ -425,7 +425,7 @@ export async function runIndiaPostBooking(
       payment_status?: string | null;
       paymentStatus?: string | null;
     } | null;
-    if (shopifyPendingBookingBlocked(linkedOrder ?? {})) {
+    if (commercePendingBookingBlocked(linkedOrder ?? {})) {
       const message = "Shopify payment is pending. Confirm Prepaid or COD before India Post booking.";
       await markShipmentBookingFailed(supabase, shipment.id, message, "VALIDATION_ERROR", input.organizationId);
       failedIds.push(shipment.id);

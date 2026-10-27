@@ -68,6 +68,24 @@ export async function enqueueTrackingStageSideEffects(
           stage: shopifyStage,
         });
       }
+      if (automation.autoWooCommerceTracking) {
+        const { data: order } = await supabase
+          .from("orders")
+          .select("source")
+          .eq("id", input.orderId)
+          .eq("organization_id", input.organizationId)
+          .maybeSingle();
+        if (order?.source === "WOOCOMMERCE") {
+          const { createBackgroundJob } = await import("@/modules/jobs/service");
+          await createBackgroundJob(supabase, {
+            organizationId: input.organizationId,
+            jobType: "woocommerce-tracking",
+            entityType: "order",
+            entityId: input.orderId,
+            progress: { stage: shopifyStage },
+          });
+        }
+      }
     } catch {
       // Shopify fulfillment events are optional; tracking updates should still persist.
     }

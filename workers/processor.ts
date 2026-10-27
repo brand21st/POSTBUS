@@ -6,6 +6,7 @@ import {
   AUTOMATION_DEFAULTS,
   getAutomationSettings,
   isAutoShopifySyncEnabled,
+  isAutoWooCommerceSyncEnabled,
   mapAutomationSettings,
 } from "@/modules/automation/service";
 import {
@@ -64,6 +65,8 @@ export async function processJob(queue: string, payload: JobPayload) {
     else if (queue === "manifest-generation") await generateManifest(supabase, payload);
     else if (queue === "tracking-sync") await syncTracking(supabase, payload);
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
+    else if (queue === "woocommerce-sync") await wooCommerceSync(supabase, payload);
+    else if (queue === "woocommerce-tracking") await wooCommerceTracking(supabase, payload);
     else if (queue === "shopify-fulfillment") await shopifyFulfillment(supabase, payload);
     else if (queue === "webhook-processing") await deliverWebhooks(supabase, payload);
     else if (queue === "support-ingest") {
@@ -450,6 +453,31 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         entityId: shipment.id,
       });
     }
+    if (automation.autoWooCommerceTracking) {
+      const { data: bookedShipments } = await supabase
+        .from("shipments")
+        .select("order_id")
+        .eq("organization_id", payload.organizationId)
+        .eq("id", shipment.id);
+      const orderIds = [...new Set((bookedShipments ?? []).map((row) => row.order_id).filter(Boolean))];
+      if (orderIds.length) {
+        const { data: wooOrders } = await supabase
+          .from("orders")
+          .select("id")
+          .eq("organization_id", payload.organizationId)
+          .eq("source", "WOOCOMMERCE")
+          .in("id", orderIds);
+        for (const order of wooOrders ?? []) {
+          await createBackgroundJob(supabase, {
+            organizationId: payload.organizationId,
+            jobType: "woocommerce-tracking",
+            entityType: "order",
+            entityId: order.id,
+            progress: { stage: "booked" },
+          });
+        }
+      }
+    }
     if (automation.autoTrackingSync) {
       await enqueueOrgTrackingSyncIfIdle(supabase, payload.organizationId);
     }
@@ -727,6 +755,95 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
     });
     throw tagged;
   }
+}
+
+async function wooCommerceSync(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const { data: job } = await supabase
+    .from("background_jobs")
+    .select("progress")
+    .eq("id", payload.jobId)
+    .maybeSingle();
+  const progress =
+    job?.progress && typeof job.progress === "object"
+      ? (job.progress as {
+          mode?: string;
+          force?: boolean;
+          page?: number;
+          imported?: number;
+          updated?: number;
+          skipped?: number;
+          topic?: string;
+          orderId?: string;
+          deliveryId?: string;
+        })
+      : {};
+  if (progress.mode === "webhook") {
+    const { processWooWebhookJob } = await import("@/modules/woocommerce/webhooks");
+    await processWooWebhookJob(supabase, {
+      organizationId: payload.organizationId,
+      connectionId: payload.entityId || "",
+      topic: progress.topic || "",
+      orderId: progress.orderId || "",
+      deliveryId: progress.deliveryId,
+    });
+    return;
+  }
+  if (!progress.force && !(await isAutoWooCommerceSyncEnabled(supabase, payload.organizationId))) return;
+  const { credentialsFromConnection, loadWooConnection } = await import("@/modules/woocommerce/connect");
+  const { syncWooCommercePage } = await import("@/modules/woocommerce/orders");
+  const { enqueueWooCommerceSync } = await import("@/modules/woocommerce/sync-job");
+  const connection = await loadWooConnection(supabase, payload.organizationId);
+  const credentials = credentialsFromConnection(connection);
+  if (!connection || connection.status !== "CONNECTED" || !credentials) {
+    throw Object.assign(new Error("WooCommerce is not connected."), { code: "PERMANENT_AUTH_ERROR" });
+  }
+  const result = await syncWooCommercePage(supabase, {
+    connection,
+    credentials,
+    userId: payload.userId,
+    page: progress.page ?? 1,
+    force: progress.force,
+  });
+  const imported = (progress.imported ?? 0) + result.imported;
+  const updated = (progress.updated ?? 0) + result.updated;
+  const skipped = (progress.skipped ?? 0) + result.skipped;
+  await supabase
+    .from("background_jobs")
+    .update({ progress: { ...progress, imported, updated, skipped, hasMore: result.hasMore, page: result.nextPage } })
+    .eq("id", payload.jobId);
+  if (result.hasMore && result.nextPage) {
+    await enqueueWooCommerceSync(supabase, {
+      organizationId: payload.organizationId,
+      userId: payload.userId,
+      force: true,
+      page: result.nextPage,
+      imported,
+      updated,
+      skipped,
+    });
+    return;
+  }
+  await supabase
+    .from("woocommerce_connections")
+    .update({
+      last_sync_at: new Date().toISOString(),
+      last_successful_sync_at: new Date().toISOString(),
+      last_error: null,
+    })
+    .eq("id", connection.id);
+}
+
+async function wooCommerceTracking(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  if (!payload.entityId) return;
+  const { data: job } = await supabase.from("background_jobs").select("progress").eq("id", payload.jobId).maybeSingle();
+  const stage =
+    job?.progress && typeof job.progress === "object" ? (job.progress as { stage?: string }).stage : undefined;
+  const { syncWooCommerceTracking } = await import("@/modules/woocommerce/tracking");
+  await syncWooCommerceTracking(supabase, {
+    organizationId: payload.organizationId,
+    orderId: payload.entityId,
+    stage,
+  });
 }
 
 async function shopifySync(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {

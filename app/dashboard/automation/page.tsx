@@ -37,7 +37,7 @@ const TOGGLES = [
     camel: "autoShipmentCreation",
     snake: "auto_shipment_creation",
     title: "Auto shipment creation",
-    description: "Create a shipment when a Shopify order is imported.",
+    description: "Create a shipment when a Shopify or WooCommerce order is imported.",
   },
   {
     camel: "autoBooking",
@@ -76,6 +76,18 @@ const TOGGLES = [
     title: "Auto Shopify fulfillment",
     description:
       "On booking, write the tracking id to Shopify. CEPT In transit and Delivered scans add the matching Shopify fulfillment events.",
+  },
+  {
+    camel: "autoWooCommerceSync",
+    snake: "auto_woocommerce_sync",
+    title: "Auto WooCommerce sync",
+    description: "Import new and updated WooCommerce orders. This does not book a shipment by itself.",
+  },
+  {
+    camel: "autoWooCommerceTracking",
+    snake: "auto_woocommerce_tracking",
+    title: "Auto WooCommerce tracking",
+    description: "After booking, write the India Post AWB and tracking link back to the WooCommerce order.",
   },
 ] as const;
 

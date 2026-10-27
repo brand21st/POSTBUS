@@ -9,6 +9,7 @@ import {
 
 export const FEATURE = {
   shopify: "Shopify order sync",
+  woocommerce: "WooCommerce order sync",
   shipments: "Shipment workspace",
   labels: "Label and barcode workflows",
   starterBundle: "Everything in Starter",
@@ -29,6 +30,7 @@ export type PlanFeatureName = (typeof PLAN_FEATURE_OPTIONS)[number];
 
 export const STARTER_FEATURES: PlanFeatureName[] = [
   FEATURE.shopify,
+  FEATURE.woocommerce,
   FEATURE.shipments,
   FEATURE.labels,
   FEATURE.indiaPost,
@@ -64,6 +66,7 @@ const NAV_FEATURES: Array<{ href: string; feature: string }> = [
   { href: "/dashboard/integrations/wati", feature: FEATURE.wati },
   { href: "/dashboard/integrations/india-post", feature: FEATURE.indiaPost },
   { href: "/dashboard/integrations/shopify", feature: FEATURE.shopify },
+  { href: "/dashboard/integrations/woocommerce", feature: FEATURE.woocommerce },
 ];
 
 function asPlan(value: PlanRow | PlanRow[] | null | undefined): PlanRow | null {
@@ -115,6 +118,12 @@ export function automationToggleLock(camel: string, allows: (feature: string) =>
     return FEATURE.shopify;
   }
   if (
+    (camel === "autoWooCommerceSync" || camel === "autoWooCommerceTracking") &&
+    !allows(FEATURE.woocommerce)
+  ) {
+    return FEATURE.woocommerce;
+  }
+  if (
     (camel === "autoBooking" || camel === "autoTrackingSync" || camel === "autoLabelGeneration") &&
     !allows(FEATURE.indiaPost)
   ) {
@@ -151,6 +160,7 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
   if (slugs[0] === "bookings") return FEATURE.bulk;
   if (slugs[0] === "integrations") {
     if (slugs[1] === "shopify" && method !== "GET") return FEATURE.shopify;
+    if (slugs[1] === "woocommerce" && method !== "GET") return FEATURE.woocommerce;
     if (slugs[1] === "wati" && method !== "GET") return FEATURE.wati;
     if (slugs[1] === "india-post" && method !== "GET") return FEATURE.indiaPost;
   }

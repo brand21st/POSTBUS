@@ -1,5 +1,6 @@
 export const PLAN_FEATURE_OPTIONS = [
   "Shopify order sync",
+  "WooCommerce order sync",
   "Shipment workspace",
   "Label and barcode workflows",
   "Everything in Starter",

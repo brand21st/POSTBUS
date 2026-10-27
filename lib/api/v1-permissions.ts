@@ -117,6 +117,8 @@ export function permissionForTenantRoute(
     const readable =
       key === "GET integrations" ||
       key === "GET integrations/shopify" ||
+      key === "GET integrations/woocommerce" ||
+      key === "GET integrations/woocommerce/deliveries" ||
       key === "GET integrations/india-post" ||
       key === "GET integrations/india-post/offices" ||
       key === "GET integrations/wati" ||

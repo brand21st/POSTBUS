@@ -26,6 +26,7 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { assertPlanFeature, lockedFeatureForApi } from "@/modules/billing/entitlements";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
+import { parseWooWebhookPath } from "@/modules/woocommerce/webhooks";
 
 export async function handleV1(request: NextRequest, slugs: string[]) {
   const path = slugs.join("/");
@@ -33,11 +34,12 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   const key = `${method} ${path}`;
   const indiaPostWebhook = parseIndiaPostWebhookPath(path);
   const watiWebhook = parseWatiWebhookPath(path);
+  const wooWebhook = parseWooWebhookPath(path);
   const printAgentPath = isPrintAgentApiPath(path);
   const printDevicePath = isPrintDevicePublicPath(path);
   const limited = rateLimit(
     `${request.headers.get("x-forwarded-for") ?? "local"}:${path}`,
-    indiaPostWebhook || watiWebhook || printAgentPath || printDevicePath ? 180 : 60
+    indiaPostWebhook || watiWebhook || wooWebhook || printAgentPath || printDevicePath ? 180 : 60
   );
   if (!limited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
