@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
@@ -56,6 +56,7 @@ export default function WooCommerceIntegration() {
   const [consumerSecret, setConsumerSecret] = useState("");
   const [showManual, setShowManual] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
+  const connectFormRef = useRef<HTMLFormElement>(null);
   const status = useQuery({
     queryKey: ["woocommerce"],
     queryFn: () => api<WooStatus>("/api/v1/integrations/woocommerce"),
@@ -87,10 +88,10 @@ export default function WooCommerceIntegration() {
   });
 
   const manual = useMutation({
-    mutationFn: () =>
+    mutationFn: (input: { storeUrl: string; consumerKey: string; consumerSecret: string }) =>
       api<WooStatus>("/api/v1/integrations/woocommerce/manual", {
         method: "POST",
-        body: JSON.stringify({ storeUrl, consumerKey, consumerSecret }),
+        body: JSON.stringify(input),
       }),
     onSuccess: () => {
       setConsumerKey("");
@@ -130,6 +131,17 @@ export default function WooCommerceIntegration() {
   });
 
   const settings = data?.settings;
+
+  const readConnectForm = () => {
+    const form = connectFormRef.current;
+    if (!form) return { storeUrl: "", consumerKey: "", consumerSecret: "" };
+    const fields = new FormData(form);
+    return {
+      storeUrl: String(fields.get("storeUrl") ?? "").trim(),
+      consumerKey: String(fields.get("consumerKey") ?? "").trim(),
+      consumerSecret: String(fields.get("consumerSecret") ?? "").trim(),
+    };
+  };
 
   return (
     <div className="space-y-6">
@@ -185,43 +197,88 @@ export default function WooCommerceIntegration() {
             <CardTitle>Connect a store</CardTitle>
             <CardDescription>Use WooCommerce authorization, or enter a Read/Write REST API key.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="woo-url">Store URL</Label>
-              <Input
-                id="woo-url"
-                value={storeUrl}
-                placeholder="https://shop.example.com"
-                onChange={(event) => setStoreUrl(event.target.value)}
-              />
-            </div>
-            <Button onClick={() => authorize.mutate(storeUrl)} disabled={authorize.isPending || !storeUrl}>
-              Authorize with WooCommerce
-            </Button>
-            <Button variant="secondary" onClick={() => setShowManual((value) => !value)}>
-              {showManual ? "Hide manual keys" : "Use API keys instead"}
-            </Button>
-            {showManual ? (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="woo-key">Consumer key</Label>
-                  <Input id="woo-key" value={consumerKey} autoComplete="off" onChange={(event) => setConsumerKey(event.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="woo-secret">Consumer secret</Label>
-                  <Input
-                    id="woo-secret"
-                    type="password"
-                    value={consumerSecret}
-                    autoComplete="off"
-                    onChange={(event) => setConsumerSecret(event.target.value)}
-                  />
-                </div>
-                <Button onClick={() => manual.mutate()} disabled={manual.isPending}>
-                  Connect with API keys
+          <CardContent className="pt-0">
+            <form
+              ref={connectFormRef}
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const fields = readConnectForm();
+                setStoreUrl(fields.storeUrl);
+                authorize.mutate(fields.storeUrl);
+              }}
+              onReset={() => {
+                setStoreUrl("");
+                setConsumerKey("");
+                setConsumerSecret("");
+                setShowManual(false);
+              }}
+            >
+              <div className="space-y-2">
+                <Label htmlFor="woo-url">Store URL</Label>
+                <Input
+                  id="woo-url"
+                  name="storeUrl"
+                  defaultValue=""
+                  placeholder="https://shop.example.com"
+                  autoComplete="off"
+                  onChange={(event) => setStoreUrl(event.target.value)}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="submit" disabled={authorize.isPending || !storeUrl}>
+                  Authorize with WooCommerce
+                </Button>
+                <Button type="button" variant="secondary" onClick={() => setShowManual((value) => !value)}>
+                  {showManual ? "Hide manual keys" : "Use API keys instead"}
+                </Button>
+                <Button
+                  type="reset"
+                  variant="secondary"
+                  onClick={(event) => event.currentTarget.form?.reset()}
+                >
+                  Reset
                 </Button>
               </div>
-            ) : null}
+              {showManual ? (
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="woo-key">Consumer key</Label>
+                    <Input
+                      id="woo-key"
+                      name="consumerKey"
+                      defaultValue=""
+                      autoComplete="off"
+                      onChange={(event) => setConsumerKey(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="woo-secret">Consumer secret</Label>
+                    <Input
+                      id="woo-secret"
+                      name="consumerSecret"
+                      type="password"
+                      defaultValue=""
+                      autoComplete="off"
+                      onChange={(event) => setConsumerSecret(event.target.value)}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const fields = readConnectForm();
+                      setConsumerKey(fields.consumerKey);
+                      setConsumerSecret(fields.consumerSecret);
+                      setStoreUrl(fields.storeUrl);
+                      manual.mutate(fields);
+                    }}
+                    disabled={manual.isPending}
+                  >
+                    Connect with API keys
+                  </Button>
+                </div>
+              ) : null}
+            </form>
           </CardContent>
         </Card>
       ) : (
