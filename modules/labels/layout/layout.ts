@@ -4,8 +4,6 @@ import {
   isCodPayment,
   LABEL_GENERATED_FROM,
   LABEL_GENERATED_FROM_SIZE,
-  LABEL_WATERMARK_OPACITY,
-  LABEL_WATERMARK_ROTATION_DEG,
   productTable,
 } from "@/modules/labels/custom-blocks";
 import { fitContain, insetBox } from "@/modules/labels/layout/fit";
@@ -404,8 +402,8 @@ export function layoutLabel(template: LabelTemplate, data: PackingLabelData, ass
     stored: markBox,
     clip: markBox,
     fontSize: markSize,
-    rotationDeg: LABEL_WATERMARK_ROTATION_DEG,
-    opacity: LABEL_WATERMARK_OPACITY,
+    rotationDeg: -32,
+    opacity: 0.18,
     lines: placeLines({
       lines: [[{ text: LABEL_GENERATED_FROM, bold: false, italic: false }]],
       box: textBox,
