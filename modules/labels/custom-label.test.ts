@@ -8,6 +8,7 @@ import { SAMPLE_FROM_PARTS, SAMPLE_SHIP_PARTS, addressContentHeight, addressLine
 import { SAMPLE_PACKING_DATA, loadLogoBytes } from "@/modules/labels/packing-data";
 import { articleContractLine, amountInIndianRupees, blockPreviewLines, bookedBlockText, createCustomTextElement, CUSTOM_LABEL_BLOCKS, customerIdLine, LABEL_GENERATED_FROM, nextCustomTextId, orderIdDateLines, parcelSizeLines, productTable, productTableHeight, wrapProductCell, serviceContractLine, type CustomLabelPreview } from "@/modules/labels/custom-blocks";
 import { indiaPostVolumetricWeightGrams } from "@/modules/india-post/endpoints";
+import { layoutLabel } from "@/modules/labels/layout/layout";
 import { customBlockVisibility, renderMerchantLabelPdf } from "@/modules/labels/packing-pdf";
 import { printMediaForPage, sizeChoiceForPage } from "@/modules/labels/page-presets";
 import {
@@ -17,6 +18,7 @@ import {
   defaultLabelTemplatePage,
   templatePageSizeLabel,
   fitAddressBox,
+  fitTemplateToCustomPage,
   growAutoHeightBox,
   elementBoxFromMm,
   elementBoxMm,
@@ -26,6 +28,9 @@ import {
   normalizeHLines,
   parseLabelTemplate,
   selectLabelTemplate,
+  withDefaultNamedTemplate,
+  withDuplicatedNamedTemplate,
+  nextNamedTemplateCopyName,
   withEditorDraft,
 } from "@/modules/labels/template-schema";
 
@@ -124,6 +129,41 @@ describe("india post barcode block", () => {
     packing.library = packing.library.map((item) => ({ ...item, isDefault: false }));
     expect(defaultLabelTemplateId(packing)).toBe("default");
     expect(defaultLabelTemplateId(indiaPostLabelTemplate())).toBeNull();
+  });
+
+  it("promotes a library item to Default and copies its page", () => {
+    const packing = defaultLabelTemplate("A6");
+    const india = indiaPostLabelTemplate();
+    packing.library = [
+      { id: "default", name: "Default", isDefault: true, page: packing.page, elements: packing.elements },
+      { id: "india", name: "India Post", isDefault: false, page: india.page, elements: india.elements },
+    ];
+    const next = withDefaultNamedTemplate(packing, "india");
+    expect(defaultLabelTemplateId(next)).toBe("india");
+    expect(next.page.widthMm).toBe(india.page.widthMm);
+    expect(next.library?.find((item) => item.id === "default")?.isDefault).toBe(false);
+    expect(withDefaultNamedTemplate(packing, "missing")).toBe(packing);
+    expect(withDefaultNamedTemplate(indiaPostLabelTemplate(), "india")).toEqual(indiaPostLabelTemplate());
+  });
+
+  it("duplicates a named template without changing the default", () => {
+    expect(nextNamedTemplateCopyName(["India Post"], "India Post")).toBe("India Post (copy)");
+    expect(nextNamedTemplateCopyName(["India Post", "India Post (copy)"], "India Post")).toBe("India Post (copy 2)");
+    const packing = defaultLabelTemplate("A6");
+    const india = indiaPostLabelTemplate();
+    packing.library = [
+      { id: "default", name: "Default", isDefault: true, page: packing.page, elements: packing.elements },
+      { id: "india", name: "India Post", isDefault: false, page: india.page, elements: india.elements },
+    ];
+    const next = withDuplicatedNamedTemplate(packing, "india", "india-copy");
+    expect(defaultLabelTemplateId(next)).toBe("default");
+    const copy = next.library?.find((item) => item.id === "india-copy");
+    expect(copy?.name).toBe("India Post (copy)");
+    expect(copy?.isDefault).toBe(false);
+    expect(copy?.page.widthMm).toBe(india.page.widthMm);
+    expect(copy?.elements).toEqual(india.elements);
+    expect(copy?.elements).not.toBe(india.elements);
+    expect(withDuplicatedNamedTemplate(packing, "missing", "x")).toBe(packing);
   });
 
   it("labels the Default template paper size for the Shipping Slip badge", () => {
@@ -268,7 +308,7 @@ describe("india post barcode block", () => {
     expect(pdf).toContain("Fragile parcel");
   });
 
-  it("always prints a small generated-from header", async () => {
+  it("prints Label Generated From www.postbus.in as a watermark", async () => {
     const pdf = await pdfContents(await renderMerchantLabelPdf(indiaPostLabelTemplate(), SAMPLE_PACKING_DATA));
     expect(pdf).toContain(LABEL_GENERATED_FROM);
     expect(LABEL_GENERATED_FROM).toBe("Label Generated From www.postbus.in");
@@ -731,6 +771,114 @@ describe("india post barcode block", () => {
       expect(elements.prepaid.visible).toBe(true);
       expect(elements.serviceContractId.visible).toBe(false);
       expect(elements.labelBorder.hLines).toHaveLength(5);
+    }
+  });
+
+  it("auto-scales India Post blocks and fonts onto a custom page below 100 mm", async () => {
+    const source = indiaPostLabelTemplate();
+    const page = {
+      paperSize: "custom" as const,
+      widthMm: 80,
+      heightMm: 90,
+      widthPt: (80 * 72) / 25.4,
+      heightPt: (90 * 72) / 25.4,
+    };
+    const fitted = fitTemplateToCustomPage(source.elements, page);
+    const again = fitTemplateToCustomPage(fitted, page);
+    const fontScale = Math.min(80 / 105, 90 / 148);
+
+    for (const elements of [fitted, again]) {
+      for (const element of Object.values(elements)) {
+        if (!element.visible) continue;
+        expect(element.x).toBeGreaterThanOrEqual(-0.75);
+        expect(element.y).toBeGreaterThanOrEqual(-0.75);
+        expect(element.x + element.width).toBeLessThanOrEqual(page.widthPt + 0.75);
+        expect(element.y + element.height).toBeLessThanOrEqual(page.heightPt + 0.75);
+      }
+      expect(elements.indiaPostBarcode.y).toBeGreaterThan(elements.customerId.y);
+      expect(elements.customerId.y).toBeGreaterThan(elements.shipTo.y);
+      expect(elements.shipTo.y).toBeGreaterThan(elements.fromAddress.y);
+      expect(elements.fromAddress.y).toBeGreaterThan(elements.products.y);
+      expect(elements.indiaPostBarcode.fontSize).toBeCloseTo(Math.max(5, Math.round(14 * fontScale * 10) / 10), 5);
+      expect(elements.indiaPostBarcode.fontSize).toBeLessThan(14);
+      expect(elements.labelBorder.hLines?.map((line) => line.yMm)).toEqual([
+        Math.round(23.7 * (90 / 148) * 10) / 10,
+        Math.round(35.5 * (90 / 148) * 10) / 10,
+        Math.round(50.4 * (90 / 148) * 10) / 10,
+        Math.round(86 * (90 / 148) * 10) / 10,
+        Math.round(119.1 * (90 / 148) * 10) / 10,
+      ]);
+    }
+
+    const unscaled = parseLabelTemplate({
+      ...source,
+      page,
+    });
+    const pdf = await PDFDocument.load(await renderMerchantLabelPdf(unscaled, SAMPLE_PACKING_DATA));
+    const size = pdf.getPages()[0].getSize();
+    expect(size.width).toBeCloseTo(page.widthPt, 1);
+    expect(size.height).toBeCloseTo(page.heightPt, 1);
+    expect(unscaled.elements.shipTo.width).toBeGreaterThan(page.widthPt);
+    expect(fitted.shipTo.width).toBeLessThanOrEqual(page.widthPt + 0.75);
+  });
+
+  it("keeps custom text and laid-out blocks inside a custom page below 100 mm", () => {
+    const source = indiaPostLabelTemplate();
+    const page = {
+      paperSize: "custom" as const,
+      widthMm: 80,
+      heightMm: 90,
+      widthPt: (80 * 72) / 25.4,
+      heightPt: (90 * 72) / 25.4,
+    };
+    const withText = {
+      ...source.elements,
+      customText1: {
+        ...createCustomTextElement(source.page, 0),
+        visible: true,
+        content: "Keep this note inside the label",
+      },
+    };
+    expect(withText.customText1.x + withText.customText1.width).toBeGreaterThan(page.widthPt);
+    const fitted = fitTemplateToCustomPage(withText, page, source.page);
+    for (const element of Object.values(fitted)) {
+      if (!element.visible) continue;
+      expect(element.x).toBeGreaterThanOrEqual(-0.75);
+      expect(element.y).toBeGreaterThanOrEqual(-0.75);
+      expect(element.x + element.width).toBeLessThanOrEqual(page.widthPt + 0.75);
+      expect(element.y + element.height).toBeLessThanOrEqual(page.heightPt + 0.75);
+    }
+    expect(fitted.customText1.visible).toBe(true);
+    expect(fitted.customText1.x + fitted.customText1.width).toBeLessThanOrEqual(page.widthPt + 0.75);
+
+    const layout = layoutLabel({ ...source, page, elements: fitted }, SAMPLE_PACKING_DATA);
+    for (const block of layout.blocks) {
+      if (block.id === "labelGeneratedFrom") continue;
+      expect(block.x).toBeGreaterThanOrEqual(-0.75);
+      expect(block.y).toBeGreaterThanOrEqual(-0.75);
+      expect(block.x + block.width).toBeLessThanOrEqual(page.widthPt + 0.75);
+      expect(block.y + block.height).toBeLessThanOrEqual(page.heightPt + 0.75);
+    }
+  });
+
+  it("keeps wrapped text inside a 52 mm custom width", () => {
+    const source = indiaPostLabelTemplate();
+    const page = {
+      paperSize: "custom" as const,
+      widthMm: 52,
+      heightMm: 152,
+      widthPt: (52 * 72) / 25.4,
+      heightPt: (152 * 72) / 25.4,
+    };
+    const fitted = fitTemplateToCustomPage(source.elements, page, source.page);
+    const layout = layoutLabel({ ...source, page, elements: fitted }, SAMPLE_PACKING_DATA);
+    for (const block of layout.blocks) {
+      if (block.id === "labelGeneratedFrom") continue;
+      expect(block.x + block.width).toBeLessThanOrEqual(page.widthPt + 0.75);
+      for (const line of block.lines) {
+        expect(line.x).toBeGreaterThanOrEqual(block.x - 0.75);
+        expect(line.x + line.width).toBeLessThanOrEqual(block.x + block.width + 0.75);
+      }
     }
   });
 

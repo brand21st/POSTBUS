@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
 import { ADDRESS_FIELD_OPTIONS, normalizeAddressLayout, type AddressFieldConfig, type AddressLayout } from "@/modules/labels/address-layout";
@@ -37,6 +38,7 @@ import {
   elementBoxFromMm,
   elementBoxMm,
   fitLabelBorderToPage,
+  fitTemplateToCustomPage,
   fullPageBorderRect,
   normalizeHLines,
   withEditorDraft,
@@ -494,6 +496,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
   const [guides, setGuides] = useState<GuideLine[]>([]);
+  const [edgeLock, setEdgeLock] = useState(false);
   const spaceHeldRef = useRef(false);
   const pan = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null);
   const drag = useRef<{
@@ -576,6 +579,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
         setPanning(false);
       }
       setGuides([]);
+      setEdgeLock(false);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -659,7 +663,9 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   const updateElement = (id: string, patch: Partial<TemplateElement>) => {
     setElements((current) => {
       if (!current?.[id]) return current;
-      return { ...current, [id]: { ...current[id], ...patch } };
+      const merged = { ...current[id], ...patch };
+      if (id === "labelBorder") return { ...current, [id]: merged };
+      return { ...current, [id]: { ...merged, ...clampRect(merged, widthPt, heightPt) } };
     });
   };
 
@@ -743,6 +749,13 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
         : snapToGuides(nextTop, others, widthPt, heightPt, { resize: active.mode === "resize" });
     setGuides(guided.guides);
     const next = clampRect(storedFromTopLeft(heightPt, guided.rect), widthPt, heightPt);
+    const wanted = storedFromTopLeft(heightPt, nextTop);
+    setEdgeLock(
+      Math.abs(wanted.x - next.x) > 0.4 ||
+        Math.abs(wanted.y - next.y) > 0.4 ||
+        Math.abs(wanted.width - next.width) > 0.4 ||
+        Math.abs(wanted.height - next.height) > 0.4
+    );
     const autoBox = usesAutoHeight(id);
     const shorter = active.mode === "resize" && next.height + 0.5 < active.origin.height;
     updateElement(id, autoBox && shorter ? { ...elements[id], ...next, autoHeight: false } : next);
@@ -768,17 +781,24 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
       template: draft,
     };
     if (path === "custom-print") {
-      const printed = await api<{ connected?: boolean; downloadPath?: string; message?: string }>(
-        "/api/v1/label-template/custom-print",
-        {
-          method: "POST",
-          body: JSON.stringify(body),
+      const key = beginClientPrint("custom-label-print");
+      if (!key) return;
+      try {
+        const printed = await api<{ connected?: boolean; downloadPath?: string; message?: string }>(
+          "/api/v1/label-template/custom-print",
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": key },
+            body: JSON.stringify(body),
+          }
+        );
+        if (!printed.connected && printed.downloadPath) {
+          window.open(printed.downloadPath, "_blank", "noopener,noreferrer");
         }
-      );
-      if (!printed.connected && printed.downloadPath) {
-        window.open(printed.downloadPath, "_blank", "noopener,noreferrer");
+        toast.success(printed.message || "Queued for the Print Agent.");
+      } finally {
+        endClientPrint("custom-label-print");
       }
-      toast.success(printed.message || "Shipping label sent to the printer.");
       return;
     }
     const response = await fetch(`/api/v1/label-template/${path}`, {
@@ -860,7 +880,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                   heightMm,
                 };
                 setPage(nextPage);
-                setElements(fitLabelBorderToPage(elements, nextPage));
+                setElements(fitTemplateToCustomPage(elements, nextPage, page));
                 return;
               }
               if (!isPaperSizeId(value)) return;
@@ -899,7 +919,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                   if (!Number.isFinite(widthMm) || widthMm < 50) return;
                   const nextPage = { ...page, paperSize: "custom" as const, widthMm, widthPt: ptFromMm(widthMm) };
                   setPage(nextPage);
-                  setElements(fitLabelBorderToPage(elements, nextPage));
+                  setElements(fitTemplateToCustomPage(elements, nextPage, page));
                 }}
               />
             </label>
@@ -914,7 +934,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                   if (!Number.isFinite(heightMm) || heightMm < 50) return;
                   const nextPage = { ...page, paperSize: "custom" as const, heightMm, heightPt: ptFromMm(heightMm) };
                   setPage(nextPage);
-                  setElements(fitLabelBorderToPage(elements, nextPage));
+                  setElements(fitTemplateToCustomPage(elements, nextPage, page));
                 }}
               />
             </label>
@@ -1016,6 +1036,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
               Fit
             </Button>
             <span className="text-xs text-muted">Space+drag to move · Scroll to zoom</span>
+            {edgeLock ? <span className="text-xs font-medium text-brand">Stays inside the label</span> : null}
           </div>
           <div
             ref={canvasPane}
@@ -1030,7 +1051,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
             onAuxClick={(event) => event.preventDefault()}
           >
           <div
-            className="relative mx-auto bg-white shadow-sm"
+            className={cn("relative mx-auto overflow-hidden bg-white shadow-sm", edgeLock && "ring-2 ring-brand")}
             style={{ width: widthPt * scale, height: heightPt * scale }}
             onPointerDown={onCanvasPointerDown}
           >
@@ -1079,6 +1100,7 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                 onPointerUp={() => {
                   drag.current = null;
                   setGuides([]);
+                  setEdgeLock(false);
                 }}
                 onResizeStart={onResizeStart}
               />
