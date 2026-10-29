@@ -1834,7 +1834,12 @@ export function MultiPrintScreen() {
                           onPointerMove={manual ? (event) => onSlotPointerMove(placement.index, event) : undefined}
                           onPointerUp={manual ? endDrag : undefined}
                         >
-                          <SheetSlotLabel orderId={placement.orderId} templateId={selectedId} rotation={placement.rotation} />
+                          <SheetSlotLabel
+                            orderId={placement.orderId}
+                            templateId={selectedId}
+                            rotation={placement.rotation}
+                            cssWidthPx={placement.widthPt * canvasScale}
+                          />
                           {selected ? (
                             <span className="pointer-events-none absolute left-1 top-1 z-10 rounded-md bg-brand px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm">
                               {placement.orderId}
@@ -1920,10 +1925,12 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
   orderId,
   templateId,
   rotation,
+  cssWidthPx,
 }: {
   orderId: string;
   templateId: string;
   rotation: 0 | 90;
+  cssWidthPx: number;
 }) {
   const label = useQuery({
     queryKey: ["multi-print-label-raster", templateId, orderId],
@@ -1944,7 +1951,7 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
       return response.arrayBuffer();
     },
   });
-  const { url, error } = usePdfFirstPageUrl(label.data);
+  const { url, error } = usePdfFirstPageUrl(label.data, { cssWidthPx: Math.max(1, Math.round(cssWidthPx)) });
 
   if (!url) {
     return (
@@ -1959,6 +1966,7 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
       <img
         alt=""
         src={url}
+        decoding="async"
         className="pointer-events-none absolute left-1/2 top-1/2 max-w-none bg-white object-contain"
         style={{
           width: "100cqh",
@@ -1970,6 +1978,6 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
   }
 
   return (
-    <img alt="" src={url} className="pointer-events-none absolute inset-0 h-full w-full bg-white object-contain" />
+    <img alt="" src={url} decoding="async" className="pointer-events-none absolute inset-0 h-full w-full bg-white object-contain" />
   );
 });
