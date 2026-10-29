@@ -24,6 +24,13 @@ export function canonicalOrderNumber(value: string) {
   return value.trim().replace(/^#+/, "").trim().toUpperCase();
 }
 
+/** Digits used for API-wide order-number sort (`orders.order_number_sort`). */
+export function orderNumberSortValue(value: string): bigint | null {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return null;
+  return BigInt(digits);
+}
+
 /** Customer/merchant-facing WhatsApp order id, e.g. #WA-PB-10001. */
 export function formatWhatsAppOrderNumber(value: string) {
   const canonical = canonicalOrderNumber(value);

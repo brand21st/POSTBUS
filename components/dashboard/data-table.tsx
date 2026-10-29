@@ -7,7 +7,7 @@ import {
   tableFeatures,
   useTable,
 } from "@tanstack/react-table";
-import { AlertCircle, ChevronLeft, ChevronRight, Inbox } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -47,6 +47,11 @@ export type DataTableColumn<TData extends Record<string, unknown>> = {
   /** Shrink to this pixel width instead of absorbing leftover table width. */
   hug?: boolean;
   width?: number;
+  sort?: {
+    state: "none" | "asc" | "desc";
+    onToggle: () => void;
+    title?: string;
+  };
 };
 
 export type DataTableProps<TData extends Record<string, unknown>> = {
@@ -544,6 +549,15 @@ export function DataTable<TData extends Record<string, unknown>>({
                       <th
                         key={header.id}
                         data-col-id={header.id}
+                        aria-sort={
+                          column?.sort?.state === "asc"
+                            ? "ascending"
+                            : column?.sort?.state === "desc"
+                              ? "descending"
+                              : column?.sort
+                                ? "none"
+                                : undefined
+                        }
                         className={cn(
                           "text-xs font-semibold uppercase text-muted transition-[width,min-width,max-width] duration-150 ease-out",
                           compact ? "tracking-normal" : "tracking-wide",
@@ -557,7 +571,28 @@ export function DataTable<TData extends Record<string, unknown>>({
                         )}
                         style={columnBoxStyle(widths[header.id], boxMode, column?.width)}
                       >
-                        {header.isPlaceholder ? null : <table.FlexRender header={header} />}
+                        {header.isPlaceholder ? null : column?.sort ? (
+                          <button
+                            type="button"
+                            title={column.sort.title ?? `Sort by ${column.header}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              column.sort?.onToggle();
+                            }}
+                            className="-ml-1 inline-flex max-w-full items-center gap-0.5 rounded-md px-1 py-0.5 text-left uppercase hover:bg-surface-soft hover:text-foreground"
+                          >
+                            <span className="truncate">{column.header}</span>
+                            {column.sort.state === "asc" ? (
+                              <ChevronUp className="size-3.5 shrink-0 text-foreground" aria-hidden />
+                            ) : column.sort.state === "desc" ? (
+                              <ChevronDown className="size-3.5 shrink-0 text-foreground" aria-hidden />
+                            ) : (
+                              <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" aria-hidden />
+                            )}
+                          </button>
+                        ) : (
+                          <table.FlexRender header={header} />
+                        )}
                         {column?.resizable ? (
                           <ColumnResizeHandle
                             columnId={header.id}

@@ -9,6 +9,8 @@ import { format, isValid, parseISO, subDays } from "date-fns";
 import {
   Check,
   ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
   Columns3,
   Download,
   Link2,
@@ -62,8 +64,11 @@ import {
 import { cn } from "@/lib/utils";
 import {
   committedSearchChanged,
+  nextOrdersNumberSort,
   ordersListHref,
+  ordersNumberSortState,
   parseOrdersPageParam,
+  parseOrdersSortParam,
   patchOrdersListSearchParams,
   selectionAfterFilterChange,
 } from "@/lib/dashboard/orders-list-query";
@@ -160,6 +165,9 @@ export default function OrdersPage() {
   const queryClient = useQueryClient();
   const urlQ = searchParams.get("q") ?? "";
   const page = parseOrdersPageParam(searchParams.get("page"));
+  const sort = parseOrdersSortParam(searchParams.get("sort"));
+  const numberSort = sort === "order_number" || sort === "-order_number" ? sort : undefined;
+  const numberSortState = ordersNumberSortState(numberSort);
   const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState(urlQ);
   const [debounced, setDebounced] = useState(urlQ.trim());
@@ -199,12 +207,17 @@ export default function OrdersPage() {
   }, []);
 
   const replaceListParams = useCallback(
-    (patch: { page?: number; q?: string | null }) => {
+    (patch: { page?: number; q?: string | null; sort?: typeof sort | null }) => {
       const next = patchOrdersListSearchParams(searchParams, patch);
       router.replace(ordersListHref(next), { scroll: false });
     },
-    [router, searchParams]
+    [router, searchParams, sort]
   );
+
+  const toggleOrderNumberSort = useCallback(() => {
+    setSelected(selectionAfterFilterChange());
+    replaceListParams({ page: 1, sort: nextOrdersNumberSort(numberSort) ?? null });
+  }, [numberSort, replaceListParams]);
 
   const applyFilterChange = useCallback(() => {
     setSelected(selectionAfterFilterChange());
@@ -319,6 +332,7 @@ export default function OrdersPage() {
       status,
       source,
       payment,
+      sort,
       activeFrom,
       activeTo,
       todayRange.from.toISOString(),
@@ -331,6 +345,7 @@ export default function OrdersPage() {
         status: status === "all" ? undefined : status,
         source: source === "all" ? undefined : source,
         paymentStatus: payment === "all" ? undefined : payment,
+        sort,
         from: activeFrom,
         to: activeTo,
         includeCounts: "1",
@@ -611,6 +626,7 @@ export default function OrdersPage() {
       status: status === "all" ? undefined : status,
       source: source === "all" ? undefined : source,
       paymentStatus: payment === "all" ? undefined : payment,
+      sort,
       from: activeFrom,
       to: activeTo,
       format: "csv",
@@ -721,6 +737,11 @@ export default function OrdersPage() {
       resizable: true,
       minWidth: 64,
       maxWidth: 280,
+      sort: {
+        state: numberSortState,
+        onToggle: toggleOrderNumberSort,
+        title: "Sort by order number",
+      },
       cell: (row) => (
         <Link href={`/dashboard/orders/${row.id}`} className="font-medium hover:text-brand">
           {orderNumber(row)}
@@ -1029,6 +1050,23 @@ export default function OrdersPage() {
             {filterSelects}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-8 lg:hidden"
+              title="Sort by order number"
+              onClick={toggleOrderNumberSort}
+            >
+              # Order
+              {numberSortState === "asc" ? (
+                <ChevronUp className="size-3.5" aria-hidden />
+              ) : numberSortState === "desc" ? (
+                <ChevronDown className="size-3.5" aria-hidden />
+              ) : (
+                <ChevronsUpDown className="size-3.5 opacity-50" aria-hidden />
+              )}
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button type="button" variant="secondary" size="sm" className="h-8 lg:hidden">

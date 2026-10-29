@@ -116,6 +116,28 @@ function applyOrderListFilters(
   return builder;
 }
 
+export function resolveOrderListSort(sort?: OrderListQuery["sort"]) {
+  if (sort === "order_number") return { mode: "number" as const, ascending: true };
+  if (sort === "-order_number") return { mode: "number" as const, ascending: false };
+  if (sort === "created_at") return { mode: "created" as const, ascending: true };
+  return { mode: "created" as const, ascending: false };
+}
+
+function applyOrderListSort(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  builder: any,
+  sort?: OrderListQuery["sort"]
+) {
+  const spec = resolveOrderListSort(sort);
+  if (spec.mode === "number") {
+    return builder
+      .order("order_number_sort", { ascending: spec.ascending, nullsFirst: false })
+      .order("order_number", { ascending: spec.ascending })
+      .order("created_at", { ascending: false });
+  }
+  return builder.order("created_at", { ascending: spec.ascending });
+}
+
 async function countOrders(
   supabase: SupabaseClient,
   ctx: TenantContext,
@@ -141,11 +163,10 @@ export async function listOrders(
   const from = (query.page - 1) * query.pageSize;
   const to = from + query.pageSize - 1;
 
-  const listBuilder = applyOrderListFilters(
-    supabase.from("orders").select(ORDER_LIST_SELECT).order("created_at", { ascending: false }).range(from, to),
-    ctx,
-    query
-  );
+  const listBuilder = applyOrderListSort(
+    applyOrderListFilters(supabase.from("orders").select(ORDER_LIST_SELECT), ctx, query),
+    query.sort
+  ).range(from, to);
 
   const includeCounts = wantsOrderCounts(query);
   const [listed, total, all, today, yesterday] = await Promise.all([
@@ -678,12 +699,13 @@ export async function exportOrdersCsv(
   ctx: TenantContext,
   query: z.infer<typeof orderListQuery>
 ) {
-  let builder = supabase
-    .from("orders")
-    .select("order_number, source, status, total_amount, payment_status, created_at, customers(name)")
-    .eq("organization_id", ctx.organizationId)
-    .order("created_at", { ascending: false })
-    .limit(5000);
+  let builder = applyOrderListSort(
+    supabase
+      .from("orders")
+      .select("order_number, source, status, total_amount, payment_status, created_at, customers(name)")
+      .eq("organization_id", ctx.organizationId),
+    query.sort
+  ).limit(5000);
   if (query.status) builder = builder.eq("status", query.status);
   if (query.source) builder = builder.eq("source", query.source);
   if (query.paymentStatus) builder = builder.eq("payment_status", query.paymentStatus);

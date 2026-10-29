@@ -6,6 +6,7 @@ import {
   isWaPbSequenceNumber,
   nextPbOrderNumber,
   nextWaPbOrderNumber,
+  orderNumberSortValue,
   shouldReallocateOnConflict,
 } from "@/modules/orders/order-number";
 
@@ -48,6 +49,15 @@ describe("shouldReallocateOnConflict", () => {
     expect(shouldReallocateOnConflict("PB-10024")).toBe(true);
     expect(shouldReallocateOnConflict("WA-PB-10024")).toBe(true);
     expect(shouldReallocateOnConflict("PDDDf")).toBe(false);
+  });
+});
+
+describe("orderNumberSortValue", () => {
+  it("keeps digits so #9 sorts before #1185", () => {
+    expect(orderNumberSortValue("#1185")).toBe(1185n);
+    expect(orderNumberSortValue("PB-10001")).toBe(10001n);
+    expect(orderNumberSortValue("#9")! < orderNumberSortValue("#1185")!).toBe(true);
+    expect(orderNumberSortValue("letter-only")).toBeNull();
   });
 });
 
