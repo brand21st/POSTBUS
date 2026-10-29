@@ -11,6 +11,7 @@ import type {
   SearchResult,
 } from "@/types/api";
 import { titleCase } from "@/lib/format";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 
 export function pickString(...values: Array<string | null | undefined>) {
   for (const value of values) {
@@ -100,7 +101,8 @@ export function customerName(order: {
 }
 
 export function customerPhone(order: { customer?: CustomerSummary | null }) {
-  return pickString(order.customer?.phone) || "";
+  const raw = pickString(order.customer?.phone);
+  return extractIndiaMobileDigits(raw) ?? raw;
 }
 
 export function addressLine(address?: AddressSummary | null) {

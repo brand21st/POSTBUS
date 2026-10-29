@@ -1,3 +1,4 @@
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { buildPostBusTrackingUrl } from "@/modules/tracking-pages/host";
 
 function nestedOne(value: unknown): Record<string, unknown> | null {
@@ -19,7 +20,7 @@ function addressDto(value: unknown) {
   if (!row) return null;
   return {
     name: row.name ?? null,
-    phone: row.phone ?? null,
+    phone: extractIndiaMobileDigits(typeof row.phone === "string" ? row.phone : null) ?? row.phone ?? null,
     line1: row.line1 ?? null,
     line2: row.line2 ?? null,
     city: row.city ?? null,
@@ -48,7 +49,14 @@ export function publicOrderDto(order: Record<string, unknown>, externalOrderId?:
     parcel_weight_mode: order.parcel_weight_mode ?? order.parcelWeightMode ?? "auto",
     parcel_weight_grams: order.parcel_weight_grams ?? order.parcelWeightGrams ?? null,
     customer: customer
-      ? { name: customer.name ?? null, phone: customer.phone ?? null, email: customer.email ?? null }
+      ? {
+          name: customer.name ?? null,
+          phone:
+            extractIndiaMobileDigits(typeof customer.phone === "string" ? customer.phone : null) ??
+            customer.phone ??
+            null,
+          email: customer.email ?? null,
+        }
       : null,
     shipping_address: addressDto(order.shipping_address) ?? addressDto(order.shippingAddress),
     billing_address: addressDto(order.billing_address) ?? addressDto(order.billingAddress),

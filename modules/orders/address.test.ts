@@ -89,12 +89,34 @@ describe("updateOrderShippingAddress", () => {
         },
       ])
     );
+    expect(client.updates).toEqual(
+      expect.arrayContaining([
+        {
+          table: "customers",
+          values: { name: "Asha Rao", phone: "9876543210" },
+        },
+      ])
+    );
     expect(client.inserts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           table: "audit_logs",
           values: expect.objectContaining({ action: "order.shipping_address_updated" }),
         }),
+      ])
+    );
+  });
+
+  it("writes a 91-prefixed number as 10 digits on both customer and address", async () => {
+    const client = addressClient({ shipmentStatus: "QUEUED" });
+    await updateOrderShippingAddress(client as never, ctx, "ord-1", {
+      ...address,
+      phone: "919876543210",
+    });
+    expect(client.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ table: "addresses", values: expect.objectContaining({ phone: "9876543210" }) }),
+        expect.objectContaining({ table: "customers", values: expect.objectContaining({ phone: "9876543210" }) }),
       ])
     );
   });

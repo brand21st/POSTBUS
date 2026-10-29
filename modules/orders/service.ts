@@ -4,6 +4,7 @@ import { orIlike } from "@/lib/api/filters";
 import type { OrderStatus } from "@/types/domain";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { applyManualExtraCodCharge } from "@/modules/orders/extra-cod";
@@ -542,9 +543,11 @@ export async function updateOrderShippingAddress(
     throw new AppError(ERROR_CODES.CONFLICT, "Address is locked after India Post booking.");
   }
 
+  const phone = input.phone ? extractIndiaMobileDigits(input.phone) ?? input.phone : null;
+  const name = input.name?.trim() || null;
   const fields = {
-    name: input.name ?? null,
-    phone: input.phone ?? null,
+    name,
+    phone,
     line1: input.line1,
     line2: input.line2 ?? null,
     city: input.city,
@@ -565,12 +568,24 @@ export async function updateOrderShippingAddress(
       supabase,
       ctx.organizationId,
       (order.customer_id as string | null) ?? null,
-      input
+      { ...input, name: name ?? undefined, phone: phone ?? undefined }
     );
     const { error } = await supabase
       .from("orders")
       .update({ shipping_address_id: shipping.id })
       .eq("id", orderId)
+      .eq("organization_id", ctx.organizationId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+
+  if (order.customer_id && (name || phone)) {
+    const { error } = await supabase
+      .from("customers")
+      .update({
+        ...(name ? { name } : {}),
+        ...(phone ? { phone } : {}),
+      })
+      .eq("id", order.customer_id)
       .eq("organization_id", ctx.organizationId);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   }
@@ -581,10 +596,16 @@ export async function updateOrderShippingAddress(
     action: "order.shipping_address_updated",
     entity_type: "order",
     entity_id: orderId,
-    after: { pincode: input.pincode, city: input.city, state: input.state },
+    after: { pincode: input.pincode, city: input.city, state: input.state, phone, name },
   });
 
   return getOrder(supabase, ctx, orderId);
+}
+
+function mappedAddress(address: Record<string, unknown> | null) {
+  if (!address) return null;
+  const phone = typeof address.phone === "string" ? extractIndiaMobileDigits(address.phone) ?? address.phone : address.phone;
+  return { ...address, phone };
 }
 
 function mapOrder(row: Record<string, unknown>) {
@@ -620,7 +641,11 @@ function mapOrder(row: Record<string, unknown>) {
     parcelWeightMode: row.parcel_weight_mode ?? "auto",
     parcelWeightGrams: row.parcel_weight_grams ?? null,
     customer: customer
-      ? { name: customer.name, phone: customer.phone, email: customer.email }
+      ? {
+          name: customer.name,
+          phone: extractIndiaMobileDigits(customer.phone) ?? customer.phone,
+          email: customer.email,
+        }
       : null,
     customerName: customer?.name ?? null,
     lineItems: items.map((item) => ({
@@ -639,11 +664,12 @@ function mapOrder(row: Record<string, unknown>) {
           errorMessage: invoices[0].error_message,
         }
       : null,
-    shippingAddress:
+    shippingAddress: mappedAddress(
       (row.shipping_address as Record<string, unknown> | null) ??
-      (row.addresses as Record<string, unknown> | null) ??
-      null,
-    billingAddress: (row.billing_address as Record<string, unknown> | null) ?? null,
+        (row.addresses as Record<string, unknown> | null) ??
+        null
+    ),
+    billingAddress: mappedAddress((row.billing_address as Record<string, unknown> | null) ?? null),
   };
 }
 

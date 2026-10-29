@@ -22,6 +22,7 @@ import {
   addressLine,
   canFulfillOrder,
   customerName,
+  customerPhone,
   lineItemImageUrl,
   lineItems,
   orderNumber,
@@ -314,7 +315,7 @@ export default function OrderDetailPage() {
           </CardHeader>
           <CardContent className="space-y-1.5 p-4 pt-0 text-sm">
             <p className="font-medium text-ink">{customerName(record)}</p>
-            <p className="text-muted">{record.customer?.phone ?? "—"}</p>
+            <p className="text-muted">{customerPhone(record) || "—"}</p>
             <p className="text-muted">{record.customer?.email ?? "—"}</p>
           </CardContent>
         </Card>
@@ -349,6 +350,7 @@ export default function OrderDetailPage() {
         address={record.shippingAddress}
         onSaved={() => {
           queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+          queryClient.invalidateQueries({ queryKey: ["orders"] });
         }}
       />
 

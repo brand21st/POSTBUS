@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  customerPhone,
   labelTemplateName,
   salesInvoiceNumber,
   canFulfillOrder,
@@ -17,6 +18,13 @@ import {
   orderStageMenu,
   shopifyPendingBookingBlocked,
 } from "@/lib/dashboard/records";
+
+describe("customerPhone", () => {
+  it("shows the 10-digit mobile even when the customer row has a 91 prefix", () => {
+    expect(customerPhone({ customer: { phone: "919496821787" } })).toBe("9496821787");
+    expect(customerPhone({ customer: { phone: "9496821787" } })).toBe("9496821787");
+  });
+});
 
 describe("labelTemplateName", () => {
   it("uses the saved template name", () => {
