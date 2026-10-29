@@ -123,11 +123,10 @@ export function resolveOrderListSort(sort?: OrderListQuery["sort"]) {
   return { mode: "created" as const, ascending: false };
 }
 
-function applyOrderListSort(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  builder: any,
+function applyOrderListSort<T extends { order: (column: string, options?: object) => T }>(
+  builder: T,
   sort?: OrderListQuery["sort"]
-) {
+): T {
   const spec = resolveOrderListSort(sort);
   if (spec.mode === "number") {
     return builder
