@@ -96,10 +96,8 @@ function LayoutBlockView({
         pointerEvents: interactive ? "auto" : "none",
         outline: selected ? "2px solid var(--brand)" : undefined,
         outlineOffset: 2,
-        overflow: block.kind === "watermark" ? "visible" : "hidden",
-        opacity: block.kind === "watermark" ? (block.opacity ?? 0.18) : undefined,
-        transform: block.kind === "watermark" && block.rotationDeg ? `rotate(${block.rotationDeg}deg)` : undefined,
-        transformOrigin: block.kind === "watermark" ? "center center" : undefined,
+        overflow: "hidden",
+        opacity: block.kind === "watermark" ? (block.opacity ?? 1) : undefined,
       }}
       onPointerDown={interactive ? (event) => onPointerDown(block.id, event) : undefined}
       onPointerMove={interactive ? (event) => onPointerMove(block.id, event) : undefined}

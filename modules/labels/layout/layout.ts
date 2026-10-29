@@ -381,20 +381,16 @@ export function layoutLabel(template: LabelTemplate, data: PackingLabelData, ass
     );
   }
 
-  const diagonal = Math.hypot(widthPt, heightPt);
-  let markSize = Math.min(18, diagonal / 22);
-  while (markSize > 9 && measureHelvetica(LABEL_GENERATED_FROM, markSize, "normal") > diagonal * 0.72) {
+  const topPad = 2;
+  const maxWidth = Math.max(8, widthPt - 4);
+  let markSize = LABEL_GENERATED_FROM_SIZE;
+  while (markSize > 4 && measureHelvetica(LABEL_GENERATED_FROM, markSize, "normal") > maxWidth) {
     markSize -= 0.5;
   }
-  markSize = Math.max(LABEL_GENERATED_FROM_SIZE + 4, markSize);
-  const markWidth = measureHelvetica(LABEL_GENERATED_FROM, markSize, "normal");
-  const markBox = { x: 0, y: 0, width: widthPt, height: heightPt };
-  const textBox = {
-    x: (widthPt - markWidth) / 2,
-    y: (heightPt - markSize) / 2,
-    width: markWidth,
-    height: markSize,
-  };
+  const markWidth = Math.min(maxWidth, measureHelvetica(LABEL_GENERATED_FROM, markSize, "normal"));
+  const markX = Math.max(2, (widthPt - markWidth) / 2);
+  const markBox = { x: 0, y: topPad, width: widthPt, height: markSize };
+  const textBox = { x: markX, y: topPad, width: markWidth, height: markSize };
   blocks.push({
     id: WATERMARK_ID,
     kind: "watermark",
@@ -402,8 +398,6 @@ export function layoutLabel(template: LabelTemplate, data: PackingLabelData, ass
     stored: markBox,
     clip: markBox,
     fontSize: markSize,
-    rotationDeg: -32,
-    opacity: 0.18,
     lines: placeLines({
       lines: [[{ text: LABEL_GENERATED_FROM, bold: false, italic: false }]],
       box: textBox,
