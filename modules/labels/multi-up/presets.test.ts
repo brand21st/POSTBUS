@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LABEL_4X6, generate4x6Presets, gridSpacing } from "@/modules/labels/multi-up/presets";
+import { LABEL_4X6, generate4x6Presets, generateSheetPresets, gridSpacing } from "@/modules/labels/multi-up/presets";
 import { applyPlacementOverrides, calculateMultiUpLayout } from "@/modules/labels/multi-up/layout";
 import { ptFromMm } from "@/modules/labels/layout/units";
 import { MULTI_PRINT_PAPERS, pagePreset, sheetPreset } from "@/modules/labels/page-presets";
@@ -157,6 +157,39 @@ describe("4×6 multi-print presets", () => {
     expect(moved.placements[0]?.xPt).toBeCloseTo(12, 5);
     expect(moved.placements[0]?.yPt).toBeCloseTo(18, 5);
     expect(moved.placements[0]?.widthPt).toBeCloseTo(ptFromMm(LABEL_4X6.widthMm), 5);
+  });
+
+  it("packs a 64×59 mm template onto A4 at full size and offers leftover quantities", () => {
+    const a4 = sheetPreset("A4");
+    const presets = generateSheetPresets(a4.widthMm, a4.heightMm, "A4", 64, 59);
+    expect(presets.map((item) => item.quantity)).toEqual([1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15]);
+    expect(presets.every((item) => item.scale === 1)).toBe(true);
+    expect(presets.every((item) => item.labelWidthMm === 64 && item.labelHeightMm === 59)).toBe(true);
+    expect(presets.find((item) => item.quantity === 4)).toMatchObject({
+      columns: 2,
+      rows: 2,
+      scale: 1,
+      name: "A4 · 4 × 64×59",
+    });
+    expect(presets.find((item) => item.quantity === 15)).toMatchObject({ columns: 3, rows: 5, name: "A4 · 15 × 64×59" });
+    const densest = presets.at(-1)!;
+    const result = calculateMultiUpLayout({
+      sheetWidthMm: a4.widthMm,
+      sheetHeightMm: a4.heightMm,
+      labelWidthMm: 64,
+      labelHeightMm: 59,
+      margins: densest.margins,
+      gaps: densest.gaps,
+      rotation: 0,
+      scale: 1,
+      columns: densest.columns,
+      rows: densest.rows,
+      items: [{ orderId: "a", copies: densest.quantity }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.perSheet).toBe(15);
+    assertInside(result, 64, 59);
   });
 
   it("centers leftover space the same way as a 2×2 A4 grid", () => {
