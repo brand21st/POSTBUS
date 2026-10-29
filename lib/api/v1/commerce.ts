@@ -367,6 +367,7 @@ export async function handleCommerceRoutes(
       pageSize,
       kind,
       q,
+      sort: params.get("sort"),
       date: params.get("date"),
       on: params.get("on"),
       from: params.get("from"),

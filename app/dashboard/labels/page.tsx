@@ -8,7 +8,7 @@ import { usePrintStation } from "@/lib/hooks/use-print-station";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Download, Printer, QrCode, RefreshCw, Search, Tag, Truck, X } from "lucide-react";
+import { Check, ChevronDown, ChevronsUpDown, ChevronUp, Download, Printer, QrCode, RefreshCw, Search, Tag, Truck, X } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -18,7 +18,12 @@ import { LabelDateFilter, toLabelDateFilterValue } from "@/components/labels/lab
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { committedSearchChanged, selectionAfterFilterChange } from "@/lib/dashboard/orders-list-query";
+import {
+  committedSearchChanged,
+  nextOrdersNumberSort,
+  ordersNumberSortState,
+  selectionAfterFilterChange,
+} from "@/lib/dashboard/orders-list-query";
 import {
   labelsApiSearchParams,
   labelsListHref,
@@ -247,6 +252,9 @@ function LabelsDashboard() {
   const searchParams = useSearchParams();
   const listState = useMemo(() => parseLabelsListSearchParams(searchParams), [searchParams]);
   const { kind } = listState;
+  const numberSort =
+    listState.sort === "order_number" || listState.sort === "-order_number" ? listState.sort : undefined;
+  const numberSortState = ordersNumberSortState(listState.sort);
   const [search, setSearch] = useState(listState.q);
   const committedSearchRef = useRef(listState.q);
   const [selected, setSelected] = useState<string[]>([]);
@@ -264,6 +272,11 @@ function LabelsDashboard() {
     },
     [listState, router]
   );
+
+  const toggleOrderNumberSort = useCallback(() => {
+    setSelected(selectionAfterFilterChange());
+    replaceListState({ page: 1, sort: nextOrdersNumberSort(numberSort) });
+  }, [numberSort, replaceListState]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(listState.q), 0);
@@ -486,6 +499,11 @@ function LabelsDashboard() {
     {
       id: "label",
       header: "Order",
+      sort: {
+        state: numberSortState,
+        onToggle: toggleOrderNumberSort,
+        title: "Sort by order number",
+      },
       cell: (row) => (
         <div className="min-w-[7rem]">
           <p className="font-semibold text-foreground">{row.orderNumber ?? row.order_number ?? row.id.slice(0, 8)}</p>
@@ -710,7 +728,25 @@ function LabelsDashboard() {
             });
           }}
         />
-        <div className="relative w-full max-w-sm">
+        <div className="flex w-full max-w-sm items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="h-9 shrink-0 lg:hidden"
+            title="Sort by order number"
+            onClick={toggleOrderNumberSort}
+          >
+            Order
+            {numberSortState === "asc" ? (
+              <ChevronUp className="size-3.5" aria-hidden />
+            ) : numberSortState === "desc" ? (
+              <ChevronDown className="size-3.5" aria-hidden />
+            ) : (
+              <ChevronsUpDown className="size-3.5 opacity-50" aria-hidden />
+            )}
+          </Button>
+        <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
           <Input
             value={search}
@@ -719,6 +755,7 @@ function LabelsDashboard() {
             aria-label="Search labels"
             className="h-9 pl-9"
           />
+        </div>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">

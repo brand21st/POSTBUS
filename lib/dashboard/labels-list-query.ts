@@ -3,7 +3,8 @@ import {
   parseCalendarDate,
   type LabelDatePreset,
 } from "@/modules/labels/date-range";
-import { parseOrdersPageParam } from "@/lib/dashboard/orders-list-query";
+import { parseOrdersPageParam, parseOrdersSortParam } from "@/lib/dashboard/orders-list-query";
+import type { OrderListSort } from "@/modules/orders/schema";
 
 export type LabelKindUrlFilter = "ALL" | "COMPLETE" | "INCOMPLETE";
 
@@ -15,6 +16,7 @@ export type LabelsListQueryState = {
   on: string | null;
   from: string | null;
   to: string | null;
+  sort?: OrderListSort;
 };
 
 export function parseLabelKindParam(value?: string | null): LabelKindUrlFilter {
@@ -37,6 +39,7 @@ export function parseLabelsListSearchParams(params: URLSearchParams | string): L
     on: date === "custom" ? on : null,
     from: date === "range" && from && to ? (from <= to ? from : to) : date === "range" ? from : null,
     to: date === "range" && from && to ? (from <= to ? to : from) : date === "range" ? to : null,
+    sort: parseOrdersSortParam(search.get("sort")),
   };
 }
 
@@ -51,6 +54,7 @@ export function serializeLabelsListSearchParams(state: LabelsListQueryState): st
     next.set("to", state.to);
   }
   if (state.page > 1) next.set("page", String(state.page));
+  if (state.sort) next.set("sort", state.sort);
   return next.toString();
 }
 
@@ -72,5 +76,6 @@ export function labelsApiSearchParams(state: LabelsListQueryState, pageSize = 20
     params.set("from", state.from);
     params.set("to", state.to);
   }
+  if (state.sort) params.set("sort", state.sort);
   return params;
 }

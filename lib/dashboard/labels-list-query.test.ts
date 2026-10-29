@@ -39,6 +39,24 @@ describe("labels list query", () => {
     expect(params.get("from")).toBeNull();
   });
 
+  it("writes order-number sort on the labels URL and API query", () => {
+    const state = parseLabelsListSearchParams("sort=-order_number");
+    expect(state.sort).toBe("-order_number");
+    expect(serializeLabelsListSearchParams({ ...state, page: 1 })).toBe("sort=-order_number");
+    expect(
+      labelsApiSearchParams({
+        page: 1,
+        kind: "ALL",
+        q: "",
+        date: "all",
+        on: null,
+        from: null,
+        to: null,
+        sort: "-order_number",
+      }).get("sort")
+    ).toBe("-order_number");
+  });
+
   it("formats the selection caption", () => {
     expect(selectedLabelsCaption(1)).toBe("1 Label Selected");
     expect(selectedLabelsCaption(20)).toBe("20 Labels Selected");

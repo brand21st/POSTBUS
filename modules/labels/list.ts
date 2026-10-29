@@ -10,6 +10,7 @@ import {
 } from "@/modules/labels/date-range";
 import { filterGroupedLabels, groupLabelsByShipment } from "@/modules/labels/group";
 import { mapLabelRow } from "@/modules/labels/map";
+import { ORDER_LIST_SORTS, type OrderListSort } from "@/modules/orders/schema";
 
 const LABEL_LIST_SELECT =
   "id, status, created_at, kind, shipment_id, file_url, shipments(barcode, tracking_number, orders(order_number)), print_jobs!print_jobs_label_id_fkey(id, status, error_message, created_at)";
@@ -22,6 +23,11 @@ export function normalizeLabelKindFilter(kind?: string | null): LabelKindFilter 
     return value;
   }
   return "ALL";
+}
+
+export function resolveLabelListSort(sort?: string | null): OrderListSort | null {
+  if (!sort) return null;
+  return (ORDER_LIST_SORTS as readonly string[]).includes(sort) ? (sort as OrderListSort) : null;
 }
 
 export function matchesLabelKindFilter(hasIndia: boolean, hasMerchant: boolean, kind: LabelKindFilter) {
@@ -77,6 +83,7 @@ export async function listGroupedLabels(
     pageSize: number;
     kind?: string | null;
     q?: string | null;
+    sort?: string | null;
   } & LabelDateFilterInput
 ) {
   const page = Math.max(1, query.page || 1);
@@ -90,15 +97,17 @@ export async function listGroupedLabels(
     : DEFAULT_LABEL_TIMEZONE;
   const bounds = resolveLabelDateBounds(query, timezone);
 
+  const sort = resolveLabelListSort(query.sort);
   const rpcArgs: Record<string, unknown> = {
     p_organization_id: ctx.organizationId,
     p_kind: kind,
     p_limit: pageSize,
     p_offset: offset,
-    p_search: search,
-    p_from: bounds?.fromIso ?? null,
-    p_to: bounds?.toIso ?? null,
   };
+  if (search) rpcArgs.p_search = search;
+  if (bounds?.fromIso) rpcArgs.p_from = bounds.fromIso;
+  if (bounds?.toIso) rpcArgs.p_to = bounds.toIso;
+  if (sort) rpcArgs.p_sort = sort;
   const { data, error } = await supabase.rpc("label_shipment_groups", rpcArgs);
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
