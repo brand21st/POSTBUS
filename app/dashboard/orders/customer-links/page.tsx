@@ -339,13 +339,13 @@ function ConfirmPanel({
         overwrite
         getCurrent={() => addressFields}
         onApply={(fields) => {
-          if (fields.name) setCustomerName(fields.name);
-          if (fields.phone) setPhone(fields.phone);
-          if (fields.line1) setLine1(fields.line1);
-          if (fields.line2) setLine2(fields.line2);
-          if (fields.city) setCity(fields.city);
+          setCustomerName((fields.name ?? "").trim());
+          setPhone((fields.phone ?? "").trim());
+          setLine1((fields.line1 ?? "").trim());
+          setLine2((fields.line2 ?? "").trim());
+          setCity((fields.city ?? "").trim());
           if (fields.state) setState(fields.state);
-          if (fields.pincode) setPincode(fields.pincode);
+          setPincode((fields.pincode ?? "").trim());
         }}
       />
       {catalogOrder ? (

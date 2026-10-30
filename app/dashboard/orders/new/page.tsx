@@ -20,6 +20,7 @@ import {
   clipIndiaPostAddressLine,
   INDIA_POST_ADDRESS_LINE_TOO_LONG,
 } from "@/components/address/address-line-input";
+import { unsetIfDefault } from "@/lib/parsers/whatsapp-customer-message";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -571,41 +572,44 @@ export default function NewOrderPage() {
       <div className="space-y-3">
 
       <WhatsAppPasteParser
-        getCurrent={() => ({
-          name: form.getValues("customerName"),
-          phone: form.getValues("customerPhone"),
-          email: form.getValues("customerEmail"),
-          line1: form.getValues("shippingAddress.line1"),
-          line2: form.getValues("shippingAddress.line2"),
-          city: form.getValues("shippingAddress.city"),
-          state: form.getValues("shippingAddress.state"),
-          pincode: form.getValues("shippingAddress.pincode"),
-        })}
+        overwrite
+        getCurrent={() => {
+          const shipping = form.getValues("shippingAddress");
+          return {
+            name: shipping.name || form.getValues("customerName"),
+            phone: shipping.phone || form.getValues("customerPhone"),
+            email: form.getValues("customerEmail"),
+            line1: shipping.line1,
+            line2: shipping.line2,
+            city: shipping.city,
+            state: unsetIfDefault(
+              shipping.state,
+              form.getFieldState("shippingAddress.state").isDirty,
+              DEFAULT_INDIAN_STATE
+            ),
+            pincode: shipping.pincode,
+          };
+        }}
         onApply={(fields) => {
-          if (fields.name) {
-            form.setValue("customerName", fields.name, { shouldDirty: true });
-            if (!form.getValues("shippingAddress.name")) {
-              form.setValue("shippingAddress.name", fields.name, { shouldDirty: true });
-            }
-          }
-          if (fields.phone) {
-            form.setValue("customerPhone", fields.phone, { shouldDirty: true });
-            if (!form.getValues("shippingAddress.phone")) {
-              form.setValue("shippingAddress.phone", fields.phone, { shouldDirty: true });
-            }
-          }
-          if (fields.email && !String(form.getValues("customerEmail") ?? "").trim()) {
-            form.setValue("customerEmail", fields.email, { shouldDirty: true });
-          }
-          if (fields.line1) {
-            form.setValue("shippingAddress.line1", clipIndiaPostAddressLine(fields.line1), { shouldDirty: true });
-          }
-          if (fields.line2) {
-            form.setValue("shippingAddress.line2", clipIndiaPostAddressLine(fields.line2), { shouldDirty: true });
-          }
-          if (fields.city) form.setValue("shippingAddress.city", fields.city, { shouldDirty: true });
-          if (fields.state) form.setValue("shippingAddress.state", fields.state, { shouldDirty: true });
-          if (fields.pincode) form.setValue("shippingAddress.pincode", fields.pincode, { shouldDirty: true });
+          const name = (fields.name ?? "").trim();
+          const phone = (fields.phone ?? "").trim();
+          const email = (fields.email ?? "").trim();
+          const line1 = clipIndiaPostAddressLine(fields.line1 ?? "");
+          const line2 = clipIndiaPostAddressLine(fields.line2 ?? "");
+          const city = (fields.city ?? "").trim();
+          const state = (fields.state ?? "").trim() || DEFAULT_INDIAN_STATE;
+          const pincode = (fields.pincode ?? "").trim();
+          const write = { shouldDirty: true, shouldValidate: true } as const;
+          form.setValue("customerName", name, write);
+          form.setValue("customerPhone", phone, write);
+          form.setValue("customerEmail", email, write);
+          form.setValue("shippingAddress.name", name, write);
+          form.setValue("shippingAddress.phone", phone, write);
+          form.setValue("shippingAddress.line1", line1, write);
+          form.setValue("shippingAddress.line2", line2, write);
+          form.setValue("shippingAddress.city", city, write);
+          form.setValue("shippingAddress.state", state, write);
+          form.setValue("shippingAddress.pincode", pincode, write);
         }}
       />
 
