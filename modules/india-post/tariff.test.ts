@@ -97,10 +97,17 @@ describe("tenant and read-only input resolution", () => {
     const { db, operations } = database();
     await expect(loadTariffOrder(db, "org-1", "00000000-0000-4000-8000-000000000001")).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
     expect(operations[0].filters).toContainEqual(["organization_id", "org-1"]);
+    expect(operations[0].filters).toContainEqual(["id", "00000000-0000-4000-8000-000000000001"]);
+  });
+  it("looks up estimates by order number without casting it to uuid", async () => {
+    const { db, operations } = database();
+    await expect(loadTariffOrder(db, "org-1", "PB-10059")).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    expect(operations[0].filters).toContainEqual(["organization_id", "org-1"]);
+    expect(operations[0].filters).toContainEqual(["order_number", "PB-10059"]);
   });
   it("stores only the estimate and timestamp on the tenant order", async () => {
     const { db, operations } = database();
-    await saveTariffEstimate(db, "org-1", "order-1", input, { estimatedTotal: 152, calculatedAt: "2026-10-16T00:00:00.000Z" });
+    await saveTariffEstimate(db, "org-1", "00000000-0000-4000-8000-000000000001", input, { estimatedTotal: 152, calculatedAt: "2026-10-16T00:00:00.000Z" });
     expect(operations[0]).toMatchObject({
       table: "orders",
       update: {
@@ -108,7 +115,7 @@ describe("tenant and read-only input resolution", () => {
         india_post_estimated_at: "2026-10-16T00:00:00.000Z",
         india_post_estimate_key: "v1|BUSINESS_PARCEL|400001|110001|550|20|15|10|||",
       },
-      filters: [["organization_id", "org-1"], ["id", "order-1"]],
+      filters: [["organization_id", "org-1"], ["id", "00000000-0000-4000-8000-000000000001"]],
     });
     expect(operations[0].update).not.toHaveProperty("shipping_amount");
     expect(operations[0].update).not.toHaveProperty("tariff_amount");

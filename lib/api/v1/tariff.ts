@@ -60,7 +60,7 @@ export async function handleTariffRoutes(request: NextRequest, supabase: Supabas
     const input = resolveTariffInput(body, connection, order);
     service = input.service;
     const quote = await executeTariff(admin, ctx.organizationId, connection, input);
-    if (orderId) await saveTariffEstimate(admin, ctx.organizationId, orderId, input, quote);
+    if (order?.id) await saveTariffEstimate(admin, ctx.organizationId, order.id, input, quote);
     logInfo("india-post.tariff", { organizationId: ctx.organizationId, orderId, service, category: "SUCCESS", durationMs: Date.now() - started });
     return privateResponse(quote);
   } catch (error) {

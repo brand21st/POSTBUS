@@ -1,10 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { z } from "zod";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { decryptSecret } from "@/lib/security/crypto";
 import { persistIndiaPostTokens, withProcessSessionLock } from "@/modules/india-post/session";
 import { IndiaPostProvider } from "@/modules/india-post/provider";
 import { withIndiaPostSessionLock } from "@/modules/india-post/session-lock";
+import { orderLookup } from "@/modules/orders/order-number";
 import { manualTariffSchema, orderTariffSchema, tariffEstimateKey, tariffInputSchema, normalizeTariff, type TariffInput, type TariffQuote } from "@/modules/india-post/tariff-contract";
 
 export function tariffError(category: string, message: string, code: ConstructorParameters<typeof AppError>[0] = ERROR_CODES.PROVIDER_ERROR) {
@@ -46,14 +46,16 @@ export function tariffSourcePincode(connection: TariffConnection, office?: "pick
 }
 
 export type TariffOrder = {
+  id?: string;
   india_post_service?: string | null; parcel_weight_mode?: string | null; parcel_weight_grams?: number | null;
   shipping_address: { pincode?: string | null } | null;
   order_line_items: Array<{ weight_grams: number | null; quantity: number }>;
   shipments: Array<{ weight_grams?: number | null; length_cm?: number | null; width_cm?: number | null; height_cm?: number | null; service_code?: string | null; created_at?: string }>;
 };
 export async function loadTariffOrder(db: SupabaseClient, organizationId: string, id: string): Promise<TariffOrder> {
-  if (!z.uuid().safeParse(id).success) throw tariffError("ORDER_NOT_FOUND", "Order not found.", ERROR_CODES.RESOURCE_NOT_FOUND);
-  const { data, error } = await db.from("orders").select("india_post_service,parcel_weight_mode,parcel_weight_grams,shipping_address:addresses!shipping_address_id(pincode),order_line_items(weight_grams,quantity),shipments(weight_grams,length_cm,width_cm,height_cm,service_code,created_at)").eq("organization_id", organizationId).eq("id", id).maybeSingle();
+  const lookup = orderLookup(id);
+  if (!lookup) throw tariffError("ORDER_NOT_FOUND", "Order not found.", ERROR_CODES.RESOURCE_NOT_FOUND);
+  const { data, error } = await db.from("orders").select("id,india_post_service,parcel_weight_mode,parcel_weight_grams,shipping_address:addresses!shipping_address_id(pincode),order_line_items(weight_grams,quantity),shipments(weight_grams,length_cm,width_cm,height_cm,service_code,created_at)").eq("organization_id", organizationId).eq(lookup.column, lookup.value).maybeSingle();
   if (error) throw tariffError("INTERNAL_ERROR", "Unable to load order details.");
   if (!data) throw tariffError("ORDER_NOT_FOUND", "Order not found.", ERROR_CODES.RESOURCE_NOT_FOUND);
   return data as unknown as TariffOrder;
@@ -148,6 +150,8 @@ export async function saveTariffEstimate(
   input: TariffInput,
   quote: Pick<TariffQuote, "estimatedTotal" | "calculatedAt">
 ) {
+  const lookup = orderLookup(orderId);
+  if (lookup?.column !== "id") throw tariffError("INTERNAL_ERROR", "Unable to save the shipping estimate.");
   const { data, error } = await db
     .from("orders")
     .update({
@@ -156,7 +160,7 @@ export async function saveTariffEstimate(
       india_post_estimate_key: tariffEstimateKey(input),
     })
     .eq("organization_id", organizationId)
-    .eq("id", orderId)
+    .eq("id", lookup.value)
     .select("id")
     .maybeSingle();
   if (error || !data) throw tariffError("INTERNAL_ERROR", "Unable to save the shipping estimate.");

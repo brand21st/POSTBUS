@@ -1,5 +1,6 @@
 const PB_SEQUENCE = /^PB-(\d+)$/i;
 const WA_PB_SEQUENCE = /^WA-PB-(\d+)$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function isPbSequenceNumber(value: string) {
   return PB_SEQUENCE.test(value.trim());
@@ -22,6 +23,19 @@ export function shouldReallocateOnConflict(requestedNumber: string) {
 
 export function canonicalOrderNumber(value: string) {
   return value.trim().replace(/^#+/, "").trim().toUpperCase();
+}
+
+export function isUuid(value: string) {
+  return UUID_RE.test(value.trim());
+}
+
+/** Resolve a dashboard/API order key without sending order numbers into uuid columns. */
+export function orderLookup(idOrNumber: string): { column: "id" | "order_number"; value: string } | null {
+  const trimmed = idOrNumber.trim();
+  if (!trimmed) return null;
+  if (isUuid(trimmed)) return { column: "id", value: trimmed };
+  const number = canonicalOrderNumber(trimmed);
+  return number ? { column: "order_number", value: number } : null;
 }
 
 /** Digits used for API-wide order-number sort (`orders.order_number_sort`). */

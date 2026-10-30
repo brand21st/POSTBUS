@@ -3,9 +3,11 @@ import {
   formatWhatsAppOrderNumber,
   isOrderNumberConflict,
   isPbSequenceNumber,
+  isUuid,
   isWaPbSequenceNumber,
   nextPbOrderNumber,
   nextWaPbOrderNumber,
+  orderLookup,
   orderNumberSortValue,
   shouldReallocateOnConflict,
 } from "@/modules/orders/order-number";
@@ -70,5 +72,17 @@ describe("isOrderNumberConflict", () => {
       true
     );
     expect(isOrderNumberConflict("Order failed.")).toBe(false);
+  });
+});
+
+describe("orderLookup", () => {
+  it("keeps UUIDs on the id column and order numbers off it", () => {
+    expect(isUuid("c8c64456-d324-4277-9577-c3ee1086fccf")).toBe(true);
+    expect(orderLookup("c8c64456-d324-4277-9577-c3ee1086fccf")).toEqual({
+      column: "id",
+      value: "c8c64456-d324-4277-9577-c3ee1086fccf",
+    });
+    expect(orderLookup("PB-10059")).toEqual({ column: "order_number", value: "PB-10059" });
+    expect(orderLookup("")).toBeNull();
   });
 });

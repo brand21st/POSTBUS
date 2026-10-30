@@ -61,7 +61,7 @@ describe("tariff routes", () => {
     expect(createAdminClient).not.toHaveBeenCalled(); expect(executeTariff).not.toHaveBeenCalled(); expect(saveTariffEstimate).not.toHaveBeenCalled();
   });
   it("uses the order destination and saves the successful estimate", async () => {
-    vi.mocked(loadTariffOrder).mockResolvedValueOnce({ shipping_address: { pincode: "600001" }, order_line_items: [], shipments: [] });
+    vi.mocked(loadTariffOrder).mockResolvedValueOnce({ id: "00000000-0000-4000-8000-000000000001", shipping_address: { pincode: "600001" }, order_line_items: [], shipments: [] });
     const temporary = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "destinationPincode"));
     const ctx = { ...context(), permissions: ["orders.read"] as TenantContext["permissions"] };
     await handleTariffRoutes(request("orders/test/tariff-quote", temporary), db, ctx, "orders/test/tariff-quote");
@@ -70,7 +70,7 @@ describe("tariff routes", () => {
     expect(saveTariffEstimate).toHaveBeenCalledWith(
       expect.anything(),
       ctx.organizationId,
-      "test",
+      "00000000-0000-4000-8000-000000000001",
       expect.objectContaining({ destinationPincode: "600001", weightGrams: 550 }),
       expect.objectContaining({ estimatedTotal: 152 })
     );

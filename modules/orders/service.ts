@@ -33,6 +33,7 @@ import {
   isOrderNumberConflict,
   nextPbOrderNumber,
   nextWaPbOrderNumber,
+  orderLookup,
   shouldReallocateOnConflict,
 } from "@/modules/orders/order-number";
 
@@ -196,13 +197,15 @@ export async function listOrders(
 }
 
 export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id: string) {
+  const lookup = orderLookup(id);
+  if (!lookup) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
   const { data, error } = await supabase
     .from("orders")
     .select(
       "*, customers(*), shipping_address:addresses!shipping_address_id(*), billing_address:addresses!billing_address_id(*), order_line_items(*), shipments(*), shipping_invoices(id, status, invoice_number, error_message, shipment_id, created_at)"
     )
     .eq("organization_id", ctx.organizationId)
-    .eq("id", id)
+    .eq(lookup.column, lookup.value)
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logError, logInfo } from "@/lib/logger";
+import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { lockTokenRef } from "@/modules/india-post/booking-lock";
 
 export const INDIA_POST_SESSION_LOCK_TTL_SECONDS = 25;
@@ -50,8 +51,18 @@ type AcquireResult =
   | { kind: "busy" }
   | { kind: "unavailable"; reason: string };
 
+function sessionLockClient(supabase: SupabaseClient) {
+  try {
+    if (hasAdminClient()) return createAdminClient();
+  } catch {
+    // Tests and local misconfig still use the caller client.
+  }
+  return supabase;
+}
+
 async function tryAcquireDbLock(supabase: SupabaseClient, connectionId: string): Promise<AcquireResult> {
-  if (typeof supabase.rpc !== "function") {
+  const client = sessionLockClient(supabase);
+  if (typeof client.rpc !== "function") {
     return { kind: "unavailable", reason: "rpc_missing" };
   }
   try {
@@ -59,7 +70,7 @@ async function tryAcquireDbLock(supabase: SupabaseClient, connectionId: string):
       data: unknown;
       error: { code?: string; message?: string } | null;
     }>(
-      supabase.rpc("acquire_india_post_session_lock", {
+      client.rpc("acquire_india_post_session_lock", {
         p_connection_id: connectionId,
         p_ttl_seconds: INDIA_POST_SESSION_LOCK_TTL_SECONDS,
       }) as PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }>,
@@ -82,10 +93,11 @@ async function tryAcquireDbLock(supabase: SupabaseClient, connectionId: string):
 }
 
 async function releaseDbLock(supabase: SupabaseClient, connectionId: string, token: string) {
-  if (typeof supabase.rpc !== "function") return;
+  const client = sessionLockClient(supabase);
+  if (typeof client.rpc !== "function") return;
   try {
     const { error } = await withRpcTimeout<{ error: { code?: string; message?: string } | null }>(
-      supabase.rpc("release_india_post_session_lock", {
+      client.rpc("release_india_post_session_lock", {
         p_connection_id: connectionId,
         p_token: token,
       }) as PromiseLike<{ error: { code?: string; message?: string } | null }>,
