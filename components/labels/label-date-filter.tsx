@@ -8,6 +8,7 @@ import {
   isSameDay,
   isSameMonth,
   isWithinInterval,
+  startOfDay,
   startOfMonth,
   startOfWeek,
 } from "date-fns";
@@ -101,23 +102,29 @@ export function LabelDateFilter({ value, onChange }: Props) {
       setPicker(null);
       return;
     }
-    if (!draftStart || draftEnd) {
+    const completeRange = Boolean(draftStart && draftEnd && !isSameDay(draftStart, draftEnd));
+    if (!draftStart || completeRange) {
       setDraftStart(date);
-      setDraftEnd(null);
+      setDraftEnd(date);
       return;
     }
-    if (date.getTime() < draftStart.getTime()) {
+    if (isSameDay(date, draftStart)) {
+      setDraftEnd(date);
+      return;
+    }
+    if (date.getTime() < startOfDay(draftStart).getTime()) {
+      setDraftEnd(draftStart);
       setDraftStart(date);
-      setDraftEnd(null);
       return;
     }
     setDraftEnd(date);
   }
 
   function applyRange() {
-    if (!draftStart || !draftEnd) return;
+    if (!draftStart) return;
+    const end = draftEnd ?? draftStart;
     const from = parseCalendarDate(toIsoDate(draftStart));
-    const to = parseCalendarDate(toIsoDate(draftEnd));
+    const to = parseCalendarDate(toIsoDate(end));
     if (!from || !to) return;
     onChange({ kind: "range", from, to });
     setPicker(null);
@@ -132,8 +139,10 @@ export function LabelDateFilter({ value, onChange }: Props) {
         ? format(draftStart, "d MMM yyyy")
         : "Select a date"
       : draftStart
-        ? `${format(draftStart, "d MMM")}${draftEnd ? ` → ${format(draftEnd, "d MMM")}` : " → End date"}`
-        : "Start date → End date";
+        ? draftEnd && !isSameDay(draftStart, draftEnd)
+          ? `${format(draftStart, "d MMM")} → ${format(draftEnd, "d MMM")}`
+          : format(draftStart, "d MMM yyyy")
+        : "Select a date";
 
   return (
     <>
@@ -183,7 +192,7 @@ export function LabelDateFilter({ value, onChange }: Props) {
               <DialogDescription>
                 {picker === "day"
                   ? "Show labels generated on this calendar date."
-                  : "Choose a start date, then an end date. Both days are included."}
+                  : "Choose one day, or a start date and then an end date. Both days are included."}
               </DialogDescription>
             </DialogHeader>
             <p className="mt-4 text-lg font-semibold text-ink" aria-live="polite" aria-atomic="true">
@@ -277,7 +286,7 @@ export function LabelDateFilter({ value, onChange }: Props) {
               >
                 Clear dates
               </Button>
-              <Button type="button" disabled={!draftStart || !draftEnd} onClick={applyRange}>
+              <Button type="button" disabled={!draftStart} onClick={applyRange}>
                 <Check className="size-4" />
                 Apply
               </Button>

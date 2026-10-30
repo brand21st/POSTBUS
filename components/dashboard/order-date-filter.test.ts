@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { todayOrderRange, yesterdayOrderRange } from "@/components/dashboard/order-date-filter";
+import {
+  nextDraftRange,
+  todayOrderRange,
+  yesterdayOrderRange,
+} from "@/components/dashboard/order-date-filter";
 
 describe("order date preset ranges", () => {
   it("covers the merchant's complete local day", () => {
@@ -22,5 +26,25 @@ describe("order date preset ranges", () => {
 
     expect(range.from.getDate()).toBe(22);
     expect(now.getDate()).toBe(23);
+  });
+
+  it("selects a full single day so Apply can run immediately", () => {
+    const day = new Date(2026, 9, 30, 12);
+    const draft = nextDraftRange(null, null, day);
+    expect(draft.start.getDate()).toBe(30);
+    expect(draft.end.getDate()).toBe(30);
+    const range = todayOrderRange(draft.start);
+    expect(range.from.getHours()).toBe(0);
+    expect(range.to.getHours()).toBe(23);
+    expect(range.to.getMinutes()).toBe(59);
+  });
+
+  it("extends a single-day draft into a range on the second click", () => {
+    const start = new Date(2026, 9, 28);
+    const end = new Date(2026, 9, 30);
+    const first = nextDraftRange(null, null, start);
+    const second = nextDraftRange(first.start, first.end, end);
+    expect(second.start.getDate()).toBe(28);
+    expect(second.end.getDate()).toBe(30);
   });
 });

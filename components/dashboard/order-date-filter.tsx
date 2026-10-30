@@ -8,6 +8,7 @@ import {
   isSameDay,
   isSameMonth,
   isWithinInterval,
+  startOfDay,
   startOfMonth,
   startOfWeek,
 } from "date-fns";
@@ -59,6 +60,24 @@ export function yesterdayOrderRange(now = new Date()) {
   return localDayRange(yesterday);
 }
 
+export function nextDraftRange(
+  draftStart: Date | null,
+  draftEnd: Date | null,
+  date: Date
+): { start: Date; end: Date } {
+  const completeRange = Boolean(draftStart && draftEnd && !isSameDay(draftStart, draftEnd));
+  if (!draftStart || completeRange) {
+    return { start: date, end: date };
+  }
+  if (isSameDay(date, draftStart)) {
+    return { start: draftStart, end: date };
+  }
+  if (date.getTime() < startOfDay(draftStart).getTime()) {
+    return { start: date, end: draftStart };
+  }
+  return { start: draftStart, end: date };
+}
+
 export function OrderDateFilter({ value, counts, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [visibleMonth, setVisibleMonth] = useState(() =>
@@ -89,25 +108,18 @@ export function OrderDateFilter({ value, counts, onChange }: Props) {
   }, [visibleMonth]);
 
   function chooseDate(date: Date) {
-    if (!draftStart || draftEnd) {
-      setDraftStart(date);
-      setDraftEnd(null);
-      return;
-    }
-    if (date.getTime() < draftStart.getTime()) {
-      setDraftStart(date);
-      setDraftEnd(null);
-      return;
-    }
-    setDraftEnd(date);
+    const next = nextDraftRange(draftStart, draftEnd, date);
+    setDraftStart(next.start);
+    setDraftEnd(next.end);
   }
 
   function apply() {
-    if (!draftStart || !draftEnd) return;
+    if (!draftStart) return;
+    const end = draftEnd ?? draftStart;
     onChange({
       kind: "custom",
       from: localDayRange(draftStart).from,
-      to: localDayRange(draftEnd).to,
+      to: localDayRange(end).to,
     });
     setOpen(false);
   }
@@ -117,8 +129,10 @@ export function OrderDateFilter({ value, counts, onChange }: Props) {
       ? `${format(value.from, "MMM d")} – ${format(value.to, "MMM d")}`
       : null;
   const draftLabel = draftStart
-    ? `${format(draftStart, "d MMM")}${draftEnd ? ` → ${format(draftEnd, "d MMM")}` : " → End date"}`
-    : "Start date → End date";
+    ? draftEnd && !isSameDay(draftStart, draftEnd)
+      ? `${format(draftStart, "d MMM")} → ${format(draftEnd, "d MMM")}`
+      : format(draftStart, "d MMM yyyy")
+    : "Select a date";
 
   return (
     <>
@@ -181,7 +195,7 @@ export function OrderDateFilter({ value, counts, onChange }: Props) {
             <DialogHeader>
               <DialogTitle>Select dates</DialogTitle>
               <DialogDescription>
-                Choose a start date, then an end date.
+                Choose one day, or a start date and then an end date. Each day uses the full local day.
               </DialogDescription>
             </DialogHeader>
             <p
@@ -279,7 +293,7 @@ export function OrderDateFilter({ value, counts, onChange }: Props) {
             >
               Clear dates
             </Button>
-            <Button type="button" disabled={!draftStart || !draftEnd} onClick={apply}>
+            <Button type="button" disabled={!draftStart} onClick={apply}>
               <Check className="size-4" />
               Apply
             </Button>
