@@ -85,6 +85,19 @@ describe("new order form", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("rejects a shipping address line that will not fit an India Post label", () => {
+    const parsed = newOrderFormSchema.safeParse({
+      ...filledOrder,
+      shippingAddress: {
+        ...filledOrder.shippingAddress,
+        line1: "x".repeat(81),
+      },
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues.some((issue) => issue.path.join(".") === "shippingAddress.line1")).toBe(true);
+  });
+
   it("still requires a billing address when it is different from shipping", () => {
     const parsed = newOrderFormSchema.safeParse({
       ...filledOrder,

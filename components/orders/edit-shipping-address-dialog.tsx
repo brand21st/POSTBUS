@@ -8,6 +8,10 @@ import { Lock } from "lucide-react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import {
+  AddressLineInput,
+  INDIA_POST_ADDRESS_LINE_TOO_LONG,
+} from "@/components/address/address-line-input";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaWhatsappField } from "@/components/auth/india-whatsapp-field";
 import { Button } from "@/components/ui/button";
@@ -27,6 +31,7 @@ import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS, INDIAN_STATES } from "@/lib
 import type { IndiaPostDirectoryLookup } from "@/lib/india-post/pincode-directory";
 import { api } from "@/lib/hooks/use-api";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
+import { INDIA_POST_ADDRESS_LINE_MAX } from "@/modules/india-post/spec";
 import type { AddressSummary } from "@/types/api";
 
 const schema = z.object({
@@ -34,8 +39,11 @@ const schema = z.object({
   phone: z
     .string()
     .refine((value) => extractIndiaMobileDigits(value) !== null, "Enter a 10-digit Indian mobile number."),
-  line1: z.string().min(3, "Address is required."),
-  line2: z.string().optional(),
+  line1: z
+    .string()
+    .min(3, "Address is required.")
+    .max(INDIA_POST_ADDRESS_LINE_MAX, INDIA_POST_ADDRESS_LINE_TOO_LONG),
+  line2: z.string().max(INDIA_POST_ADDRESS_LINE_MAX, INDIA_POST_ADDRESS_LINE_TOO_LONG).optional(),
   city: z.string().min(2, "City is required."),
   state: z.string().min(2, "State is required."),
   pincode: z.string().regex(/^\d{6}$/, "Enter a 6-digit pincode."),
@@ -136,31 +144,30 @@ export function EditShippingAddressDialog({
               placeholder="10-digit mobile number"
             />
           </Field>
-          <Field
+          <AddressLineInput
+            id="edit-shipping-line1"
             label="Address"
             className="md:col-span-2"
+            inputClassName="h-9"
             hint="House, building, and street — required for booking."
             error={form.formState.errors.line1?.message}
-          >
-            <Input
-              className="h-9"
-              autoComplete="address-line1"
-              placeholder="House / building, street"
-              {...form.register("line1")}
-            />
-          </Field>
-          <Field
+            control={form.control}
+            autoComplete="address-line1"
+            placeholder="House / building, street"
+            {...form.register("line1")}
+          />
+          <AddressLineInput
+            id="edit-shipping-line2"
             label="Area / locality"
             className="md:col-span-2"
+            inputClassName="h-9"
             hint="Optional. Landmark or extra address — not required for India Post booking."
-          >
-            <Input
-              className="h-9"
-              autoComplete="address-line2"
-              placeholder="Landmark, area (optional)"
-              {...form.register("line2")}
-            />
-          </Field>
+            error={form.formState.errors.line2?.message}
+            control={form.control}
+            autoComplete="address-line2"
+            placeholder="Landmark, area (optional)"
+            {...form.register("line2")}
+          />
           <Field label="Pincode" error={form.formState.errors.pincode?.message}>
             <Input
               className="h-9 tabular-nums tracking-wide"

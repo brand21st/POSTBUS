@@ -15,6 +15,11 @@ import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
 import { TariffEstimateCard } from "@/components/orders/tariff-estimate-card";
 import type { TariffEstimateStatus } from "@/components/orders/tariff-estimate-card";
 import { WhatsAppPasteParser } from "@/components/orders/whatsapp-paste-parser";
+import {
+  AddressLineInput,
+  clipIndiaPostAddressLine,
+  INDIA_POST_ADDRESS_LINE_TOO_LONG,
+} from "@/components/address/address-line-input";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -56,14 +61,18 @@ import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } f
 import type { OrderRecord, Paginated, ProductRecord } from "@/types/api";
 import { addRupees, INDIA_POST_COD_MAX_RUPEES, tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
 import { catalogCodAdvancePaid } from "@/modules/products/payment";
+import { INDIA_POST_ADDRESS_LINE_MAX } from "@/modules/india-post/spec";
 
 const addressSchema = z.object({
   name: z.string().min(2, "Customer name is required."),
   phone: z
     .string()
     .refine((value) => extractIndiaMobileDigits(value) !== null, "Enter a 10-digit Indian mobile number."),
-  line1: z.string().min(3, "Address is required."),
-  line2: z.string().optional(),
+  line1: z
+    .string()
+    .min(3, "Address is required.")
+    .max(INDIA_POST_ADDRESS_LINE_MAX, INDIA_POST_ADDRESS_LINE_TOO_LONG),
+  line2: z.string().max(INDIA_POST_ADDRESS_LINE_MAX, INDIA_POST_ADDRESS_LINE_TOO_LONG).optional(),
   city: z.string().min(2, "City is required."),
   state: z.string().min(2, "State is required."),
   pincode: z.string().regex(/^\d{6}$/, "Enter a 6-digit pincode."),
@@ -588,8 +597,12 @@ export default function NewOrderPage() {
           if (fields.email && !String(form.getValues("customerEmail") ?? "").trim()) {
             form.setValue("customerEmail", fields.email, { shouldDirty: true });
           }
-          if (fields.line1) form.setValue("shippingAddress.line1", fields.line1, { shouldDirty: true });
-          if (fields.line2) form.setValue("shippingAddress.line2", fields.line2, { shouldDirty: true });
+          if (fields.line1) {
+            form.setValue("shippingAddress.line1", clipIndiaPostAddressLine(fields.line1), { shouldDirty: true });
+          }
+          if (fields.line2) {
+            form.setValue("shippingAddress.line2", clipIndiaPostAddressLine(fields.line2), { shouldDirty: true });
+          }
           if (fields.city) form.setValue("shippingAddress.city", fields.city, { shouldDirty: true });
           if (fields.state) form.setValue("shippingAddress.state", fields.state, { shouldDirty: true });
           if (fields.pincode) form.setValue("shippingAddress.pincode", fields.pincode, { shouldDirty: true });
@@ -1363,31 +1376,30 @@ function AddressFields({
           placeholder="10-digit mobile number"
         />
       </Field>
-      <Field
+      <AddressLineInput
+        id={`${prefix}-line1`}
         label="Address"
         className="md:col-span-2"
+        inputClassName="h-8"
         hint="House, building, and street — required for booking."
         error={form.formState.errors[prefix]?.line1?.message}
-      >
-        <Input
-          className="h-8"
-          autoComplete="address-line1"
-          placeholder="House / building, street"
-          {...form.register(`${prefix}.line1`)}
-        />
-      </Field>
-      <Field
+        control={form.control}
+        autoComplete="address-line1"
+        placeholder="House / building, street"
+        {...form.register(`${prefix}.line1`)}
+      />
+      <AddressLineInput
+        id={`${prefix}-line2`}
         label="Area / locality"
         className="md:col-span-2"
+        inputClassName="h-8"
         hint="Optional. Landmark or extra address — not required for India Post booking."
-      >
-        <Input
-          className="h-8"
-          autoComplete="address-line2"
-          placeholder="Landmark, area (optional)"
-          {...form.register(`${prefix}.line2`)}
-        />
-      </Field>
+        error={form.formState.errors[prefix]?.line2?.message}
+        control={form.control}
+        autoComplete="address-line2"
+        placeholder="Landmark, area (optional)"
+        {...form.register(`${prefix}.line2`)}
+      />
       <Field label="Pincode" error={form.formState.errors[prefix]?.pincode?.message}>
         <Input
           className="h-8 tabular-nums tracking-wide"
