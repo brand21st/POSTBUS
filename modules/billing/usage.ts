@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/billing";
+import { TRIAL_ENDED_MESSAGE, trialIsLive } from "@/modules/billing/trial-policy";
 
 export const LIVE_STATUSES = ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"] as const;
 export const BOOKABLE_STATUSES = ["TRIAL", "ACTIVE", "PAST_DUE"] as const;
@@ -46,6 +47,7 @@ export type QuotaSnapshot = {
   periodStart: string | null;
   periodEnd: string | null;
   bookable: boolean;
+  coverageEnded: boolean;
 };
 
 type UsageRow = {
@@ -62,7 +64,9 @@ type UsageRow = {
 async function loadLiveSubscription(supabase: SupabaseClient, organizationId: string) {
   const { data } = await supabase
     .from("subscriptions")
-    .select("id, status, order_limit, current_period_start, current_period_end, plans!plan_id(name, monthly_order_limit)")
+    .select(
+      "id, status, order_limit, current_period_start, current_period_end, expires_at, trial_end, cancel_at_period_end, razorpay_subscription_id, plans!plan_id(name, monthly_order_limit)"
+    )
     .eq("organization_id", organizationId)
     .in("status", [...LIVE_STATUSES])
     .order("created_at", { ascending: false })
@@ -99,7 +103,8 @@ export async function getQuotaSnapshot(
     }
   }
   let orderLimit = usage?.order_limit ?? subscription?.order_limit ?? plan?.monthly_order_limit ?? null;
-  if (subscription?.status === "TRIAL") {
+  const liveTrial = subscription ? trialIsLive(subscription) : false;
+  if (liveTrial) {
     const { data: topPlan } = await supabase
       .from("plans")
       .select("monthly_order_limit")
@@ -113,7 +118,12 @@ export async function getQuotaSnapshot(
   const ordersUsed = usage?.orders_used ?? 0;
   const remaining = orderLimit === null ? null : Math.max(0, orderLimit - ordersUsed);
   const accountOk = (org?.account_status ?? "ACTIVE") === "ACTIVE";
-  const statusOk = Boolean(subscription && BOOKABLE_STATUSES.includes(subscription.status as (typeof BOOKABLE_STATUSES)[number]));
+  const coverageEnded = subscription ? subscriptionCoverageEnded(subscription) : true;
+  const statusOk = Boolean(
+    subscription &&
+      BOOKABLE_STATUSES.includes(subscription.status as (typeof BOOKABLE_STATUSES)[number]) &&
+      !coverageEnded
+  );
   const limitOk = remaining === null || remaining > 0;
   return {
     organizationId,
@@ -126,6 +136,7 @@ export async function getQuotaSnapshot(
     periodStart: usage?.period_start ?? subscription?.current_period_start ?? null,
     periodEnd: usage?.period_end ?? subscription?.current_period_end ?? null,
     bookable: accountOk && statusOk && limitOk,
+    coverageEnded,
   };
 }
 
@@ -143,7 +154,16 @@ export async function checkQuota(
     throw new AppError(ERROR_CODES.FORBIDDEN, ACCOUNT_BLOCKED_MESSAGE);
   }
   const snapshot = await getQuotaSnapshot(supabase, organizationId);
-  if (!snapshot.status || !BOOKABLE_STATUSES.includes(snapshot.status as (typeof BOOKABLE_STATUSES)[number])) {
+  if (!snapshot.bookable) {
+    const statusBookable = Boolean(
+      snapshot.status && BOOKABLE_STATUSES.includes(snapshot.status as (typeof BOOKABLE_STATUSES)[number])
+    );
+    if (statusBookable && !snapshot.coverageEnded) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, ORDER_LIMIT_MESSAGE);
+    }
+    if (snapshot.status === "TRIAL" || snapshot.status === "EXPIRED") {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, TRIAL_ENDED_MESSAGE);
+    }
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, SUBSCRIPTION_INACTIVE_MESSAGE);
   }
   if (snapshot.orderLimit !== null && snapshot.ordersUsed + needed > snapshot.orderLimit) {

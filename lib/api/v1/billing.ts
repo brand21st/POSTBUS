@@ -17,6 +17,7 @@ import {
   verifyCheckout,
 } from "@/modules/billing/subscriptions";
 import { getQuotaSnapshot, subscriptionCoverageEnded } from "@/modules/billing/usage";
+import { NEW_TRIAL_DAYS } from "@/modules/billing/trial-policy";
 
 const subscribeSchema = z.object({
   planId: z.string().uuid(),
@@ -70,15 +71,12 @@ export async function handleBillingRoutes(
     const razorpay = await getRazorpayConfig();
     const catalog = await listActivePlans(supabase);
     const mapped = plan ? mapPlan(plan) : null;
-    const trialPlan =
-      mapped && subscription?.status === "TRIAL" ? applyFullTrialAccess(mapped, catalog) : mapped;
-    const trialLimit =
-      subscription?.status === "TRIAL" && trialPlan
-        ? trialPlan.monthlyOrderLimit
-        : usage.orderLimit;
+    const coverageEnded = subscription ? subscriptionCoverageEnded(subscription) : false;
+    const trialLive = mapped && subscription?.status === "TRIAL" && !coverageEnded;
+    const trialPlan = trialLive ? applyFullTrialAccess(mapped, catalog, NEW_TRIAL_DAYS) : mapped;
+    const trialLimit = trialLive && trialPlan ? trialPlan.monthlyOrderLimit : usage.orderLimit;
     const remaining =
       trialLimit == null ? usage.remaining : Math.max(0, trialLimit - usage.ordersUsed);
-    const coverageEnded = subscription ? subscriptionCoverageEnded(subscription) : false;
     return {
       configurationRequired: !razorpay.keyId || !razorpay.keySecret,
       configured: Boolean(razorpay.keyId && razorpay.keySecret),

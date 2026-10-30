@@ -5,7 +5,10 @@ import {
   getLiveSubscription,
   mapPlan,
   type PlanRow,
+  type SubscriptionRow,
 } from "@/modules/billing/subscriptions";
+import { trialIsLive } from "@/modules/billing/trial-policy";
+import { subscriptionCoverageEnded } from "@/modules/billing/usage";
 
 export const FEATURE = {
   shopify: "Shopify order sync",
@@ -173,16 +176,32 @@ export type PlanEntitlements = {
   planName: string | null;
   planSlug: string | null;
   status: string | null;
+  trialEnd: string | null;
+  coverageEnded: boolean;
 };
+
+async function loadEntitlementSubscription(supabase: SupabaseClient, organizationId: string) {
+  const live = await getLiveSubscription(supabase, organizationId);
+  if (live) return live;
+  const { data } = await supabase
+    .from("subscriptions")
+    .select("*, plans!plan_id(*)")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as SubscriptionRow | null) ?? null;
+}
 
 export async function getOrganizationEntitlements(
   supabase: SupabaseClient,
   organizationId: string
 ): Promise<PlanEntitlements> {
-  const live = await getLiveSubscription(supabase, organizationId);
+  const live = await loadEntitlementSubscription(supabase, organizationId);
   const plan = asPlan(live?.plans);
   const mapped = plan ? mapPlan(plan) : null;
-  const trial = live?.status === "TRIAL";
+  const trial = live ? trialIsLive(live) : false;
+  const coverageEnded = live ? subscriptionCoverageEnded(live) || live.status === "EXPIRED" : true;
   return {
     features: expandPlanFeatures(mapped?.features ?? [], {
       trial,
@@ -192,6 +211,8 @@ export async function getOrganizationEntitlements(
     planName: mapped?.name ?? null,
     planSlug: mapped?.slug ?? null,
     status: live?.status ?? null,
+    trialEnd: live?.trial_end ?? live?.current_period_end ?? null,
+    coverageEnded,
   };
 }
 

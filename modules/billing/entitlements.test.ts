@@ -24,6 +24,11 @@ describe("plan entitlements", () => {
     expect(expandPlanFeatures([], { trial: true, slug: "starter" })).toEqual(BUSINESS_FEATURES);
   });
 
+  it("does not keep trial unlocks after the trial flag is false", () => {
+    expect(expandPlanFeatures([], { trial: false, slug: "starter" })).toEqual(STARTER_FEATURES);
+    expect(expandPlanFeatures([], { trial: false, slug: "starter" })).not.toContain(FEATURE.wati);
+  });
+
   it("shows official India Post label buttons only on Starter", () => {
     expect(showsStarterOfficialIndiaPostLabel({ slug: "starter" })).toBe(true);
     expect(showsStarterOfficialIndiaPostLabel({ slug: "pro" })).toBe(false);

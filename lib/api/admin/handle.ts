@@ -104,7 +104,7 @@ export async function handleAdminRoutes(
       .select("trial_enabled, trial_days")
       .eq("id", 1)
       .maybeSingle();
-    return data ?? { trial_enabled: true, trial_days: 3 };
+    return data ?? { trial_enabled: true, trial_days: 7 };
   }
   if (key === "PATCH trial-settings") {
     const body = z
@@ -158,6 +158,9 @@ async function loadOverview(supabase: ReturnType<typeof createAdminClient>) {
     accounts,
     activeAccounts,
     trial,
+    activeTrials,
+    expiredTrials,
+    paidSubs,
     cancelled,
     activeSubs,
     monthly,
@@ -172,6 +175,17 @@ async function loadOverview(supabase: ReturnType<typeof createAdminClient>) {
     supabase.from("organizations").select("id", { count: "exact", head: true }),
     supabase.from("organizations").select("id", { count: "exact", head: true }).eq("account_status", "ACTIVE"),
     supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("status", "TRIAL"),
+    supabase
+      .from("subscriptions")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "TRIAL")
+      .gt("trial_end", new Date().toISOString()),
+    supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("status", "EXPIRED"),
+    supabase
+      .from("subscriptions")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "ACTIVE")
+      .or("razorpay_subscription_id.not.is.null,amount_paise.gt.0"),
     supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("status", "CANCELLED"),
     supabase.from("subscriptions").select("id, amount_paise, billing_cycle, plan_id, plans!plan_id(slug)").eq("status", "ACTIVE"),
     supabase.from("subscriptions").select("id", { count: "exact", head: true }).eq("billing_cycle", "monthly").eq("status", "ACTIVE"),
@@ -219,6 +233,9 @@ async function loadOverview(supabase: ReturnType<typeof createAdminClient>) {
       accounts: accounts.count ?? 0,
       activeAccounts: activeAccounts.count ?? 0,
       trialAccounts: trial.count ?? 0,
+      activeTrials: activeTrials.count ?? 0,
+      expiredTrials: expiredTrials.count ?? 0,
+      paidAccounts: paidSubs.count ?? 0,
       cancelledAccounts: cancelled.count ?? 0,
       activeSubscriptions: activeRows.length,
       monthlySubscriptions: monthly.count ?? 0,
@@ -670,6 +687,7 @@ async function handleAccounts(
         current_period_end: end.toISOString(),
         renews_at: end.toISOString(),
         expires_at: end.toISOString(),
+        trial_manual_override: true,
       })
       .eq("id", live.id);
     await writeBillingAudit(supabase, {
@@ -694,6 +712,7 @@ async function handleAccounts(
         status: parsed.days > 0 ? "TRIAL" : live.status,
         trial_end: end.toISOString(),
         current_period_end: end.toISOString(),
+        trial_manual_override: true,
       })
       .eq("id", live.id);
     await writeBillingAudit(supabase, {

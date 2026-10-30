@@ -15,6 +15,7 @@ type SubscriptionRow = {
   started_at?: string | null;
   created_at?: string | null;
   current_period_end: string;
+  trial_end?: string | null;
   organization_id?: string;
   organizations?: { id?: string; name?: string; slug?: string } | null;
   plans?: { name?: string };
@@ -41,13 +42,14 @@ export default function AdminSubscriptionsPage() {
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Amount</th>
               <th className="px-4 py-3">Started</th>
+              <th className="px-4 py-3">Trial ends</th>
               <th className="px-4 py-3">Renews</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-sm text-muted" colSpan={7}>
+                <td className="px-4 py-6 text-sm text-muted" colSpan={8}>
                   {query.isLoading
                     ? "Loading subscriptions…"
                     : query.isError
@@ -79,6 +81,7 @@ export default function AdminSubscriptionsPage() {
                     </td>
                     <td className="px-4 py-3">{formatPaise(row.amount_paise)}</td>
                     <td className="px-4 py-3">{formatDate(row.started_at ?? row.created_at)}</td>
+                    <td className="px-4 py-3">{formatDate(row.trial_end)}</td>
                     <td className="px-4 py-3">{formatDate(row.current_period_end)}</td>
                   </tr>
                 );

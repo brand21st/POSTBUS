@@ -40,7 +40,7 @@ export function PlanPicker({
   coverageEnded?: boolean;
 }) {
   const hasCurrent = Boolean(currentPlanId || currentPlanSlug) && !coverageEnded;
-  const trial = (subscriptionStatus ?? "").toUpperCase() === "TRIAL";
+  const trial = (subscriptionStatus ?? "").toUpperCase() === "TRIAL" && !coverageEnded;
 
   return (
     <div className="grid gap-5 lg:grid-cols-3">

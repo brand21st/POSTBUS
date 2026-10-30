@@ -31,7 +31,7 @@ export function Sidebar({
   const pathname = usePathname();
   const planName = me?.subscription?.planName ?? me?.subscription?.planCode ?? "Starter";
   const features = me?.subscription?.features ?? [];
-  const trial = me?.subscription?.status === "TRIAL";
+  const trial = Boolean(me?.subscription?.trial);
   const workspace = me?.organization?.name ?? "Workspace";
   const profileName = me?.user.fullName ?? me?.user.email ?? "Account";
   const supportUnread = useSupportUnread();

@@ -39,6 +39,9 @@ export type MeSubscription = {
   planName?: string | null;
   status?: string | null;
   features?: string[];
+  trial?: boolean;
+  trialEnd?: string | null;
+  coverageEnded?: boolean;
 };
 
 export type MeResponse = {

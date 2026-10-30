@@ -95,7 +95,7 @@ export default function BillingPage() {
     (plan) => plan.id === data?.plan?.id || plan.slug === data?.plan?.slug
   );
   const currentPlanName = catalogPlan?.name ?? data?.plan?.name ?? "No plan";
-  const onTrial = data?.subscription?.status === "TRIAL";
+  const onTrial = data?.subscription?.status === "TRIAL" && !data.subscription.coverageEnded;
   const coverageEnded = Boolean(
     data?.subscription?.coverageEnded ||
       (data?.subscription &&
@@ -206,7 +206,7 @@ export default function BillingPage() {
             ) : null}
           </div>
 
-          <div>
+          <div id="plans">
             <div className="mb-4 flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-ink">Pay for a plan</h2>
               <div className="inline-flex rounded-full border border-border bg-card p-1 text-sm">

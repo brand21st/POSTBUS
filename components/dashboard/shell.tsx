@@ -15,6 +15,9 @@ import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
 import { useUserPresenceHeartbeat } from "@/lib/hooks/use-user-presence-heartbeat";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { PlanLock } from "@/components/billing/plan-lock";
+import { TrialEndedModal } from "@/components/billing/trial-ended-modal";
+import { TrialStatusBar } from "@/components/dashboard/trial-status-bar";
+import { trialBannerCopy } from "@/modules/billing/trial-policy";
 import {
   shouldMountDashboardChildren,
   shouldRedirectToLoginFromMe,
@@ -78,6 +81,34 @@ export function DashboardShell({
     if (mobileOpen) setMobileOpen(false);
   }
 
+  const subscription = me.data?.subscription;
+  const [trialElapsed, setTrialElapsed] = useState(false);
+  const trialExpired =
+    subscription?.status === "EXPIRED" ||
+    ((subscription?.status === "TRIAL" || Boolean(subscription?.trial)) &&
+      (Boolean(subscription?.coverageEnded) || trialElapsed));
+  const trialCopy = trialBannerCopy({
+    trial: Boolean(subscription?.trial) && !trialElapsed,
+    coverageEnded: trialExpired,
+    trialEnd: subscription?.trialEnd,
+  });
+
+  useEffect(() => {
+    setTrialElapsed(false);
+    const end = subscription?.trialEnd ? Date.parse(subscription.trialEnd) : NaN;
+    if (!subscription?.trial || !Number.isFinite(end)) return;
+    const wait = end - Date.now();
+    if (wait <= 0) {
+      setTrialElapsed(true);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setTrialElapsed(true);
+      void me.refetch();
+    }, Math.min(wait, 2_147_000_000));
+    return () => window.clearTimeout(timer);
+  }, [me.refetch, subscription?.trial, subscription?.trialEnd]);
+
   const confirmedLoss = isConfirmedSessionLoss(me.error);
   const transientAuth = isTransientApiAuthError(me.error);
   useUserPresenceHeartbeat(Boolean(me.data) && !confirmedLoss);
@@ -124,7 +155,7 @@ export function DashboardShell({
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="sticky top-0 z-30 bg-background">
-          {announcement}
+          {trialCopy ? <TrialStatusBar {...trialCopy} /> : announcement}
           <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
         </div>
         {me.data && !confirmedLoss ? <NewOrderAlerts /> : null}
@@ -176,6 +207,7 @@ export function DashboardShell({
       </div>
       <MobileNav open={mobileOpen} onOpenChange={setMobileOpen} me={me.data} />
       <ProductTour userId={me.data?.user.id} />
+      <TrialEndedModal open={Boolean(trialExpired)} />
     </div>
   );
 }

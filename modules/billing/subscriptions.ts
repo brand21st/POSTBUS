@@ -6,6 +6,7 @@ import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/a
 import { mergeFullPlanFeatures } from "@/modules/billing/plan-features";
 import { amountForCycle } from "@/modules/billing/prices";
 import { LIVE_STATUSES } from "@/modules/billing/usage";
+import { NEW_TRIAL_DAYS } from "@/modules/billing/trial-policy";
 import {
   cancelRazorpaySubscription,
   createRazorpayCustomer,
@@ -88,7 +89,7 @@ export function mapPlan(plan: PlanRow) {
 export function applyFullTrialAccess(
   plan: ReturnType<typeof mapPlan>,
   catalog: Array<ReturnType<typeof mapPlan>>,
-  trialDays = 3
+  trialDays = NEW_TRIAL_DAYS
 ) {
   const full = mergeFullPlanFeatures(catalog.length ? catalog : [plan]);
   const top = (catalog.length ? catalog : [plan]).reduce((best, item) =>
