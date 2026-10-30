@@ -11,6 +11,7 @@ import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
 import { IndiaPostWatchTutorialLink } from "@/components/integrations/india-post-watch-tutorial-link";
 import { ShopifyWatchTutorialLink } from "@/components/integrations/shopify-watch-tutorial-link";
 import { VachatSignupLink } from "@/components/integrations/vachat-signup-link";
+import { WooCommerceWatchTutorialLink } from "@/components/integrations/woocommerce-watch-tutorial-link";
 import { AiAccountantCard } from "@/components/addons/ai-accountant-card";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -197,6 +198,8 @@ export default function IntegrationsPage() {
                         <ShopifyWatchTutorialLink className="mt-2" />
                       ) : provider === "INDIA_POST" ? (
                         <IndiaPostWatchTutorialLink className="mt-2" />
+                      ) : provider === "WOOCOMMERCE" ? (
+                        <WooCommerceWatchTutorialLink className="mt-2" />
                       ) : provider === "VACHAT" ? (
                         <VachatSignupLink className="mt-2" />
                       ) : null}

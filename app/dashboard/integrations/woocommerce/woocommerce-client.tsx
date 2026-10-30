@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
+import { WooCommerceWatchTutorialLink } from "@/components/integrations/woocommerce-watch-tutorial-link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
@@ -207,6 +208,8 @@ export default function WooCommerceIntegration() {
         description="Pull store orders into PostBus, then book them with India Post."
         actions={connected ? <StatusBadge value={data?.status ?? "CONNECTED"} /> : undefined}
       />
+
+      <WooCommerceWatchTutorialLink />
 
       <Card>
         <CardHeader className="space-y-3">
