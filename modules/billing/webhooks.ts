@@ -4,11 +4,13 @@ import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/b
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
 import {
   activateSubscription,
+  fulfillCapturedSubscriptionPurchase,
   periodsMatch,
   unixToDate,
   unixToDateOrNull,
   type SubscriptionRow,
 } from "@/modules/billing/subscriptions";
+import { resolvePurchaseByOrder } from "@/modules/billing/purchase";
 import { classifyPlatformRazorpayPayment, type PlatformPaymentDomain } from "@/modules/addons/classify";
 import { isAddonPaymentRow } from "@/modules/addons/constants";
 import { fetchRazorpaySubscription } from "@/modules/razorpay/client";
@@ -350,7 +352,10 @@ export async function processRazorpayEvent(
         failureReason: String(paymentEntity.error_description ?? paymentEntity.error_reason ?? "Payment failed"),
       });
     } else if (subscription) {
-    if (subscription.status !== "TRIAL") {
+    const recurringFailure = Boolean(
+      razorpaySubscriptionId && razorpaySubscriptionId === subscription.razorpay_subscription_id
+    );
+    if (recurringFailure && subscription.status !== "TRIAL") {
       await supabase.from("subscriptions").update({ status: "PAYMENT_FAILED" }).eq("id", subscription.id);
       await writeSubscriptionHistory(supabase, {
         organizationId: subscription.organization_id,
@@ -480,11 +485,37 @@ export async function processRazorpayEvent(
         method: paymentEntity.method ? String(paymentEntity.method) : null,
       });
     } else if (domain === "SUBSCRIPTION") {
-      if (
-        paid &&
-        paymentEntity.amount != null &&
-        Number(paid.amount_paise) !== Number(paymentEntity.amount)
-      ) {
+      if (!orderId || !paymentEntity.id) {
+        logError("razorpay.webhook_unmatched_payment", { event, eventId, orderId });
+        return { ignored: true };
+      }
+      const resolved = await resolvePurchaseByOrder(supabase, orderId);
+      if ("ambiguous" in resolved) {
+        logError("razorpay.webhook_ambiguous_order", { event, eventId, orderId, count: resolved.count });
+        return { ignored: true };
+      }
+      if ("purchase" in resolved) {
+        const purchase = resolved.purchase;
+        const result = await fulfillCapturedSubscriptionPurchase(supabase, {
+          razorpayOrderId: orderId,
+          paymentId: String(paymentEntity.id),
+          amountPaise: paymentEntity.amount != null ? Number(paymentEntity.amount) : Number(purchase.amount_paise),
+          currency: paymentEntity.currency ? String(paymentEntity.currency) : purchase.currency,
+          method: paymentEntity.method ? String(paymentEntity.method) : null,
+          organizationId: purchase.organization_id,
+          actor: "WEBHOOK",
+          reason: "payment.captured",
+        });
+        if (result.amountMismatch || result.currencyMismatch || result.forbidden || result.ambiguous) {
+          logError("razorpay.webhook_amount_mismatch", {
+            event,
+            expected: purchase.amount_paise,
+            received: paymentEntity.amount,
+            orderId,
+          });
+          return { ignored: true };
+        }
+      } else if (paid && paymentEntity.amount != null && Number(paid.amount_paise) !== Number(paymentEntity.amount)) {
         logError("razorpay.webhook_amount_mismatch", {
           event,
           expected: paid.amount_paise,
@@ -492,8 +523,7 @@ export async function processRazorpayEvent(
           orderId,
         });
         return { ignored: true };
-      }
-      if (paid && paymentEntity.id) {
+      } else if (paid) {
         await activateSubscription(supabase, {
           subscription: paid,
           paymentId: String(paymentEntity.id),
@@ -503,21 +533,6 @@ export async function processRazorpayEvent(
           razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
           actor: "WEBHOOK",
           reason: "payment.captured",
-        });
-      } else if (paid) {
-        await upsertPayment(supabase, {
-          organizationId: paid.organization_id,
-          subscriptionId: paid.id,
-          planId: paid.plan_id,
-          amountPaise: Number(paymentEntity.amount ?? 0),
-          status: "CAPTURED",
-          razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
-          razorpayOrderId: orderId,
-          razorpayInvoiceId: paymentEntity.invoice_id ? String(paymentEntity.invoice_id) : null,
-          razorpaySubscriptionId,
-          billingCycle: paid.billing_cycle,
-          method: paymentEntity.method ? String(paymentEntity.method) : null,
-          paidAt: new Date().toISOString(),
         });
       }
     } else {

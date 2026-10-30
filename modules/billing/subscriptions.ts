@@ -17,6 +17,13 @@ import {
   resumeRazorpaySubscription,
 } from "@/modules/razorpay/client";
 import { verifyCheckoutSignature, verifyOrderCheckoutSignature } from "@/modules/razorpay/signature";
+import {
+  isCapturedRazorpayStatus,
+  purchaseAmountMatches,
+  purchaseCurrencyMatches,
+  resolvePurchaseByOrder,
+  rpcFunctionMissing,
+} from "@/modules/billing/purchase";
 
 export type PlanRow = {
   id: string;
@@ -217,76 +224,26 @@ export async function startCheckout(
     name: input.organizationName,
     email: input.email,
   }).catch(() => null);
-  const now = new Date();
-  const period = periodForCycle(input.billingCycle, now);
-  const checkoutPatch = {
-    plan_id: plan.id,
-    billing_cycle: input.billingCycle,
-    amount_paise: amount,
-    order_limit: plan.monthly_order_limit,
-  };
-  let live = await getLiveSubscription(supabase, input.organizationId);
-  let subscriptionId = live?.id;
-  if (live) {
+  const live = await getLiveSubscription(supabase, input.organizationId);
+  const subscriptionId = live?.id ?? null;
+  if (live && customerId && customerId !== live.razorpay_customer_id) {
     await supabase
       .from("subscriptions")
-      .update({
-        ...checkoutPatch,
-        razorpay_customer_id: customerId ?? live.razorpay_customer_id,
-      })
+      .update({ razorpay_customer_id: customerId })
       .eq("id", live.id);
-  } else {
-    const { data, error } = await supabase
-      .from("subscriptions")
-      .insert({
-        organization_id: input.organizationId,
-        ...checkoutPatch,
-        status: "TRIAL",
-        started_at: now.toISOString(),
-        current_period_start: now.toISOString(),
-        current_period_end: period.end.toISOString(),
-        renews_at: period.end.toISOString(),
-        razorpay_customer_id: customerId,
-      })
-      .select("id")
-      .single();
-    const duplicateLive =
-      error?.code === "23505" || /one_live_per_org|duplicate key/i.test(error?.message ?? "");
-    if (duplicateLive) {
-      live = await getLiveSubscription(supabase, input.organizationId);
-      if (!live) {
-        throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not start subscription.");
-      }
-      subscriptionId = live.id;
-      await supabase
-        .from("subscriptions")
-        .update({
-          ...checkoutPatch,
-          razorpay_customer_id: customerId ?? live.razorpay_customer_id,
-        })
-        .eq("id", live.id);
-    } else if (error || !data) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, error?.message || "Could not start subscription.");
-    } else {
-      subscriptionId = data.id;
-    }
   }
   const order = await createRazorpayOrder({
     amountPaise: amount,
     receipt: `pb_${input.organizationId.replace(/-/g, "").slice(0, 10)}_${Date.now()}`.slice(0, 40),
     notes: {
       organization_id: input.organizationId,
-      subscription_id: subscriptionId!,
+      subscription_id: subscriptionId ?? "",
       plan_id: plan.id,
       billing_cycle: input.billingCycle,
     },
   });
   const razorpayOrderId = String(order.id);
-  await supabase
-    .from("subscriptions")
-    .update({ razorpay_order_id: razorpayOrderId })
-    .eq("id", subscriptionId!);
-  await supabase.from("payments").insert({
+  const { error: paymentError } = await supabase.from("payments").insert({
     organization_id: input.organizationId,
     subscription_id: subscriptionId,
     plan_id: plan.id,
@@ -295,17 +252,24 @@ export async function startCheckout(
     status: "PENDING",
     razorpay_order_id: razorpayOrderId,
     billing_cycle: input.billingCycle,
+    payment_purpose: "subscription",
   });
-  await writeSubscriptionHistory(supabase, {
-    organizationId: input.organizationId,
-    subscriptionId: subscriptionId!,
-    fromStatus: live?.status ?? null,
-    toStatus: live?.status ?? "TRIAL",
-    fromPlanId: live?.plan_id ?? null,
-    toPlanId: plan.id,
-    reason: "checkout_started",
-    actor: input.userId,
-  });
+  if (paymentError) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, paymentError.message || "Could not start checkout.");
+  }
+  if (subscriptionId) {
+    await writeSubscriptionHistory(supabase, {
+      organizationId: input.organizationId,
+      subscriptionId,
+      fromStatus: live?.status ?? null,
+      toStatus: live?.status ?? null,
+      fromPlanId: live?.plan_id ?? null,
+      toPlanId: live?.plan_id ?? null,
+      reason: "checkout_started",
+      actor: input.userId,
+      metadata: { intendedPlanId: plan.id, billingCycle: input.billingCycle, razorpayOrderId },
+    });
+  }
   await writeBillingAudit(supabase, {
     actorId: input.userId,
     actorType: "USER",
@@ -368,10 +332,13 @@ export async function verifyCheckout(
   }
   const payment = await fetchRazorpayPayment(input.paymentId);
   const status = String(payment.status ?? "");
-  if (status !== "captured" && status !== "authorized") {
+  if (!isCapturedRazorpayStatus(status)) {
     throw new AppError(ERROR_CODES.PROVIDER_ERROR, "Payment was not captured.");
   }
-  const orderId = String(payment.order_id ?? input.razorpayOrderId);
+  const orderId = String(payment.order_id ?? "");
+  if (!orderId || orderId !== input.razorpayOrderId) {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "Payment does not belong to this checkout order.");
+  }
   const { fulfillCapturedAiCreditPayment } = await import("@/modules/ai-credits/service");
   const credits = await fulfillCapturedAiCreditPayment(supabase, {
     razorpayOrderId: orderId,
@@ -399,32 +366,37 @@ export async function verifyCheckout(
     });
     return { verified: true, creditsRemaining: credits.remaining };
   }
-  const { data: subscription } = await supabase
-    .from("subscriptions")
-    .select(SUBSCRIPTION_WITH_PLAN)
-    .eq("organization_id", input.organizationId)
-    .eq("razorpay_order_id", orderId)
-    .maybeSingle();
-  if (!subscription) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Checkout order not found.");
-  const expectedAmount = Number(subscription.amount_paise);
-  if (Number(payment.amount) !== expectedAmount) {
-    throw new AppError(ERROR_CODES.FORBIDDEN, "Paid amount does not match the selected plan.");
-  }
-  await activateSubscription(supabase, {
-    subscription: subscription as SubscriptionRow,
+  const result = await fulfillCapturedSubscriptionPurchase(supabase, {
+    organizationId: input.organizationId,
     paymentId: input.paymentId,
-    amountPaise: Number(payment.amount),
-    method: payment.method ? String(payment.method) : null,
     razorpayOrderId: orderId,
+    amountPaise: Number(payment.amount),
+    currency: payment.currency ? String(payment.currency) : "INR",
+    method: payment.method ? String(payment.method) : null,
     actor: input.userId,
     reason: "checkout_verified",
   });
+  if (result.forbidden) {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "This payment does not belong to your workspace.");
+  }
+  if (result.ambiguous) {
+    throw new AppError(ERROR_CODES.CONFLICT, "This checkout order is ambiguous and cannot activate a plan.");
+  }
+  if (result.notFound) {
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Checkout order not found.");
+  }
+  if (result.currencyMismatch) {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "Paid currency does not match the checkout.");
+  }
+  if (result.amountMismatch) {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "Paid amount does not match the selected plan.");
+  }
   await writeBillingAudit(supabase, {
     actorId: input.userId,
     actorType: "USER",
     action: "subscription.payment_verified",
     targetType: "subscription",
-    targetId: subscription.id,
+    targetId: result.subscriptionId ?? orderId,
     organizationId: input.organizationId,
     ip: input.ip,
     metadata: { paymentId: input.paymentId, razorpayOrderId: orderId },
@@ -445,12 +417,19 @@ export async function activateSubscription(
     periodEnd?: Date;
     actor?: string | null;
     reason?: string;
+    purchase?: {
+      planId: string;
+      billingCycle: "monthly" | "yearly";
+      amountPaise: number;
+      orderLimit: number | null;
+    };
   }
 ) {
+  const expectedAmount = input.purchase?.amountPaise ?? input.subscription.amount_paise;
   if (
     input.amountPaise != null &&
     Number.isFinite(input.amountPaise) &&
-    Number(input.subscription.amount_paise) !== Number(input.amountPaise)
+    Number(expectedAmount) !== Number(input.amountPaise)
   ) {
     throw new AppError(ERROR_CODES.FORBIDDEN, "Paid amount does not match the selected plan.");
   }
@@ -463,15 +442,23 @@ export async function activateSubscription(
     if (alreadyPaid?.status === "CAPTURED") return;
   }
   const plan = asPlan(input.subscription.plans);
-  const cycle = input.subscription.billing_cycle;
+  const cycle = input.purchase?.billingCycle ?? input.subscription.billing_cycle;
   const period = periodForCycle(cycle, input.periodStart ?? new Date());
   const periodStart = input.periodStart ?? period.start;
   const periodEnd = input.periodEnd ?? period.end;
   const previous = input.subscription.status;
+  const nextPlanId = input.purchase?.planId ?? input.subscription.plan_id;
+  const nextAmount = input.purchase?.amountPaise ?? input.subscription.amount_paise;
+  const nextLimit =
+    input.purchase?.orderLimit ?? input.subscription.order_limit ?? plan?.monthly_order_limit ?? null;
   await supabase
     .from("subscriptions")
     .update({
       status: "ACTIVE",
+      plan_id: nextPlanId,
+      billing_cycle: cycle,
+      amount_paise: nextAmount,
+      order_limit: nextLimit,
       started_at: input.subscription.started_at ?? periodStart.toISOString(),
       current_period_start: periodStart.toISOString(),
       current_period_end: periodEnd.toISOString(),
@@ -479,6 +466,8 @@ export async function activateSubscription(
       expires_at: periodEnd.toISOString(),
       cancel_at_period_end: false,
       cancelled_at: null,
+      pending_plan_id: null,
+      pending_billing_cycle: null,
     })
     .eq("id", input.subscription.id);
 
@@ -488,8 +477,7 @@ export async function activateSubscription(
       subscription_id: input.subscription.id,
       period_start: periodStart.toISOString().slice(0, 10),
       period_end: periodEnd.toISOString().slice(0, 10),
-      orders_used: 0,
-      order_limit: input.subscription.order_limit ?? plan?.monthly_order_limit ?? null,
+      order_limit: nextLimit,
     },
     { onConflict: "organization_id,period_start" }
   );
@@ -503,8 +491,8 @@ export async function activateSubscription(
     const payload = {
       organization_id: input.subscription.organization_id,
       subscription_id: input.subscription.id,
-      plan_id: input.subscription.plan_id,
-      amount_paise: input.amountPaise ?? input.subscription.amount_paise,
+      plan_id: nextPlanId,
+      amount_paise: input.amountPaise ?? nextAmount,
       currency: "INR",
       status: "CAPTURED" as const,
       razorpay_payment_id: input.paymentId,
@@ -547,8 +535,8 @@ export async function activateSubscription(
         organization_id: input.subscription.organization_id,
         subscription_id: input.subscription.id,
         number: invoiceNumber,
-        amount: (input.amountPaise ?? input.subscription.amount_paise) / 100,
-        amount_paise: input.amountPaise ?? input.subscription.amount_paise,
+        amount: (input.amountPaise ?? nextAmount) / 100,
+        amount_paise: input.amountPaise ?? nextAmount,
         currency: "INR",
         status: "PAID",
         issued_at: new Date().toISOString(),
@@ -565,7 +553,7 @@ export async function activateSubscription(
     subscriptionId: input.subscription.id,
     fromStatus: previous,
     toStatus: "ACTIVE",
-    toPlanId: input.subscription.plan_id,
+    toPlanId: nextPlanId,
     reason: input.reason ?? "activated",
     actor: input.actor ?? "WEBHOOK",
   });
@@ -576,6 +564,103 @@ export async function activateSubscription(
       entityId: input.subscription.id,
     });
   }
+}
+
+export async function fulfillCapturedSubscriptionPurchase(
+  supabase: SupabaseClient,
+  input: {
+    razorpayOrderId: string;
+    paymentId: string;
+    amountPaise: number;
+    currency?: string | null;
+    method?: string | null;
+    organizationId?: string | null;
+    actor?: string | null;
+    reason?: string;
+  }
+): Promise<{
+  handled: boolean;
+  duplicate?: boolean;
+  ignored?: boolean;
+  forbidden?: boolean;
+  notFound?: boolean;
+  amountMismatch?: boolean;
+  currencyMismatch?: boolean;
+  ambiguous?: boolean;
+  subscriptionId?: string;
+}> {
+  const resolved = await resolvePurchaseByOrder(supabase, input.razorpayOrderId);
+  if ("ambiguous" in resolved) {
+    return { handled: true, ambiguous: true };
+  }
+  if ("missing" in resolved) {
+    return { handled: false, notFound: true };
+  }
+  const purchase = resolved.purchase;
+  if (purchase.payment_purpose && purchase.payment_purpose !== "subscription") {
+    return { handled: false, notFound: true };
+  }
+  if (input.organizationId && purchase.organization_id !== input.organizationId) {
+    return { handled: true, forbidden: true };
+  }
+  if (!purchaseCurrencyMatches(purchase, input.currency)) {
+    return { handled: true, currencyMismatch: true };
+  }
+  if (!purchaseAmountMatches(purchase, input.amountPaise)) {
+    return { handled: true, amountMismatch: true };
+  }
+
+  const { data, error } = await supabase.rpc("fulfill_captured_subscription_purchase", {
+    p_razorpay_order_id: input.razorpayOrderId,
+    p_razorpay_payment_id: input.paymentId,
+    p_amount_paise: Number(purchase.amount_paise),
+    p_currency: purchase.currency || "INR",
+    p_method: input.method ?? null,
+    p_expected_organization_id: input.organizationId ?? purchase.organization_id,
+    p_actor: input.actor ?? null,
+    p_reason: input.reason ?? "checkout_verified",
+  });
+  if (error) {
+    if (rpcFunctionMissing(error)) {
+      throw new AppError(
+        ERROR_CODES.INTEGRATION_NOT_CONNECTED,
+        "Captured-plan activation is unavailable until the billing purchase RPC is applied."
+      );
+    }
+    throw new AppError(ERROR_CODES.PROVIDER_ERROR, error.message || "Could not activate the purchase.");
+  }
+  const result = (data ?? {}) as {
+    handled?: boolean;
+    duplicate?: boolean;
+    forbidden?: boolean;
+    notFound?: boolean;
+    amountMismatch?: boolean;
+    currencyMismatch?: boolean;
+    ambiguous?: boolean;
+    granted?: boolean;
+    subscriptionId?: string;
+  };
+  if (result.ambiguous) return { handled: true, ambiguous: true };
+  if (result.forbidden) return { handled: true, forbidden: true };
+  if (result.notFound) return { handled: Boolean(result.handled), notFound: true };
+  if (result.amountMismatch) return { handled: true, amountMismatch: true };
+  if (result.currencyMismatch) return { handled: true, currencyMismatch: true };
+  if (result.duplicate) {
+    return { handled: true, duplicate: true, subscriptionId: result.subscriptionId };
+  }
+  return { handled: true, subscriptionId: result.subscriptionId };
+}
+
+async function hasCapturedSubscriptionPayment(supabase: SupabaseClient, organizationId: string) {
+  const { data } = await supabase
+    .from("payments")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("status", "CAPTURED")
+    .eq("payment_purpose", "subscription")
+    .limit(1)
+    .maybeSingle();
+  return Boolean(data?.id);
 }
 
 export async function adminAssignPlan(
@@ -714,22 +799,10 @@ export async function changePlan(
   const nextAmount = amountForCycle(plan, cycle);
   const upgrade = nextAmount > currentAmount || (live.plan_id === plan.id && cycle === "yearly" && live.billing_cycle === "monthly");
   if (upgrade) {
-    await supabase
-      .from("subscriptions")
-      .update({
-        plan_id: plan.id,
-        billing_cycle: cycle,
-        amount_paise: nextAmount,
-        order_limit: plan.monthly_order_limit,
-        pending_plan_id: null,
-        pending_billing_cycle: null,
-      })
-      .eq("id", live.id);
-    await supabase
-      .from("billing_usage")
-      .update({ order_limit: plan.monthly_order_limit })
-      .eq("subscription_id", live.id)
-      .eq("period_start", (live.current_period_start ?? "").slice(0, 10));
+    throw new AppError(
+      ERROR_CODES.FORBIDDEN,
+      "Pay for the new plan from Billing checkout. Plan upgrades are applied only after a captured Razorpay payment."
+    );
   } else {
     await supabase
       .from("subscriptions")
@@ -811,18 +884,33 @@ export async function resumeSubscription(
 ) {
   const live = await getLiveSubscription(supabase, input.organizationId);
   if (!live) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "No subscription to resume.");
+  if (live.status === "TRIAL") {
+    throw new AppError(
+      ERROR_CODES.FORBIDDEN,
+      "Trial access cannot be resumed as a paid plan. Pay from Billing to continue after the trial."
+    );
+  }
+  const paidEvidence = await hasCapturedSubscriptionPayment(supabase, input.organizationId);
+  if (!paidEvidence) {
+    throw new AppError(
+      ERROR_CODES.FORBIDDEN,
+      "This subscription cannot be resumed without a captured payment."
+    );
+  }
   if (live.razorpay_subscription_id && live.status === "PAUSED") {
     await resumeRazorpaySubscription(live.razorpay_subscription_id);
   }
+  const nextStatus =
+    live.status === "PAUSED" || live.status === "PAYMENT_FAILED" ? "ACTIVE" : live.status;
   await supabase
     .from("subscriptions")
-    .update({ status: "ACTIVE", cancel_at_period_end: false, cancelled_at: null })
+    .update({ status: nextStatus, cancel_at_period_end: false, cancelled_at: null })
     .eq("id", live.id);
   await writeSubscriptionHistory(supabase, {
     organizationId: input.organizationId,
     subscriptionId: live.id,
     fromStatus: live.status,
-    toStatus: "ACTIVE",
+    toStatus: nextStatus,
     reason: "resumed",
     actor: input.userId,
   });
@@ -835,7 +923,7 @@ export async function resumeSubscription(
     organizationId: input.organizationId,
     ip: input.ip,
   });
-  return { status: "ACTIVE" };
+  return { status: nextStatus };
 }
 
 export async function pauseSubscriptionAdmin(

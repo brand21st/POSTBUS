@@ -80,6 +80,11 @@ export function CheckoutButton({
           name: data.name,
           description: data.description,
           prefill: data.prefill ?? {},
+          modal: {
+            ondismiss: () => {
+              toast.message("Payment was not completed. Your current plan remains unchanged.");
+            },
+          },
           handler: async (response: {
             razorpay_payment_id: string;
             razorpay_order_id: string;

@@ -195,7 +195,8 @@ export default function BillingPage() {
           ) : null}
 
           <div className="flex flex-wrap gap-2">
-            {coverageEnded ? null : data?.subscription?.cancelAtPeriodEnd ? (
+            {coverageEnded ? null : data?.subscription?.cancelAtPeriodEnd &&
+            data.subscription.status !== "TRIAL" ? (
               <Button variant="secondary" onClick={() => resume.mutate()} disabled={resume.isPending}>
                 Resume subscription
               </Button>
