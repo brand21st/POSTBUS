@@ -28,8 +28,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
-# Used by the Coolify scheduled task that drains background_jobs.
+# Used by Coolify scheduled tasks (job drain + billing sweep).
 COPY --from=builder --chown=node:node /app/scripts/drain-jobs.mjs ./scripts/drain-jobs.mjs
+COPY --from=builder --chown=node:node /app/scripts/billing-cron.mjs ./scripts/billing-cron.mjs
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
