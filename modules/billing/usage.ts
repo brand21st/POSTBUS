@@ -4,6 +4,7 @@ import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/b
 import { TRIAL_ENDED_MESSAGE, trialIsLive } from "@/modules/billing/trial-policy";
 
 export const LIVE_STATUSES = ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"] as const;
+export const PAYABLE_STATUSES = [...LIVE_STATUSES, "EXPIRED", "CANCELLED"] as const;
 export const BOOKABLE_STATUSES = ["TRIAL", "ACTIVE", "PAST_DUE"] as const;
 
 /** One-time checkout (no Razorpay subscription) or trial/cancel-at-end: coverage stops at period end. */

@@ -103,7 +103,12 @@ export function CheckoutButton({
               toast.success("Payment received. Your plan is active.");
               window.location.reload();
             } catch (error) {
-              toast.error(error instanceof Error ? error.message : "Could not confirm payment.");
+              const message = error instanceof Error ? error.message : "Could not confirm payment.";
+              if (/do not pay again/i.test(message)) {
+                toast.message(message);
+              } else {
+                toast.error(message);
+              }
             }
           },
         });

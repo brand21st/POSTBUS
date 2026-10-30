@@ -138,7 +138,7 @@ describe("razorpay webhook idempotency", () => {
     expect(isUniqueViolation({ code: "23503" })).toBe(false);
   });
 
-  it("activates a trial from payment.captured using the Razorpay order id", async () => {
+  it("does not activate an Orders capture that has no unique purchase intent", async () => {
     const state = {
       subscription: liveSubscription({
         status: "TRIAL",
@@ -148,7 +148,7 @@ describe("razorpay webhook idempotency", () => {
       payments: [] as PaymentRow[],
       activations: 0,
     };
-    await processRazorpayEvent(
+    const result = await processRazorpayEvent(
       fakeSupabase(state),
       {
         event: "payment.captured",
@@ -158,9 +158,10 @@ describe("razorpay webhook idempotency", () => {
       },
       "evt_order"
     );
-    expect(state.subscription?.status).toBe("ACTIVE");
-    expect(state.payments[0]?.razorpay_payment_id).toBe("pay_order");
-    expect(state.payments[0]?.status).toBe("CAPTURED");
+    expect(result).toEqual({ ignored: true });
+    expect(state.subscription?.status).toBe("TRIAL");
+    expect(state.activations).toBe(0);
+    expect(state.payments).toHaveLength(0);
   });
 
   it("does not insert a second payment for the same Razorpay payment id", async () => {

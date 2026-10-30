@@ -10,6 +10,7 @@ import {
   cancelSubscription,
   changePlan,
   getLiveSubscription,
+  getPayableSubscription,
   listActivePlans,
   mapPlan,
   resumeSubscription,
@@ -61,7 +62,9 @@ export async function handleBillingRoutes(
   if (!ctx) return null;
 
   if (key === "GET billing" || key === "GET billing/subscription") {
-    const subscription = await getLiveSubscription(supabase, ctx.organizationId);
+    const subscription =
+      (await getLiveSubscription(supabase, ctx.organizationId)) ??
+      (await getPayableSubscription(supabase, ctx.organizationId));
     const usage = await getQuotaSnapshot(supabase, ctx.organizationId);
     const plan = subscription?.plans
       ? Array.isArray(subscription.plans)

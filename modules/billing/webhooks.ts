@@ -515,15 +515,25 @@ export async function processRazorpayEvent(
           });
           return { ignored: true };
         }
-      } else if (paid && paymentEntity.amount != null && Number(paid.amount_paise) !== Number(paymentEntity.amount)) {
-        logError("razorpay.webhook_amount_mismatch", {
-          event,
-          expected: paid.amount_paise,
-          received: paymentEntity.amount,
-          orderId,
-        });
-        return { ignored: true };
-      } else if (paid) {
+      } else {
+        const rzpSubId = String(paymentEntity.subscription_id ?? razorpaySubscriptionId ?? "");
+        if (
+          !paid?.razorpay_subscription_id ||
+          !rzpSubId ||
+          paid.razorpay_subscription_id !== rzpSubId
+        ) {
+          logError("razorpay.webhook_unmatched_order_capture", { event, eventId, orderId });
+          return { ignored: true };
+        }
+        if (paymentEntity.amount != null && Number(paid.amount_paise) !== Number(paymentEntity.amount)) {
+          logError("razorpay.webhook_amount_mismatch", {
+            event,
+            expected: paid.amount_paise,
+            received: paymentEntity.amount,
+            orderId,
+          });
+          return { ignored: true };
+        }
         await activateSubscription(supabase, {
           subscription: paid,
           paymentId: String(paymentEntity.id),

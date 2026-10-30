@@ -5,7 +5,7 @@ import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/b
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
 import { mergeFullPlanFeatures } from "@/modules/billing/plan-features";
 import { amountForCycle } from "@/modules/billing/prices";
-import { LIVE_STATUSES } from "@/modules/billing/usage";
+import { LIVE_STATUSES, PAYABLE_STATUSES } from "@/modules/billing/usage";
 import { NEW_TRIAL_DAYS } from "@/modules/billing/trial-policy";
 import {
   cancelRazorpaySubscription,
@@ -133,6 +133,19 @@ export async function getLiveSubscription(supabase: SupabaseClient, organization
   return data as SubscriptionRow | null;
 }
 
+/** Org row that may receive a verified captured purchase, including EXPIRED trials. */
+export async function getPayableSubscription(supabase: SupabaseClient, organizationId: string) {
+  const { data } = await supabase
+    .from("subscriptions")
+    .select(SUBSCRIPTION_WITH_PLAN)
+    .eq("organization_id", organizationId)
+    .in("status", [...PAYABLE_STATUSES])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data as SubscriptionRow | null;
+}
+
 async function loadPlan(supabase: SupabaseClient, planId: string) {
   const { data, error } = await supabase.from("plans").select("*").eq("id", planId).maybeSingle();
   if (error || !data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Plan not found.");
@@ -224,7 +237,7 @@ export async function startCheckout(
     name: input.organizationName,
     email: input.email,
   }).catch(() => null);
-  const live = await getLiveSubscription(supabase, input.organizationId);
+  const live = await getPayableSubscription(supabase, input.organizationId);
   const subscriptionId = live?.id ?? null;
   if (live && customerId && customerId !== live.razorpay_customer_id) {
     await supabase
@@ -381,6 +394,12 @@ export async function verifyCheckout(
   }
   if (result.ambiguous) {
     throw new AppError(ERROR_CODES.CONFLICT, "This checkout order is ambiguous and cannot activate a plan.");
+  }
+  if (result.integrityError) {
+    throw new AppError(
+      ERROR_CODES.CONFLICT,
+      "Payment was captured. We are confirming your plan. Do not pay again."
+    );
   }
   if (result.notFound) {
     throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Checkout order not found.");
@@ -587,6 +606,7 @@ export async function fulfillCapturedSubscriptionPurchase(
   amountMismatch?: boolean;
   currencyMismatch?: boolean;
   ambiguous?: boolean;
+  integrityError?: boolean;
   subscriptionId?: string;
 }> {
   const resolved = await resolvePurchaseByOrder(supabase, input.razorpayOrderId);
@@ -624,10 +644,13 @@ export async function fulfillCapturedSubscriptionPurchase(
     if (rpcFunctionMissing(error)) {
       throw new AppError(
         ERROR_CODES.INTEGRATION_NOT_CONNECTED,
-        "Captured-plan activation is unavailable until the billing purchase RPC is applied."
+        "Payment was captured. Plan activation is delayed until billing is connected. Do not pay again."
       );
     }
-    throw new AppError(ERROR_CODES.PROVIDER_ERROR, error.message || "Could not activate the purchase.");
+    throw new AppError(
+      ERROR_CODES.PROVIDER_ERROR,
+      "Payment was captured. We are confirming your plan. Do not pay again."
+    );
   }
   const result = (data ?? {}) as {
     handled?: boolean;
@@ -637,11 +660,13 @@ export async function fulfillCapturedSubscriptionPurchase(
     amountMismatch?: boolean;
     currencyMismatch?: boolean;
     ambiguous?: boolean;
+    integrityError?: boolean;
     granted?: boolean;
     subscriptionId?: string;
   };
   if (result.ambiguous) return { handled: true, ambiguous: true };
   if (result.forbidden) return { handled: true, forbidden: true };
+  if (result.integrityError) return { handled: true, integrityError: true, notFound: true };
   if (result.notFound) return { handled: Boolean(result.handled), notFound: true };
   if (result.amountMismatch) return { handled: true, amountMismatch: true };
   if (result.currencyMismatch) return { handled: true, currencyMismatch: true };

@@ -41,6 +41,7 @@ import {
   startCheckout,
   verifyCheckout,
 } from "@/modules/billing/subscriptions";
+import { checkQuota, SUBSCRIPTION_INACTIVE_MESSAGE } from "@/modules/billing/usage";
 import { processRazorpayEvent } from "@/modules/billing/webhooks";
 
 const BUSINESS = {
@@ -135,14 +136,27 @@ function effectiveOf(subscription: ReturnType<typeof liveSub>) {
   };
 }
 
-function createDb(state: { subscription: ReturnType<typeof liveSub>; payments: Payment[]; rpcMissing?: boolean }) {
+function createDb(state: {
+  subscription: ReturnType<typeof liveSub>;
+  payments: Payment[];
+  extraSubscriptions?: Array<ReturnType<typeof liveSub>>;
+  rpcMissing?: boolean;
+  rpcFailOnce?: boolean;
+}) {
   const plans = [STARTER, PRO, BUSINESS];
   let rpcLock = Promise.resolve();
   const usage = { orders_used: 4, order_limit: state.subscription.order_limit, period_start: "2026-10-01" };
   const supabase = {
     async rpc(name: string, args: Record<string, unknown>) {
+      if (name === "ensure_billing_period") {
+        return { data: usage, error: null };
+      }
       if (state.rpcMissing || name !== "fulfill_captured_subscription_purchase") {
         return { data: null, error: { code: "42883", message: "function does not exist" } };
+      }
+      if (state.rpcFailOnce) {
+        state.rpcFailOnce = false;
+        return { data: null, error: { message: "temporary activation failure" } };
       }
       const run = async () => {
         const matches = state.payments.filter(
@@ -174,18 +188,56 @@ function createDb(state: { subscription: ReturnType<typeof liveSub>; payments: P
           }
           return { data: { handled: true, forbidden: true }, error: null };
         }
+        const catalog = [state.subscription, ...(state.extraSubscriptions ?? [])];
+        let target = state.subscription;
+        if (purchase.subscription_id) {
+          const named = catalog.find((row) => row.id === purchase.subscription_id);
+          if (!named) {
+            return { data: { handled: true, integrityError: true, notFound: true }, error: null };
+          }
+          if (named.organization_id !== purchase.organization_id) {
+            return { data: { handled: true, forbidden: true }, error: null };
+          }
+          target = named;
+        } else {
+          const rank: Record<string, number> = {
+            ACTIVE: 0,
+            PAST_DUE: 1,
+            TRIAL: 2,
+            PAYMENT_FAILED: 3,
+            PAUSED: 4,
+            EXPIRED: 5,
+            CANCELLED: 6,
+          };
+          const payable = catalog
+            .filter((row) => row.organization_id === purchase.organization_id)
+            .sort(
+              (a, b) =>
+                (rank[a.status] ?? 7) - (rank[b.status] ?? 7) ||
+                String(b.created_at).localeCompare(String(a.created_at))
+            );
+          if (!payable[0]) return { data: { handled: true, notFound: true }, error: null };
+          target = payable[0];
+        }
         const plan = plans.find((item) => item.id === purchase.plan_id);
         purchase.status = "CAPTURED";
         purchase.razorpay_payment_id = String(args.p_razorpay_payment_id);
-        Object.assign(state.subscription, {
+        purchase.subscription_id = target.id;
+        const paidStart = new Date().toISOString();
+        const paidEnd = new Date(Date.now() + 30 * 86400000).toISOString();
+        Object.assign(target, {
           status: "ACTIVE",
           plan_id: purchase.plan_id,
           amount_paise: purchase.amount_paise,
-          order_limit: plan?.monthly_order_limit ?? state.subscription.order_limit,
+          order_limit: plan?.monthly_order_limit ?? target.order_limit,
           billing_cycle: purchase.billing_cycle,
+          current_period_start: paidStart,
+          current_period_end: paidEnd,
+          expires_at: paidEnd,
         });
+        if (target.id === state.subscription.id) Object.assign(state.subscription, target);
         usage.order_limit = plan?.monthly_order_limit ?? usage.order_limit;
-        return { data: { handled: true, granted: true, subscriptionId: state.subscription.id }, error: null };
+        return { data: { handled: true, granted: true, subscriptionId: target.id }, error: null };
       };
       const queued = rpcLock.then(run, run);
       rpcLock = queued.then(
@@ -220,6 +272,7 @@ function createDb(state: { subscription: ReturnType<typeof liveSub>; payments: P
             return { data: found ?? null, error: found ? null : { message: "missing" } };
           }
           if (table === "razorpay_customers") return { data: { razorpay_customer_id: "cust_1" } };
+          if (table === "organizations") return { data: { account_status: "ACTIVE" } };
           if (table === "subscriptions") {
             if (filters.id && filters.id !== state.subscription.id) return { data: null };
             if (filters.organization_id && filters.organization_id !== state.subscription.organization_id) {
@@ -911,6 +964,342 @@ describe("P0 checkout payment bypass", () => {
     ).rejects.toMatchObject({ code: "INTEGRATION_NOT_CONNECTED" });
     expect(db.state.subscription.status).toBe("TRIAL");
     expect(db.state.subscription.plan_id).toBe(BUSINESS.id);
+  });
+
+  function pendingPay(overrides: Partial<Payment> = {}): Payment {
+    return {
+      id: "p1",
+      organization_id: "org-1",
+      subscription_id: "sub-1",
+      plan_id: PRO.id,
+      amount_paise: 149900,
+      currency: "INR",
+      status: "PENDING",
+      billing_cycle: "monthly",
+      razorpay_order_id: "order_pro",
+      razorpay_payment_id: null,
+      payment_purpose: "subscription",
+      ...overrides,
+    };
+  }
+
+  function expiredTrial(overrides: Record<string, unknown> = {}) {
+    return liveSub({
+      status: "EXPIRED",
+      current_period_end: "2026-10-31T18:30:00.000Z",
+      trial_end: "2026-10-31T18:30:00.000Z",
+      expires_at: "2026-10-31T18:30:00.000Z",
+      ...overrides,
+    });
+  }
+
+  const verifyPro = {
+    organizationId: "org-1",
+    userId: "user-1",
+    paymentId: "pay_1",
+    razorpayOrderId: "order_pro",
+    signature: "valid",
+  };
+
+  it("expired 1. TRIAL captured payment becomes ACTIVE", async () => {
+    const db = createDb({ subscription: liveSub(), payments: [pendingPay()] });
+    await verifyCheckout(db.supabase as never, verifyPro);
+    expect(db.state.subscription.status).toBe("ACTIVE");
+    expect(db.state.subscription.plan_id).toBe(PRO.id);
+    expect(db.state.subscription.trial_cohort).toBe("legacy_nov1");
+  });
+
+  it("expired 2. EXPIRED trial captured payment becomes ACTIVE", async () => {
+    const db = createDb({ subscription: expiredTrial(), payments: [pendingPay()] });
+    await verifyCheckout(db.supabase as never, verifyPro);
+    expect(db.state.subscription.status).toBe("ACTIVE");
+    expect(db.state.subscription.plan_id).toBe(PRO.id);
+    expect(db.state.subscription.amount_paise).toBe(149900);
+    expect(db.state.subscription.order_limit).toBe(3000);
+    expect(db.state.subscription.trial_end).toBe("2026-10-31T18:30:00.000Z");
+    expect(db.state.payments).toHaveLength(1);
+  });
+
+  it("expired 3. EXPIRED cancelled checkout stays EXPIRED", async () => {
+    const db = createDb({ subscription: expiredTrial(), payments: [] });
+    const before = effectiveOf(db.state.subscription);
+    await startCheckout(db.supabase as never, { ...owner, planId: PRO.id, billingCycle: "monthly" });
+    expect(effectiveOf(db.state.subscription)).toEqual(before);
+    expect(db.state.payments[0]?.status).toBe("PENDING");
+    expect(db.state.payments[0]?.subscription_id).toBe("sub-1");
+  });
+
+  it("expired 4-6. EXPIRED failed, authorized, or invalid signature stay EXPIRED", async () => {
+    const db = createDb({ subscription: expiredTrial(), payments: [pendingPay()] });
+    const before = effectiveOf(db.state.subscription);
+    for (const status of ["failed", "authorized"]) {
+      razorpayState.payment = { ...razorpayState.payment, status };
+      await expect(verifyCheckout(db.supabase as never, verifyPro)).rejects.toBeInstanceOf(AppError);
+      expect(effectiveOf(db.state.subscription)).toEqual(before);
+    }
+    razorpayState.payment = { ...razorpayState.payment, status: "captured" };
+    await expect(
+      verifyCheckout(db.supabase as never, { ...verifyPro, signature: "nope" })
+    ).rejects.toBeInstanceOf(AppError);
+    expect(effectiveOf(db.state.subscription)).toEqual(before);
+  });
+
+  it("expired 7-8. EXPIRED wrong amount or organization stay EXPIRED", async () => {
+    const db = createDb({
+      subscription: expiredTrial(),
+      payments: [pendingPay({ amount_paise: 149900 })],
+    });
+    const before = effectiveOf(db.state.subscription);
+    razorpayState.payment = { ...razorpayState.payment, amount: 100 };
+    await expect(verifyCheckout(db.supabase as never, verifyPro)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(effectiveOf(db.state.subscription)).toEqual(before);
+    razorpayState.payment = { ...razorpayState.payment, amount: 149900 };
+    await expect(
+      verifyCheckout(db.supabase as never, { ...verifyPro, organizationId: "org-other" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(effectiveOf(db.state.subscription)).toEqual(before);
+    expect(db.state.subscription.id).toBe("sub-1");
+  });
+
+  it("expired 9-10. EXPIRED duplicate webhook and concurrent capture activate once", async () => {
+    const db = createDb({ subscription: expiredTrial(), payments: [pendingPay()] });
+    const payload = {
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: "pay_1",
+            amount: 149900,
+            currency: "INR",
+            order_id: "order_pro",
+            status: "captured",
+          },
+        },
+      },
+    };
+    await processRazorpayEvent(db.supabase as never, payload, "evt_1");
+    await processRazorpayEvent(db.supabase as never, payload, "evt_1");
+    expect(db.state.subscription.status).toBe("ACTIVE");
+    expect(db.state.payments.filter((row) => row.status === "CAPTURED")).toHaveLength(1);
+    const db2 = createDb({ subscription: expiredTrial(), payments: [pendingPay()] });
+    const input = {
+      razorpayOrderId: "order_pro",
+      paymentId: "pay_1",
+      amountPaise: 149900,
+      currency: "INR",
+      organizationId: "org-1",
+    };
+    const [first, second] = await Promise.all([
+      fulfillCapturedSubscriptionPurchase(db2.supabase as never, input),
+      fulfillCapturedSubscriptionPurchase(db2.supabase as never, input),
+    ]);
+    expect([first, second].filter((row) => row.duplicate)).toHaveLength(1);
+    expect(db2.state.payments.filter((row) => row.status === "CAPTURED")).toHaveLength(1);
+  });
+
+  it("expired 11. EXPIRED purchase with null subscription_id still activates the org row", async () => {
+    const db = createDb({
+      subscription: expiredTrial(),
+      payments: [pendingPay({ subscription_id: null })],
+    });
+    await fulfillCapturedSubscriptionPurchase(db.supabase as never, {
+      razorpayOrderId: "order_pro",
+      paymentId: "pay_1",
+      amountPaise: 149900,
+      currency: "INR",
+      organizationId: "org-1",
+    });
+    expect(db.state.subscription.status).toBe("ACTIVE");
+    expect(db.state.subscription.id).toBe("sub-1");
+    expect(db.state.payments[0]?.subscription_id).toBe("sub-1");
+  });
+
+  it("expired 12. ACTIVE paid Starter captured upgrade becomes Pro once", async () => {
+    const db = createDb({
+      subscription: liveSub({
+        status: "ACTIVE",
+        plan_id: STARTER.id,
+        amount_paise: 49900,
+        order_limit: 500,
+        trial_end: "2026-10-03T00:00:00.000Z",
+      }),
+      payments: [pendingPay()],
+    });
+    await verifyCheckout(db.supabase as never, verifyPro);
+    expect(db.state.subscription.status).toBe("ACTIVE");
+    expect(db.state.subscription.plan_id).toBe(PRO.id);
+    expect(db.state.subscription.order_limit).toBe(3000);
+    expect(db.state.payments).toHaveLength(1);
+  });
+
+  it("expired 13-14. rolling and Nov 1 EXPIRED trials purchase successfully", async () => {
+    const rolling = createDb({
+      subscription: expiredTrial({
+        trial_cohort: "rolling_7d",
+        trial_end: "2026-11-03T00:00:00.000Z",
+        current_period_end: "2026-11-03T00:00:00.000Z",
+        created_at: "2026-10-27T00:00:00.000Z",
+      }),
+      payments: [pendingPay()],
+    });
+    await verifyCheckout(rolling.supabase as never, verifyPro);
+    expect(rolling.state.subscription.status).toBe("ACTIVE");
+    expect(rolling.state.subscription.trial_cohort).toBe("rolling_7d");
+    const legacy = createDb({
+      subscription: expiredTrial({ trial_cohort: "legacy_nov1" }),
+      payments: [pendingPay()],
+    });
+    await verifyCheckout(legacy.supabase as never, verifyPro);
+    expect(legacy.state.subscription.status).toBe("ACTIVE");
+    expect(legacy.state.subscription.trial_cohort).toBe("legacy_nov1");
+  });
+
+  it("expired 17-18. transient RPC failure leaves PENDING then retry activates", async () => {
+    const db = createDb({
+      subscription: expiredTrial(),
+      payments: [pendingPay()],
+      rpcFailOnce: true,
+    });
+    await expect(
+      fulfillCapturedSubscriptionPurchase(db.supabase as never, {
+        razorpayOrderId: "order_pro",
+        paymentId: "pay_1",
+        amountPaise: 149900,
+        currency: "INR",
+        organizationId: "org-1",
+      })
+    ).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect(db.state.subscription.status).toBe("EXPIRED");
+    expect(db.state.payments[0]?.status).toBe("PENDING");
+    await fulfillCapturedSubscriptionPurchase(db.supabase as never, {
+      razorpayOrderId: "order_pro",
+      paymentId: "pay_1",
+      amountPaise: 149900,
+      currency: "INR",
+      organizationId: "org-1",
+    });
+    expect(db.state.subscription.status).toBe("ACTIVE");
+    expect(db.state.payments[0]?.status).toBe("CAPTURED");
+  });
+
+  it("expired 19-20. unmatched Orders webhook and duplicate order fail closed", async () => {
+    const unmatched = createDb({ subscription: expiredTrial(), payments: [] });
+    const result = await processRazorpayEvent(
+      unmatched.supabase as never,
+      {
+        event: "payment.captured",
+        payload: {
+          payment: { entity: { id: "pay_x", amount: 149900, order_id: "order_missing", status: "captured" } },
+        },
+      },
+      "evt_miss"
+    );
+    expect(result).toEqual({ ignored: true });
+    expect(unmatched.state.subscription.status).toBe("EXPIRED");
+    const dup = createDb({
+      subscription: expiredTrial(),
+      payments: [pendingPay({ id: "a" }), pendingPay({ id: "b", plan_id: BUSINESS.id, amount_paise: 350000 })],
+    });
+    const closed = await fulfillCapturedSubscriptionPurchase(dup.supabase as never, {
+      razorpayOrderId: "order_pro",
+      paymentId: "pay_1",
+      amountPaise: 149900,
+      currency: "INR",
+      organizationId: "org-1",
+    });
+    expect(closed.ambiguous).toBe(true);
+    expect(dup.state.subscription.status).toBe("EXPIRED");
+  });
+
+  it("expired 4b-5. EXPIRED captured Starter and Business activate the purchased plan", async () => {
+    const starter = createDb({
+      subscription: expiredTrial(),
+      payments: [pendingPay({ plan_id: STARTER.id, amount_paise: 49900 })],
+    });
+    razorpayState.payment = { ...razorpayState.payment, amount: 49900 };
+    await verifyCheckout(starter.supabase as never, verifyPro);
+    expect(starter.state.subscription.plan_id).toBe(STARTER.id);
+    expect(starter.state.subscription.order_limit).toBe(500);
+    razorpayState.payment = { ...razorpayState.payment, amount: 350000 };
+    const business = createDb({
+      subscription: expiredTrial(),
+      payments: [pendingPay({ plan_id: BUSINESS.id, amount_paise: 350000 })],
+    });
+    await verifyCheckout(business.supabase as never, verifyPro);
+    expect(business.state.subscription.plan_id).toBe(BUSINESS.id);
+    expect(business.state.subscription.order_limit).toBe(10000);
+  });
+
+  it("expired 16-17. foreign or missing subscription_id does not fall back", async () => {
+    const foreign = createDb({
+      subscription: expiredTrial(),
+      extraSubscriptions: [liveSub({ id: "sub-other", organization_id: "org-2", status: "EXPIRED" })],
+      payments: [pendingPay({ subscription_id: "sub-other" })],
+    });
+    const blocked = await fulfillCapturedSubscriptionPurchase(foreign.supabase as never, {
+      razorpayOrderId: "order_pro",
+      paymentId: "pay_1",
+      amountPaise: 149900,
+      currency: "INR",
+      organizationId: "org-1",
+    });
+    expect(blocked.forbidden).toBe(true);
+    expect(foreign.state.subscription.status).toBe("EXPIRED");
+    const missing = createDb({
+      subscription: expiredTrial(),
+      payments: [pendingPay({ subscription_id: "sub-missing" })],
+    });
+    const broken = await fulfillCapturedSubscriptionPurchase(missing.supabase as never, {
+      razorpayOrderId: "order_pro",
+      paymentId: "pay_1",
+      amountPaise: 149900,
+      currency: "INR",
+      organizationId: "org-1",
+    });
+    expect(broken.integrityError).toBe(true);
+    expect(missing.state.subscription.status).toBe("EXPIRED");
+    expect(missing.state.payments[0]?.status).toBe("PENDING");
+  });
+
+  it("expired 18. null subscription_id prefers the live org row over an older cancelled row", async () => {
+    const db = createDb({
+      subscription: expiredTrial({ created_at: "2026-10-01T00:00:00.000Z" }),
+      extraSubscriptions: [
+        liveSub({
+          id: "sub-old",
+          status: "CANCELLED",
+          created_at: "2026-09-01T00:00:00.000Z",
+          plan_id: STARTER.id,
+        }),
+      ],
+      payments: [pendingPay({ subscription_id: null })],
+    });
+    await fulfillCapturedSubscriptionPurchase(db.supabase as never, {
+      razorpayOrderId: "order_pro",
+      paymentId: "pay_1",
+      amountPaise: 149900,
+      currency: "INR",
+      organizationId: "org-1",
+    });
+    expect(db.state.subscription.id).toBe("sub-1");
+    expect(db.state.subscription.status).toBe("ACTIVE");
+    expect(db.state.extraSubscriptions?.[0]?.status).toBe("CANCELLED");
+  });
+
+  it("expired 21-24. expiry blocks booking, paid restore, usage consistent, starter stays one row", async () => {
+    const db = createDb({ subscription: expiredTrial(), payments: [pendingPay()] });
+    await expect(checkQuota(db.supabase as never, "org-1", 1)).rejects.toMatchObject({
+      message: SUBSCRIPTION_INACTIVE_MESSAGE,
+    });
+    await verifyCheckout(db.supabase as never, verifyPro);
+    await expect(checkQuota(db.supabase as never, "org-1", 1)).resolves.toMatchObject({
+      bookable: true,
+      status: "ACTIVE",
+    });
+    expect(db.usage.orders_used).toBe(4);
+    expect(db.usage.order_limit).toBe(3000);
+    expect(db.state.subscription.id).toBe("sub-1");
+    expect(db.state.payments).toHaveLength(1);
   });
 });
 
