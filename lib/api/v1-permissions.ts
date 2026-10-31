@@ -169,6 +169,10 @@ export function permissionForTenantRoute(
     return method === "GET" ? "orders.read" : "orders.write";
   }
 
+  if (root === "order-defaults") {
+    return method === "GET" ? "orders.read" : "orders.write";
+  }
+
   if (root === "support") {
     if (method === "GET") return "support.read";
     if (slugs[1] === "settings") return "support.settings";

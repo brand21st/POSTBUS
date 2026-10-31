@@ -13,6 +13,8 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "ai-credits/quote", ["ai-credits", "quote"])).toBe("orders.read");
     expect(permissionForTenantRoute("GET", "shipment-presets", ["shipment-presets"])).toBe("orders.read");
     expect(permissionForTenantRoute("POST", "shipment-presets", ["shipment-presets"])).toBe("orders.write");
+    expect(permissionForTenantRoute("GET", "order-defaults", ["order-defaults"])).toBe("orders.read");
+    expect(permissionForTenantRoute("PUT", "order-defaults", ["order-defaults"])).toBe("orders.write");
     expect(
       permissionForTenantRoute("DELETE", "shipment-presets/abc", ["shipment-presets", "abc"])
     ).toBe("orders.write");

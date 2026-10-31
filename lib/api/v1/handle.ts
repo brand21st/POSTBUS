@@ -16,6 +16,7 @@ import { handleAddonRoutes } from "@/lib/api/v1/addons";
 import { handleAiAccountantRoutes } from "@/lib/api/v1/ai-accountant";
 import { handleBillingRoutes } from "@/lib/api/v1/billing";
 import { handleMerchantTutorials } from "@/lib/api/v1/tutorials";
+import { handleOrderDefaultRoutes } from "@/lib/api/v1/order-defaults";
 import { handleShipmentPresetRoutes } from "@/lib/api/v1/shipment-presets";
 import { handleUiRoutes } from "@/lib/api/v1/ui";
 import { handleWorkspaceRoutes } from "@/lib/api/v1/workspace";
@@ -85,6 +86,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
     (await handleSupportRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleUiRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleShipmentPresetRoutes(request, supabase, ctx, method, slugs)) ??
+    (await handleOrderDefaultRoutes(request, supabase, ctx, method, slugs)) ??
     (await handlePrintStationRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handlePrintDeviceTenantRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleLabelTemplateRoutes(request, supabase, ctx, key, method, slugs)) ??

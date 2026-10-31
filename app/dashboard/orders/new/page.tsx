@@ -58,6 +58,10 @@ import {
   unlockNewOrderSound,
 } from "@/lib/notifications/new-order";
 import { optionalDimensionCm, optionalPositiveInt } from "@/modules/orders/schema";
+import {
+  MANUAL_ORDER_PAYMENT_DEFAULTS,
+  type ManualOrderPaymentDefault,
+} from "@/modules/orders/payment-default";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { OrderRecord, Paginated, ProductRecord } from "@/types/api";
 import { addRupees, INDIA_POST_COD_MAX_RUPEES, tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
@@ -228,6 +232,10 @@ export default function NewOrderPage() {
     queryFn: () =>
       api<Paginated<ProductRecord>>(`/api/v1/products?${toSearchParams({ page: 1, pageSize: 100, active: "true" })}`),
   });
+  const orderDefaults = useQuery({
+    queryKey: ["order-defaults"],
+    queryFn: () => api<{ paymentStatus: ManualOrderPaymentDefault | null }>("/api/v1/order-defaults"),
+  });
   const serviceOptions = useMemo(
     () => selectableIndiaPostServices(indiaPost.data),
     [indiaPost.data]
@@ -260,6 +268,7 @@ export default function NewOrderPage() {
   });
 
   const serviceTouched = useRef(false);
+  const paymentDefaultApplied = useRef(false);
   const pendingProductFocus = useRef(false);
   const customerPanel = useRef<HTMLDetailsElement>(null);
   const items = useFieldArray({ control: form.control, name: "lineItems" });
@@ -268,6 +277,29 @@ export default function NewOrderPage() {
   const billingSame = form.watch("billingSameAsShipping");
   const createShipment = form.watch("createShipment");
   const paymentStatus = form.watch("paymentStatus");
+  const savedPaymentDefault = orderDefaults.data?.paymentStatus ?? null;
+
+  useEffect(() => {
+    if (paymentDefaultApplied.current || !orderDefaults.isSuccess) return;
+    paymentDefaultApplied.current = true;
+    const saved = orderDefaults.data.paymentStatus;
+    if (!saved || form.getFieldState("paymentStatus").isDirty) return;
+    form.setValue("paymentStatus", saved);
+    if (saved !== "COD") form.setValue("extraCodCharge", 0);
+  }, [form, orderDefaults.data, orderDefaults.isSuccess]);
+
+  const savePaymentDefault = useMutation({
+    mutationFn: (status: ManualOrderPaymentDefault) =>
+      api<{ paymentStatus: ManualOrderPaymentDefault }>("/api/v1/order-defaults", {
+        method: "PUT",
+        body: JSON.stringify({ paymentStatus: status }),
+      }),
+    onSuccess: () => {
+      toast.success("Payment default saved.");
+      queryClient.invalidateQueries({ queryKey: ["order-defaults"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
   const amountPaid = Number(form.watch("amountPaid") || 0);
   const extraCodRaw = form.watch("extraCodCharge");
   const submitLock = useRef(false);
@@ -634,19 +666,40 @@ export default function NewOrderPage() {
             </div>
           </Field>
           <div className="space-y-2">
-            <Label>Payment</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label>Payment</Label>
+              <button
+                type="button"
+                className="text-xs font-medium text-brand underline-offset-2 hover:underline disabled:cursor-default disabled:text-muted disabled:no-underline"
+                disabled={
+                  savePaymentDefault.isPending ||
+                  savedPaymentDefault === paymentStatus ||
+                  !MANUAL_ORDER_PAYMENT_DEFAULTS.includes(paymentStatus as ManualOrderPaymentDefault)
+                }
+                onClick={() => {
+                  if (!MANUAL_ORDER_PAYMENT_DEFAULTS.includes(paymentStatus as ManualOrderPaymentDefault)) return;
+                  savePaymentDefault.mutate(paymentStatus as ManualOrderPaymentDefault);
+                }}
+              >
+                {savePaymentDefault.isPending
+                  ? "Saving…"
+                  : savedPaymentDefault === paymentStatus
+                    ? "Default"
+                    : "Save as default"}
+              </button>
+            </div>
             <Select
               value={paymentStatus}
               onValueChange={(value) => {
-                form.setValue("paymentStatus", value as FormValues["paymentStatus"]);
+                form.setValue("paymentStatus", value as FormValues["paymentStatus"], { shouldDirty: true });
                 if (value !== "COD") form.setValue("extraCodCharge", 0);
               }}
             >
-              <SelectTrigger className="h-8">
+              <SelectTrigger className="h-8" aria-label="Payment">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PAYMENT_STATUSES.filter((item) => item !== "FAILED" && item !== "PENDING" && item !== "REFUNDED").map((item) => (
+                {MANUAL_ORDER_PAYMENT_DEFAULTS.map((item) => (
                   <SelectItem key={item} value={item}>
                     {PAYMENT_STATUS_LABELS[item]}
                   </SelectItem>
