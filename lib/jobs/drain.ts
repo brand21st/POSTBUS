@@ -158,6 +158,7 @@ async function claimQueuedJob(job: ClaimedJob): Promise<ClaimedJob | null> {
     })
     .eq("id", job.id)
     .in("status", ["PENDING", "QUEUED"])
+    .or(`next_attempt_at.is.null,next_attempt_at.lte.${lockedAt}`)
     .select("id, organization_id, job_type, entity_type, entity_id, created_by, attempt_count, created_at, locked_at, progress")
     .maybeSingle();
   if (error || !data) return null;

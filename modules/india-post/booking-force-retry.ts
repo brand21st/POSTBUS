@@ -16,6 +16,7 @@ import {
   type BookingRetryOrder,
 } from "@/modules/india-post/booking-retry-eligibility";
 import { bookingForceRetryEnabled } from "@/modules/india-post/booking-recovery";
+import { isParkedHistoricalBookingJob } from "@/modules/india-post/smart-auto-retry";
 
 const REQUEUEABLE = ["DRAFT", "VALIDATING", "QUEUED", "FAILED"] as const;
 
@@ -88,7 +89,17 @@ async function reuseOrCreateJob(
 ) {
   const state = String(job?.status ?? "").toUpperCase();
   if (job?.id && (state === "QUEUED" || state === "PENDING")) {
-    return job;
+    if (!isParkedHistoricalBookingJob(job)) return job;
+    const { data, error } = await supabase
+      .from("background_jobs")
+      .update({ next_attempt_at: null, locked_at: null })
+      .eq("id", job.id)
+      .eq("organization_id", ctx.organizationId)
+      .in("status", ["QUEUED", "PENDING"])
+      .select("*")
+      .maybeSingle();
+    if (error) throw new AppError(ERROR_CODES.JOB_FAILED, error.message);
+    return data ?? job;
   }
   if (job?.id && state === "RETRYING") {
     const { data, error } = await supabase

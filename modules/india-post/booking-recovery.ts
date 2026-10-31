@@ -39,6 +39,11 @@ export function bulkExcelBookingEnabled() {
   return envFlagExactTrue(process.env.BULK_EXCEL_BOOKING_ENABLED);
 }
 
+/** Off unless SMART_AUTO_BOOKING_RETRY_ENABLED is exactly true. */
+export function smartAutoBookingRetryEnabled() {
+  return envFlagExactTrue(process.env.SMART_AUTO_BOOKING_RETRY_ENABLED);
+}
+
 export const BULK_EXCEL_BOOKING_DISABLED_MESSAGE =
   "Bulk Excel Booking is disabled on this environment. Existing import rows were not booked.";
 
@@ -206,6 +211,7 @@ export async function loadBookingQueueHealth(supabase: SupabaseClient) {
     overdueJobs: Number(overdue.data ?? 0),
     autoRecoveryEnabled: bookingAutoRecoveryEnabled(),
     forceRetryEnabled: bookingForceRetryEnabled(),
+    smartAutoRetryEnabled: smartAutoBookingRetryEnabled(),
     jobRunner: (process.env.JOB_RUNNER || "database").trim().toLowerCase() || "database",
   };
 }

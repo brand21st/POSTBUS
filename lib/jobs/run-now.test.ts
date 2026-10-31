@@ -15,6 +15,9 @@ vi.mock("@/lib/supabase/admin", () => ({
       update: () => ({
         eq: () => ({
           in: () => ({
+            or: () => ({
+              select: () => ({ maybeSingle }),
+            }),
             select: () => ({ maybeSingle }),
           }),
         }),

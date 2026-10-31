@@ -279,6 +279,19 @@ export default function ShipmentDetailPage() {
             <p className="text-muted">
               Last lookup {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
             </p>
+            {record.smartAutoRetry?.merchantState ? (
+              <p className="font-medium text-ink">
+                {String(record.smartAutoRetry.merchantState).replaceAll("_", " ")}
+              </p>
+            ) : null}
+            {record.smartAutoRetry?.nextAttemptAt ? (
+              <p className="text-muted">Next retry at {formatDate(record.smartAutoRetry.nextAttemptAt, true)}</p>
+            ) : null}
+            {record.smartAutoRetry && (record.smartAutoRetry.attemptCount ?? 0) > 0 ? (
+              <p className="text-muted">
+                Retry attempt {record.smartAutoRetry.attemptCount} of {record.smartAutoRetry.maxAttempts}
+              </p>
+            ) : null}
             {bookedAt && trackingLookupFailed ? (
               <p className="text-muted">
                 Article is booked. India Post tracking often stays empty until the first post-office scan.
@@ -288,6 +301,14 @@ export default function ShipmentDetailPage() {
             ) : (
               <p className="text-muted">No provider error recorded.</p>
             )}
+            {record.smartAutoRetry?.canEditShipment && (record.orderId || record.order_id) ? (
+              <Link
+                href={`/dashboard/orders/${record.orderId ?? record.order_id}`}
+                className="inline-flex text-brand hover:underline"
+              >
+                Edit shipment
+              </Link>
+            ) : null}
           </CardContent>
         </Card>
         <Card>

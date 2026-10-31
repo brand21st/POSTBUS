@@ -386,6 +386,19 @@ export type ShipmentRecord = {
   tariff_amount?: number | string | null;
   lastError?: string | null;
   last_error?: string | null;
+  lastErrorCode?: string | null;
+  last_error_code?: string | null;
+  smartAutoRetry?: {
+    merchantState?: string;
+    class?: string | null;
+    attemptCount?: number;
+    maxAttempts?: number;
+    nextAttemptAt?: string | null;
+    reason?: string;
+    errorCode?: string | null;
+    correctionKind?: string | null;
+    canEditShipment?: boolean;
+  } | null;
   customer?: CustomerSummary | null;
   createdAt?: string;
   created_at?: string;

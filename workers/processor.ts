@@ -52,6 +52,30 @@ export async function processJob(queue: string, payload: JobPayload) {
   };
   logInfo("job.started", timing);
 
+  if (queue === "shipment-booking") {
+    const { isParkedHistoricalBookingJob, reparkHistoricalBookingJob, HISTORICAL_JOB_HOLD_AT } = await import(
+      "@/modules/india-post/smart-auto-retry"
+    );
+    const { data: existingJob } = await supabase
+      .from("background_jobs")
+      .select("id, status, next_attempt_at, attempt_count, last_error_code, organization_id")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (isParkedHistoricalBookingJob(existingJob)) {
+      await reparkHistoricalBookingJob(supabase, {
+        jobId,
+        organizationId: payload.organizationId,
+        job: existingJob,
+      });
+      logInfo("smart_auto_retry.historical_job_reparked", {
+        ...timing,
+        nextAttemptAt: existingJob?.next_attempt_at ?? HISTORICAL_JOB_HOLD_AT,
+        previousStatus: existingJob?.status ?? null,
+      });
+      return;
+    }
+  }
+
   await supabase
     .from("background_jobs")
     .update({ status: "RUNNING", started_at: new Date().toISOString() })
@@ -235,19 +259,79 @@ export async function processJob(queue: string, payload: JobPayload) {
     });
     const { data: job } = await supabase
       .from("background_jobs")
-      .select("attempt_count, max_attempts")
+      .select("id, attempt_count, max_attempts, next_attempt_at, status")
       .eq("id", jobId)
       .single();
     const attempt = (job?.attempt_count ?? 0) + 1;
     const postSubmitUncertain = queue === "shipment-booking" && isAmbiguousCeptOutcome(classified);
-    const retryable =
+    let retryable =
       classified.retryable && !postSubmitUncertain && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
     const retryAfterMs = Number((error as { retryAfterMs?: number })?.retryAfterMs);
-    const retryDelayMs = retryable
+    let retryDelayMs = retryable
       ? Number.isFinite(retryAfterMs) && retryAfterMs >= 0
         ? retryAfterMs
         : delayForAttempt(attempt)
       : 0;
+    let parkedHistoricalJob = false;
+    if (queue === "shipment-booking") {
+      const {
+        decideSmartAutoRetry,
+        isParkedHistoricalBookingJob,
+        persistSmartAutoRetrySnapshot,
+        smartAutoBookingRetryEnabled,
+      } = await import("@/modules/india-post/smart-auto-retry");
+      parkedHistoricalJob = isParkedHistoricalBookingJob(job);
+      if (parkedHistoricalJob) {
+        retryable = false;
+        retryDelayMs = 0;
+      } else if (smartAutoBookingRetryEnabled()) {
+        const shipmentId = payload.entityType === "shipment" ? payload.entityId : payload.shipmentIds?.[0];
+        let shipment: Record<string, unknown> | null = null;
+        if (shipmentId) {
+          const loaded = await supabase
+            .from("shipments")
+            .select(
+              "id, status, booked_at, barcode, tracking_number, provider_ref, last_error, last_error_code, metadata, created_at, updated_at"
+            )
+            .eq("id", shipmentId)
+            .eq("organization_id", payload.organizationId)
+            .maybeSingle();
+          shipment = loaded.data;
+        }
+        const decision = decideSmartAutoRetry({
+          classified,
+          error,
+          shipment,
+          job,
+          attempt,
+        });
+        retryable = decision.shouldRetry;
+        retryDelayMs = decision.shouldRetry ? decision.retryDelayMs : 0;
+        if (shipmentId && shipment) {
+          await persistSmartAutoRetrySnapshot(supabase, {
+            organizationId: payload.organizationId,
+            shipmentId,
+            metadata: shipment.metadata,
+            snapshot: {
+              class: decision.retryClass,
+              merchantState: decision.merchantState,
+              attemptCount: attempt,
+              maxAttempts: job?.max_attempts ?? MAX_ATTEMPTS,
+              nextAttemptAt: retryable ? new Date(Date.now() + retryDelayMs).toISOString() : null,
+              reason: decision.reason,
+              errorCode: classified.code,
+              correctionKind: decision.merchantState.includes("ADDRESS")
+                ? "address"
+                : decision.merchantState.includes("WEIGHT")
+                  ? "weight"
+                  : null,
+              canEditShipment: decision.retryClass === "VALIDATION_FAILURE",
+              updatedAt: new Date().toISOString(),
+            },
+          });
+        }
+      }
+    }
     logInfo("job.retry_decision", {
       ...timing,
       attempt,
@@ -268,16 +352,18 @@ export async function processJob(queue: string, payload: JobPayload) {
       retryable,
       finished_at: new Date().toISOString(),
     });
-    await supabase
-      .from("background_jobs")
-      .update({
-        status: retryable ? "RETRYING" : "FAILED",
-        attempt_count: attempt,
-        last_error: classified.message,
-        last_error_code: classified.code,
-        next_attempt_at: retryable ? new Date(Date.now() + retryDelayMs).toISOString() : null,
-      })
-      .eq("id", jobId);
+    if (!parkedHistoricalJob) {
+      await supabase
+        .from("background_jobs")
+        .update({
+          status: retryable ? "RETRYING" : "FAILED",
+          attempt_count: attempt,
+          last_error: classified.message,
+          last_error_code: classified.code,
+          next_attempt_at: retryable ? new Date(Date.now() + retryDelayMs).toISOString() : null,
+        })
+        .eq("id", jobId);
+    }
 
     const failureShipmentIds = [
       ...new Set(
@@ -288,7 +374,7 @@ export async function processJob(queue: string, payload: JobPayload) {
         ].filter((id): id is string => Boolean(id))
       ),
     ];
-    if (shouldApplyBookingFailureUpdate(queue) && failureShipmentIds.length) {
+    if (!parkedHistoricalJob && shouldApplyBookingFailureUpdate(queue) && failureShipmentIds.length) {
       const shipmentPatch = bookingFailureShipmentUpdate(classified, retryable);
       await supabase
         .from("shipments")

@@ -24,6 +24,7 @@ import {
 import { loadCatalogProducts } from "@/modules/products/service";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { syncOpenShipmentsService } from "@/modules/shipments/service";
+import { resumeSmartAutoRetryAfterCorrection } from "@/modules/india-post/smart-auto-retry";
 import {
   enrichShopifyLineItemImagesFromCache,
   enrichShopifyLineItemImagesInOrders,
@@ -533,6 +534,11 @@ export async function updateOrderWeights(
       .eq("organization_id", ctx.organizationId)
       .in("id", openIds);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    await resumeSmartAutoRetryAfterCorrection(supabase, {
+      organizationId: ctx.organizationId,
+      shipmentIds: openIds,
+      userId: ctx.userId,
+    });
   }
 
   return getOrder(supabase, ctx, orderId);
@@ -621,6 +627,17 @@ export async function updateOrderShippingAddress(
     entity_id: orderId,
     after: { pincode: input.pincode, city: input.city, state: input.state, phone, name },
   });
+
+  const openShipmentIds = ((shipments ?? []) as Array<{ id: string; status?: string | null }>)
+    .filter((row) => ["DRAFT", "QUEUED", "FAILED", "VALIDATING"].includes((row.status ?? "").toUpperCase()))
+    .map((row) => row.id);
+  if (openShipmentIds.length) {
+    await resumeSmartAutoRetryAfterCorrection(supabase, {
+      organizationId: ctx.organizationId,
+      shipmentIds: openShipmentIds,
+      userId: ctx.userId,
+    });
+  }
 
   return getOrder(supabase, ctx, orderId);
 }

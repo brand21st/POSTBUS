@@ -44,7 +44,7 @@ export type BookingRetryOrder = {
   fulfillmentStatus?: string | null;
 } | null;
 
-export type BookingEligibilityPurpose = "retry" | "auto-recovery" | "worker";
+export type BookingEligibilityPurpose = "retry" | "auto-recovery" | "worker" | "auto-retry";
 
 export type BookingRetryJob = {
   id?: string | null;
@@ -171,7 +171,7 @@ export function isHistoricalUnauthoredFirstBooking(
   if (hasSubmissionArtifact(shipment)) return false;
   if (readBookingFirstSubmitApprovedAt(shipment.metadata)) return false;
   const created = createdAtMs(shipment);
-  if (created == null) return purpose === "auto-recovery";
+  if (created == null) return purpose === "auto-recovery" || purpose === "auto-retry";
   return created < Date.parse(HISTORICAL_FIRST_BOOKING_BEFORE);
 }
 
@@ -366,7 +366,7 @@ export function evaluateBookingRetryEligibility(
   }
 
   if (
-    (purpose === "auto-recovery" || purpose === "worker") &&
+    (purpose === "auto-recovery" || purpose === "worker" || purpose === "auto-retry") &&
     isHistoricalUnauthoredFirstBooking(shipment, purpose)
   ) {
     return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job?.id ?? undefined });

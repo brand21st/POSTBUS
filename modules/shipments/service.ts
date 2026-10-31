@@ -19,6 +19,7 @@ import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { INDIA_POST_SERVICES } from "@/types/domain";
 import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
+import { merchantSmartAutoRetryView, resumeSmartAutoRetryAfterCorrection } from "@/modules/india-post/smart-auto-retry";
 
 const OPEN_SHIPMENT_STATUSES = ["DRAFT", "QUEUED", "FAILED"] as const;
 
@@ -785,6 +786,12 @@ export async function updateShipmentDimensions(
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError?.message || "Failed to update shipment dimensions.");
   }
 
+  await resumeSmartAutoRetryAfterCorrection(supabase, {
+    organizationId: ctx.organizationId,
+    shipmentIds: [shipmentId],
+    userId: ctx.userId,
+  });
+
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organizationId,
     actor_id: ctx.userId,
@@ -1168,6 +1175,7 @@ function mapShipment(row: Record<string, unknown>) {
     last_error: row.last_error as string | null | undefined,
     booked_at: row.booked_at as string | null | undefined,
   });
+  const smartAutoRetry = merchantSmartAutoRetryView({ shipment: row });
   return {
     ...row,
     orderId: row.order_id as string | undefined,
@@ -1192,6 +1200,9 @@ function mapShipment(row: Record<string, unknown>) {
     trackingNumber: row.tracking_number,
     lastError,
     last_error: lastError,
+    lastErrorCode: row.last_error_code ?? null,
+    last_error_code: row.last_error_code ?? null,
+    smartAutoRetry,
     serviceCode: row.service_code,
     createdAt: row.created_at,
     operationalStatus: row.operational_status,

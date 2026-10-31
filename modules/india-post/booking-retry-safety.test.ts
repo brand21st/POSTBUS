@@ -9,6 +9,7 @@ import {
   BULK_EXCEL_BOOKING_DISABLED_MESSAGE,
   envFlagExactTrue,
   runBookingAutoRecovery,
+  smartAutoBookingRetryEnabled,
 } from "@/modules/india-post/booking-recovery";
 import { forceRetryBookingBatch, scheduleForceRetryBooking } from "@/modules/india-post/booking-force-retry";
 import {
@@ -399,6 +400,13 @@ describe("order booking eligibility", () => {
       evaluateBookingRetryEligibility({
         shipment: historical,
         order: { status: "PROCESSING", fulfillment_status: "UNFULFILLED" },
+        purpose: "auto-retry",
+      }).eligible
+    ).toBe(false);
+    expect(
+      evaluateBookingRetryEligibility({
+        shipment: historical,
+        order: { status: "PROCESSING", fulfillment_status: "UNFULFILLED" },
         purpose: "retry",
       }).eligible
     ).toBe(true);
@@ -624,11 +632,12 @@ describe("fail-closed booking flags", () => {
     expect(envFlagExactTrue("true")).toBe(true);
   });
 
-  it("keeps Force Retry, Auto Recovery, and Excel booking off for every non-true value", () => {
+  it("keeps Force Retry, Auto Recovery, Excel booking, and Smart Auto Retry off for every non-true value", () => {
     const previous = {
       retry: process.env.BOOKING_FORCE_RETRY_ENABLED,
       recovery: process.env.BOOKING_AUTO_RECOVERY,
       excel: process.env.BULK_EXCEL_BOOKING_ENABLED,
+      smart: process.env.SMART_AUTO_BOOKING_RETRY_ENABLED,
     };
     try {
       for (const value of DISABLED_VALUES) {
@@ -636,25 +645,31 @@ describe("fail-closed booking flags", () => {
           delete process.env.BOOKING_FORCE_RETRY_ENABLED;
           delete process.env.BOOKING_AUTO_RECOVERY;
           delete process.env.BULK_EXCEL_BOOKING_ENABLED;
+          delete process.env.SMART_AUTO_BOOKING_RETRY_ENABLED;
         } else {
           process.env.BOOKING_FORCE_RETRY_ENABLED = value;
           process.env.BOOKING_AUTO_RECOVERY = value;
           process.env.BULK_EXCEL_BOOKING_ENABLED = value;
+          process.env.SMART_AUTO_BOOKING_RETRY_ENABLED = value;
         }
         expect(bookingForceRetryEnabled()).toBe(false);
         expect(bookingAutoRecoveryEnabled()).toBe(false);
         expect(bulkExcelBookingEnabled()).toBe(false);
+        expect(smartAutoBookingRetryEnabled()).toBe(false);
       }
       process.env.BOOKING_FORCE_RETRY_ENABLED = "true";
       process.env.BOOKING_AUTO_RECOVERY = "true";
       process.env.BULK_EXCEL_BOOKING_ENABLED = "true";
+      process.env.SMART_AUTO_BOOKING_RETRY_ENABLED = "true";
       expect(bookingForceRetryEnabled()).toBe(true);
       expect(bookingAutoRecoveryEnabled()).toBe(true);
       expect(bulkExcelBookingEnabled()).toBe(true);
+      expect(smartAutoBookingRetryEnabled()).toBe(true);
     } finally {
       restore("BOOKING_FORCE_RETRY_ENABLED", previous.retry);
       restore("BOOKING_AUTO_RECOVERY", previous.recovery);
       restore("BULK_EXCEL_BOOKING_ENABLED", previous.excel);
+      restore("SMART_AUTO_BOOKING_RETRY_ENABLED", previous.smart);
     }
   });
 
