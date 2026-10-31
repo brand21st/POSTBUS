@@ -16,6 +16,12 @@ vi.mock("@/modules/india-post/provider", () => ({
   })),
 }));
 
+vi.mock("@/modules/webhooks/publish", () => ({
+  publishShipmentBooked: vi.fn().mockResolvedValue(undefined),
+  publishBookingFailed: vi.fn().mockResolvedValue(undefined),
+  publishBookingRequested: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/modules/shopify/booking-guard", () => ({
   revalidateShopifyBooking: vi.fn().mockResolvedValue({ ok: true }),
 }));

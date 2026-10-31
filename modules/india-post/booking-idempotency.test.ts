@@ -29,6 +29,12 @@ vi.mock("@/modules/india-post/provider", () => ({
   })),
 }));
 
+vi.mock("@/modules/webhooks/publish", () => ({
+  publishShipmentBooked: vi.fn().mockResolvedValue(undefined),
+  publishBookingFailed: vi.fn().mockResolvedValue(undefined),
+  publishBookingRequested: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/modules/india-post/origin", () => ({
   cachedOfficeLookup: vi.fn(),
   resolveIndiaPostOrigin: vi.fn().mockResolvedValue({
@@ -333,7 +339,16 @@ describe("runIndiaPostBooking idempotency", () => {
   it("does not POST to CEPT when the Shopify order is still PENDING", async () => {
     bookShipmentMock.mockReset();
     const { supabase, store } = memoryDb([
-      baseShipment({ orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY", payment_status: "PENDING" } }),
+      baseShipment({
+        orders: {
+          id: "ord-1",
+          order_number: "#1001",
+          source: "SHOPIFY",
+          status: "PROCESSING",
+          fulfillment_status: "UNFULFILLED",
+          payment_status: "PENDING",
+        },
+      }),
     ]);
     const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
     expect(bookShipmentMock).not.toHaveBeenCalled();
