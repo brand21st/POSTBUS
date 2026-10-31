@@ -61,6 +61,7 @@ import { optionalDimensionCm, optionalPositiveInt } from "@/modules/orders/schem
 import {
   MANUAL_ORDER_PAYMENT_DEFAULTS,
   type ManualOrderPaymentDefault,
+  type OrderPaymentDefault,
 } from "@/modules/orders/payment-default";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { OrderRecord, Paginated, ProductRecord } from "@/types/api";
@@ -234,7 +235,7 @@ export default function NewOrderPage() {
   });
   const orderDefaults = useQuery({
     queryKey: ["order-defaults"],
-    queryFn: () => api<{ paymentStatus: ManualOrderPaymentDefault | null }>("/api/v1/order-defaults"),
+    queryFn: () => api<OrderPaymentDefault>("/api/v1/order-defaults"),
   });
   const serviceOptions = useMemo(
     () => selectableIndiaPostServices(indiaPost.data),
@@ -278,14 +279,22 @@ export default function NewOrderPage() {
   const createShipment = form.watch("createShipment");
   const paymentStatus = form.watch("paymentStatus");
   const savedPaymentDefault = orderDefaults.data?.paymentStatus ?? null;
+  const savedExtraCodCharge = orderDefaults.data?.extraCodCharge ?? null;
+  const [extraCodClosed, setExtraCodClosed] = useState(false);
 
   useEffect(() => {
     if (paymentDefaultApplied.current || !orderDefaults.isSuccess) return;
     paymentDefaultApplied.current = true;
     const saved = orderDefaults.data.paymentStatus;
-    if (!saved || form.getFieldState("paymentStatus").isDirty) return;
-    form.setValue("paymentStatus", saved);
-    if (saved !== "COD") form.setValue("extraCodCharge", 0);
+    const paymentDirty = form.getFieldState("paymentStatus").isDirty;
+    if (saved && !paymentDirty) form.setValue("paymentStatus", saved);
+    const payment = saved && !paymentDirty ? saved : form.getValues("paymentStatus");
+    const extra = orderDefaults.data.extraCodCharge;
+    if (payment === "COD" && extra != null && !form.getFieldState("extraCodCharge").isDirty) {
+      form.setValue("extraCodCharge", extra);
+    } else if (payment !== "COD") {
+      form.setValue("extraCodCharge", 0);
+    }
   }, [form, orderDefaults.data, orderDefaults.isSuccess]);
 
   const savePaymentDefault = useMutation({
@@ -296,6 +305,18 @@ export default function NewOrderPage() {
       }),
     onSuccess: () => {
       toast.success("Payment default saved.");
+      queryClient.invalidateQueries({ queryKey: ["order-defaults"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const saveExtraCodDefault = useMutation({
+    mutationFn: (amount: number) =>
+      api<OrderPaymentDefault>("/api/v1/order-defaults", {
+        method: "PUT",
+        body: JSON.stringify({ extraCodCharge: amount }),
+      }),
+    onSuccess: () => {
+      toast.success("Extra COD charge default saved.");
       queryClient.invalidateQueries({ queryKey: ["order-defaults"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -462,6 +483,11 @@ export default function NewOrderPage() {
       finalCodLimitMessage = error instanceof Error ? error.message : "Enter a valid extra COD charge.";
     }
   }
+  const extraCodFieldError = extraCodParsed.ok
+    ? finalCodLimitMessage ?? form.formState.errors.extraCodCharge?.message
+    : extraCodParsed.message;
+  const extraCodDefaultSaved =
+    extraCodParsed.ok && savedExtraCodCharge != null && Math.abs(savedExtraCodCharge - extraCodCharge) < 0.001;
   const codAdvance = paymentStatus === "COD" && Number.isFinite(orderTotal) ? Math.max(0, orderTotal - collectOnDelivery) : 0;
 
   const bookingService = resolveOrderBookingService({
@@ -692,7 +718,11 @@ export default function NewOrderPage() {
               value={paymentStatus}
               onValueChange={(value) => {
                 form.setValue("paymentStatus", value as FormValues["paymentStatus"], { shouldDirty: true });
-                if (value !== "COD") form.setValue("extraCodCharge", 0);
+                if (value !== "COD") {
+                  form.setValue("extraCodCharge", 0);
+                } else if (!extraCodClosed) {
+                  form.setValue("extraCodCharge", savedExtraCodCharge ?? 0, { shouldValidate: true });
+                }
               }}
             >
               <SelectTrigger className="h-8" aria-label="Payment">
@@ -718,29 +748,67 @@ export default function NewOrderPage() {
           ) : null}
           {paymentStatus === "COD" ? (
             <div className="space-y-3 md:col-span-2">
-              <Field
-                label="Extra COD Charge (₹)"
-                hint="Optional additional amount to collect from the customer."
-                className="max-w-64"
-                error={
-                  extraCodParsed.ok
-                    ? finalCodLimitMessage ?? form.formState.errors.extraCodCharge?.message
-                    : extraCodParsed.message
-                }
-                htmlFor="extra-cod-charge"
-              >
-                <Input
-                  id="extra-cod-charge"
-                  className="h-8"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  inputMode="decimal"
-                  placeholder="Enter additional COD charge"
-                  aria-describedby="extra-cod-charge-hint"
-                  {...form.register("extraCodCharge")}
-                />
-              </Field>
+              {extraCodClosed ? (
+                <button
+                  type="button"
+                  className="text-xs font-medium text-brand underline-offset-2 hover:underline"
+                  onClick={() => {
+                    setExtraCodClosed(false);
+                    form.setValue("extraCodCharge", savedExtraCodCharge ?? 0, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                  }}
+                >
+                  Add extra COD charge
+                </button>
+              ) : (
+                <div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Label htmlFor="extra-cod-charge">Extra COD Charge (₹)</Label>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-brand underline-offset-2 hover:underline disabled:cursor-default disabled:text-muted disabled:no-underline"
+                        disabled={saveExtraCodDefault.isPending || !extraCodParsed.ok || extraCodDefaultSaved}
+                        onClick={() => {
+                          if (!extraCodParsed.ok) return;
+                          saveExtraCodDefault.mutate(extraCodCharge);
+                        }}
+                      >
+                        {saveExtraCodDefault.isPending ? "Saving…" : extraCodDefaultSaved ? "Default" : "Save as default"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-muted underline-offset-2 hover:underline"
+                        onClick={() => {
+                          setExtraCodClosed(true);
+                          form.setValue("extraCodCharge", 0, { shouldDirty: true, shouldValidate: true });
+                        }}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-1 max-w-64">
+                    <Input
+                      id="extra-cod-charge"
+                      className="h-8"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      inputMode="decimal"
+                      placeholder="Enter additional COD charge"
+                      aria-describedby="extra-cod-charge-hint"
+                      {...form.register("extraCodCharge")}
+                    />
+                  </div>
+                  <p id="extra-cod-charge-hint" className="mt-0.5 text-[11px] text-muted">
+                    Optional additional amount to collect from the customer.
+                  </p>
+                  {extraCodFieldError ? <p className="mt-0.5 text-xs text-error">{extraCodFieldError}</p> : null}
+                </div>
+              )}
               <div className="rounded-xl border border-border bg-surface-soft p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payment details</p>
                 <dl className="mt-2 space-y-1.5 text-sm">

@@ -25,6 +25,7 @@ export async function handleOrderDefaultRoutes(
   }
 
   if (method === "PUT") {
+    // Accept a payment status, an extra COD amount, or both.
     const body = saveOrderPaymentDefaultSchema.parse(await request.json().catch(() => ({})));
     return saveOrderPaymentDefault(supabase, ctx.userId, ctx.organizationId, body);
   }
