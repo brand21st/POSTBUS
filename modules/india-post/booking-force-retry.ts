@@ -8,10 +8,12 @@ import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import {
   bulkRetryBucket,
   evaluateBookingRetryEligibility,
+  metadataWithFirstSubmitApproval,
   STALE_BOOKING_LOCK_MS,
   type BookingRetryAction,
   type BookingRetryDecision,
   type BookingRetryJob,
+  type BookingRetryOrder,
 } from "@/modules/india-post/booking-retry-eligibility";
 import { bookingForceRetryEnabled } from "@/modules/india-post/booking-recovery";
 
@@ -44,7 +46,9 @@ function asJob(row: Record<string, unknown> | null): BookingRetryJob {
 async function loadOwnedShipment(supabase: SupabaseClient, organizationId: string, shipmentId: string) {
   const { data, error } = await supabase
     .from("shipments")
-    .select("id, status, booked_at, barcode, tracking_number, provider_ref, last_error_code, metadata, updated_at, organization_id")
+    .select(
+      "id, status, booked_at, barcode, tracking_number, provider_ref, last_error_code, metadata, updated_at, created_at, organization_id, orders(status, fulfillment_status, source, payment_status)"
+    )
     .eq("organization_id", organizationId)
     .eq("id", shipmentId)
     .maybeSingle();
@@ -65,7 +69,15 @@ export async function evaluateOwnedBookingRetry(
   return evaluateBookingRetryEligibility({
     shipment,
     job: asJob(job as Record<string, unknown> | null),
+    order: orderFromRow(shipment),
+    purpose: "retry",
   });
+}
+
+function orderFromRow(row: { orders?: BookingRetryOrder | BookingRetryOrder[] | null } | null): BookingRetryOrder {
+  const raw = row?.orders;
+  if (Array.isArray(raw)) return raw[0] ?? null;
+  return raw ?? null;
 }
 
 async function reuseOrCreateJob(
@@ -131,6 +143,8 @@ export async function scheduleForceRetryBooking(
   const decision = evaluateBookingRetryEligibility({
     shipment,
     job: asJob(latest as Record<string, unknown> | null),
+    order: orderFromRow(shipment),
+    purpose: "retry",
   });
   if (decision.action === "RETRY_ALREADY_SCHEDULED") {
     return {
@@ -150,6 +164,7 @@ export async function scheduleForceRetryBooking(
     status: "QUEUED",
     last_error: null,
     last_error_code: null,
+    metadata: metadataWithFirstSubmitApproval(shipment?.metadata),
   };
   if (extras?.weightGrams != null && extras.weightGrams > 0) patch.weight_grams = Math.round(extras.weightGrams);
   if (extras?.lengthCm != null && extras.lengthCm > 0) patch.length_cm = extras.lengthCm;
@@ -210,7 +225,11 @@ type BulkRow = {
   last_error_code?: string | null;
   metadata?: unknown;
   updated_at?: string | null;
-  orders?: { source?: string | null; payment_status?: string | null } | { source?: string | null; payment_status?: string | null }[] | null;
+  created_at?: string | null;
+  orders?:
+    | (BookingRetryOrder & { source?: string | null; payment_status?: string | null })
+    | Array<BookingRetryOrder & { source?: string | null; payment_status?: string | null }>
+    | null;
 };
 
 export async function forceRetryBookingBatch(
@@ -228,7 +247,7 @@ export async function forceRetryBookingBatch(
     supabase
       .from("shipments")
       .select(
-        "id, status, booked_at, barcode, tracking_number, provider_ref, last_error_code, metadata, updated_at, orders(source, payment_status)"
+        "id, status, booked_at, barcode, tracking_number, provider_ref, last_error_code, metadata, updated_at, created_at, orders(source, payment_status, status, fulfillment_status)"
       )
       .eq("organization_id", ctx.organizationId)
       .in("id", ids),
@@ -277,7 +296,12 @@ export async function forceRetryBookingBatch(
       });
       continue;
     }
-    const decision = evaluateBookingRetryEligibility({ shipment: row, job: asJob(latestJob.get(id) ?? null) });
+    const decision = evaluateBookingRetryEligibility({
+      shipment: row,
+      job: asJob(latestJob.get(id) ?? null),
+      order: orderFromRow(row),
+      purpose: "retry",
+    });
     const bucket = bulkRetryBucket(decision.action);
     if (bucket === "needsReview") summary.needsReview += 1;
     else if (bucket === "alreadyProcessing") summary.alreadyProcessing += 1;

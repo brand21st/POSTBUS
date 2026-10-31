@@ -37,6 +37,7 @@ const PERMANENT_CODES = new Set([
   "INVALID_CONTRACT",
   "PERMANENT_AUTH_ERROR",
   "VALIDATION_ERROR",
+  "BOOKING_REVIEW_REQUIRED",
 ]);
 
 export type ClassifiedError = {

@@ -337,6 +337,11 @@ export async function createShipmentsForOrders(
       const decision = evaluateBookingRetryEligibility({
         shipment: current,
         job: latestJobByShipment.get(current.id) ?? null,
+        order: {
+          status: order.status,
+          fulfillment_status: (order as { fulfillment_status?: string | null }).fulfillment_status,
+        },
+        purpose: "retry",
       });
       if (!decision.eligible) {
         skipped.push(order.id);

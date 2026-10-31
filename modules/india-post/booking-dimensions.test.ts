@@ -279,7 +279,13 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       height_cm: null,
                       payment_mode: "PREPAID",
                       cod_amount: 0,
-                      orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY" },
+                      orders: {
+                        id: "ord-1",
+                        order_number: "#1001",
+                        source: "SHOPIFY",
+                        status: "PROCESSING",
+                        fulfillment_status: "UNFULFILLED",
+                      },
                       customers: { name: "Test Customer", phone: "9876543210" },
                       addresses: {
                         name: "Test Customer",
@@ -444,7 +450,13 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       height_cm: null,
                       payment_mode: "PREPAID",
                       cod_amount: 0,
-                      orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY" },
+                      orders: {
+                        id: "ord-1",
+                        order_number: "#1001",
+                        source: "SHOPIFY",
+                        status: "PROCESSING",
+                        fulfillment_status: "UNFULFILLED",
+                      },
                       customers: { name: "Test Customer", phone: "9876543210" },
                       addresses: {
                         name: "Test Customer",
@@ -595,7 +607,13 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       height_cm: 2,
                       payment_mode: "PREPAID",
                       cod_amount: 0,
-                      orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY" },
+                      orders: {
+                        id: "ord-1",
+                        order_number: "#1001",
+                        source: "SHOPIFY",
+                        status: "PROCESSING",
+                        fulfillment_status: "UNFULFILLED",
+                      },
                       customers: { name: "Test Customer", phone: "9876543210" },
                       addresses: {
                         name: "Test Customer",
@@ -743,7 +761,13 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       height_cm: 10,
                       payment_mode: "PREPAID",
                       cod_amount: 0,
-                      orders: { id: "ord-2", order_number: "#1002", source: "MANUAL" },
+                      orders: {
+                        id: "ord-2",
+                        order_number: "#1002",
+                        source: "MANUAL",
+                        status: "PROCESSING",
+                        fulfillment_status: "UNFULFILLED",
+                      },
                       customers: { name: "Manual Customer", phone: "9876543210" },
                       addresses: {
                         name: "Manual Customer",

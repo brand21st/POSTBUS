@@ -1,6 +1,7 @@
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
 import { isAuthoritativeIndiaPostBooking, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
 import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
+import { FULFILLMENT_STATUSES, ORDER_STATUSES, type FulfillmentStatus, type OrderStatus } from "@/types/domain";
 
 /** Matches claim_background_jobs stale RUNNING recovery. */
 export const STALE_BOOKING_LOCK_MS = 15 * 60 * 1000;
@@ -33,7 +34,17 @@ export type BookingRetryShipment = {
   metadata?: unknown;
   updated_at?: string | null;
   updatedAt?: string | null;
+  created_at?: string | null;
+  createdAt?: string | null;
 };
+
+export type BookingRetryOrder = {
+  status?: string | null;
+  fulfillment_status?: string | null;
+  fulfillmentStatus?: string | null;
+} | null;
+
+export type BookingEligibilityPurpose = "retry" | "auto-recovery" | "worker";
 
 export type BookingRetryJob = {
   id?: string | null;
@@ -102,6 +113,88 @@ const REASONS: Record<BookingRetryAction, string> = {
   INVALID_SHIPMENT: "Shipment could not be retried.",
   MAX_ATTEMPTS_EXCEEDED: "Booking has reached the maximum number of attempts.",
 };
+
+/** Order statuses that may still need a first India Post booking. */
+export const ORDER_STATUSES_ELIGIBLE_FOR_FIRST_BOOKING = [
+  "IMPORTED",
+  "READY",
+  "PROCESSING",
+  "FAILED",
+] as const satisfies readonly OrderStatus[];
+
+/** Order statuses that must never receive a new India Post booking. */
+export const ORDER_STATUSES_BLOCK_NEW_BOOKING = [
+  "BOOKED",
+  "SHIPPED",
+  "IN_TRANSIT",
+  "DELIVERED",
+  "CANCELLED",
+] as const satisfies readonly OrderStatus[];
+
+const ORDER_STATUS_SET = new Set<string>(ORDER_STATUSES);
+const FULFILLMENT_STATUS_SET = new Set<string>(FULFILLMENT_STATUSES);
+const ELIGIBLE_ORDER_STATUS_SET = new Set<string>(ORDER_STATUSES_ELIGIBLE_FOR_FIRST_BOOKING);
+const BLOCKED_FULFILLMENT = new Set<string>(["FULFILLED", "CANCELLED"] satisfies FulfillmentStatus[]);
+
+/**
+ * Shipments created before this instant cannot be first-booked by cron or
+ * Automatic Recovery. Force Retry remains the explicit merchant decision.
+ * Covers the 24 Sep-2026 orphans and 14 Oct-8 queued jobs.
+ */
+export const HISTORICAL_FIRST_BOOKING_BEFORE = "2026-10-31T00:00:00.000Z";
+
+export function readBookingFirstSubmitApprovedAt(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const value = (metadata as { bookingFirstSubmitApprovedAt?: unknown }).bookingFirstSubmitApprovedAt;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function metadataWithFirstSubmitApproval(metadata: unknown, approvedAt = new Date().toISOString()) {
+  const base =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? { ...(metadata as Record<string, unknown>) }
+      : {};
+  return { ...base, bookingFirstSubmitApprovedAt: approvedAt };
+}
+
+function createdAtMs(shipment: BookingRetryShipment) {
+  const raw = shipment.createdAt ?? shipment.created_at;
+  if (!raw) return null;
+  const ms = Date.parse(String(raw));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+export function isHistoricalUnauthoredFirstBooking(
+  shipment: BookingRetryShipment,
+  purpose: BookingEligibilityPurpose = "retry"
+) {
+  if (hasSubmissionArtifact(shipment)) return false;
+  if (readBookingFirstSubmitApprovedAt(shipment.metadata)) return false;
+  const created = createdAtMs(shipment);
+  if (created == null) return purpose === "auto-recovery";
+  return created < Date.parse(HISTORICAL_FIRST_BOOKING_BEFORE);
+}
+
+export function evaluateOrderBookingEligibility(order?: BookingRetryOrder | undefined) {
+  if (order === undefined) return { eligible: true as const, action: "SAFE_TO_REQUEUE" as const };
+  if (!order) {
+    return { eligible: false as const, action: "MANUAL_REVIEW_REQUIRED" as const };
+  }
+  const status = String(order.status ?? "").trim().toUpperCase();
+  if (!status || !ORDER_STATUS_SET.has(status)) {
+    return { eligible: false as const, action: "MANUAL_REVIEW_REQUIRED" as const };
+  }
+  if (!ELIGIBLE_ORDER_STATUS_SET.has(status)) {
+    return { eligible: false as const, action: "MANUAL_REVIEW_REQUIRED" as const };
+  }
+  const fulfillment = String(order.fulfillmentStatus ?? order.fulfillment_status ?? "").trim().toUpperCase();
+  if (fulfillment) {
+    if (!FULFILLMENT_STATUS_SET.has(fulfillment) || BLOCKED_FULFILLMENT.has(fulfillment)) {
+      return { eligible: false as const, action: "MANUAL_REVIEW_REQUIRED" as const };
+    }
+  }
+  return { eligible: true as const, action: "SAFE_TO_REQUEUE" as const };
+}
 
 function decision(
   action: BookingRetryAction,
@@ -193,12 +286,18 @@ export function shipmentOutcomeIsUncertain(
 }
 
 export function evaluateBookingRetryEligibility(
-  input: { shipment?: BookingRetryShipment | null; job?: BookingRetryJob },
+  input: {
+    shipment?: BookingRetryShipment | null;
+    job?: BookingRetryJob;
+    order?: BookingRetryOrder | undefined;
+    purpose?: BookingEligibilityPurpose;
+  },
   now = Date.now()
 ): BookingRetryDecision {
   const shipment = input.shipment;
   const shipmentId = String(shipment?.id ?? "");
   if (!shipment?.id) return decision("INVALID_SHIPMENT", shipmentId);
+  const purpose = input.purpose ?? "retry";
 
   const bookedAt = shipment.bookedAt ?? shipment.booked_at;
   const status = statusOf(shipment);
@@ -255,6 +354,21 @@ export function evaluateBookingRetryEligibility(
   }
 
   if (!SAFE_STATUSES.has(status)) {
+    return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job?.id ?? undefined });
+  }
+
+  const orderCheck =
+    purpose === "auto-recovery" && input.order === undefined
+      ? evaluateOrderBookingEligibility(null)
+      : evaluateOrderBookingEligibility(input.order);
+  if (!orderCheck.eligible) {
+    return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job?.id ?? undefined });
+  }
+
+  if (
+    (purpose === "auto-recovery" || purpose === "worker") &&
+    isHistoricalUnauthoredFirstBooking(shipment, purpose)
+  ) {
     return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job?.id ?? undefined });
   }
 

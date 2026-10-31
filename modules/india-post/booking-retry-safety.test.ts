@@ -14,9 +14,15 @@ import { forceRetryBookingBatch, scheduleForceRetryBooking } from "@/modules/ind
 import {
   bulkRetryBucket,
   evaluateBookingRetryEligibility,
+  evaluateOrderBookingEligibility,
+  HISTORICAL_FIRST_BOOKING_BEFORE,
+  isHistoricalUnauthoredFirstBooking,
+  ORDER_STATUSES_BLOCK_NEW_BOOKING,
+  ORDER_STATUSES_ELIGIBLE_FOR_FIRST_BOOKING,
   STALE_BOOKING_LOCK_MS,
   type BookingRetryAction,
 } from "@/modules/india-post/booking-retry-eligibility";
+import { FULFILLMENT_STATUSES, ORDER_STATUSES } from "@/types/domain";
 
 const NOW = Date.parse("2026-10-31T03:00:00.000Z");
 
@@ -332,6 +338,87 @@ describe("bulk retry buckets", () => {
   });
 });
 
+describe("order booking eligibility", () => {
+  it("uses the real order and fulfillment enums", () => {
+    expect([...ORDER_STATUSES]).toEqual([
+      "IMPORTED",
+      "READY",
+      "PROCESSING",
+      "BOOKED",
+      "SHIPPED",
+      "IN_TRANSIT",
+      "DELIVERED",
+      "FAILED",
+      "CANCELLED",
+    ]);
+    expect([...FULFILLMENT_STATUSES]).toEqual(["UNFULFILLED", "PARTIAL", "FULFILLED", "CANCELLED"]);
+    expect([...ORDER_STATUSES_ELIGIBLE_FOR_FIRST_BOOKING]).toEqual(["IMPORTED", "READY", "PROCESSING", "FAILED"]);
+    expect([...ORDER_STATUSES_BLOCK_NEW_BOOKING]).toEqual([
+      "BOOKED",
+      "SHIPPED",
+      "IN_TRANSIT",
+      "DELIVERED",
+      "CANCELLED",
+    ]);
+  });
+
+  it("fails closed for missing, unknown, shipped, fulfilled, and cancelled orders", () => {
+    expect(evaluateOrderBookingEligibility(null).eligible).toBe(false);
+    expect(evaluateOrderBookingEligibility({ status: "UNKNOWN" }).eligible).toBe(false);
+    expect(evaluateOrderBookingEligibility({ status: "SHIPPED" }).eligible).toBe(false);
+    expect(evaluateOrderBookingEligibility({ status: "CANCELLED" }).eligible).toBe(false);
+    expect(evaluateOrderBookingEligibility({ status: "PROCESSING", fulfillment_status: "FULFILLED" }).eligible).toBe(
+      false
+    );
+    expect(evaluateOrderBookingEligibility({ status: "PROCESSING", fulfillment_status: "UNFULFILLED" }).eligible).toBe(
+      true
+    );
+  });
+
+  it("does not treat PROCESSING alone as approval for historical first bookings", () => {
+    const historical = shipment({
+      created_at: "2026-10-08T09:12:58.102Z",
+      metadata: {},
+    });
+    expect(isHistoricalUnauthoredFirstBooking(historical, "auto-recovery")).toBe(true);
+    expect(
+      evaluateBookingRetryEligibility({
+        shipment: historical,
+        order: { status: "PROCESSING", fulfillment_status: "UNFULFILLED" },
+        purpose: "auto-recovery",
+      }).eligible
+    ).toBe(false);
+    expect(
+      evaluateBookingRetryEligibility({
+        shipment: historical,
+        order: { status: "PROCESSING", fulfillment_status: "UNFULFILLED" },
+        purpose: "worker",
+      }).eligible
+    ).toBe(false);
+    expect(
+      evaluateBookingRetryEligibility({
+        shipment: historical,
+        order: { status: "PROCESSING", fulfillment_status: "UNFULFILLED" },
+        purpose: "retry",
+      }).eligible
+    ).toBe(true);
+  });
+
+  it("recovers only a fresh eligible first-time shipment", () => {
+    const fresh = shipment({
+      created_at: "2026-10-31T12:00:00.000Z",
+    });
+    expect(fresh.created_at > HISTORICAL_FIRST_BOOKING_BEFORE).toBe(true);
+    expect(
+      evaluateBookingRetryEligibility({
+        shipment: fresh,
+        order: { status: "READY", fulfillment_status: "UNFULFILLED" },
+        purpose: "auto-recovery",
+      }).action
+    ).toBe("SAFE_TO_REQUEUE");
+  });
+});
+
 describe("booking auto recovery", () => {
   it("stays off unless BOOKING_AUTO_RECOVERY is exactly true", async () => {
     const previous = process.env.BOOKING_AUTO_RECOVERY;
@@ -378,6 +465,143 @@ describe("booking auto recovery", () => {
     expect(calls).toBe(1);
     expect(first.enabled).toBe(true);
     expect(second.enabled).toBe(true);
+    if (previous === undefined) delete process.env.BOOKING_AUTO_RECOVERY;
+    else process.env.BOOKING_AUTO_RECOVERY = previous;
+  });
+
+  it("does not enqueue 24 SHIPPED-order orphans when Automatic Recovery is on", async () => {
+    const previous = process.env.BOOKING_AUTO_RECOVERY;
+    process.env.BOOKING_AUTO_RECOVERY = "true";
+    const orphans = Array.from({ length: 24 }, (_, index) => ({
+      id: `orphan-${index + 1}`,
+      organization_id: "org-shipped",
+      barcode: null,
+      tracking_number: null,
+      provider_ref: null,
+      booked_at: null,
+      metadata: {},
+      last_error_code: null,
+      created_by: "user-1",
+      created_at: "2026-09-22T12:00:00.000Z",
+      order_id: `order-${index + 1}`,
+      orders: { status: "SHIPPED", fulfillment_status: "UNFULFILLED" },
+    }));
+    let jobInserts = 0;
+    const supabase = {
+      rpc: async () => ({ data: null, error: { message: "skip rpc" } }),
+      from(table: string) {
+        if (table === "shipments") {
+          const query = {
+            select: () => query,
+            eq: () => query,
+            is: () => query,
+            lt: () => query,
+            order: () => query,
+            limit: async () => ({ data: orphans, error: null }),
+          };
+          return query;
+        }
+        if (table === "background_jobs") {
+          const query = {
+            select: () => query,
+            eq: () => query,
+            in: () => query,
+            order: () => query,
+            limit: () => query,
+            maybeSingle: async () => ({ data: null, error: null }),
+            insert: () => {
+              jobInserts += 1;
+              throw new Error("must not insert booking jobs for shipped orphans");
+            },
+          };
+          return query;
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    };
+    await expect(runBookingAutoRecovery(supabase as never)).resolves.toEqual({
+      enabled: true,
+      recovered: 0,
+      skipped: 24,
+    });
+    expect(jobInserts).toBe(0);
+    if (previous === undefined) delete process.env.BOOKING_AUTO_RECOVERY;
+    else process.env.BOOKING_AUTO_RECOVERY = previous;
+  });
+
+  it("enqueues a fresh PROCESSING orphan and skips a historical PROCESSING row", async () => {
+    const previous = process.env.BOOKING_AUTO_RECOVERY;
+    process.env.BOOKING_AUTO_RECOVERY = "true";
+    const rows = [
+      {
+        id: "fresh-1",
+        organization_id: "org-a",
+        barcode: null,
+        tracking_number: null,
+        provider_ref: null,
+        booked_at: null,
+        metadata: {},
+        created_at: "2026-10-31T12:00:00.000Z",
+        orders: { status: "PROCESSING", fulfillment_status: "UNFULFILLED" },
+      },
+      {
+        id: "hist-1",
+        organization_id: "org-a",
+        barcode: null,
+        tracking_number: null,
+        provider_ref: null,
+        booked_at: null,
+        metadata: {},
+        created_at: "2026-10-08T09:12:58.000Z",
+        orders: { status: "PROCESSING", fulfillment_status: "UNFULFILLED" },
+      },
+    ];
+    const inserted: string[] = [];
+    const supabase = {
+      rpc: async () => ({ data: null, error: { code: "42883", message: "function does not exist" } }),
+      from(table: string) {
+        if (table === "shipments") {
+          const query = {
+            select: () => query,
+            eq: () => query,
+            is: () => query,
+            lt: () => query,
+            order: () => query,
+            limit: async () => ({ data: rows, error: null }),
+          };
+          return query;
+        }
+        if (table === "background_jobs") {
+          const query = {
+            select: () => query,
+            eq: () => query,
+            in: () => query,
+            order: () => query,
+            limit: () => query,
+            maybeSingle: async () => ({ data: null, error: null }),
+            insert: (payload: { entity_id: string }) => {
+              inserted.push(payload.entity_id);
+              return {
+                select: () => ({
+                  single: async () => ({
+                    data: { id: `job-${payload.entity_id}`, status: "QUEUED", entity_id: payload.entity_id },
+                    error: null,
+                  }),
+                }),
+              };
+            },
+          };
+          return query;
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    };
+    await expect(runBookingAutoRecovery(supabase as never)).resolves.toEqual({
+      enabled: true,
+      recovered: 1,
+      skipped: 1,
+    });
+    expect(inserted).toEqual(["fresh-1"]);
     if (previous === undefined) delete process.env.BOOKING_AUTO_RECOVERY;
     else process.env.BOOKING_AUTO_RECOVERY = previous;
   });

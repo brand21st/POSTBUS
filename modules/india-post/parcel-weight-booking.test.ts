@@ -171,7 +171,13 @@ function bookingDb(input: {
                     height_cm: 1,
                     payment_mode: "PREPAID",
                     cod_amount: 0,
-                    orders: { id: "ord-1", order_number: "#32G", source: "MANUAL" },
+                    orders: {
+                      id: "ord-1",
+                      order_number: "#32G",
+                      source: "MANUAL",
+                      status: "PROCESSING",
+                      fulfillment_status: "UNFULFILLED",
+                    },
                     customers: { name: "Priya Sharma", phone: "9944388249" },
                     addresses: {
                       name: "Priya Sharma",

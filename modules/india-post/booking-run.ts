@@ -31,7 +31,12 @@ import { commercePendingBookingBlocked } from "@/lib/dashboard/records";
 import { withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
 import { classifyProviderError } from "@/lib/jobs/retry";
 import { tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
-import { existingBarcodeMayBeSubmitted } from "@/modules/india-post/booking-retry-eligibility";
+import {
+  evaluateOrderBookingEligibility,
+  existingBarcodeMayBeSubmitted,
+  isHistoricalUnauthoredFirstBooking,
+  type BookingRetryOrder,
+} from "@/modules/india-post/booking-retry-eligibility";
 import { trustedFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
 import { metadataWithCeptSubmitIntent, readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { logInfo, logError } from "@/lib/logger";
@@ -261,7 +266,7 @@ export async function runIndiaPostBooking(
     !isAuthoritativeIndiaPostBooking(row) &&
     (isIndiaPostBookingUnknown(row) || Boolean(readCeptSubmitIntentAt(row.metadata)));
   const unknown = shipments.filter(awaitsProof);
-  const pending = shipments.filter((row) => !isAuthoritativeIndiaPostBooking(row) && !awaitsProof(row));
+  let pending = shipments.filter((row) => !isAuthoritativeIndiaPostBooking(row) && !awaitsProof(row));
   const bookedIds: string[] = alreadyBooked.map((row) => row.id);
   const failedIds: string[] = [];
 
@@ -386,6 +391,45 @@ export async function runIndiaPostBooking(
       code: unknownCode,
     });
   }
+
+  function orderFromShipment(row: { orders?: unknown }): BookingRetryOrder {
+    const raw = row.orders;
+    if (Array.isArray(raw)) {
+      const first = raw[0] as unknown;
+      return first && typeof first === "object" ? (first as BookingRetryOrder) : null;
+    }
+    return raw && typeof raw === "object" ? (raw as BookingRetryOrder) : null;
+  }
+
+  const submittable: typeof pending = [];
+  for (const shipment of pending) {
+    const orderDecision = evaluateOrderBookingEligibility(orderFromShipment(shipment));
+    const historicalHold = isHistoricalUnauthoredFirstBooking(shipment, "worker");
+    if (orderDecision.eligible && !historicalHold) {
+      submittable.push(shipment);
+      continue;
+    }
+    await supabase
+      .from("shipments")
+      .update({
+        status: "RECOVERY_REQUIRED",
+        last_error: orderDecision.eligible
+          ? "This shipment needs an explicit booking approval before India Post submission."
+          : "The linked order is not eligible for a new India Post booking.",
+        last_error_code: "BOOKING_REVIEW_REQUIRED",
+      })
+      .eq("id", shipment.id)
+      .eq("organization_id", input.organizationId)
+      .is("booked_at", null);
+    logInfo("booking.order_or_history_blocked", {
+      organizationId: input.organizationId,
+      shipmentId: shipment.id,
+      jobId: input.jobId,
+      orderEligible: orderDecision.eligible,
+      historicalHold,
+    });
+  }
+  pending = submittable;
 
   if (!pending.length) {
     return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared: [], result: null };

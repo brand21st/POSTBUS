@@ -61,7 +61,13 @@ function withProof(barcode: string, id = "ship-1", orderId = "ord-1") {
     order_id: orderId,
     barcode,
     created_at: ISSUED,
-    orders: { id: orderId, order_number: "#1001", source: "EXCEL" },
+    orders: {
+      id: orderId,
+      order_number: "#1001",
+      source: "EXCEL",
+      status: "PROCESSING",
+      fulfillment_status: "UNFULFILLED",
+    },
     metadata: metadataWithFirstBarcodeProof(null, {
       shipmentId: id,
       organizationId: "org-1",
@@ -87,7 +93,13 @@ function baseShipment(overrides: Record<string, unknown> = {}) {
     height_cm: 10,
     payment_mode: "PREPAID",
     cod_amount: 0,
-    orders: { id: "ord-1", order_number: "#1001", source: "SHOPIFY" },
+    orders: {
+      id: "ord-1",
+      order_number: "#1001",
+      source: "SHOPIFY",
+      status: "PROCESSING",
+      fulfillment_status: "UNFULFILLED",
+    },
     customers: { name: "Test", phone: "9876543210" },
     addresses: {
       name: "Test",
@@ -674,6 +686,65 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(outcome.failedIds).toEqual(["ship-1"]);
   });
 
+  it("does not POST when the linked order is already SHIPPED", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([
+      baseShipment({
+        created_at: "2026-10-31T12:00:00.000Z",
+        orders: {
+          id: "ord-1",
+          order_number: "#1001",
+          source: "SHOPIFY",
+          status: "SHIPPED",
+          fulfillment_status: "UNFULFILLED",
+        },
+      }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(outcome.booked).toBe(0);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    expect(store[0]?.last_error_code).toBe("BOOKING_REVIEW_REQUIRED");
+    expect(store[0]?.barcode).toBeNull();
+  });
+
+  it("does not POST a historical first booking that is only PROCESSING", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([
+      baseShipment({
+        created_at: "2026-10-08T09:12:58.102Z",
+        orders: {
+          id: "ord-1",
+          order_number: "#1001",
+          source: "MANUAL",
+          status: "PROCESSING",
+          fulfillment_status: "UNFULFILLED",
+        },
+      }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(outcome.booked).toBe(0);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    expect(store[0]?.barcode).toBeNull();
+  });
+
+  it("does not POST a LABEL_READY shipment that already has booked_at", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([
+      baseShipment({
+        status: "LABEL_READY",
+        booked_at: "2026-10-31T10:23:56.000Z",
+        barcode: BARCODE,
+      }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.barcode).toBe(BARCODE);
+    expect(store[0]?.booked_at).toBe("2026-10-31T10:23:56.000Z");
+  });
+
   it("does not POST a historical barcode that has no submit marker and no error", async () => {
     bookShipmentMock.mockReset();
     const { supabase, store } = memoryDb([baseShipment({ barcode: BARCODE, last_error_code: null })]);
@@ -700,7 +771,13 @@ describe("runIndiaPostBooking idempotency", () => {
       baseShipment({
         barcode: BARCODE,
         metadata: {},
-        orders: { id: "ord-1", order_number: "#1001", source: "EXCEL" },
+        orders: {
+          id: "ord-1",
+          order_number: "#1001",
+          source: "EXCEL",
+          status: "PROCESSING",
+          fulfillment_status: "UNFULFILLED",
+        },
       }),
     ]);
     await expect(
@@ -814,7 +891,15 @@ describe("runIndiaPostBooking idempotency", () => {
   it("still books a manual shipment that has no barcode yet", async () => {
     bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
     const { supabase } = memoryDb([
-      baseShipment({ orders: { id: "ord-1", order_number: "#1001", source: "MANUAL" } }),
+      baseShipment({
+        orders: {
+          id: "ord-1",
+          order_number: "#1001",
+          source: "MANUAL",
+          status: "PROCESSING",
+          fulfillment_status: "UNFULFILLED",
+        },
+      }),
     ]);
     const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
     expect(bookShipmentMock).toHaveBeenCalledTimes(1);

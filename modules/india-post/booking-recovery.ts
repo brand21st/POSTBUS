@@ -3,7 +3,10 @@ import { logError, logInfo } from "@/lib/logger";
 import { enqueueShipmentBookingJob } from "@/modules/jobs/shipment-booking-job";
 import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { shipmentBarcode } from "@/modules/india-post/booking-idempotency";
-import { evaluateBookingRetryEligibility } from "@/modules/india-post/booking-retry-eligibility";
+import {
+  evaluateBookingRetryEligibility,
+  type BookingRetryOrder,
+} from "@/modules/india-post/booking-retry-eligibility";
 
 export const BOOKING_RECOVERY_BATCH = 20;
 const ORPHAN_MIN_AGE_MS = 2 * 60 * 1000;
@@ -49,11 +52,21 @@ type OrphanRow = {
   metadata?: unknown;
   last_error_code?: string | null;
   created_by?: string | null;
+  created_at?: string | null;
+  order_id?: string | null;
+  orders?: BookingRetryOrder | BookingRetryOrder[] | null;
 };
+
+function linkedOrder(row: OrphanRow): BookingRetryOrder {
+  const raw = row.orders;
+  if (Array.isArray(raw)) return raw[0] ?? null;
+  return raw ?? null;
+}
 
 /**
  * Requeue shipments that are still QUEUED, have no barcode, no submit intent,
- * and no booking job. Never touches RECOVERY_REQUIRED or rows that may have been posted.
+ * and no booking job. Never touches RECOVERY_REQUIRED, terminal orders,
+ * historical first-bookings, or rows that may have been posted.
  */
 export async function runBookingAutoRecovery(supabase: SupabaseClient): Promise<BookingRecoveryResult> {
   if (!bookingAutoRecoveryEnabled()) return { enabled: false, recovered: 0, skipped: 0 };
@@ -68,14 +81,16 @@ async function recoverSafeOrphans(supabase: SupabaseClient): Promise<BookingReco
   const cutoff = new Date(Date.now() - ORPHAN_MIN_AGE_MS).toISOString();
   const { data, error } = await supabase
     .from("shipments")
-    .select("id, organization_id, barcode, tracking_number, provider_ref, booked_at, metadata, last_error_code, created_by")
+    .select(
+      "id, organization_id, barcode, tracking_number, provider_ref, booked_at, metadata, last_error_code, created_by, created_at, order_id, orders(status, fulfillment_status)"
+    )
     .eq("status", "QUEUED")
     .is("booked_at", null)
     .is("barcode", null)
     .is("tracking_number", null)
     .is("provider_ref", null)
     .lt("updated_at", cutoff)
-    .order("updated_at", { ascending: true })
+    .order("id", { ascending: true })
     .limit(BOOKING_RECOVERY_BATCH);
   if (error) throw new Error(error.message);
 
@@ -90,9 +105,18 @@ async function recoverSafeOrphans(supabase: SupabaseClient): Promise<BookingReco
       skipped += 1;
       continue;
     }
-    const decision = evaluateBookingRetryEligibility({ shipment: { ...row, status: "QUEUED" } });
+    const decision = evaluateBookingRetryEligibility({
+      shipment: { ...row, status: "QUEUED" },
+      order: linkedOrder(row),
+      purpose: "auto-recovery",
+    });
     if (!decision.eligible) {
       skipped += 1;
+      logInfo("booking.orphan_skipped", {
+        organizationId: row.organization_id,
+        shipmentId: row.id,
+        action: decision.action,
+      });
       continue;
     }
     const { data: job, error: jobError } = await supabase
@@ -114,15 +138,19 @@ async function recoverSafeOrphans(supabase: SupabaseClient): Promise<BookingReco
       continue;
     }
     try {
-      await enqueueShipmentBookingJob(supabase, {
+      const enqueued = await enqueueShipmentBookingJob(supabase, {
         organizationId: row.organization_id,
         jobType: "shipment-booking",
         entityType: "shipment",
         entityId: row.id,
         userId: row.created_by ?? undefined,
       });
+      if (enqueued && String(enqueued.status ?? "").toUpperCase() !== "QUEUED" && String(enqueued.status ?? "").toUpperCase() !== "PENDING") {
+        skipped += 1;
+        continue;
+      }
       recovered += 1;
-      logInfo("booking.orphan_requeued", { organizationId: row.organization_id, shipmentId: row.id });
+      logInfo("booking.orphan_requeued", { organizationId: row.organization_id, shipmentId: row.id, jobId: enqueued?.id });
     } catch (enqueueError) {
       skipped += 1;
       logError("booking.orphan_requeue_failed", {
