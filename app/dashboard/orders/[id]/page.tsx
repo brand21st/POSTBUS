@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,6 +46,46 @@ function positiveNumber(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
+/** Fields that should recalculate the tariff. Estimate timestamps are excluded so a saved quote cannot restart itself. */
+function tariffOrderRevision(record: OrderRecord) {
+  const shipments = (record as OrderRecord & { shipments?: Array<Record<string, unknown>> }).shipments ?? [];
+  return JSON.stringify({
+    pincode: record.shippingAddress?.pincode ?? null,
+    service: record.indiaPostService ?? record.india_post_service ?? null,
+    payment: record.paymentStatus ?? record.payment_status ?? null,
+    cod: record.codAmount ?? record.cod_amount ?? null,
+    parcelMode: record.parcelWeightMode ?? record.parcel_weight_mode ?? null,
+    parcelGrams: record.parcelWeightGrams ?? record.parcel_weight_grams ?? null,
+    lines: lineItems(record).map((item, index) => [
+      item.id ?? index,
+      item.quantity,
+      item.weightGrams ?? item.weight_grams ?? null,
+      Boolean(item.weight_edited),
+    ]),
+    parcels: shipments.map((row) => [
+      row.id ?? null,
+      row.weight_grams ?? null,
+      row.length_cm ?? null,
+      row.width_cm ?? null,
+      row.height_cm ?? null,
+      row.service_code ?? null,
+    ]),
+  });
+}
+
+function savedWeightKey(record: OrderRecord | undefined) {
+  if (!record) return "";
+  return JSON.stringify({
+    mode: record.parcelWeightMode ?? record.parcel_weight_mode ?? null,
+    grams: record.parcelWeightGrams ?? record.parcel_weight_grams ?? null,
+    lines: lineItems(record).map((item, index) => [
+      item.id ?? index,
+      item.weightGrams ?? item.weight_grams ?? null,
+      Boolean(item.weight_edited),
+    ]),
+  });
+}
+
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const queryClient = useQueryClient();
@@ -56,6 +96,7 @@ export default function OrderDetailPage() {
   const [draftWeights, setDraftWeights] = useState<Record<string, string>>({});
   const [manualBox, setManualBox] = useState("");
   const [addressOpen, setAddressOpen] = useState(false);
+  const orderRecord = useRef<OrderRecord | undefined>(undefined);
 
   const order = useQuery({
     queryKey: ["order", params.id],
@@ -109,9 +150,12 @@ export default function OrderDetailPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  orderRecord.current = order.data;
+  const weightKey = savedWeightKey(order.data);
+
   useEffect(() => {
-    const record = order.data;
-    if (!record) return;
+    const record = orderRecord.current;
+    if (!record || !weightKey) return;
     const timer = window.setTimeout(() => {
       const next: Record<string, string> = {};
       const modes: Record<string, "auto" | "manual"> = {};
@@ -129,7 +173,7 @@ export default function OrderDetailPage() {
       setManualBox(Number.isFinite(box) && box > 0 ? String(Math.round(box)) : "");
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [order.data]);
+  }, [weightKey]);
 
   const saveWeights = useMutation({
     mutationFn: (body: {
@@ -549,7 +593,7 @@ export default function OrderDetailPage() {
               ) : null}
             </div>
           )}
-          <TariffEstimateCard orderId={params.id} revision={JSON.stringify(record)} draftRevision={JSON.stringify([draftWeights, manualBox, weightMode, itemModes])} draft={{ weightGrams: weightMode === "manual" ? positiveNumber(manualBox) : items.length && items.every((item, index) => draftItemGrams(item, index) > 0) ? positiveNumber(autoBoxWeight) : undefined }} />
+          <TariffEstimateCard orderId={params.id} revision={tariffOrderRevision(record)} draftRevision={JSON.stringify([draftWeights, manualBox, weightMode, itemModes])} draft={{ weightGrams: weightMode === "manual" ? positiveNumber(manualBox) : items.length && items.every((item, index) => draftItemGrams(item, index) > 0) ? positiveNumber(autoBoxWeight) : undefined }} />
         </CardContent>
       </Card>
 
