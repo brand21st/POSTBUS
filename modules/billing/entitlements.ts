@@ -66,6 +66,7 @@ const NAV_FEATURES: Array<{ href: string; feature: string }> = [
   { href: "/dashboard/labels/customize", feature: FEATURE.packing },
   { href: "/dashboard/labels/templates", feature: FEATURE.packing },
   { href: "/dashboard/labels/multi-print", feature: FEATURE.packing },
+  { href: "/dashboard/orders/bulk-excel", feature: FEATURE.bulk },
   { href: "/dashboard/integrations/wati", feature: FEATURE.wati },
   { href: "/dashboard/integrations/india-post", feature: FEATURE.indiaPost },
   { href: "/dashboard/integrations/shopify", feature: FEATURE.shopify },

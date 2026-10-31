@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { commercePendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapExcelRowToArticle, mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import type { DraftArticle, DraftPickup, ValidationIssue } from "@/modules/india-post/article-types";
@@ -22,6 +24,7 @@ import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/mo
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import { duplicateBarcodeBookingBlock, metadataWithFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
 import { indiaPostRequiresOtp } from "@/modules/india-post/spec";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 
@@ -206,12 +209,16 @@ export async function validateOrdersForBooking(
   for (const order of orders ?? []) {
     const address = order.shipping_address as {
       name?: string;
+      company_name?: string | null;
       line1?: string;
       line2?: string;
+      line3?: string;
       city?: string;
       state?: string;
       pincode?: string;
       phone?: string;
+      address_validation_status?: string | null;
+      address_validation_errors?: unknown;
     } | null;
     if (
       whatsappShipmentBlocked({
@@ -290,6 +297,30 @@ export async function validateOrdersForBooking(
       });
       continue;
     }
+    const addressBlock = shippingAddressBookingBlock(address);
+    if (addressBlock) {
+      const issue: ValidationIssue = {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        barcode: "",
+        field: "shipping_address",
+        value: String(address?.address_validation_status ?? ""),
+        error: addressBlock,
+        status: "Failed",
+        category: "BOOKING",
+      };
+      issues.push(issue);
+      rows.push({
+        orderId: order.id,
+        orderNumber: order.order_number,
+        shipmentId: "",
+        barcode: "",
+        valid: false,
+        issues: [issue],
+        status: String((order as { status?: string }).status ?? ""),
+      });
+      continue;
+    }
 
     const serviceCode = resolveOrderBookingService({
       orderService: order.india_post_service,
@@ -335,9 +366,10 @@ export async function validateOrdersForBooking(
       senderPin: origin.pincode,
       senderMobile: indiaPostMobile(sender.phone) || "",
       receiverName: address?.name ?? "",
-      receiverCompany: address?.name ?? "",
+      receiverCompany: address?.company_name || address?.name || "",
       receiverLine1: address?.line1 ?? "",
       receiverLine2: address?.line2 ?? "",
+      receiverLine3: address?.line3 ?? "",
       receiverCity: address?.city ?? "",
       receiverState: address?.state ?? "",
       receiverPin: address?.pincode ?? "",
@@ -692,9 +724,24 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
         environment: store.connection?.environment,
       });
     }
+    const { data: existingBarcode, error: existingBarcodeError } = await supabase
+      .from("shipments")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("barcode", barcode)
+      .limit(1)
+      .maybeSingle();
+    if (existingBarcodeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingBarcodeError.message);
+    const duplicateBarcode = duplicateBarcodeBookingBlock(existingBarcode);
+    if (duplicateBarcode) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, duplicateBarcode);
+    }
+    const shipmentId = randomUUID();
+    const issuedAt = new Date().toISOString();
     const { data: shipment, error } = await supabase
       .from("shipments")
       .insert({
+        id: shipmentId,
         organization_id: ctx.organizationId,
         order_id: order.id,
         customer_id: order.customer_id,
@@ -707,6 +754,13 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
         width_cm: Number(article.breadth_diameter) || null,
         height_cm: Number(article.height) || null,
         barcode,
+        created_at: issuedAt,
+        metadata: metadataWithFirstBarcodeProof(null, {
+          shipmentId,
+          organizationId: ctx.organizationId,
+          barcode,
+          issuedAt,
+        }),
         status: "QUEUED",
       })
       .select("id")
@@ -717,10 +771,21 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
     createdIds.push(shipment.id);
   }
 
+  await startBookingForShipmentIds(supabase, ctx, createdIds);
+  return { ...validation, queued: createdIds.length };
+}
+
+/** Queues the existing shipment-booking jobs. Does not call India Post itself. */
+export async function startBookingForShipmentIds(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentIds: string[]
+) {
+  if (!shipmentIds.length) return [];
   const bookingJobs =
     effectiveIndiaPostBookingBatchSize() === 1
       ? await Promise.all(
-          createdIds.map((entityId) =>
+          shipmentIds.map((entityId) =>
             createBackgroundJob(supabase, {
               organizationId: ctx.organizationId,
               jobType: "shipment-booking",
@@ -730,8 +795,8 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
             })
           )
         )
-      : await enqueueQueuedShipmentsAsBulkOrSingle(supabase, ctx, createdIds);
+      : await enqueueQueuedShipmentsAsBulkOrSingle(supabase, ctx, shipmentIds);
   const { claimedJobFromRow, startQueuedBookingJobs } = await import("@/lib/jobs/drain");
   await startQueuedBookingJobs(bookingJobs.map(claimedJobFromRow));
-  return { ...validation, queued: createdIds.length };
+  return bookingJobs;
 }

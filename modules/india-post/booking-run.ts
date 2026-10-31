@@ -9,13 +9,17 @@ import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-p
 import { splitIndiaPostBookingResult, type IndiaPostBookingResponse } from "@/modules/india-post/booking-apply";
 import { indiaPostBookingServiceCode, indiaPostMobile } from "@/modules/india-post/endpoints";
 import {
+  shippingAddressBookingBlock,
+  type StoredShippingFields,
+} from "@/modules/shopify/shipping-contact";
+import { ensureLegacyAddressValidation } from "@/modules/orders/historical-classify";
+import {
   BOOKING_CLAIMABLE_STATUSES,
   barcodeLogRef,
   isAuthoritativeIndiaPostBooking,
   isIndiaPostBookingUnknown,
   isIndiaPostDuplicateArticleMessage,
   shipmentBarcode,
-  trackingConfirmedNotBooked,
   trackingHasArticle,
 } from "@/modules/india-post/booking-idempotency";
 import { cachedOfficeLookup, resolveIndiaPostOrigin } from "@/modules/india-post/origin";
@@ -26,6 +30,10 @@ import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 import { commercePendingBookingBlocked } from "@/lib/dashboard/records";
 import { withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
 import { classifyProviderError } from "@/lib/jobs/retry";
+import { tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
+import { existingBarcodeMayBeSubmitted } from "@/modules/india-post/booking-retry-eligibility";
+import { trustedFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
+import { metadataWithCeptSubmitIntent, readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { logInfo, logError } from "@/lib/logger";
 
 type Admin = SupabaseClient;
@@ -71,7 +79,7 @@ export async function markShipmentBookingFailed(
   }
 }
 
-async function persistBookedShipment(
+export async function persistBookedShipment(
   supabase: Admin,
   input: {
     organizationId: string;
@@ -162,6 +170,22 @@ async function persistBookedShipment(
   return true;
 }
 
+async function reloadShipmentForSubmit(supabase: Admin, shipmentId: string, organizationId: string) {
+  try {
+    const byId = supabase
+      .from("shipments")
+      .select("id, organization_id, barcode, booked_at, metadata, status, last_error_code, tracking_number, provider_ref, created_at")
+      .eq("id", shipmentId);
+    if (typeof byId.maybeSingle !== "function") return null;
+    const { data, error } = await byId.maybeSingle();
+    if (error || !data) return null;
+    if (data.organization_id && String(data.organization_id) !== organizationId) return data;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 async function claimShipmentForBooking(
   supabase: Admin,
   input: { organizationId: string; shipmentId: string; barcode?: string | null }
@@ -180,6 +204,30 @@ async function claimShipmentForBooking(
     .maybeSingle();
   if (error) throw error;
   return data as { id: string; barcode: string | null; status: string; booked_at: string | null } | null;
+}
+
+export function assertShipmentsClassified(input: {
+  requestedIds: string[];
+  bookedIds: string[];
+  failedIds: string[];
+  preparedIds: string[];
+}) {
+  const done = new Set([...input.bookedIds, ...input.failedIds]);
+  const unresolved = input.requestedIds.filter((id) => !done.has(id));
+  if (!unresolved.length) return;
+  const prepared = new Set(input.preparedIds);
+  const posted = unresolved.filter((id) => prepared.has(id));
+  if (posted.length) {
+    throw Object.assign(new Error("India Post booking result is unknown. The article was not submitted again."), {
+      code: "CEPT_UNKNOWN",
+      shipmentIds: posted,
+    });
+  }
+  throw Object.assign(new Error("Shipment was not classified for booking."), {
+    code: "PRE_POST_TRANSIENT",
+    bookingPhase: "PRE_POST",
+    shipmentIds: unresolved,
+  });
 }
 
 export async function runIndiaPostBooking(
@@ -209,10 +257,11 @@ export async function runIndiaPostBooking(
   }
 
   const alreadyBooked = shipments.filter((row) => isAuthoritativeIndiaPostBooking(row));
-  const unknown = shipments.filter((row) => isIndiaPostBookingUnknown(row));
-  const pending = shipments.filter(
-    (row) => !isAuthoritativeIndiaPostBooking(row) && !isIndiaPostBookingUnknown(row)
-  );
+  const awaitsProof = (row: (typeof shipments)[number]) =>
+    !isAuthoritativeIndiaPostBooking(row) &&
+    (isIndiaPostBookingUnknown(row) || Boolean(readCeptSubmitIntentAt(row.metadata)));
+  const unknown = shipments.filter(awaitsProof);
+  const pending = shipments.filter((row) => !isAuthoritativeIndiaPostBooking(row) && !awaitsProof(row));
   const bookedIds: string[] = alreadyBooked.map((row) => row.id);
   const failedIds: string[] = [];
 
@@ -306,36 +355,11 @@ export async function runIndiaPostBooking(
       bookedIds.push(row.id);
       continue;
     }
-    const confirmedNotBooked = trackingOk && trackingConfirmedNotBooked(tracked, barcode);
     const trackingResult = !trackingOk
       ? "UNAVAILABLE"
       : trackingHasArticle(tracked, barcode)
         ? "FOUND"
-        : confirmedNotBooked
-          ? "CONFIRMED_NOT_BOOKED"
-          : "EMPTY";
-    if (confirmedNotBooked) {
-      logInfo("booking.recovery_requeue", {
-        organizationId: input.organizationId,
-        shipmentId: row.id,
-        jobId: input.jobId,
-        barcodeRef: barcodeLogRef(barcode),
-        reason: "confirmed_not_booked",
-        tracking_result: trackingResult,
-      });
-      await supabase
-        .from("shipments")
-        .update({
-          status: "QUEUED",
-          last_error_code: "CEPT_NOT_BOOKED",
-        })
-        .eq("id", row.id)
-        .eq("organization_id", input.organizationId)
-        .in("status", ["BOOKING", "RECOVERY_REQUIRED"])
-        .is("booked_at", null);
-      pending.push({ ...row, status: "QUEUED" });
-      continue;
-    }
+        : "INCONCLUSIVE";
     const unknownCode =
       String(row.last_error_code ?? "").toUpperCase() === "ETIMEDOUT" ? "ETIMEDOUT" : "CEPT_UNKNOWN";
     logInfo("booking.recovery_required", {
@@ -356,7 +380,7 @@ export async function runIndiaPostBooking(
       })
       .eq("id", row.id)
       .eq("organization_id", input.organizationId)
-      .in("status", ["BOOKING", "RECOVERY_REQUIRED"])
+      .in("status", ["BOOKING", "RECOVERY_REQUIRED", "QUEUED", "FAILED"])
       .is("booked_at", null);
     throw Object.assign(new Error("India Post booking result is unknown. The article was not submitted again."), {
       code: unknownCode,
@@ -367,7 +391,12 @@ export async function runIndiaPostBooking(
     return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared: [], result: null };
   }
 
-  const session = await provider.ensureSession();
+  let session: Awaited<ReturnType<typeof provider.ensureSession>>;
+  try {
+    session = await provider.ensureSession();
+  } catch (error) {
+    throw tagPrePostBookingError(error);
+  }
   if (!session.reused && session.tokens) {
     await persistIndiaPostTokens(supabase, connection, session.tokens);
   }
@@ -377,11 +406,37 @@ export async function runIndiaPostBooking(
     barcode: string;
     payload: Record<string, string | number>;
     persistDefaults: { dims: boolean; weight: boolean };
+    allocatedThisRun: boolean;
+    provenFirstBarcode: boolean;
   }> = [];
+  const reviewIds: string[] = [];
 
   for (const shipment of pending) {
     const requestedService = (shipment.service_code as string) || DEFAULT_INDIA_POST_SERVICE;
-    let barcode = barcodeForSelectedService(shipmentBarcode(shipment.barcode), requestedService);
+    const loadedBarcode = shipmentBarcode(shipment.barcode);
+    const provenFirstBarcode = Boolean(loadedBarcode) && trustedFirstBarcodeProof(shipment);
+    if (loadedBarcode && !existingBarcodeMayBeSubmitted(shipment) && !provenFirstBarcode) {
+      await supabase
+        .from("shipments")
+        .update({
+          status: "RECOVERY_REQUIRED",
+          last_error: "Booking outcome could not be confirmed. Please contact support before retrying.",
+          last_error_code: "BOOKING_REVIEW_REQUIRED",
+        })
+        .eq("id", shipment.id)
+        .eq("organization_id", input.organizationId)
+        .is("booked_at", null);
+      reviewIds.push(shipment.id);
+      logInfo("booking.historical_blocked", {
+        organizationId: input.organizationId,
+        shipmentId: shipment.id,
+        jobId: input.jobId,
+        barcodeRef: barcodeLogRef(loadedBarcode),
+      });
+      continue;
+    }
+    let barcode = barcodeForSelectedService(loadedBarcode, requestedService);
+    let allocatedThisRun = false;
     const serviceCode = indiaPostBookingServiceCode(requestedService, barcode);
     const contractId = contractByService.get(serviceCode) || connection.contract_id;
     if (!contractId) {
@@ -389,12 +444,61 @@ export async function runIndiaPostBooking(
       await markShipmentBookingFailed(supabase, shipment.id, message, "INVALID_CONTRACT", input.organizationId);
       throw Object.assign(new Error(message), { code: "INVALID_CONTRACT" });
     }
+    const linkedOrder = shipment.orders as {
+      source?: string | null;
+      payment_status?: string | null;
+      paymentStatus?: string | null;
+    } | null;
+    if (commercePendingBookingBlocked(linkedOrder ?? {})) {
+      const source = (linkedOrder?.source ?? "").toUpperCase() === "WOOCOMMERCE" ? "WooCommerce" : "Shopify";
+      const message = `${source} payment is pending. Confirm Prepaid or COD before India Post booking.`;
+      await markShipmentBookingFailed(supabase, shipment.id, message, "VALIDATION_ERROR", input.organizationId);
+      failedIds.push(shipment.id);
+      continue;
+    }
+
+    const rawAddress = shipment.addresses as StoredShippingFields | null;
+    const address = rawAddress?.id
+      ? await ensureLegacyAddressValidation(supabase, {
+          organizationId: input.organizationId,
+          address: rawAddress,
+        })
+      : rawAddress;
+    const addressBlock = shippingAddressBookingBlock(address);
+    if (addressBlock) {
+      await markShipmentBookingFailed(supabase, shipment.id, addressBlock, "VALIDATION_ERROR", input.organizationId);
+      failedIds.push(shipment.id);
+      continue;
+    }
+
+    const destPincode = address?.pincode ?? "";
+    let origin;
+    try {
+      origin = await resolveIndiaPostOrigin(
+        offices,
+        connection,
+        {
+          ...pickup,
+          pincode: senderIdentity.pincode || pickup?.pincode,
+          city: senderIdentity.city || pickup?.city,
+          state: senderIdentity.state || pickup?.state,
+        },
+        destPincode
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "India Post origin could not be resolved.";
+      await markShipmentBookingFailed(supabase, shipment.id, message, "VALIDATION_ERROR", input.organizationId);
+      failedIds.push(shipment.id);
+      continue;
+    }
+
     if (!barcode) {
       barcode = await allocateNextBarcode(supabase, {
         organizationId: input.organizationId,
         serviceCode,
         environment: connection.environment,
       });
+      allocatedThisRun = true;
     }
 
     const claimed = await claimShipmentForBooking(supabase, {
@@ -420,40 +524,7 @@ export async function runIndiaPostBooking(
     }
     barcode = shipmentBarcode(claimed.barcode) || barcode;
 
-    const linkedOrder = shipment.orders as {
-      source?: string | null;
-      payment_status?: string | null;
-      paymentStatus?: string | null;
-    } | null;
-    if (commercePendingBookingBlocked(linkedOrder ?? {})) {
-      const message = "Shopify payment is pending. Confirm Prepaid or COD before India Post booking.";
-      await markShipmentBookingFailed(supabase, shipment.id, message, "VALIDATION_ERROR", input.organizationId);
-      failedIds.push(shipment.id);
-      continue;
-    }
-
-    const address = shipment.addresses as {
-      name?: string;
-      line1?: string;
-      line2?: string;
-      city?: string;
-      state?: string;
-      pincode?: string;
-      phone?: string;
-    } | null;
-    const destPincode = address?.pincode ?? "";
     try {
-      const origin = await resolveIndiaPostOrigin(
-        offices,
-        connection,
-        {
-          ...pickup,
-          pincode: senderIdentity.pincode || pickup?.pincode,
-          city: senderIdentity.city || pickup?.city,
-          state: senderIdentity.state || pickup?.state,
-        },
-        destPincode
-      );
       const senderMobile = indiaPostMobile(senderIdentity.phone);
       const receiverMobile = indiaPostMobile(address?.phone);
       const missingDims = !(
@@ -486,9 +557,10 @@ export async function runIndiaPostBooking(
         senderPin: origin.pincode,
         senderMobile: senderMobile || "",
         receiverName: address?.name ?? "",
-        receiverCompany: address?.name ?? "",
+        receiverCompany: address?.company_name || address?.name || "",
         receiverLine1: address?.line1 ?? "",
         receiverLine2: address?.line2 ?? "",
+        receiverLine3: address?.line3 ?? "",
         receiverCity: address?.city ?? "",
         receiverState: address?.state ?? "",
         receiverPin: destPincode,
@@ -506,17 +578,31 @@ export async function runIndiaPostBooking(
         barcode,
         payload: serializeIndiaPostBookingArticle(validated),
         persistDefaults: { dims: missingDims, weight: missingWeight },
+        allocatedThisRun,
+        provenFirstBarcode,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Validation failed.";
       const code = String((error as { code?: string })?.code || "VALIDATION_ERROR");
       await markShipmentBookingFailed(supabase, shipment.id, message, code, input.organizationId);
-      if (pending.length === 1) throw Object.assign(new Error(message), { code });
+      if (pending.length === 1) throw tagPrePostBookingError(Object.assign(new Error(message), { code }));
     }
   }
 
   if (!prepared.length) {
+    if (reviewIds.length) {
+      throw Object.assign(new Error("Booking needs review before it can be submitted. The article was not submitted again."), {
+        code: "BOOKING_REVIEW_REQUIRED",
+        shipmentIds: reviewIds,
+      });
+    }
     if (bookedIds.length || failedIds.length) {
+      assertShipmentsClassified({
+        requestedIds: input.shipmentIds,
+        bookedIds,
+        failedIds,
+        preparedIds: prepared.map((item) => item.shipment.id),
+      });
       return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result: null };
     }
     throw Object.assign(new Error("No articles passed validation."), { code: "VALIDATION_ERROR" });
@@ -553,6 +639,7 @@ export async function runIndiaPostBooking(
     orderId: prepared[0]?.shipment.order_id,
   });
   let result: IndiaPostBookingResponse | null = null;
+  let submissionOpened = false;
   try {
     result = (await withIndiaPostBookingLock(
       supabase,
@@ -562,8 +649,74 @@ export async function runIndiaPostBooking(
         shipmentId: prepared[0]?.shipment.id,
         connectionId: String(connection.id ?? ""),
       },
-      () =>
-        timed(
+      async () => {
+        const intentAt = new Date().toISOString();
+        for (const item of prepared) {
+          const reloaded = await reloadShipmentForSubmit(supabase, item.shipment.id, input.organizationId);
+          if (reloaded) {
+            if (String(reloaded.organization_id ?? "") && String(reloaded.organization_id) !== input.organizationId) {
+              throw Object.assign(new Error("Shipment is outside this organization."), { code: "BOOKING_REVIEW_REQUIRED" });
+            }
+            if (reloaded.booked_at || isAuthoritativeIndiaPostBooking(reloaded)) {
+              throw Object.assign(new Error("This shipment is already booked with India Post."), { code: "CEPT_UNKNOWN", bookingPhase: "POST_SUBMIT" });
+            }
+            if (readCeptSubmitIntentAt(reloaded.metadata)) {
+              throw Object.assign(new Error("Booking outcome could not be confirmed. The article was not submitted again."), {
+                code: "CEPT_UNKNOWN",
+                bookingPhase: "POST_SUBMIT",
+                shipmentIds: [item.shipment.id],
+              });
+            }
+            const currentBarcode = shipmentBarcode(reloaded.barcode);
+            if (currentBarcode && currentBarcode !== item.barcode) {
+              throw Object.assign(new Error("Booking needs review before it can be submitted."), {
+                code: "BOOKING_REVIEW_REQUIRED",
+                shipmentIds: [item.shipment.id],
+              });
+            }
+            if (!item.allocatedThisRun && !existingBarcodeMayBeSubmitted(reloaded) && !trustedFirstBarcodeProof(reloaded)) {
+              throw Object.assign(new Error("Booking needs review before it can be submitted."), {
+                code: "BOOKING_REVIEW_REQUIRED",
+                shipmentIds: [item.shipment.id],
+              });
+            }
+          } else if (!item.allocatedThisRun && !item.provenFirstBarcode) {
+            throw Object.assign(new Error("Booking needs review before it can be submitted."), {
+              code: "BOOKING_REVIEW_REQUIRED",
+              shipmentIds: [item.shipment.id],
+            });
+          }
+          const nextMetadata = metadataWithCeptSubmitIntent(reloaded?.metadata ?? item.shipment.metadata, intentAt);
+          const { data: intentSaved, error: intentError } = await supabase
+            .from("shipments")
+            .update({ metadata: nextMetadata })
+            .eq("id", item.shipment.id)
+            .eq("organization_id", input.organizationId)
+            .is("booked_at", null)
+            .filter("metadata->>ceptSubmitIntentAt", "is", null)
+            .select("id")
+            .maybeSingle();
+          if (intentError) {
+            throw Object.assign(new Error(intentError.message), { code: "PRE_POST_TRANSIENT", bookingPhase: "PRE_POST" });
+          }
+          if (!intentSaved) {
+            const blocked = reloaded ? await reloadShipmentForSubmit(supabase, item.shipment.id, input.organizationId) : null;
+            if (blocked?.booked_at || readCeptSubmitIntentAt(blocked?.metadata) || isAuthoritativeIndiaPostBooking(blocked ?? {})) {
+              throw Object.assign(new Error("Booking outcome could not be confirmed. The article was not submitted again."), {
+                code: "CEPT_UNKNOWN",
+                bookingPhase: "POST_SUBMIT",
+                shipmentIds: [item.shipment.id],
+              });
+            }
+            throw Object.assign(new Error("Booking intent was not stored. The provider was not called."), {
+              code: "PRE_POST_TRANSIENT",
+              bookingPhase: "PRE_POST",
+            });
+          }
+          item.shipment.metadata = nextMetadata;
+        }
+        submissionOpened = true;
+        return timed(
           "india_post.book",
           {
             organizationId: input.organizationId,
@@ -577,9 +730,11 @@ export async function runIndiaPostBooking(
             transport === "file"
               ? provider.bookShipmentFile(articles)
               : provider.bookShipment({ articles })
-        )
+        );
+      }
     )) as IndiaPostBookingResponse;
   } catch (error) {
+    if (!submissionOpened) throw tagPrePostBookingError(error);
     const message = error instanceof Error ? error.message : "India Post booking failed.";
     const classified = classifyProviderError(error);
     logError("booking.cept_failed", {
@@ -624,24 +779,45 @@ export async function runIndiaPostBooking(
         duplicate: true,
         booked: bookedIds.length,
       });
+      assertShipmentsClassified({
+        requestedIds: input.shipmentIds,
+        bookedIds,
+        failedIds,
+        preparedIds: prepared.map((item) => item.shipment.id),
+      });
       return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result: null };
     }
-    if (isRetryableCeptUncertainty(error) || classified.code === "ETIMEDOUT") {
+    const networkFailure = /timeout|econn|network|temporar/i.test(message) || classified.code === "ETIMEDOUT" || classified.code === "ECONNRESET" || classified.code === "ECONNREFUSED";
+    if (isRetryableCeptUncertainty(error) || classified.code === "ETIMEDOUT" || networkFailure || (classified.httpStatus ?? 0) >= 500 || /^HTTP_5\d\d$/.test(classified.code)) {
       logError("booking.cept_unknown", {
         organizationId: input.organizationId,
         jobId: input.jobId,
         shipmentId: prepared.map((item) => item.shipment.id),
         message,
-        outcome: "ETIMEDOUT",
+        outcome: "CEPT_UNKNOWN",
       });
-      throw Object.assign(new Error("India Post booking timed out after the request was sent. The article was not submitted again."), {
-        code: "ETIMEDOUT",
-      });
+      throw Object.assign(
+        new Error("India Post booking outcome is unknown after the request was sent. The article was not submitted again."),
+        {
+          code: "CEPT_UNKNOWN",
+          bookingPhase: "POST_SUBMIT",
+          status: classified.httpStatus,
+          shipmentIds: prepared.map((item) => item.shipment.id),
+        }
+      );
     }
     if (classified.code === "CEPT_UNKNOWN") {
-      throw Object.assign(new Error(message), { code: "CEPT_UNKNOWN", status: classified.httpStatus ?? 409 });
+      throw Object.assign(new Error(message), {
+        code: "CEPT_UNKNOWN",
+        bookingPhase: "POST_SUBMIT",
+        status: classified.httpStatus ?? 409,
+        shipmentIds: prepared.map((item) => item.shipment.id),
+      });
     }
-    throw error;
+    throw Object.assign(error instanceof Error ? error : new Error(message), {
+      code: classified.code,
+      shipmentIds: prepared.map((item) => item.shipment.id),
+    });
   }
 
   const split = splitIndiaPostBookingResult(result);
@@ -701,5 +877,14 @@ export async function runIndiaPostBooking(
     })
   );
 
+  for (const id of reviewIds) {
+    if (!failedIds.includes(id) && !bookedIds.includes(id)) failedIds.push(id);
+  }
+  assertShipmentsClassified({
+    requestedIds: input.shipmentIds,
+    bookedIds,
+    failedIds,
+    preparedIds: prepared.map((item) => item.shipment.id),
+  });
   return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result };
 }

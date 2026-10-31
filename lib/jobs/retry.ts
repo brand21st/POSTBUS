@@ -57,6 +57,23 @@ export function classifyProviderError(error: unknown): ClassifiedError {
   const code = anyError?.code || (anyError?.status ? `HTTP_${anyError.status}` : "PROVIDER_ERROR");
 
   const httpStatus = typeof anyError?.status === "number" ? anyError.status : undefined;
+  const bookingPhase = (anyError as { bookingPhase?: string }).bookingPhase;
+
+  if (bookingPhase === "PRE_POST" || code === "PRE_POST_TRANSIENT") {
+    if (PERMANENT_CODES.has(code)) {
+      return { retryable: false, code, message, httpStatus };
+    }
+    if (httpStatus && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429) {
+      return { retryable: false, code: code === "PRE_POST_TRANSIENT" ? `HTTP_${httpStatus}` : code, message, httpStatus };
+    }
+    return { retryable: true, code: "PRE_POST_TRANSIENT", message, httpStatus };
+  }
+
+  // A CEPT code or an explicit post-submit phase wins over the HTTP status.
+  // HTTP 500 on a CEPT_UNKNOWN error must not become a retryable HTTP_500.
+  if (bookingPhase === "POST_SUBMIT" || code === "CEPT_UNKNOWN") {
+    return { retryable: false, code: "CEPT_UNKNOWN", message, httpStatus };
+  }
 
   if (PERMANENT_CODES.has(code)) {
     return { retryable: false, code, message, httpStatus };

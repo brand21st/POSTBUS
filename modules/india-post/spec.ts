@@ -12,3 +12,8 @@ export const INDIA_POST_SPEED_POST_DOC_WEIGHT_MAX_G = 500;
 export function indiaPostRequiresOtp(serviceCode: string) {
   return serviceCode.trim().toUpperCase() === "24_SPP_PARSPL";
 }
+
+/** JSON body placed in the CEPT file field. Does not call India Post. */
+export function indiaPostArticlesFileJson(articles: unknown[]) {
+  return JSON.stringify({ articles });
+}

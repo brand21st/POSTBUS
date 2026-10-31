@@ -36,7 +36,13 @@ export type NavItem = {
 export const sidebarNav: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
-  { label: "Orders", href: "/dashboard/orders", icon: ShoppingBag, tour: "nav-orders" },
+  {
+    label: "Orders",
+    href: "/dashboard/orders",
+    icon: ShoppingBag,
+    tour: "nav-orders",
+    children: [{ label: "Bulk Excel Booking", href: "/dashboard/orders/bulk-excel" }],
+  },
   { label: "Inventory", href: "/dashboard/inventory", icon: Package },
   { label: "Shipments", href: "/dashboard/shipments", icon: Truck, tour: "nav-shipments" },
   { label: "NDR & RTO", href: "/dashboard/ndr-rto", icon: PackageX },
@@ -113,7 +119,7 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
       label:
         segment === "new"
           ? "New"
-          : segment === "customer-links"
+            : segment === "customer-links"
             ? "Customer order link"
             : segment === "support"
               ? "Support Center"
@@ -123,6 +129,8 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
                 ? "Google Sheets"
               : segment === "ai-accountant"
                 ? "AI Accountant"
+              : segment === "bulk-excel"
+                ? "Bulk Excel Booking"
               : segment.replace(/-/g, " "),
       href,
     });

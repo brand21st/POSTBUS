@@ -1,3 +1,4 @@
+import { wrapIndiaPostAddressLines } from "@/modules/india-post/address-lines";
 import { indiaPostBookingArticleType, indiaPostMobile, indiaPostShapeOfArticle } from "@/modules/india-post/endpoints";
 import { INDIA_POST_BULK_REFERENCE_MAX, indiaPostRequiresOtp } from "@/modules/india-post/spec";
 import type { DraftArticle, DraftParty } from "@/modules/india-post/article-types";
@@ -5,11 +6,6 @@ import { toIndiaPostPhysicalWeightGrams } from "@/modules/india-post/weight";
 
 function text(value?: string | null) {
   return (value ?? "").trim();
-}
-
-function optionalStreet(value?: string | null) {
-  const street = text(value);
-  return street.length >= 3 ? street : undefined;
 }
 
 function party(input: {
@@ -26,12 +22,13 @@ function party(input: {
 }): DraftParty {
   const name = text(input.name);
   const company = text(input.company) || name;
+  const street = wrapIndiaPostAddressLines(input.line1, input.line2, input.line3);
   return {
     name,
     company,
-    line1: text(input.line1),
-    line2: optionalStreet(input.line2),
-    line3: optionalStreet(input.line3),
+    line1: street.line1,
+    line2: street.line2,
+    line3: street.line3,
     city: text(input.city),
     state: text(input.state) || undefined,
     pincode: text(input.pincode),
@@ -66,6 +63,7 @@ export function mapShipmentToArticle(input: {
   receiverCompany?: string | null;
   receiverLine1: string;
   receiverLine2?: string | null;
+  receiverLine3?: string | null;
   receiverCity: string;
   receiverState?: string | null;
   receiverPin: string;
@@ -115,6 +113,7 @@ export function mapShipmentToArticle(input: {
       company: input.receiverCompany,
       line1: input.receiverLine1,
       line2: input.receiverLine2,
+      line3: input.receiverLine3,
       city: input.receiverCity,
       state: input.receiverState,
       pincode: input.receiverPin,

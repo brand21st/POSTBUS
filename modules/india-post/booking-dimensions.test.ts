@@ -16,6 +16,18 @@ vi.mock("@/modules/india-post/provider", () => ({
   })),
 }));
 
+vi.mock("@/modules/shopify/booking-guard", () => ({
+  revalidateShopifyBooking: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+vi.mock("@/modules/shopify/allocations", () => ({
+  markShopifyAllocationsBooked: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/modules/india-post/allocate-barcode", () => ({
+  allocateNextBarcode: vi.fn(async () => "ET214330016IN"),
+}));
+
 vi.mock("@/modules/india-post/origin", () => ({
   cachedOfficeLookup: vi.fn(),
   resolveIndiaPostOrigin: vi.fn().mockResolvedValue({
@@ -27,13 +39,14 @@ vi.mock("@/modules/india-post/origin", () => ({
 }));
 
 function chainableWrite(
-  data: unknown = { id: "ship-1", barcode: "ET214330016IN", status: "BOOKING", booked_at: null }
+  data: unknown = { id: "ship-1", barcode: null, status: "BOOKING", booked_at: null }
 ) {
   const self: Record<string, unknown> = {};
   const next = () => self;
   self.eq = next;
   self.in = next;
   self.is = next;
+  self.filter = next;
   self.select = next;
   self.maybeSingle = async () => ({ data, error: null });
   self.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
@@ -223,6 +236,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     const mockSupabase = {
       rpc: async (name: string) => {
         if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
         return { data: null, error: null };
       },
       from: (table: string) => {
@@ -257,7 +271,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       id: "ship-1",
                       order_id: "ord-1",
                       status: "QUEUED",
-                      barcode: "ET214330016IN",
+                      barcode: null,
                       service_code: "SP_INLAND_PARCEL",
                       weight_grams: 500,
                       length_cm: null,
@@ -274,6 +288,10 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                         state: "Delhi",
                         pincode: "110001",
                         phone: "9876543210",
+                        original_phone: "9876543210",
+                        phone_source: "shipping",
+                        country: "IN",
+                        address_validation_status: "READY",
                       },
                     },
                   ],
@@ -387,6 +405,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     const mockSupabase = {
       rpc: async (name: string) => {
         if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
         return { data: null, error: null };
       },
       from: (table: string) => {
@@ -417,7 +436,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       id: "ship-1",
                       order_id: "ord-1",
                       status: "QUEUED",
-                      barcode: "ET214330016IN",
+                      barcode: null,
                       service_code: "SP_INLAND_PARCEL",
                       weight_grams: 0,
                       length_cm: null,
@@ -434,6 +453,10 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                         state: "Delhi",
                         pincode: "110001",
                         phone: "9876543210",
+                        original_phone: "9876543210",
+                        phone_source: "shipping",
+                        country: "IN",
+                        address_validation_status: "READY",
                       },
                     },
                   ],
@@ -530,6 +553,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     const mockSupabase = {
       rpc: async (name: string) => {
         if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
         return { data: null, error: null };
       },
       from: (table: string) => {
@@ -563,7 +587,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       id: "ship-1",
                       order_id: "ord-1",
                       status: "QUEUED",
-                      barcode: "ET214330016IN",
+                      barcode: null,
                       service_code: "SP_INLAND_PARCEL",
                       weight_grams: 500,
                       length_cm: 5,
@@ -580,6 +604,10 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                         state: "Delhi",
                         pincode: "110001",
                         phone: "9876543210",
+                        original_phone: "9876543210",
+                        phone_source: "shipping",
+                        country: "IN",
+                        address_validation_status: "READY",
                       },
                     },
                   ],
@@ -676,6 +704,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     const mockSupabase = {
       rpc: async (name: string) => {
         if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
         return { data: null, error: null };
       },
       from: (table: string) => {
@@ -706,7 +735,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       id: "ship-2",
                       order_id: "ord-2",
                       status: "QUEUED",
-                      barcode: "ET214330016IN",
+                      barcode: null,
                       service_code: "SP_INLAND_PARCEL",
                       weight_grams: 800,
                       length_cm: 20, // VALID DIMENSIONS
@@ -723,6 +752,10 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                         state: "Delhi",
                         pincode: "110001",
                         phone: "9876543210",
+                        original_phone: "9876543210",
+                        phone_source: "shipping",
+                        country: "IN",
+                        address_validation_status: "READY",
                       },
                     },
                   ],

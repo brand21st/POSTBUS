@@ -62,6 +62,7 @@ import {
   validateExcelBuffer,
   validateOrdersForBooking,
 } from "@/modules/india-post/bulk-booking";
+import { handleBulkExcelRoutes } from "@/modules/india-post/bulk-excel-routes";
 import { logError } from "@/lib/logger";
 import { backfillMissingShopifyLineItemImages } from "@/modules/shopify/orders";
 
@@ -279,6 +280,11 @@ export async function handleCommerceRoutes(
       .map((id) => id.trim())
       .filter(Boolean);
     return summarizeBulkBookings(supabase, ctx, orderIds);
+  }
+
+  if (slugs[0] === "bookings" && (slugs[1] === "excel-imports" || slugs[1] === "excel-template" || slugs[1] === "excel-import-profiles")) {
+    const bulkExcel = await handleBulkExcelRoutes(request, supabase, ctx, method, slugs);
+    if (bulkExcel !== null) return bulkExcel;
   }
 
   if (key === "POST bookings/excel") {

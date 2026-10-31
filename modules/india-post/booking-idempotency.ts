@@ -38,21 +38,19 @@ export function isIndiaPostBookingUnknown(row: {
 }
 
 /**
- * Empty tracking is not proof the article was rejected.
- * A second CEPT POST is allowed only via trackingConfirmedNotBooked().
+ * Tracking silence, "not found", and "not booked" are not proof CEPT rejected the article.
+ * Nothing in tracking authorizes another booking POST.
  */
 export function canRetryCeptPostAfterUnknown(row?: { last_error_code?: string | null }) {
   void row;
   return false;
 }
 
-/** Tracking explicitly proved this article was not accepted. Empty/unavailable results are not proof. */
+/** Always false. A tracking miss must not authorize another booking POST. */
 export function trackingConfirmedNotBooked(result: unknown, barcode: string) {
-  if (trackingHasArticle(result, barcode)) return false;
-  if (result == null) return false;
-  const rec = result as { message?: string; error?: string };
-  const message = String(rec.message ?? rec.error ?? "");
-  return /not found|no record|article not booked|not booked/i.test(message);
+  void result;
+  void barcode;
+  return false;
 }
 
 export function barcodeLogRef(barcode?: string | null) {

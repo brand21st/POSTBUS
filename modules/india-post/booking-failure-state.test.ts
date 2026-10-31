@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { bookingFailureShipmentUpdate } from "@/modules/india-post/booking-failure-state";
+import { bookingFailureShipmentUpdate, shouldApplyBookingFailureUpdate, tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
+import { classifyProviderError } from "@/lib/jobs/retry";
 
 describe("bookingFailureShipmentUpdate", () => {
   it("moves temporary CEPT 409 conflicts to RECOVERY_REQUIRED so empty tracking cannot POST again", () => {
@@ -51,6 +52,21 @@ describe("bookingFailureShipmentUpdate", () => {
       false
     );
     expect(patch.status).toBe("RECOVERY_REQUIRED");
+  });
+
+  it("keeps a pre-POST timeout retryable as QUEUED", () => {
+    const tagged = tagPrePostBookingError(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }));
+    const classified = classifyProviderError(tagged);
+    expect(classified.code).toBe("PRE_POST_TRANSIENT");
+    expect(classified.retryable).toBe(true);
+    const patch = bookingFailureShipmentUpdate(classified, true);
+    expect(patch.status).toBe("QUEUED");
+    expect(patch.status).not.toBe("RECOVERY_REQUIRED");
+  });
+
+  it("does not let a label failure rewrite the booking", () => {
+    expect(shouldApplyBookingFailureUpdate("label-generation")).toBe(false);
+    expect(shouldApplyBookingFailureUpdate("shipment-booking")).toBe(true);
   });
 
   it("fails BOOKING for permanent validation errors", () => {

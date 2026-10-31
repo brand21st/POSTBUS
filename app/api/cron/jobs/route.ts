@@ -6,6 +6,7 @@ import { DEFAULT_DRAIN_LIMIT, drainDueJobs } from "@/lib/jobs/drain";
 import { parseJobTypes } from "@/lib/jobs/job-lanes";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
+import { runBookingAutoRecovery } from "@/modules/india-post/booking-recovery";
 import { enqueueDueTrackingSyncJobs } from "@/modules/india-post/tracking-sync";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,22 @@ export async function POST(request: NextRequest) {
       const { enqueueDueLedgerSyncJobs } = await import("@/modules/ai-accountant/ledger/schedule");
       await enqueueDueLedgerSyncJobs(createAdminClient());
     }
-    return NextResponse.json({ success: true, data: await drainDueJobs(limit, jobTypes) });
+    const drained = await drainDueJobs(limit, jobTypes);
+    let recovery: { enabled: boolean; recovered: number; skipped: number } | { error: string } = {
+      enabled: false,
+      recovered: 0,
+      skipped: 0,
+    };
+    if ((!jobTypes || jobTypes.includes("shipment-booking")) && hasAdminClient()) {
+      try {
+        recovery = await runBookingAutoRecovery(createAdminClient());
+      } catch (recoveryError) {
+        const message = recoveryError instanceof Error ? recoveryError.message : "Booking recovery failed.";
+        logError("booking.recovery_failed", { message });
+        recovery = { error: message };
+      }
+    }
+    return NextResponse.json({ success: true, data: { ...drained, recovery } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not drain background jobs.";
     logError("jobs.drain_error", { message });

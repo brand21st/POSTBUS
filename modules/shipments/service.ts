@@ -4,6 +4,9 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
+import { isAuthoritativeIndiaPostBooking } from "@/modules/india-post/booking-idempotency";
+import { scheduleForceRetryBooking } from "@/modules/india-post/booking-force-retry";
+import { evaluateBookingRetryEligibility } from "@/modules/india-post/booking-retry-eligibility";
 import { resolveOrderBookingService, shipmentServiceLocked } from "@/modules/india-post/booking-service";
 import {
   indiaPostDisplayShipmentStatus,
@@ -15,8 +18,42 @@ import { commercePendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/da
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { INDIA_POST_SERVICES } from "@/types/domain";
+import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 
 const OPEN_SHIPMENT_STATUSES = ["DRAFT", "QUEUED", "FAILED"] as const;
+
+async function enqueueBookingOrMarkFailed(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentId: string
+) {
+  try {
+    return await createBackgroundJob(supabase, {
+      organizationId: ctx.organizationId,
+      jobType: "shipment-booking",
+      entityType: "shipment",
+      entityId: shipmentId,
+      userId: ctx.userId,
+    });
+  } catch (error) {
+    await supabase
+      .from("shipments")
+      .update({
+        status: "FAILED",
+        last_error: "Booking could not be queued. Retry when the queue is available.",
+        last_error_code: "QUEUE_UNAVAILABLE",
+      })
+      .eq("id", shipmentId)
+      .eq("organization_id", ctx.organizationId)
+      .is("booked_at", null)
+      .in("status", ["QUEUED", "DRAFT"]);
+    if (error instanceof AppError) throw error;
+    throw new AppError(
+      ERROR_CODES.JOB_FAILED,
+      error instanceof Error ? error.message : "Booking could not be queued."
+    );
+  }
+}
 
 function assertIndiaPostService(serviceCode: string) {
   if (!INDIA_POST_SERVICES.some((service) => service.code === serviceCode)) {
@@ -118,7 +155,7 @@ export async function createShipmentsForOrders(
 
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("*, order_line_items(quantity, weight_grams, unit_price)")
+    .select("*, order_line_items(quantity, unfulfilled_quantity, weight_grams, unit_price)")
     .eq("organization_id", ctx.organizationId)
     .in("id", orderIds);
 
@@ -127,15 +164,52 @@ export async function createShipmentsForOrders(
 
   const { data: existing } = await supabase
     .from("shipments")
-    .select("id, order_id, status")
+    .select("id, order_id, status, booked_at, barcode, tracking_number, provider_ref, last_error_code, metadata")
     .eq("organization_id", ctx.organizationId)
     .in("order_id", orders.map((order) => order.id))
     .not("status", "eq", "CANCELLED");
-  const existingByOrder = new Map<string, { id: string; order_id: string; status: string }>();
+  const existingByOrder = new Map<string, {
+    id: string;
+    order_id: string;
+    status: string;
+    booked_at?: string | null;
+    barcode?: string | null;
+    tracking_number?: string | null;
+    provider_ref?: string | null;
+    last_error_code?: string | null;
+    metadata?: unknown;
+  }>();
   for (const row of existing ?? []) {
     const prev = existingByOrder.get(row.order_id as string);
     if (!prev || ((prev.status === "FAILED") && row.status !== "FAILED")) {
-      existingByOrder.set(row.order_id as string, row as { id: string; order_id: string; status: string });
+      existingByOrder.set(row.order_id as string, row as {
+        id: string;
+        order_id: string;
+        status: string;
+        booked_at?: string | null;
+        barcode?: string | null;
+        tracking_number?: string | null;
+        provider_ref?: string | null;
+        last_error_code?: string | null;
+        metadata?: unknown;
+      });
+    }
+  }
+
+  const latestJobByShipment = new Map<string, Record<string, unknown>>();
+  const existingIds = [...existingByOrder.values()].map((row) => row.id);
+  if (existingIds.length) {
+    const { data: priorJobs } = await supabase
+      .from("background_jobs")
+      .select("id, entity_id, status, attempt_count, max_attempts, next_attempt_at, locked_at, created_at")
+      .eq("organization_id", ctx.organizationId)
+      .eq("job_type", "shipment-booking")
+      .eq("entity_type", "shipment")
+      .in("entity_id", existingIds)
+      .order("created_at", { ascending: false });
+    for (const job of priorJobs ?? []) {
+      const entityId = String((job as { entity_id?: string }).entity_id ?? "");
+      if (entityId && !latestJobByShipment.has(entityId)) latestJobByShipment.set(entityId, job as Record<string, unknown>);
     }
   }
 
@@ -156,8 +230,25 @@ export async function createShipmentsForOrders(
 
   const created = [];
   const skipped = [];
+  const addressIds = [
+    ...new Set(
+      orders
+        .map((order) => order.shipping_address_id as string | null | undefined)
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+  const { data: addressRows } = addressIds.length
+    ? await supabase
+        .from("addresses")
+        .select("*")
+        .eq("organization_id", ctx.organizationId)
+        .in("id", addressIds)
+    : { data: [] as Array<Record<string, unknown>> };
+  const addressById = new Map((addressRows ?? []).map((row) => [row.id as string, row as Record<string, unknown>]));
+
   const whatsappBlocked: string[] = [];
   const shopifyPendingBlocked: string[] = [];
+  const addressBlocked: string[] = [];
   for (const order of orders) {
     if (
       whatsappShipmentBlocked({
@@ -175,14 +266,37 @@ export async function createShipmentsForOrders(
       skipped.push(order.id);
       continue;
     }
+    if (enqueueBooking) {
+      const shipping = order.shipping_address_id ? addressById.get(order.shipping_address_id as string) : null;
+      const addressBlock = shippingAddressBookingBlock(shipping ?? null);
+      if (addressBlock) {
+        addressBlocked.push(String(order.order_number ?? order.id));
+        skipped.push(order.id);
+        continue;
+      }
+    }
     const current = existingByOrder.get(order.id);
     const currentStatus = (current?.status ?? "").toUpperCase();
-    const alreadyBooked = isIndiaPostAcceptedStatus(currentStatus);
-    const items = (order.order_line_items as Array<{ quantity: number; weight_grams?: number }>) ?? [];
+    const alreadyBooked =
+      isIndiaPostAcceptedStatus(currentStatus) ||
+      (current ? isAuthoritativeIndiaPostBooking(current) : false);
+    const items = (order.order_line_items as Array<{
+      quantity: number;
+      unfulfilled_quantity?: number | null;
+      weight_grams?: number;
+    }>) ?? [];
+    const shopifyOrder = (order.source ?? "").toUpperCase() === "SHOPIFY";
     const weight = bookingBoxWeightGrams({
       parcelWeightMode: order.parcel_weight_mode as string | null,
       parcelWeightGrams: order.parcel_weight_grams as number | null,
-      lineItems: items,
+      lineItems: items.map((item) => ({
+        quantity: shopifyOrder
+          ? item.unfulfilled_quantity == null
+            ? 0
+            : Number(item.unfulfilled_quantity)
+          : item.quantity,
+        weight_grams: item.weight_grams,
+      })),
       explicitGrams: extras?.weightGrams,
     });
 
@@ -220,14 +334,21 @@ export async function createShipmentsForOrders(
     }
 
     if (enqueueBooking && current && !alreadyBooked) {
-      const recovering = currentStatus === "RECOVERY_REQUIRED" || currentStatus === "BOOKING";
+      const decision = evaluateBookingRetryEligibility({
+        shipment: current,
+        job: latestJobByShipment.get(current.id) ?? null,
+      });
+      if (!decision.eligible) {
+        skipped.push(order.id);
+        continue;
+      }
       const collect = shipmentCollectFromOrder(order);
-      await supabase
+      const { data: requeued, error: requeueError } = await supabase
         .from("shipments")
         .update({
-          ...(recovering
-            ? { status: currentStatus }
-            : { status: "QUEUED", last_error: null, last_error_code: null }),
+          status: "QUEUED",
+          last_error: null,
+          last_error_code: null,
           payment_mode: collect.payment_mode,
           cod_amount: collect.cod_amount,
           service_code: serviceFor(order),
@@ -236,8 +357,21 @@ export async function createShipmentsForOrders(
           ...(extras?.widthCm != null ? { width_cm: extras.widthCm } : {}),
           ...(extras?.heightCm != null ? { height_cm: extras.heightCm } : {}),
         })
-        .eq("id", current.id);
-      if (!recovering && currentStatus !== "QUEUED") {
+        .eq("id", current.id)
+        .eq("organization_id", ctx.organizationId)
+        .is("booked_at", null)
+        .is("barcode", null)
+        .is("tracking_number", null)
+        .is("provider_ref", null)
+        .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED"])
+        .filter("metadata->>ceptSubmitIntentAt", "is", null)
+        .select("id")
+        .maybeSingle();
+      if (requeueError || !requeued) {
+        skipped.push(order.id);
+        continue;
+      }
+      if (currentStatus !== "QUEUED") {
         const { publishBookingRequested } = await import("@/modules/webhooks/publish");
         await publishBookingRequested(supabase, {
           organizationId: ctx.organizationId,
@@ -247,13 +381,7 @@ export async function createShipmentsForOrders(
           previousStatus: currentStatus,
         });
       }
-      const job = await createBackgroundJob(supabase, {
-        organizationId: ctx.organizationId,
-        jobType: "shipment-booking",
-        entityType: "shipment",
-        entityId: current.id,
-        userId: ctx.userId,
-      });
+      const job = await enqueueBookingOrMarkFailed(supabase, ctx, current.id);
       bookingJobs.push(job);
       created.push({ ...current, jobId: job.id });
       continue;
@@ -316,13 +444,7 @@ export async function createShipmentsForOrders(
       continue;
     }
 
-    const job = await createBackgroundJob(supabase, {
-      organizationId: ctx.organizationId,
-      jobType: "shipment-booking",
-      entityType: "shipment",
-      entityId: shipment.id,
-      userId: ctx.userId,
-    });
+    const job = await enqueueBookingOrMarkFailed(supabase, ctx, shipment.id);
     bookingJobs.push(job);
     created.push({ ...shipment, jobId: job.id });
   }
@@ -339,6 +461,8 @@ export async function createShipmentsForOrders(
         ? `${whatsappBlocked[0]} cannot be booked until the WhatsApp order is READY.`
         : shopifyPendingBlocked.length
           ? `${shopifyPendingBlocked[0]} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`
+        : addressBlocked.length
+          ? `${addressBlocked[0]} cannot be booked until the shipping address is valid and ready.`
         : skipped.length === 1
           ? "This order already has a shipment. Open the shipment to retry or cancel it."
           : "Every selected order already has a shipment."
@@ -460,9 +584,10 @@ export async function retryShipment(
       .maybeSingle();
     linkedOrder = order;
     if (commercePendingBookingBlocked(order ?? {})) {
+      const source = (order?.source ?? "").toUpperCase() === "WOOCOMMERCE" ? "WooCommerce" : "Shopify";
       throw new AppError(
         ERROR_CODES.CONFLICT,
-        `${shipment.orderNumber ?? shipment.order_number ?? "This order"} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`
+        `${shipment.orderNumber ?? shipment.order_number ?? "This order"} cannot be booked until ${source} payment is confirmed as Prepaid or COD.`
       );
     }
   }
@@ -480,30 +605,31 @@ export async function retryShipment(
     });
     assertIndiaPostService(serviceCode);
   }
-  await supabase
-    .from("shipments")
-    .update({
-      status: "QUEUED",
-      last_error: null,
-      last_error_code: null,
-      ...(serviceCode ? { service_code: serviceCode } : {}),
-      ...(extras?.weightGrams != null && extras.weightGrams > 0 ? { weight_grams: Math.round(extras.weightGrams) } : {}),
-      ...(extras?.lengthCm != null && extras.lengthCm > 0 ? { length_cm: extras.lengthCm } : {}),
-      ...(extras?.widthCm != null && extras.widthCm > 0 ? { width_cm: extras.widthCm } : {}),
-      ...(extras?.heightCm != null && extras.heightCm > 0 ? { height_cm: extras.heightCm } : {}),
-    })
-    .eq("id", id)
-    .eq("organization_id", ctx.organizationId);
-  const job = await createBackgroundJob(supabase, {
-    organizationId: ctx.organizationId,
-    jobType: "shipment-booking",
-    entityType: "shipment",
-    entityId: id,
-    userId: ctx.userId,
-  });
-  const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
-  await runQueuedJobsNow([claimedJobFromRow(job)]);
-  return { shipmentId: id, jobId: job.id, message: "Retry queued." };
+  const { evaluateOwnedBookingRetry } = await import("@/modules/india-post/booking-force-retry");
+  const preview = await evaluateOwnedBookingRetry(supabase, ctx.organizationId, id);
+  if (preview.action === "RETRY_ALREADY_SCHEDULED") {
+    return { shipmentId: id, jobId: preview.existingJobId ?? null, message: preview.reason, scheduled: false, action: preview.action };
+  }
+  if (!preview.eligible) {
+    throw new AppError(ERROR_CODES.CONFLICT, preview.reason, { action: preview.action });
+  }
+  if (serviceCode) {
+    await supabase
+      .from("shipments")
+      .update({ service_code: serviceCode })
+      .eq("id", id)
+      .eq("organization_id", ctx.organizationId)
+      .is("booked_at", null)
+      .in("status", ["DRAFT", "QUEUED", "FAILED", "VALIDATING"]);
+  }
+  const scheduled = await scheduleForceRetryBooking(supabase, ctx, id, extras);
+  return {
+    shipmentId: id,
+    jobId: scheduled.jobId,
+    message: scheduled.message,
+    scheduled: scheduled.scheduled,
+    action: scheduled.decision.action,
+  };
 }
 
 export const updateShipmentDimensionsSchema = z.preprocess(

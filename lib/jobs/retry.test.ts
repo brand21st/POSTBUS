@@ -45,6 +45,16 @@ describe("classifyProviderError", () => {
   it("retries 429 and 5xx but not generic 4xx", () => {
     expect(classifyProviderError({ status: 429, message: "rate" }).retryable).toBe(true);
     expect(classifyProviderError({ status: 500, message: "boom" }).retryable).toBe(true);
+    for (const status of [500, 502, 503, 504]) {
+      const afterPost = classifyProviderError({
+        code: "CEPT_UNKNOWN",
+        status,
+        bookingPhase: "POST_SUBMIT",
+        message: "after post",
+      });
+      expect(afterPost.retryable).toBe(false);
+      expect(afterPost.code).toBe("CEPT_UNKNOWN");
+    }
     expect(classifyProviderError({ status: 422, message: "unprocessable" }).retryable).toBe(false);
   });
 });

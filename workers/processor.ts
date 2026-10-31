@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs/retry";
-import { bookingFailureShipmentUpdate } from "@/modules/india-post/booking-failure-state";
+import { bookingFailureShipmentUpdate, isAmbiguousCeptOutcome, shouldApplyBookingFailureUpdate } from "@/modules/india-post/booking-failure-state";
 import { logError, logInfo } from "@/lib/logger";
 import {
   AUTOMATION_DEFAULTS,
@@ -59,6 +59,22 @@ export async function processJob(queue: string, payload: JobPayload) {
 
   try {
     if (queue === "shipment-booking") await bookShipment(supabase, payload);
+    else if (queue === "bulk-excel-import") {
+      const { bulkExcelBookingEnabled } = await import("@/modules/india-post/booking-recovery");
+      if (!bulkExcelBookingEnabled()) {
+        logInfo("bulk_excel.disabled", {
+          organizationId: payload.organizationId,
+          jobId,
+          entityId: payload.entityId,
+        });
+        return;
+      }
+      const { materializeBulkExcelImport } = await import("@/modules/india-post/bulk-excel-import");
+      if (!payload.entityId) {
+        throw Object.assign(new Error("Excel import batch is missing."), { code: "VALIDATION_ERROR" });
+      }
+      await materializeBulkExcelImport(supabase, payload.organizationId, payload.entityId, jobId);
+    }
     else if (queue === "label-generation") await generateLabel(supabase, payload);
     else if (queue === "invoice-generation") await generateInvoice(supabase, payload);
     else if (queue === "sales-invoice-issue") await issueSalesInvoiceJob(supabase, payload);
@@ -223,7 +239,9 @@ export async function processJob(queue: string, payload: JobPayload) {
       .eq("id", jobId)
       .single();
     const attempt = (job?.attempt_count ?? 0) + 1;
-    const retryable = classified.retryable && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
+    const postSubmitUncertain = queue === "shipment-booking" && isAmbiguousCeptOutcome(classified);
+    const retryable =
+      classified.retryable && !postSubmitUncertain && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
     const retryAfterMs = Number((error as { retryAfterMs?: number })?.retryAfterMs);
     const retryDelayMs = retryable
       ? Number.isFinite(retryAfterMs) && retryAfterMs >= 0
@@ -261,27 +279,28 @@ export async function processJob(queue: string, payload: JobPayload) {
       })
       .eq("id", jobId);
 
-    if (
-      queue !== "invoice-generation" &&
-      queue !== "label-generation" &&
-      queue !== "tracking-sync" &&
-      queue !== "wati-notify" &&
-      queue !== "vachat-notify" &&
-      queue !== "support-ingest" &&
-      payload.entityType === "shipment" &&
-      payload.entityId
-    ) {
-    const shipmentPatch = bookingFailureShipmentUpdate(classified, retryable);
-    await supabase
-      .from("shipments")
-      .update({
-        status: shipmentPatch.status,
-        last_error: classified.message,
-        last_error_code: classified.code,
-      })
-      .eq("id", payload.entityId)
-      .is("booked_at", null)
-      .in("status", [...shipmentPatch.allowedStatuses]);
+    const failureShipmentIds = [
+      ...new Set(
+        [
+          ...((error as { shipmentIds?: string[] }).shipmentIds ?? []),
+          ...(payload.shipmentIds ?? []),
+          payload.entityType === "shipment" ? payload.entityId : undefined,
+        ].filter((id): id is string => Boolean(id))
+      ),
+    ];
+    if (shouldApplyBookingFailureUpdate(queue) && failureShipmentIds.length) {
+      const shipmentPatch = bookingFailureShipmentUpdate(classified, retryable);
+      await supabase
+        .from("shipments")
+        .update({
+          status: shipmentPatch.status,
+          last_error: classified.message,
+          last_error_code: classified.code,
+        })
+        .eq("organization_id", payload.organizationId)
+        .in("id", failureShipmentIds)
+        .is("booked_at", null)
+        .in("status", [...shipmentPatch.allowedStatuses]);
       await supabase.from("notifications").insert({
         organization_id: payload.organizationId,
         type: retryable ? "shipment.retrying" : "shipment.failed",

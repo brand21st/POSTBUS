@@ -38,6 +38,24 @@ function isTimeoutError(error: unknown) {
   );
 }
 
+/** Unit tests stub fetch. A real fetch from a test process must not leave the machine. */
+export function assertTestProcessCannotReachLiveCept(url: string) {
+  const testProcess = process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+  if (!testProcess) return;
+  const fetchFn = globalThis.fetch as { mock?: unknown } | undefined;
+  if (fetchFn && typeof fetchFn === "function" && "mock" in fetchFn) return;
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    throw Object.assign(new Error("India Post booking URL is invalid."), { code: "CEPT_ISOLATION" });
+  }
+  if (host === "127.0.0.1" || host === "localhost" || host === "::1" || host.endsWith(".localhost")) return;
+  throw Object.assign(new Error("Refusing a live India Post booking POST from a test process."), {
+    code: "CEPT_ISOLATION",
+  });
+}
+
 export type ShippingProvider = {
   validateShipment(input: Record<string, unknown>): Promise<void>;
   getTariff(input: TariffInput): Promise<unknown>;
@@ -300,8 +318,10 @@ export class IndiaPostProvider implements ShippingProvider {
     if (!customId) {
       throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post customer ID is missing.");
     }
+    const bookingUrl = indiaPostBookingUrl(this.environment(), customId);
+    assertTestProcessCannotReachLiveCept(bookingUrl);
     return this.withAuthRetry(async (token) => {
-      const response = await fetch(indiaPostBookingUrl(this.environment(), customId), {
+      const response = await fetch(bookingUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -322,11 +342,13 @@ export class IndiaPostProvider implements ShippingProvider {
     if (!customId) {
       throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post customer ID is missing.");
     }
+    const file = new File([JSON.stringify({ articles })], "articles.json", { type: "application/json" });
+    const body = new FormData();
+    body.append("file", file);
+    const fileUrl = indiaPostBookingFileUrl(this.environment(), customId);
+    assertTestProcessCannotReachLiveCept(fileUrl);
     return this.withAuthRetry(async (token) => {
-      const file = new File([JSON.stringify({ articles })], "articles.json", { type: "application/json" });
-      const body = new FormData();
-      body.append("file", file);
-      const response = await fetch(indiaPostBookingFileUrl(this.environment(), customId), {
+      const response = await fetch(fileUrl, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body,

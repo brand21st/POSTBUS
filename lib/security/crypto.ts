@@ -53,6 +53,26 @@ export function hmacSha256(value: string) {
   return createHmac("sha256", encryptionSecret()).update(value).digest("hex");
 }
 
+/** Current integration key, then any retained previous keys. Verification tries each. */
+export function bookingProofSecrets(): string[] {
+  const configured = (process.env.INTEGRATION_ENCRYPTION_KEY || "").trim();
+  const current = configured || encryptionSecret();
+  const previous = (process.env.INTEGRATION_ENCRYPTION_KEY_PREVIOUS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item && item !== current);
+  return [current, ...previous];
+}
+
+/** Identifier stored with a proof. Not the secret. */
+export function bookingProofKeyId(secret: string) {
+  return createHash("sha256").update(`postbus.booking-proof-key.v1\0${secret}`).digest("hex").slice(0, 16);
+}
+
+export function hmacSha256Digest(value: string, secret: string) {
+  return createHmac("sha256", secret).update(value).digest();
+}
+
 export function randomToken(bytes = 32) {
   return randomBytes(bytes).toString("hex");
 }
