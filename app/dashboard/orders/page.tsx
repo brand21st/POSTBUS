@@ -176,6 +176,10 @@ export default function OrdersPage() {
   const [source, setSource] = useState("all");
   const [payment, setPayment] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
+  const [parcelOrder, setParcelOrder] = useState<OrderRecord | null>(null);
+  const openParcelEditor = (order: OrderRecord) => {
+    window.setTimeout(() => setParcelOrder(order), 0);
+  };
   const [dateFilter, setDateFilter] = useState<OrderDateFilterValue>({ kind: "all" });
   const [confirmFulfill, setConfirmFulfill] = useState(false);
   const [columnsReady, setColumnsReady] = useState(false);
@@ -818,8 +822,8 @@ export default function OrdersPage() {
           {
             id: "dimensions",
             header: "Parcel",
-            className: "w-[7.5rem] px-2 whitespace-nowrap",
-            cell: (row: OrderRecord) => <OrderDimensionBadge order={row} />,
+            className: "w-[7.5rem] min-w-[7.5rem] px-2 whitespace-normal",
+            cell: (row: OrderRecord) => <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />,
           } satisfies DataTableColumn<OrderRecord>,
         ]
       : []),
@@ -1146,6 +1150,17 @@ export default function OrdersPage() {
         </div>
       ) : null}
 
+      {parcelOrder ? (
+        <OrderDimensionBadge
+          order={list.items.find((item) => item.id === parcelOrder.id) ?? parcelOrder}
+          dialogOnly
+          open
+          onOpenChange={(next) => {
+            if (!next) setParcelOrder(null);
+          }}
+        />
+      ) : null}
+
       <DataTable
         columns={columns}
         data={list.items}
@@ -1231,7 +1246,7 @@ export default function OrdersPage() {
                       onPointerDown={(event) => event.stopPropagation()}
                     >
                       <StatusBadge value={row.source} />
-                      <OrderDimensionBadge order={row} />
+                      <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />
                       <ShopifyPaymentConfirm order={row} />
                     </div>
                     <div className="flex items-center justify-between gap-2">

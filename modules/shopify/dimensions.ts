@@ -320,6 +320,28 @@ export function dimensionSourceLabel(source: string | null | undefined) {
   }
 }
 
+/** Short source name for the orders table, where the full label does not fit. */
+export function dimensionSourceShort(source: string | null | undefined) {
+  switch (source) {
+    case "shopify":
+      return "Shopify";
+    case "postbus_default":
+      return "Default";
+    case "postbus_preset":
+      return "Saved";
+    case "postbus_custom":
+      return "Custom";
+    case "autopack_history":
+      return "AutoPack";
+    case "postbus":
+    case "postbus_package":
+    case "manual":
+      return "PostBus";
+    default:
+      return null;
+  }
+}
+
 export function formatParcelSize(length?: number | null, width?: number | null, height?: number | null) {
   if (!(Number(length) > 0 && Number(width) > 0 && Number(height) > 0)) return "No size";
   const trim = (value: number) => String(Math.round(value * 100) / 100);

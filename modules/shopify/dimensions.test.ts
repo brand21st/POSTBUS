@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   dimensionSourceLabel,
+  dimensionSourceShort,
   dimsFromMetafieldEntries,
   formatParcelSize,
   resolveShipmentDimensions,
@@ -18,6 +19,8 @@ describe("shopify dimension import", () => {
     ).toMatchObject({ lengthCm: 30, widthCm: 20, heightCm: 10, dimensionSource: "shopify" });
     expect(formatParcelSize(30, 20, 10)).toBe("30 × 20 × 10 cm");
     expect(dimensionSourceLabel("shopify")).toBe("Source: Shopify product measurement");
+    expect(dimensionSourceLabel("postbus_preset")).toBe("Source: Saved pack size");
+    expect(dimensionSourceShort("postbus_preset")).toBe("Saved");
   });
 
   it("keeps weight and shows no size when dimensions are absent", () => {
