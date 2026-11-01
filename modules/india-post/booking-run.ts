@@ -29,6 +29,7 @@ import { persistIndiaPostTokens } from "@/modules/india-post/session";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 import { commercePendingBookingBlocked } from "@/lib/dashboard/records";
+import { confirmHistoryForBookedShipment } from "@/modules/autopack/history";
 import { withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
 import { classifyProviderError } from "@/lib/jobs/retry";
 import { tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
@@ -143,6 +144,18 @@ export async function persistBookedShipment(
     });
     return false;
   }
+  // AutoPack: a typed box that India Post accepted becomes "confirmed" (booked with, not measured).
+  await confirmHistoryForBookedShipment(supabase, {
+    organizationId: input.organizationId,
+    shipmentId: input.shipmentId,
+    box: input.payload
+      ? {
+          lengthCm: Number(input.payload.length),
+          widthCm: Number(input.payload.breadth_diameter),
+          heightCm: Number(input.payload.height),
+        }
+      : null,
+  }).catch(() => undefined);
   if (input.orderId) {
     await supabase.from("orders").update({ status: "BOOKED" }).eq("id", input.orderId);
     try {

@@ -655,6 +655,8 @@ export type AutomationSettings = {
   auto_wati_delivered?: boolean;
   autoLabelPrinting?: boolean;
   auto_label_printing?: boolean;
+  autoPackageSelection?: boolean;
+  auto_package_selection?: boolean;
 };
 
 export type PrintStation = {

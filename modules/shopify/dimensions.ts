@@ -7,7 +7,14 @@
  * therefore come from variant or product metafields, then from PostBus packages.
  */
 
-export type DimensionSource = "shopify" | "postbus_package" | "postbus_default" | "postbus";
+export type DimensionSource =
+  | "shopify"
+  | "postbus_package"
+  | "postbus_default"
+  | "postbus"
+  | "postbus_preset"
+  | "postbus_custom"
+  | "autopack_history";
 
 export type CmBox = {
   lengthCm: number;
@@ -31,6 +38,10 @@ export type ResolvedShipmentDimensions = CmBox & {
   source: DimensionSource;
   packageId?: string;
   packageName?: string;
+  /** packaging_history row that justifies an AutoPack choice. */
+  evidenceId?: string;
+  /** Merchant pressed Apply on an AutoPack suggestion. */
+  merchantAccepted?: boolean;
 };
 
 export type MetafieldEntry = {
@@ -239,6 +250,8 @@ export type ParcelDimensionRecord = {
   lengthCm: number;
   widthCm: number;
   heightCm: number;
+  evidenceId?: string;
+  merchantAccepted?: boolean;
   syncedAt: string;
 };
 
@@ -254,6 +267,8 @@ export function parcelDimensionsMetadata(
     lengthCm: choice.lengthCm,
     widthCm: choice.widthCm,
     heightCm: choice.heightCm,
+    ...(choice.evidenceId ? { evidenceId: choice.evidenceId } : {}),
+    ...(choice.merchantAccepted ? { merchantAccepted: true } : {}),
     syncedAt,
   };
 }
@@ -267,9 +282,21 @@ export function mergeParcelDimensionsMetadata(existing: unknown, record: ParcelD
 }
 
 export function readParcelDimensionSource(metadata: unknown) {
+  return readParcelDimensionRecord(metadata)?.source ?? null;
+}
+
+export function readParcelDimensionRecord(
+  metadata: unknown
+): { source: string; evidenceId: string | null; merchantAccepted: boolean; packageId: string | null } | null {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
-  const record = (metadata as { parcelDimensions?: { source?: unknown } }).parcelDimensions;
-  return typeof record?.source === "string" ? record.source : null;
+  const record = (metadata as { parcelDimensions?: Record<string, unknown> }).parcelDimensions;
+  if (!record || typeof record.source !== "string") return null;
+  return {
+    source: record.source,
+    evidenceId: typeof record.evidenceId === "string" ? record.evidenceId : null,
+    merchantAccepted: record.merchantAccepted === true,
+    packageId: typeof record.packageId === "string" ? record.packageId : null,
+  };
 }
 
 export function dimensionSourceLabel(source: string | null | undefined) {
@@ -278,6 +305,12 @@ export function dimensionSourceLabel(source: string | null | undefined) {
       return "Source: Shopify product measurement";
     case "postbus_default":
       return "Source: PostBus Default Package";
+    case "postbus_preset":
+      return "Source: Saved pack size";
+    case "postbus_custom":
+      return "Source: Custom size";
+    case "autopack_history":
+      return "Source: AutoPack (verified past box)";
     case "postbus":
     case "postbus_package":
     case "manual":
@@ -293,6 +326,17 @@ export function formatParcelSize(length?: number | null, width?: number | null, 
   return `${trim(Number(length))} × ${trim(Number(width))} × ${trim(Number(height))} cm`;
 }
 
-export function manualDimensionLock(source: string | null | undefined) {
-  return source === "postbus" || source === "manual";
+const MERCHANT_DIMENSION_SOURCES = new Set(["postbus", "manual", "postbus_preset", "postbus_custom"]);
+
+/**
+ * True when the merchant chose this size in PostBus. Sync and AutoPack never overwrite it.
+ * Pass the whole metadata to also lock an AutoPack suggestion the merchant accepted.
+ */
+export function manualDimensionLock(source: string | null | undefined, metadata?: unknown) {
+  if (source && MERCHANT_DIMENSION_SOURCES.has(source)) return true;
+  if (metadata !== undefined) {
+    const record = readParcelDimensionRecord(metadata);
+    if (record?.source === "autopack_history" && record.merchantAccepted) return true;
+  }
+  return false;
 }

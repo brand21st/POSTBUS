@@ -17,7 +17,7 @@ export const SHIPMENT_PRESET_MAX = 12;
 export const SHIPMENT_PRESET_NAME_MAX = 40;
 
 const PRESET_COLUMNS =
-  "id, name, weight_grams, length_cm, width_cm, height_cm, service_code, created_at, updated_at, last_used_at";
+  "id, user_id, name, weight_grams, length_cm, width_cm, height_cm, service_code, created_at, updated_at, last_used_at";
 
 export const createShipmentPresetSchema = z.object({
   name: z.string().trim().min(1, "Name is required.").max(SHIPMENT_PRESET_NAME_MAX, "Name is too long."),
@@ -32,6 +32,8 @@ export type ShipmentPresetInput = z.infer<typeof createShipmentPresetSchema>;
 
 export type ShipmentPreset = {
   id: string;
+  /** Workspace member who saved it. Every member can use it. */
+  createdBy: string | null;
   name: string;
   weightGrams: number;
   lengthCm: number;
@@ -45,6 +47,7 @@ export type ShipmentPreset = {
 
 function mapPreset(row: {
   id: string;
+  user_id?: string | null;
   name: string;
   weight_grams: number;
   length_cm: number | string;
@@ -57,6 +60,7 @@ function mapPreset(row: {
 }): ShipmentPreset {
   return {
     id: row.id,
+    createdBy: row.user_id ?? null,
     name: row.name,
     weightGrams: Number(row.weight_grams),
     lengthCm: Number(row.length_cm),
@@ -112,10 +116,10 @@ export async function listShipmentPresets(
   userId: string,
   organizationId: string
 ): Promise<ShipmentPreset[]> {
+  void userId; // Shared by the workspace; any member may read, use or remove it.
   const { data, error } = await supabase
     .from("user_shipment_presets")
     .select(PRESET_COLUMNS)
-    .eq("user_id", userId)
     .eq("organization_id", organizationId)
     .order("last_used_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
@@ -137,17 +141,22 @@ export async function createShipmentPreset(
   if (packError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, packError);
   const serviceCode = requireService(input.serviceCode);
 
-  const { count, error: countError } = await supabase
+  // Pack sizes are shared by the workspace: the cap and the name are checked per workspace.
+  const { data: existing, error: countError } = await supabase
     .from("user_shipment_presets")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
+    .select("id, name")
     .eq("organization_id", organizationId);
 
   if (countError) {
     throw new AppError(ERROR_CODES.JOB_FAILED, "Could not save the pack size.");
   }
-  if ((count ?? 0) >= SHIPMENT_PRESET_MAX) {
+  const rows = (existing ?? []) as Array<{ id: string; name: string }>;
+  if (rows.length >= SHIPMENT_PRESET_MAX) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, `You can save up to ${SHIPMENT_PRESET_MAX} pack sizes.`);
+  }
+  const wanted = input.name.trim().toLowerCase();
+  if (rows.some((row) => String(row.name ?? "").trim().toLowerCase() === wanted)) {
+    throw new AppError(ERROR_CODES.CONFLICT, "A pack size with that name already exists. Rename it.");
   }
 
   const { data, error } = await supabase
@@ -180,11 +189,11 @@ export async function touchShipmentPreset(
   organizationId: string,
   presetId: string
 ): Promise<ShipmentPreset> {
+  void userId; // Shared by the workspace; any member may read, use or remove it.
   const { data, error } = await supabase
     .from("user_shipment_presets")
     .update({ last_used_at: new Date().toISOString() })
     .eq("id", presetId)
-    .eq("user_id", userId)
     .eq("organization_id", organizationId)
     .select(PRESET_COLUMNS)
     .maybeSingle();
@@ -204,11 +213,11 @@ export async function deleteShipmentPreset(
   organizationId: string,
   presetId: string
 ): Promise<{ id: string }> {
+  void userId; // Shared by the workspace; any member may read, use or remove it.
   const { data, error } = await supabase
     .from("user_shipment_presets")
     .delete()
     .eq("id", presetId)
-    .eq("user_id", userId)
     .eq("organization_id", organizationId)
     .select("id")
     .maybeSingle();

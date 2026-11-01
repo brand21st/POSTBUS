@@ -165,7 +165,7 @@ export function permissionForTenantRoute(
 
   if (path === "search") return "orders.read";
 
-  if (root === "shipment-presets") {
+  if (root === "shipment-presets" || root === "autopack") {
     return method === "GET" ? "orders.read" : "orders.write";
   }
 

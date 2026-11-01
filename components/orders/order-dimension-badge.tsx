@@ -16,6 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
+import { AutoPackSuggestion, type AutoPackPick } from "@/components/orders/autopack-suggestion";
+import { Checkbox } from "@/components/ui/checkbox";
 import { orderNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
@@ -128,6 +130,11 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const [boxWeightInput, setBoxWeightInput] = useState("");
   const [itemWeights, setItemWeights] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  // Where the box came from: a saved pack size, an AutoPack suggestion, or typed.
+  const [pickedPresetId, setPickedPresetId] = useState<string | null>(null);
+  const [autopackPick, setAutopackPick] = useState<AutoPackPick | null>(null);
+  const [measured, setMeasured] = useState(false);
+  const isShopifyOrder = String(order.source ?? "").toUpperCase() === "SHOPIFY";
 
   useEffect(() => {
     if (open) {
@@ -152,6 +159,9 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       }
 
       setFormError(null);
+      setPickedPresetId(null);
+      setAutopackPick(null);
+      setMeasured(false);
     }
   }, [open, length, width, height, currentWeightGrams]);
 
@@ -169,6 +179,9 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       heightCm: number;
       boxWeightGrams?: number;
       lineItems?: Array<{ id: string; weightGrams: number; weightMode: "auto" | "manual" }>;
+      presetId?: string;
+      autopackEvidenceId?: string;
+      measured?: boolean;
     }) => {
       const endpoint = shipment?.id
         ? `/api/v1/shipments/${shipment.id}`
@@ -182,6 +195,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       toast.success("Parcel dimensions and weight saved successfully.");
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["order", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["autopack", order.id] });
       setOpen(false);
     },
     onError: (err: unknown) => {
@@ -224,12 +238,24 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       weightMode: "manual" as const,
     }));
 
+    // The suggestion only counts if the box was not edited afterwards.
+    const usedSuggestion =
+      autopackPick &&
+      autopackPick.lengthCm === l &&
+      autopackPick.widthCm === w &&
+      autopackPick.heightCm === h
+        ? autopackPick.evidenceId
+        : undefined;
+
     saveMutation.mutate({
       lengthCm: l,
       widthCm: w,
       heightCm: h,
       boxWeightGrams: Number.isFinite(bWeight) && bWeight > 0 ? Math.round(bWeight) : undefined,
       lineItems: lineItemsPayload.length > 0 ? lineItemsPayload : undefined,
+      ...(usedSuggestion ? { autopackEvidenceId: usedSuggestion } : {}),
+      ...(!usedSuggestion && pickedPresetId ? { presetId: pickedPresetId } : {}),
+      ...(measured ? { measured: true } : {}),
     });
   };
 
@@ -399,6 +425,19 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                 </p>
               ) : null}
 
+              <AutoPackSuggestion
+                orderId={String(order.id)}
+                enabled={open && isShopifyOrder && !isLocked}
+                onUse={(pick) => {
+                  setLengthInput(String(pick.lengthCm));
+                  setWidthInput(String(pick.widthCm));
+                  setHeightInput(String(pick.heightCm));
+                  setAutopackPick(pick);
+                  setPickedPresetId(null);
+                  setFormError(null);
+                }}
+              />
+
               <ShipmentPackPresets
                 weightGrams={Number(boxWeightInput) || undefined}
                 lengthCm={Number(lengthInput) || undefined}
@@ -409,6 +448,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                   setLengthInput(String(size.lengthCm));
                   setWidthInput(String(size.widthCm));
                   setHeightInput(String(size.heightCm));
+                  setPickedPresetId(null);
+                  setAutopackPick(null);
                   setFormError(null);
                 }}
                 onApply={(pack) => {
@@ -416,6 +457,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                   setWidthInput(String(pack.widthCm));
                   setHeightInput(String(pack.heightCm));
                   setBoxWeightInput(String(Math.round(pack.weightGrams)));
+                  setPickedPresetId(pack.presetId ?? null);
+                  setAutopackPick(null);
                   setFormError(null);
                 }}
               />
@@ -643,6 +686,21 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                   ) : null}
                 </div>
               </div>
+
+              {isShopifyOrder ? (
+                <label className="flex items-start gap-2 text-[11px] leading-4 text-muted">
+                  <Checkbox
+                    checked={measured}
+                    onCheckedChange={(value) => setMeasured(value === true)}
+                    disabled={saveMutation.isPending}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium text-ink">I measured this box.</span> AutoPack may reuse it for
+                    orders with exactly these items and quantities when AutoPack box selection is on.
+                  </span>
+                </label>
+              ) : null}
 
               {formError ? (
                 <div className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
