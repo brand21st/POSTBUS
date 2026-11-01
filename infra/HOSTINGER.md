@@ -58,6 +58,8 @@ Then add **three** scheduled tasks on the **same** PostBus web container (do not
 
 `scripts/drain-jobs.mjs` appends `JOB_TYPES` as `?types=` on `POST /api/cron/jobs`. Unknown types are rejected. An untyped drain (`node scripts/drain-jobs.mjs` with no `JOB_TYPES`) still claims every due job.
 
+A drain that includes `woocommerce-sync` (the Other lane, or an untyped drain) also enqueues an incremental WooCommerce pull for each connected store not synced in the last 10 minutes. This is the fallback when store webhooks are missing or dropped, so new WooCommerce orders only import automatically while that lane is scheduled.
+
 Label-only and other-only drains run the rest pool at concurrency 4. A mixed untyped drain still runs `shipment-booking` first at booking concurrency (default 4), then remaining jobs at concurrency 2.
 
 `POST /api/cron/jobs` requires `Authorization: Bearer $CRON_SECRET` and refuses to run

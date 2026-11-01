@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { logError, logInfo } from "@/lib/logger";
 import { decryptSecret, hashSecret } from "@/lib/security/crypto";
+import { isAutoWooCommerceSyncEnabled } from "@/modules/automation/service";
 import { getWooOrder } from "@/modules/woocommerce/client";
 import { credentialsFromConnection } from "@/modules/woocommerce/connect";
 import {
@@ -12,12 +14,29 @@ import {
 } from "@/modules/woocommerce/orders";
 import { isPostbusEchoUpdate, shouldApplyWooOrder, verifyWooWebhookSignature } from "@/modules/woocommerce/signature";
 import { enqueueWooWebhookJob } from "@/modules/woocommerce/sync-job";
+import { redactWooText } from "@/modules/woocommerce/sync-window";
 
 export function parseWooWebhookPath(path: string) {
   if (path === "webhooks/woocommerce/auth") return { kind: "auth" as const };
   const match = path.match(/^webhooks\/woocommerce\/([0-9a-f-]{36})$/i);
   if (!match) return null;
   return { kind: "delivery" as const, connectionId: match[1] };
+}
+
+/** WooCommerce pings a new webhook with an unsigned `webhook_id=<id>` form body. */
+export function isWooWebhookPing(rawBody: string) {
+  return /^webhook_id=\d+$/.test(rawBody.trim());
+}
+
+/**
+ * WooCommerce builds X-WC-Webhook-Delivery-ID from the webhook id and the current second, so
+ * different orders updated in the same second share it. Pair it with the body hash so only a
+ * true redelivery of the same payload is treated as a duplicate.
+ */
+export function wooDeliveryKey(deliveryHeader: string | null, rawBody: string) {
+  const bodyHash = hashSecret(rawBody);
+  const header = (deliveryHeader ?? "").trim();
+  return header ? `${header}:${bodyHash.slice(0, 32)}` : bodyHash;
 }
 
 export async function acceptWooWebhook(
@@ -33,11 +52,15 @@ export async function acceptWooWebhook(
   if (!connection?.encrypted_webhook_secret || connection.status !== "CONNECTED") {
     throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Invalid WooCommerce webhook signature.");
   }
+  // The ping carries no order data, so acknowledging it unsigned is safe.
+  if (isWooWebhookPing(input.rawBody)) {
+    return { accepted: true, duplicate: false, ignored: true };
+  }
   const secret = decryptSecret(connection.encrypted_webhook_secret);
   if (!verifyWooWebhookSignature(secret, input.rawBody, input.signature)) {
     throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Invalid WooCommerce webhook signature.");
   }
-  const deliveryId = input.deliveryId || hashSecret(input.rawBody);
+  const deliveryId = wooDeliveryKey(input.deliveryId, input.rawBody);
   const { error } = await supabase.from("woocommerce_webhook_deliveries").insert({
     id: deliveryId,
     organization_id: connection.organization_id,
@@ -73,6 +96,11 @@ export async function acceptWooWebhook(
   }
   if (!orderId) {
     await supabase.from("woocommerce_webhook_deliveries").update({ status: "FAILED", last_error: "Missing order id" }).eq("id", deliveryId);
+    logError("woocommerce.webhook_missing_order_id", {
+      organizationId: connection.organization_id,
+      connectionId: connection.id,
+      topic: input.topic,
+    });
     return { accepted: true, duplicate: false };
   }
   await enqueueWooWebhookJob(supabase, {
@@ -85,17 +113,61 @@ export async function acceptWooWebhook(
   return { accepted: true, duplicate: false, queued: true };
 }
 
-export async function processWooWebhookJob(
-  supabase: SupabaseClient,
-  input: { organizationId: string; connectionId: string; topic: string; orderId: string; deliveryId?: string }
-) {
+type WooWebhookJobInput = {
+  organizationId: string;
+  connectionId: string;
+  topic: string;
+  orderId: string;
+  deliveryId?: string;
+};
+
+export async function processWooWebhookJob(supabase: SupabaseClient, input: WooWebhookJobInput) {
+  try {
+    const result = await importWooWebhookOrder(supabase, input);
+    logInfo("woocommerce.webhook_processed", {
+      organizationId: input.organizationId,
+      connectionId: input.connectionId,
+      topic: input.topic,
+      orderId: input.orderId,
+      ...result,
+    });
+    return result;
+  } catch (error) {
+    const message = redactWooText(error instanceof Error ? error.message : "WooCommerce order import failed.");
+    logError("woocommerce.webhook_import_failed", {
+      organizationId: input.organizationId,
+      connectionId: input.connectionId,
+      topic: input.topic,
+      orderId: input.orderId,
+      deliveryId: input.deliveryId,
+      message,
+    });
+    if (input.deliveryId) {
+      await supabase
+        .from("woocommerce_webhook_deliveries")
+        .update({ status: "FAILED", last_error: message.slice(0, 500) })
+        .eq("id", input.deliveryId);
+    }
+    // Rethrow so the job runner retries; a later success marks the delivery PROCESSED.
+    throw error;
+  }
+}
+
+async function importWooWebhookOrder(supabase: SupabaseClient, input: WooWebhookJobInput) {
   const connection = await loadConnected(supabase, input.connectionId, input.organizationId);
   if (!connection || connection.sync_enabled === false) {
     await finishDelivery(supabase, input.deliveryId, "IGNORED");
     return { skipped: true };
   }
+  if (!(await isAutoWooCommerceSyncEnabled(supabase, input.organizationId))) {
+    await finishDelivery(supabase, input.deliveryId, "IGNORED");
+    return { skipped: true, reason: "auto_sync_off" };
+  }
   const creds = credentialsFromConnection(connection);
-  if (!creds) return { skipped: true };
+  if (!creds) {
+    await finishDelivery(supabase, input.deliveryId, "IGNORED");
+    return { skipped: true };
+  }
   if (input.topic === "order.deleted") {
     const result = await markWooOrderDeleted(supabase, input.organizationId, input.orderId);
     await finishDelivery(supabase, input.deliveryId, "PROCESSED");
@@ -166,6 +238,6 @@ async function finishDelivery(supabase: SupabaseClient, deliveryId: string | und
   if (!deliveryId) return;
   await supabase
     .from("woocommerce_webhook_deliveries")
-    .update({ status, processed_at: new Date().toISOString() })
+    .update({ status, processed_at: new Date().toISOString(), last_error: null })
     .eq("id", deliveryId);
 }

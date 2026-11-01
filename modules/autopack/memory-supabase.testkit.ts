@@ -2,6 +2,7 @@
  * Tiny in-memory stand-in for the supabase-js query builder, enough for AutoPack tests.
  * Supports select / insert / update with eq, is, in, contains-free filters, order, limit,
  * single and maybeSingle. Not a general fake: unknown methods throw so tests fail loudly.
+ * Optional `unique` column sets make inserts fail with Postgres code 23505, like a unique index.
  */
 
 type Row = Record<string, unknown>;
@@ -13,7 +14,12 @@ export function testUuid() {
   return `00000000-0000-4000-8000-${String(idCounter).padStart(12, "0")}`;
 }
 
-export function memorySupabase(seed: Record<string, Row[]> = {}) {
+type MemoryError = { code?: string; message: string };
+
+export function memorySupabase(
+  seed: Record<string, Row[]> = {},
+  options: { unique?: Record<string, string[][]> } = {}
+) {
   const tables: Record<string, Row[]> = {};
   for (const [name, rows] of Object.entries(seed)) tables[name] = rows.map((row) => ({ ...row }));
   const calls: Array<{ table: string; op: string; payload?: unknown }> = [];
@@ -32,12 +38,22 @@ export function memorySupabase(seed: Record<string, Row[]> = {}) {
     let limitTo: number | null = null;
     let headCount = false;
 
-    const run = (): { data: unknown; error: null; count?: number } => {
+    const run = (): { data: unknown; error: MemoryError | null; count?: number } => {
       const rows = table(name);
       if (op === "insert") {
         const list = (Array.isArray(payload) ? payload : [payload]) as Row[];
         const now = new Date().toISOString();
         const inserted = list.map((row) => ({ id: testUuid(), created_at: now, ...row }));
+        for (const columns of [["id"], ...(options.unique?.[name] ?? [])]) {
+          const seen = new Set(rows.map((row) => JSON.stringify(columns.map((column) => row[column]))));
+          for (const row of inserted) {
+            const key = JSON.stringify(columns.map((column) => row[column]));
+            if (seen.has(key)) {
+              return { data: null, error: { code: "23505", message: `duplicate key on ${name}(${columns.join(", ")})` } };
+            }
+            seen.add(key);
+          }
+        }
         rows.push(...inserted);
         calls.push({ table: name, op, payload });
         return { data: returning ? inserted : null, error: null };
@@ -106,6 +122,7 @@ export function memorySupabase(seed: Record<string, Row[]> = {}) {
       },
       async single() {
         const result = run();
+        if (result.error) return { data: null, error: result.error };
         const list = (result.data as Row[] | null) ?? [];
         return list.length === 1
           ? { data: list[0], error: null }
@@ -113,6 +130,7 @@ export function memorySupabase(seed: Record<string, Row[]> = {}) {
       },
       async maybeSingle() {
         const result = run();
+        if (result.error) return { data: null, error: result.error };
         const list = (result.data as Row[] | null) ?? [];
         return { data: list[0] ?? null, error: null };
       },
