@@ -54,7 +54,7 @@ import { DEFAULT_INDIA_POST_SERVICE, type MemberRole } from "@/types/domain";
 const MATERIALIZE_CHUNK = 25;
 const FIELD_KEYS = new Set(MERCHANT_BOOKING_FIELDS.map((field) => field.key));
 
-type BatchRow = {
+export type BatchRow = {
   id: string;
   organization_id: string;
   filename: string;
@@ -75,7 +75,7 @@ type BatchRow = {
   created_by: string | null;
 };
 
-type ImportRow = {
+export type ImportRow = {
   id: string;
   batch_id: string;
   organization_id: string;
@@ -709,7 +709,51 @@ function workerActor(organizationId: string, userId: string): TenantContext {
   };
 }
 
-async function materializeRow(
+/**
+ * Metadata key stamped on the order and the shipment a row creates, in the same insert.
+ * A retry after a crash finds them by it instead of creating a second order, a second
+ * shipment and a second barcode. Unique indexes in 20261101170500 enforce one of each per row.
+ */
+export const BULK_IMPORT_ROW_KEY = "bulkImportRowId";
+
+async function findOrderForImportRow(supabase: SupabaseClient, organizationId: string, rowId: string) {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("id, customer_id, shipping_address_id")
+    .eq("organization_id", organizationId)
+    .eq(`metadata->>${BULK_IMPORT_ROW_KEY}`, rowId)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return data as { id: string; customer_id: string; shipping_address_id: string } | null;
+}
+
+async function findShipmentForImportRow(supabase: SupabaseClient, organizationId: string, rowId: string) {
+  const { data, error } = await supabase
+    .from("shipments")
+    .select("id, barcode, order_id")
+    .eq("organization_id", organizationId)
+    .eq(`metadata->>${BULK_IMPORT_ROW_KEY}`, rowId)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return data as { id: string; barcode: string | null; order_id: string } | null;
+}
+
+async function linkImportRowShipment(
+  supabase: SupabaseClient,
+  rowId: string,
+  shipment: { id: string; barcode: string | null; order_id: string }
+) {
+  await supabase
+    .from("bulk_import_rows")
+    .update({ shipment_id: shipment.id, barcode: shipment.barcode, status: "queued", order_id: shipment.order_id })
+    .eq("id", rowId);
+  return shipment.id;
+}
+
+/** Exported for crash-recovery tests; production callers go through materializeBulkExcelImport. */
+export async function materializeRow(
   supabase: SupabaseClient,
   ctx: TenantContext,
   batch: BatchRow,
@@ -719,9 +763,20 @@ async function materializeRow(
   const serviceCode = batch.service_code || DEFAULT_INDIA_POST_SERVICE;
   const paymentMode = String(normalized.paymentMode ?? "PREPAID").toUpperCase() === "COD" ? "COD" : "PAID";
   const codAmount = Number(normalized.codAmount) || 0;
+  // A shipment from an earlier, interrupted attempt is the answer: no new order, no new barcode.
+  const earlierShipment = await findShipmentForImportRow(supabase, ctx.organizationId, row.id);
+  if (earlierShipment) return linkImportRowShipment(supabase, row.id, earlierShipment);
+
   let orderId = row.order_id;
   let customerId = "";
   let addressId = "";
+  if (!orderId) {
+    const earlierOrder = await findOrderForImportRow(supabase, ctx.organizationId, row.id);
+    if (earlierOrder) {
+      orderId = earlierOrder.id;
+      await supabase.from("bulk_import_rows").update({ order_id: earlierOrder.id }).eq("id", row.id);
+    }
+  }
   if (!orderId) {
     const order = await createManualOrder(supabase, ctx, {
       customer: {
@@ -750,6 +805,7 @@ async function materializeRow(
       paymentStatus: paymentMode,
       source: "MANUAL",
       orderNumber: String(normalized.bulkReference || "").trim() || `XL-${batch.id.slice(0, 8)}-${row.excel_row_number}`,
+      metadata: { [BULK_IMPORT_ROW_KEY]: row.id, bulkImportBatchId: batch.id },
     });
     orderId = order.id;
     customerId = order.customer_id;
@@ -823,24 +879,28 @@ async function materializeRow(
       height_cm: Number(normalized.heightCm) || null,
       barcode,
       created_at: issuedAt,
-      metadata: metadataWithFirstBarcodeProof(null, {
-        shipmentId,
-        organizationId: ctx.organizationId,
-        barcode,
-        issuedAt,
-      }),
+      metadata: {
+        ...metadataWithFirstBarcodeProof(null, {
+          shipmentId,
+          organizationId: ctx.organizationId,
+          barcode,
+          issuedAt,
+        }),
+        [BULK_IMPORT_ROW_KEY]: row.id,
+      },
       status: "QUEUED",
     })
     .select("id")
     .single();
   if (error || !shipment) {
+    // A concurrent attempt for the same row won the unique index: link its shipment.
+    if (error?.code === "23505") {
+      const raced = await findShipmentForImportRow(supabase, ctx.organizationId, row.id);
+      if (raced) return linkImportRowShipment(supabase, row.id, raced);
+    }
     throw new AppError(ERROR_CODES.SHIPMENT_FAILED, error?.message || "Could not create shipment from Excel.");
   }
-  await supabase
-    .from("bulk_import_rows")
-    .update({ shipment_id: shipment.id, barcode, status: "queued", order_id: orderId })
-    .eq("id", row.id);
-  return shipment.id as string;
+  return linkImportRowShipment(supabase, row.id, { id: shipment.id as string, barcode, order_id: String(orderId) });
 }
 
 export async function materializeBulkExcelImport(

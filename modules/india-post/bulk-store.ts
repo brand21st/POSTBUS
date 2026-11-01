@@ -6,11 +6,42 @@ import { canTransitionIndiaPostBulkBatch } from "@/modules/india-post/bulk-state
 
 type Admin = SupabaseClient;
 
+/** background_jobs.entity_type for a multi-article booking job; entity_id is the batch id. */
+export const BULK_BATCH_JOB_ENTITY = "india_post_bulk_batch";
+
+/** Points a READY batch at the job that will post it. A batch already linked keeps its job. */
+export async function linkBulkBatchJob(supabase: Admin, batchId: string, jobId: string) {
+  const { data, error } = await supabase
+    .from("india_post_bulk_batches")
+    .update({ job_id: jobId })
+    .eq("id", batchId)
+    .eq("status", "READY")
+    .is("job_id", null)
+    .select("id")
+    .maybeSingle();
+  if (error) throw Object.assign(new Error(error.message), { code: "VALIDATION_ERROR" });
+  if (!data) {
+    throw Object.assign(new Error("Bulk batch is no longer READY or already has a job."), { code: "VALIDATION_ERROR" });
+  }
+}
+
 export async function loadBulkBatchByJobId(supabase: Admin, jobId: string) {
   const { data, error } = await supabase
     .from("india_post_bulk_batches")
     .select("id, status, article_count, organization_id")
     .eq("job_id", jobId)
+    .maybeSingle();
+  if (error) throw error;
+  return data as { id: string; status: IndiaPostBulkBatchStatus; article_count: number; organization_id: string } | null;
+}
+
+/** The batch a bulk job was keyed on (entity_id). Scoped to the organization that owns the job. */
+export async function loadBulkBatchById(supabase: Admin, organizationId: string, batchId: string) {
+  const { data, error } = await supabase
+    .from("india_post_bulk_batches")
+    .select("id, status, article_count, organization_id")
+    .eq("id", batchId)
+    .eq("organization_id", organizationId)
     .maybeSingle();
   if (error) throw error;
   return data as { id: string; status: IndiaPostBulkBatchStatus; article_count: number; organization_id: string } | null;

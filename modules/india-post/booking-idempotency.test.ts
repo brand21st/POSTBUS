@@ -750,6 +750,63 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(outcome.failedIds).toContain("ship-2");
   });
 
+  it("moves a bulk article missing from the response to recovery, not failed", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce({
+      batch_id: "batch-1",
+      correlation_id: "corr-1",
+      valid_articles: [{ barcode_no: BARCODE, article_number: BARCODE, calculated_tariff: 45 }],
+      error_articles: [],
+    });
+    const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1"), withProof(BARCODE_2, "ship-2", "ord-2")]);
+    const outcome = await runIndiaPostBooking(supabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1", "ship-2"],
+    });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(outcome.failedIds).toEqual([]);
+    expect(outcome.recoveryIds).toEqual(["ship-2"]);
+    const missing = store.find((row) => row.id === "ship-2");
+    expect(missing?.status).toBe("RECOVERY_REQUIRED");
+    expect(missing?.last_error_code).toBe("CEPT_UNKNOWN");
+    expect(missing?.booked_at ?? null).toBeNull();
+  });
+
+  it("does not trust a bulk rejection when the response lists an article that was not sent", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce({
+      batch_id: "batch-1",
+      correlation_id: "corr-1",
+      valid_articles: [{ barcode_no: BARCODE, article_number: BARCODE, calculated_tariff: 45 }],
+      error_articles: [
+        { barcode_no: BARCODE_2, errors: ["Invalid article"] },
+        { barcode_no: "EZ999999999IN", errors: ["Invalid article"] },
+      ],
+    });
+    const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1"), withProof(BARCODE_2, "ship-2", "ord-2")]);
+    const outcome = await runIndiaPostBooking(supabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1", "ship-2"],
+    });
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(outcome.failedIds).toEqual([]);
+    expect(outcome.recoveryIds).toEqual(["ship-2"]);
+    expect(store.find((row) => row.id === "ship-2")?.status).toBe("RECOVERY_REQUIRED");
+  });
+
+  it("keeps a single-article rejection as FAILED", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce({
+      batch_id: "batch-1",
+      valid_articles: [],
+      error_articles: [],
+    });
+    const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1")]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    // Unchanged single-article behaviour: the stricter rule only applies to multi-article POSTs.
+    expect(store.find((row) => row.id === "ship-1")?.status).toBe("FAILED");
+  });
+
   it("lets two workers post a proved shipment only once", async () => {
     bookShipmentMock.mockReset().mockImplementation(
       () => new Promise((resolve) => setTimeout(() => resolve(ceptSuccess()), 30))

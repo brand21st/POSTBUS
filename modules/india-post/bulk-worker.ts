@@ -11,10 +11,28 @@ import type { IndiaPostBulkBatchStatus } from "@/modules/india-post/bulk-state";
 export type BulkCeptOutcome = {
   bookedIds: string[];
   failedIds: string[];
+  /** Posted articles the CEPT response did not prove either way. */
+  recoveryIds?: string[];
   result?: { batch_id?: string | null; correlation_id?: string | null } | null;
 };
 
 export type BulkWorkerBatch = { id: string; status: IndiaPostBulkBatchStatus };
+
+/**
+ * This job did not post and must not report anything: another job owns the batch, or the batch
+ * already finished. Callers end the job without touching shipments.
+ */
+export const BULK_BATCH_SUPERSEDED = "BULK_BATCH_SUPERSEDED";
+
+const FINISHED_BULK_STATUSES = new Set<IndiaPostBulkBatchStatus>(["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED"]);
+
+function superseded(message: string) {
+  return Object.assign(new Error(message), { code: BULK_BATCH_SUPERSEDED });
+}
+
+export function isBulkBatchSuperseded(error: unknown) {
+  return (error as { code?: string } | null)?.code === BULK_BATCH_SUPERSEDED;
+}
 
 export type BulkWorkerDeps = {
   transition: (
@@ -58,6 +76,9 @@ export async function runIndiaPostBulkWorkerAttempt(
     }
     throw Object.assign(new Error("Bulk batch is not safe to POST to CEPT."), { code: "CEPT_UNKNOWN" });
   }
+  if (FINISHED_BULK_STATUSES.has(bulkBatch.status)) {
+    throw superseded("Bulk batch already finished; this job has nothing to post.");
+  }
   if (!bulkWorkerMayPost(bulkBatch.status) || bulkBatch.status !== "READY") {
     throw Object.assign(new Error("Bulk batch is not safe to POST to CEPT."), { code: "CEPT_UNKNOWN" });
   }
@@ -66,7 +87,8 @@ export async function runIndiaPostBulkWorkerAttempt(
     submitted_at: new Date().toISOString(),
   });
   if (!moved) {
-    throw Object.assign(new Error("Bulk batch lock/transition lost; not posting to CEPT."), { code: "CEPT_UNKNOWN" });
+    // Another job moved the batch out of READY first. It owns the POST and the results.
+    throw superseded("Another job owns this bulk batch; not posting to CEPT.");
   }
   bulkBatch.status = "SUBMITTING";
 
@@ -99,8 +121,14 @@ export async function runIndiaPostBulkWorkerAttempt(
     throw error;
   }
 
-  const next =
-    outcome.failedIds.length === 0 ? "SUCCEEDED" : outcome.bookedIds.length ? "PARTIAL_SUCCESS" : "FAILED";
+  const recoveryIds = outcome.recoveryIds ?? [];
+  const next: IndiaPostBulkBatchStatus = recoveryIds.length
+    ? "RECOVERY_REQUIRED"
+    : outcome.failedIds.length === 0
+      ? "SUCCEEDED"
+      : outcome.bookedIds.length
+        ? "PARTIAL_SUCCESS"
+        : "FAILED";
   await deps.transition(input.supabase, bulkBatch.id, "SUBMITTING", "SUBMITTED").catch(() => false);
   bulkBatch.status = "SUBMITTED";
   await deps.transition(input.supabase, bulkBatch.id, "SUBMITTED", "RECONCILING").catch(() => false);
@@ -108,6 +136,7 @@ export async function runIndiaPostBulkWorkerAttempt(
   await deps.persistArticles(input.supabase, bulkBatch.id, {
     bookedIds: outcome.bookedIds,
     failedIds: outcome.failedIds,
+    recoveryIds,
     ceptBatchId: outcome.result?.batch_id,
     correlationId: outcome.result?.correlation_id,
   }).catch(() => undefined);
@@ -116,8 +145,19 @@ export async function runIndiaPostBulkWorkerAttempt(
   }).catch(() => false);
   bulkBatch.status = next;
   deps.recordMetric(
-    next === "SUCCEEDED" ? "bulk_batches_succeeded" : next === "PARTIAL_SUCCESS" ? "bulk_batches_partial" : "bulk_batches_failed",
-    { batchId: bulkBatch.id, booked: outcome.bookedIds.length, failed: outcome.failedIds.length }
+    next === "SUCCEEDED"
+      ? "bulk_batches_succeeded"
+      : next === "PARTIAL_SUCCESS"
+        ? "bulk_batches_partial"
+        : next === "RECOVERY_REQUIRED"
+          ? "bulk_batches_recovery_required"
+          : "bulk_batches_failed",
+    {
+      batchId: bulkBatch.id,
+      booked: outcome.bookedIds.length,
+      failed: outcome.failedIds.length,
+      recovery: recoveryIds.length,
+    }
   );
   return outcome;
 }

@@ -3,7 +3,12 @@ import type { TenantContext } from "@/lib/api/context";
 import { buildIndiaPostBulkBatches, type BuiltBulkBatch } from "@/modules/india-post/bulk-batch-build";
 import { indiaPostBulkMaxArticles } from "@/modules/india-post/bulk-config";
 import type { BulkCandidate } from "@/modules/india-post/bulk-eligibility";
-import { persistReadyBulkBatch } from "@/modules/india-post/bulk-store";
+import {
+  BULK_BATCH_JOB_ENTITY,
+  linkBulkBatchJob,
+  persistReadyBulkBatch,
+  transitionBulkBatch,
+} from "@/modules/india-post/bulk-store";
 import { createBackgroundJob } from "@/modules/jobs/service";
 
 export type BulkEnginePlan = {
@@ -47,15 +52,29 @@ export async function enqueueIndiaPostBulkPlan(
     );
   }
   for (const batch of plan.batches) {
-    const job = await createBackgroundJob(supabase, {
-      organizationId: ctx.organizationId,
-      jobType: "shipment-booking",
-      entityType: "shipment",
-      entityId: batch.shipmentIds[0],
-      shipmentIds: batch.shipmentIds,
-      userId: ctx.userId,
-    });
-    await persistReadyBulkBatch(supabase, batch, job.id);
+    // Batch first, then a job keyed on the batch. Keying the job on a member shipment let the
+    // per-shipment dedupe hand back that shipment's single-article job, so the batch's other
+    // members were never posted and stayed locked in an active batch.
+    const batchId = await persistReadyBulkBatch(supabase, batch, null);
+    let job;
+    try {
+      job = await createBackgroundJob(supabase, {
+        organizationId: ctx.organizationId,
+        jobType: "shipment-booking",
+        entityType: BULK_BATCH_JOB_ENTITY,
+        entityId: batchId,
+        shipmentIds: batch.shipmentIds,
+        userId: ctx.userId,
+      });
+      await linkBulkBatchJob(supabase, batchId, job.id);
+    } catch (error) {
+      // Nothing was posted. Release the members so they can be booked another way.
+      await transitionBulkBatch(supabase, batchId, "READY", "FAILED", {
+        last_error: error instanceof Error ? error.message : "Could not queue the bulk batch job.",
+        last_error_code: "QUEUE_UNAVAILABLE",
+      }).catch(() => false);
+      throw error;
+    }
     jobs.push(job);
   }
   return jobs;

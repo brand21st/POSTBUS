@@ -10,7 +10,7 @@ import {
   isConfirmedIndiaPostRefreshAuthFailure,
   isIndiaPostRefreshError,
 } from "@/modules/india-post/login-auth";
-import { INDIA_POST_TIMEOUT_MS, indiaPostTimeoutSignal } from "@/modules/india-post/http";
+import { INDIA_POST_TIMEOUT_MS, indiaPostBookingTimeoutMs, indiaPostTimeoutSignal } from "@/modules/india-post/http";
 import { logError, logInfo } from "@/lib/logger";
 import {
   accessTokenStillValid,
@@ -336,7 +336,9 @@ export class IndiaPostProvider implements ShippingProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ articles: input.articles }),
-        signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
+        signal: indiaPostTimeoutSignal(
+          indiaPostBookingTimeoutMs(Array.isArray(input.articles) ? input.articles.length : 1, "json")
+        ),
       });
       const json = await response.json().catch(() => ({}));
       this.assertBookingResponse(response, json);
@@ -360,7 +362,7 @@ export class IndiaPostProvider implements ShippingProvider {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body,
-        signal: indiaPostTimeoutSignal(INDIA_POST_TIMEOUT_MS.book),
+        signal: indiaPostTimeoutSignal(indiaPostBookingTimeoutMs(articles.length, "file")),
       });
       const json = await response.json().catch(() => ({}));
       this.assertBookingResponse(response, json);

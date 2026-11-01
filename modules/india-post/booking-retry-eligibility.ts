@@ -118,6 +118,21 @@ function decision(
   };
 }
 
+/**
+ * A shipment inside an active multi-article batch is owned by that batch's job. A separate
+ * single-article retry would POST it a second time, so membership decides before anything else.
+ */
+export function bulkMembershipRetryDecision(
+  shipmentId: string,
+  articleResult: string | null | undefined
+): BookingRetryDecision | null {
+  const result = String(articleResult ?? "").toUpperCase();
+  if (result === "SUCCEEDED") return decision("ALREADY_BOOKED", shipmentId);
+  if (result === "PENDING") return decision("BOOKING_IN_PROGRESS", shipmentId);
+  if (result === "SUBMITTED" || result === "RECOVERY_REQUIRED") return decision("BOOKING_OUTCOME_UNKNOWN", shipmentId);
+  return null;
+}
+
 function statusOf(shipment: BookingRetryShipment) {
   return String(shipment.status ?? "").toUpperCase();
 }

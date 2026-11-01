@@ -31,8 +31,8 @@ import {
 } from "@/modules/india-post/tracking-sync";
 import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
 import { assertIndiaPostBulkPostAllowed } from "@/modules/india-post/bulk-run";
-import { loadBulkBatchByJobId } from "@/modules/india-post/bulk-store";
-import { runIndiaPostBulkWorkerAttempt } from "@/modules/india-post/bulk-worker";
+import { BULK_BATCH_JOB_ENTITY, loadBulkBatchById, loadBulkBatchByJobId } from "@/modules/india-post/bulk-store";
+import { isBulkBatchSuperseded, runIndiaPostBulkWorkerAttempt } from "@/modules/india-post/bulk-worker";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
@@ -338,28 +338,51 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
 
   const bookingStarted = Date.now();
   assertIndiaPostBulkPostAllowed(shipmentIds.length);
-  const bulkBatch = payload.jobId && shipmentIds.length > 1 ? await loadBulkBatchByJobId(supabase, payload.jobId) : null;
+  // New bulk jobs are keyed on their batch, so a job claimed before job_id is linked still finds it.
+  // Older jobs were keyed on a member shipment and are found by job_id.
+  const bulkBatch =
+    shipmentIds.length < 2
+      ? null
+      : payload.entityType === BULK_BATCH_JOB_ENTITY && payload.entityId
+        ? await loadBulkBatchById(supabase, payload.organizationId, payload.entityId)
+        : payload.jobId
+          ? await loadBulkBatchByJobId(supabase, payload.jobId)
+          : null;
   if (shipmentIds.length > 1 && !bulkBatch) {
     throw Object.assign(new Error("Multi-article booking requires a durable bulk batch."), { code: "VALIDATION_ERROR" });
   }
-  const outcome = await runIndiaPostBulkWorkerAttempt({
-    supabase,
-    organizationId: payload.organizationId,
-    shipmentIds,
-    bulkBatch,
-    post: () =>
-      runIndiaPostBooking(supabase, {
-        organizationId: payload.organizationId,
-        shipmentIds,
-        jobId: payload.jobId,
-      }),
-  });
+  let outcome: Awaited<ReturnType<typeof runIndiaPostBulkWorkerAttempt>>;
+  try {
+    outcome = await runIndiaPostBulkWorkerAttempt({
+      supabase,
+      organizationId: payload.organizationId,
+      shipmentIds,
+      bulkBatch,
+      post: () =>
+        runIndiaPostBooking(supabase, {
+          organizationId: payload.organizationId,
+          shipmentIds,
+          jobId: payload.jobId,
+        }),
+    });
+  } catch (error) {
+    if (!isBulkBatchSuperseded(error)) throw error;
+    // Nothing was posted by this job; the owning job reports the shipments.
+    logInfo("booking.bulk_superseded", {
+      organizationId: payload.organizationId,
+      jobId: payload.jobId,
+      batchId: bulkBatch?.id,
+      batchStatus: bulkBatch?.status,
+    });
+    return;
+  }
   logInfo("booking.completed", {
     organizationId: payload.organizationId,
     jobId: payload.jobId,
     jobType: "shipment-booking",
     booked: outcome.bookedIds.length,
     failed: outcome.failedIds.length,
+    recovery: outcome.recoveryIds?.length ?? 0,
     durationMs: Date.now() - bookingStarted,
   });
 

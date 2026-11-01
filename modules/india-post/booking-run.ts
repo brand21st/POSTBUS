@@ -6,7 +6,11 @@ import { assertValidatedArticle } from "@/modules/india-post/article-validator";
 import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/modules/india-post/parcel-defaults";
 import { indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
 import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
-import { splitIndiaPostBookingResult, type IndiaPostBookingResponse } from "@/modules/india-post/booking-apply";
+import {
+  classifyMultiArticleOutcome,
+  splitIndiaPostBookingResult,
+  type IndiaPostBookingResponse,
+} from "@/modules/india-post/booking-apply";
 import { indiaPostBookingServiceCode, indiaPostMobile } from "@/modules/india-post/endpoints";
 import {
   shippingAddressBookingBlock,
@@ -31,7 +35,8 @@ import { shopifyPendingBookingBlocked } from "@/lib/dashboard/records";
 import { markShopifyAllocationsBooked } from "@/modules/shopify/allocations";
 import { confirmHistoryForBookedShipment } from "@/modules/autopack/history";
 import { revalidateShopifyBooking } from "@/modules/shopify/booking-guard";
-import { withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
+import { indiaPostBookingLockTtlSeconds, withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
+import { indiaPostBookingTimeoutMs } from "@/modules/india-post/http";
 import { classifyProviderError } from "@/lib/jobs/retry";
 import { tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
 import { existingBarcodeMayBeSubmitted } from "@/modules/india-post/booking-retry-eligibility";
@@ -230,9 +235,11 @@ export function assertShipmentsClassified(input: {
   requestedIds: string[];
   bookedIds: string[];
   failedIds: string[];
+  /** Posted articles already moved to RECOVERY_REQUIRED; classified, but not as booked or failed. */
+  recoveryIds?: string[];
   preparedIds: string[];
 }) {
-  const done = new Set([...input.bookedIds, ...input.failedIds]);
+  const done = new Set([...input.bookedIds, ...input.failedIds, ...(input.recoveryIds ?? [])]);
   const unresolved = input.requestedIds.filter((id) => !done.has(id));
   if (!unresolved.length) return;
   const prepared = new Set(input.preparedIds);
@@ -691,6 +698,7 @@ export async function runIndiaPostBooking(
         jobId: input.jobId,
         shipmentId: prepared[0]?.shipment.id,
         connectionId: String(connection.id ?? ""),
+        ttlSeconds: indiaPostBookingLockTtlSeconds(indiaPostBookingTimeoutMs(articles.length, transport), articles.length),
       },
       async () => {
         const intentAt = new Date().toISOString();
@@ -864,16 +872,45 @@ export async function runIndiaPostBooking(
   }
 
   const split = splitIndiaPostBookingResult(result);
+  // Several articles in one POST: an article the response does not account for is unknown.
+  // It must not be marked rejected, because a later retry would POST it again.
+  const multi = prepared.length > 1 ? classifyMultiArticleOutcome(prepared.map((item) => item.barcode), result) : null;
+  const recoveryIds: string[] = [];
   logInfo("booking.cept_success", {
     organizationId: input.organizationId,
     jobId: input.jobId,
     valid: split.valid.size,
     failed: split.failed.size,
+    ...(multi ? { recovery: multi.recovery.size } : {}),
   });
 
   await Promise.all(
     prepared.map(async (item) => {
       const key = item.barcode.toUpperCase();
+      if (multi?.recovery.has(key)) {
+        recoveryIds.push(item.shipment.id);
+        logError("booking.recovery_required", {
+          INDIA_POST_ENV: indiaPostEnv,
+          organizationId: input.organizationId,
+          shipmentId: item.shipment.id,
+          jobId: input.jobId,
+          connectionId: connection.id,
+          reason: "CEPT_UNKNOWN",
+          barcodeRef: barcodeLogRef(item.barcode),
+          message: multi.recoveryReason,
+        });
+        await supabase
+          .from("shipments")
+          .update({
+            status: "RECOVERY_REQUIRED",
+            last_error: multi.recoveryReason,
+            last_error_code: "CEPT_UNKNOWN",
+          })
+          .eq("id", item.shipment.id)
+          .eq("organization_id", input.organizationId)
+          .is("booked_at", null);
+        return;
+      }
       const ok = split.valid.get(key);
       if (ok) {
         if (ok.duplicate) {
@@ -927,7 +964,8 @@ export async function runIndiaPostBooking(
     requestedIds: input.shipmentIds,
     bookedIds,
     failedIds,
+    recoveryIds,
     preparedIds: prepared.map((item) => item.shipment.id),
   });
-  return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result };
+  return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, recoveryIds, prepared, result };
 }

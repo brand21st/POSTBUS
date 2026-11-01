@@ -5,6 +5,21 @@ import { logError, logInfo } from "@/lib/logger";
 export const INDIA_POST_BOOKING_LOCK_TTL_SECONDS = 45;
 export const INDIA_POST_BOOKING_LOCK_WAIT_MS = 40_000;
 export const INDIA_POST_BOOKING_LOCK_RPC_TIMEOUT_MS = 5_000;
+/** Upper bound the acquire RPC accepts (migration 20261101170000; older databases clamp to 120). */
+export const INDIA_POST_BOOKING_LOCK_TTL_MAX_SECONDS = 330;
+/** Time inside the lock that is not the POST: per-article intent writes before it, release after it. */
+const LOCK_OVERHEAD_MS = 15_000;
+const LOCK_INTENT_WRITE_MS_PER_ARTICLE = 40;
+
+/**
+ * Lease length for one booking POST. It must outlast the request, or another worker could take
+ * the lock while CEPT is still processing. One article keeps the historical 45 s.
+ */
+export function indiaPostBookingLockTtlSeconds(requestTimeoutMs: number, articleCount = 1) {
+  const count = Math.max(1, Math.floor(Number(articleCount) || 1));
+  const needed = Math.ceil((requestTimeoutMs + LOCK_OVERHEAD_MS + LOCK_INTENT_WRITE_MS_PER_ARTICLE * count) / 1000);
+  return Math.min(INDIA_POST_BOOKING_LOCK_TTL_MAX_SECONDS, Math.max(INDIA_POST_BOOKING_LOCK_TTL_SECONDS, needed));
+}
 const POLL_MS = 150;
 
 const processTails = new Map<string, Promise<void>>();
@@ -79,7 +94,11 @@ type AcquireResult =
   | { kind: "busy" }
   | { kind: "unavailable"; reason: string };
 
-async function tryAcquireDbLock(supabase: SupabaseClient, organizationId: string): Promise<AcquireResult> {
+async function tryAcquireDbLock(
+  supabase: SupabaseClient,
+  organizationId: string,
+  ttlSeconds = INDIA_POST_BOOKING_LOCK_TTL_SECONDS
+): Promise<AcquireResult> {
   if (typeof supabase.rpc !== "function") {
     return { kind: "unavailable", reason: "rpc_missing" };
   }
@@ -90,7 +109,7 @@ async function tryAcquireDbLock(supabase: SupabaseClient, organizationId: string
     }>(
       supabase.rpc("acquire_india_post_booking_lock", {
         p_organization_id: organizationId,
-        p_ttl_seconds: INDIA_POST_BOOKING_LOCK_TTL_SECONDS,
+        p_ttl_seconds: ttlSeconds,
       }) as PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }>,
       INDIA_POST_BOOKING_LOCK_RPC_TIMEOUT_MS
     );
@@ -144,6 +163,8 @@ export async function withIndiaPostBookingLock<T>(
     shipmentId?: string;
     connectionId?: string;
     waitMs?: number;
+    /** Lease length; see indiaPostBookingLockTtlSeconds. Defaults to 45 s. */
+    ttlSeconds?: number;
     skipProcessLock?: boolean;
   },
   work: () => Promise<T>
@@ -153,7 +174,7 @@ export async function withIndiaPostBookingLock<T>(
     const waitMs = input.waitMs ?? INDIA_POST_BOOKING_LOCK_WAIT_MS;
     let token: string | null = null;
     while (Date.now() - started < waitMs) {
-      const acquired = await tryAcquireDbLock(supabase, input.organizationId);
+      const acquired = await tryAcquireDbLock(supabase, input.organizationId, input.ttlSeconds);
       if (acquired.kind === "unavailable") {
         logError("booking.lock_unavailable", {
           organizationId: input.organizationId,

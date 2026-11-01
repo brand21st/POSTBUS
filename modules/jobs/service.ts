@@ -17,7 +17,9 @@ export async function createBackgroundJob(
     progress?: Record<string, unknown>;
   }
 ) {
-  if (input.jobType === "shipment-booking" && input.entityId) {
+  // Only per-shipment booking jobs go through the one-active-job-per-shipment RPC.
+  // A multi-article job is keyed on its bulk batch and must not be merged with a shipment's job.
+  if (input.jobType === "shipment-booking" && input.entityId && (input.entityType ?? "shipment") === "shipment") {
     return enqueueShipmentBookingJob(supabase, input);
   }
 

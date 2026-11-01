@@ -6,6 +6,7 @@ import { createBackgroundJob } from "@/modules/jobs/service";
 import { loadLatestShipmentBookingJob } from "@/modules/jobs/shipment-booking-job";
 import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import {
+  bulkMembershipRetryDecision,
   bulkRetryBucket,
   evaluateBookingRetryEligibility,
   STALE_BOOKING_LOCK_MS,
@@ -60,6 +61,23 @@ export async function evaluateOwnedBookingRetry(
   const shipment = await loadOwnedShipment(supabase, organizationId, shipmentId);
   if (!shipment) {
     return evaluateBookingRetryEligibility({ shipment: null });
+  }
+  if (!shipment.booked_at) {
+    const { data: member, error: memberError } = await supabase
+      .from("india_post_bulk_batch_articles")
+      .select("article_result")
+      .eq("organization_id", organizationId)
+      .eq("shipment_id", shipmentId)
+      .in("article_result", ["PENDING", "SUBMITTED", "SUCCEEDED", "RECOVERY_REQUIRED"])
+      .limit(1)
+      .maybeSingle();
+    // Fail closed: an unreadable membership must not turn into a second POST.
+    // A database without the bulk tables has no bulk members, so that case may continue.
+    if (memberError && !/does not exist|PGRST205|42P01/i.test(`${memberError.code ?? ""} ${memberError.message ?? ""}`)) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, memberError.message);
+    }
+    const owned = bulkMembershipRetryDecision(shipmentId, member?.article_result as string | undefined);
+    if (owned) return owned;
   }
   const job = await loadLatestShipmentBookingJob(supabase, { organizationId, entityId: shipmentId });
   return evaluateBookingRetryEligibility({
