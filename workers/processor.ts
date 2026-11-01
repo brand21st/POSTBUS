@@ -64,6 +64,10 @@ export async function processJob(queue: string, payload: JobPayload) {
 
   try {
     if (queue === "shipment-booking") await bookShipment(supabase, payload);
+    else if (queue === "booking-queue-dispatch") {
+      const { runAutomaticDispatch } = await import("@/modules/booking-queue/scheduler");
+      await runAutomaticDispatch(supabase, payload.organizationId, jobId);
+    }
     else if (queue === "bulk-excel-import") {
       const { materializeBulkExcelImport } = await import("@/modules/india-post/bulk-excel-import");
       if (!payload.entityId) {

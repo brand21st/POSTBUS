@@ -141,3 +141,26 @@ export function queueRefetchInterval(summary: { counts?: { processing?: number }
 export function shortId(id: string | null | undefined) {
   return id ? id.slice(0, 8) : "—";
 }
+
+/**
+ * One line about the next automatic batch, from persisted values only (no client countdown).
+ * Null when booking is manual.
+ */
+export function nextBatchText(input: {
+  mode: "MANUAL" | "AUTOMATIC";
+  paused: boolean;
+  autoHoldUntil?: string | null;
+  batchThreshold: number;
+  readyCount: number;
+  nextTimeout: string | null;
+  formatTime: (iso: string) => string;
+}) {
+  if (input.mode !== "AUTOMATIC") return null;
+  if (input.paused) return "Automatic booking is paused.";
+  if (input.autoHoldUntil) return `On hold after repeated failures until ${input.formatTime(input.autoHoldUntil)}.`;
+  const threshold = input.batchThreshold.toLocaleString("en-IN");
+  if (!input.readyCount) return `Next batch starts when ${threshold} orders are ready.`;
+  return input.nextTimeout
+    ? `Next batch at ${threshold} ready orders, or by ${input.formatTime(input.nextTimeout)}.`
+    : `Next batch at ${threshold} ready orders.`;
+}

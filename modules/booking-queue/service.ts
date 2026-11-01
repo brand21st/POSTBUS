@@ -289,6 +289,27 @@ export function queueMirrorTarget(state: BookingQueueState, shipment: MirrorShip
 
 const ROLLUP_ACTIVE: ReadonlySet<string> = new Set(["BATCHED", "SUBMITTING"]);
 
+/**
+ * A notification when a run first lands in a state that needs a person: some articles failed, or
+ * India Post did not confirm some. Null when nothing changed or nothing needs attention.
+ */
+export function runAttentionNotice(previousStatus: string, rolled: ReturnType<typeof rollUpRun>) {
+  if (rolled.status === previousStatus) return null;
+  if (rolled.status === "RECOVERY_REQUIRED") {
+    return {
+      title: "Bulk Booking needs a check",
+      body: `${rolled.recovery} article${rolled.recovery === 1 ? "" : "s"} could not be confirmed with India Post. Open Bulk Booking to check them; they will not be sent again automatically.`,
+    };
+  }
+  if (rolled.status === "COMPLETED_WITH_ERRORS") {
+    return {
+      title: "Some Bulk Booking orders failed",
+      body: `${rolled.booked} booked, ${rolled.failed} failed. Open Bulk Booking to see why.`,
+    };
+  }
+  return null;
+}
+
 /** Run counts and status from its items. Exported for tests. */
 export function rollUpRun(states: string[]) {
   const booked = states.filter((state) => state === "BOOKED").length;
@@ -355,7 +376,13 @@ export async function syncQueueWithShipments(admin: SupabaseClient, organization
       .eq("organization_id", organizationId)
       .eq("run_id", runId);
     const rolled = rollUpRun((members ?? []).map((row) => String(row.state)));
-    await admin
+    const { data: before } = await admin
+      .from("booking_runs")
+      .select("status")
+      .eq("id", runId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    const { data: updated } = await admin
       .from("booking_runs")
       .update({
         status: rolled.status,
@@ -366,8 +393,25 @@ export async function syncQueueWithShipments(admin: SupabaseClient, organization
       })
       .eq("id", runId)
       .eq("organization_id", organizationId)
-      .in("status", ["DISPATCHING", "ACTIVE", "RECOVERY_REQUIRED", "COMPLETED_WITH_ERRORS"]);
+      .in("status", ["DISPATCHING", "ACTIVE", "RECOVERY_REQUIRED", "COMPLETED_WITH_ERRORS"])
+      .select("id")
+      .maybeSingle();
     counts.runs += 1;
+    const alert = runAttentionNotice(String(before?.status ?? ""), rolled);
+    if (updated && alert) {
+      try {
+        await admin.from("notifications").insert({
+          organization_id: organizationId,
+          type: "booking_queue.run_attention",
+          title: alert.title,
+          body: alert.body,
+          entity_type: "booking_run",
+          entity_id: runId,
+        });
+      } catch {
+        // Alerts are optional; the dashboard shows the same counts.
+      }
+    }
   }
   return counts;
 }
@@ -575,7 +619,16 @@ export type QueueSummary = {
   counts: Record<QueueSummaryBucket | "total", number>;
   oldestReadyAt: string | null;
   activeRuns: number;
-  settings: { mode: "MANUAL" | "AUTOMATIC"; batchThreshold: number; maxWaitMinutes: number | null; paused: boolean };
+  settings: {
+    mode: "MANUAL" | "AUTOMATIC";
+    batchThreshold: number;
+    maxWaitMinutes: number | null;
+    paused: boolean;
+    /** Automatic booking held itself after repeated failures, until this time. */
+    autoHoldUntil?: string | null;
+    lastError?: string | null;
+    lastDispatchAt?: string | null;
+  };
 };
 
 const DEFAULT_SETTINGS: QueueSummary["settings"] = { mode: "MANUAL", batchThreshold: 50, maxWaitMinutes: null, paused: false };
@@ -618,7 +671,7 @@ export async function queueSummary(supabase: SupabaseClient, ctx: TenantContext)
       .in("status", ["DISPATCHING", "ACTIVE"]),
     supabase
       .from("booking_automation_settings")
-      .select("mode, batch_threshold, max_wait_minutes, paused_at")
+      .select("mode, batch_threshold, max_wait_minutes, paused_at, auto_hold_until, last_error, last_dispatch_at")
       .eq("organization_id", ctx.organizationId)
       .maybeSingle(),
   ]);
@@ -639,6 +692,12 @@ export async function queueSummary(supabase: SupabaseClient, ctx: TenantContext)
           batchThreshold: Number(settings.data.batch_threshold) || DEFAULT_SETTINGS.batchThreshold,
           maxWaitMinutes: settings.data.max_wait_minutes == null ? null : Number(settings.data.max_wait_minutes),
           paused: Boolean(settings.data.paused_at),
+          autoHoldUntil:
+            settings.data.auto_hold_until && Date.parse(String(settings.data.auto_hold_until)) > Date.now()
+              ? String(settings.data.auto_hold_until)
+              : null,
+          lastError: (settings.data.last_error as string | null) ?? null,
+          lastDispatchAt: (settings.data.last_dispatch_at as string | null) ?? null,
         }
       : DEFAULT_SETTINGS,
   };

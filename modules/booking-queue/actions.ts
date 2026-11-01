@@ -163,7 +163,7 @@ type JobRow = {
 };
 
 /** Hands newly created booking jobs to whichever runner this deployment uses. */
-async function startJobs(admin: SupabaseClient, organizationId: string, jobIds: string[]) {
+export async function startBookingJobs(admin: SupabaseClient, organizationId: string, jobIds: string[]) {
   if (!jobIds.length) return;
   const { data } = await admin
     .from("background_jobs")
@@ -265,7 +265,7 @@ export async function dispatchItems(
   });
   // A replay never starts jobs again; the original request already did.
   if (!outcome.replayed) {
-    await startJobs(
+    await startBookingJobs(
       admin,
       ctx.organizationId,
       dispatched.map((row) => String(row.jobId ?? "")).filter(Boolean)

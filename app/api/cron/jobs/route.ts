@@ -64,6 +64,17 @@ export async function POST(request: NextRequest) {
       const { enqueueDueLedgerSyncJobs } = await import("@/modules/ai-accountant/ledger/schedule");
       await enqueueDueLedgerSyncJobs(createAdminClient());
     }
+    if (hasAdminClient() && (!jobTypes || jobTypes.includes("booking-queue-dispatch"))) {
+      // Automatic Bulk Booking: due workspaces get a dispatch job, drained below or next tick.
+      try {
+        const { enqueueDueBookingQueueDispatches } = await import("@/modules/booking-queue/scheduler");
+        await enqueueDueBookingQueueDispatches(createAdminClient());
+      } catch (scanError) {
+        logError("booking_queue.scan_failed", {
+          message: scanError instanceof Error ? scanError.message : "Bulk Booking scan failed.",
+        });
+      }
+    }
     const drained = await drainDueJobs(limit, jobTypes);
     let recovery: { enabled: boolean; recovered: number; skipped: number } | { error: string } = {
       enabled: false,

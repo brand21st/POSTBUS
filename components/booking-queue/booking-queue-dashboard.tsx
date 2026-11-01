@@ -12,6 +12,7 @@ import { historyColumns, queueColumns } from "@/components/booking-queue/queue-c
 import { ApproveAllWaiting, QueueBulkActions } from "@/components/booking-queue/queue-actions";
 import { QueueKpiStrip } from "@/components/booking-queue/queue-kpi-strip";
 import {
+  nextBatchText,
   parseQueueUrl,
   QUEUE_SOURCE_LABELS,
   QUEUE_SUMMARY_KEY,
@@ -30,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDate } from "@/lib/format";
+import { nextAutomaticTimeout } from "@/modules/booking-queue/planner";
 import { api } from "@/lib/hooks/use-api";
 import type { BookingHistoryRow, QueueListItem, QueueSummary } from "@/modules/booking-queue/service";
 
@@ -105,6 +107,17 @@ export function BookingQueueDashboard({ summary }: { summary: QueueSummary }) {
   const historyCols = useMemo(() => historyColumns(), []);
   const counts = liveSummary.data?.counts;
   const settings = liveSummary.data?.settings;
+  const nextBatch = settings
+    ? nextBatchText({
+        mode: settings.mode,
+        paused: settings.paused,
+        autoHoldUntil: settings.autoHoldUntil,
+        batchThreshold: settings.batchThreshold,
+        readyCount: counts?.ready ?? 0,
+        nextTimeout: nextAutomaticTimeout(liveSummary.data?.oldestReadyAt ?? null, settings.maxWaitMinutes),
+        formatTime: (iso) => formatDate(iso, true),
+      })
+    : null;
 
   const filters = (
     <div className="min-w-0 space-y-2 rounded-xl border border-border bg-card p-2 sm:p-2.5">
@@ -183,6 +196,12 @@ export function BookingQueueDashboard({ summary }: { summary: QueueSummary }) {
         <span>
           India Post transport: <span className="font-medium text-ink">one article per request</span>
         </span>
+        {nextBatch ? <span className="font-medium text-ink">{nextBatch}</span> : null}
+        {settings?.lastError ? (
+          <span className="text-red-700" title={settings.lastError}>
+            Last automatic booking error: {settings.lastError}
+          </span>
+        ) : null}
         <span>
           Oldest ready order:{" "}
           <span className="font-medium text-ink">
