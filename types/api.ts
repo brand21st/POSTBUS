@@ -386,6 +386,7 @@ export type ShipmentRecord = {
   width_cm?: number | null;
   heightCm?: number | null;
   height_cm?: number | null;
+  metadata?: Record<string, unknown> | null;
   shape?: string | null;
   tariffAmount?: number | string | null;
   tariff_amount?: number | string | null;

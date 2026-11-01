@@ -4,6 +4,7 @@ import { barcodeForSelectedService } from "@/modules/india-post/barcode";
 import { mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import { assertValidatedArticle } from "@/modules/india-post/article-validator";
 import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/modules/india-post/parcel-defaults";
+import { isStrictParcelDimensionsOrg } from "@/modules/shopify/strict-parcel-dimensions";
 import { indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
 import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
 import { splitIndiaPostBookingResult, type IndiaPostBookingResponse } from "@/modules/india-post/booking-apply";
@@ -577,6 +578,7 @@ export async function runIndiaPostBooking(
         Number(shipment.height_cm) > 0
       );
       const missingWeight = !(Number(shipment.weight_grams) > 0);
+      const strictOrg = isStrictParcelDimensionsOrg(input.organizationId);
       const draft = applyWorkspaceParcelDefaults(
         mapShipmentToArticle({
         orderId: shipment.order_id,
@@ -614,7 +616,8 @@ export async function runIndiaPostBooking(
         strictWeight: true,
         strictDimensions: true,
       }),
-        parcelDefaultsFromConnection(connection)
+        parcelDefaultsFromConnection(connection),
+        { syntheticDimensions: !strictOrg }
       );
       const validated = assertValidatedArticle(draft);
       prepared.push({
@@ -629,6 +632,7 @@ export async function runIndiaPostBooking(
       const message = error instanceof Error ? error.message : "Validation failed.";
       const code = String((error as { code?: string })?.code || "VALIDATION_ERROR");
       await markShipmentBookingFailed(supabase, shipment.id, message, code, input.organizationId);
+      if (!failedIds.includes(shipment.id)) failedIds.push(shipment.id);
       if (pending.length === 1) throw tagPrePostBookingError(Object.assign(new Error(message), { code }));
     }
   }

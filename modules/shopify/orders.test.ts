@@ -968,21 +968,21 @@ describe("shopify product shipping hydrate", () => {
     expect(shopifyLineItemWeightGrams(item)).toBe(500);
   });
 
-  it("clamps Shopify box size to India Post parcel limits", () => {
+  it("keeps a measured Shopify box instead of raising it to India Post minima", () => {
     expect(
       shopifyParcelFromLineItems([
         { title: "Kurta", quantity: 1, grams: 400, length_cm: 10, width_cm: 8, height_cm: 5 },
       ])
-    ).toEqual({ weightGrams: 400, lengthCm: 14, widthCm: 9, heightCm: 5 });
+    ).toEqual({ weightGrams: 400, lengthCm: 10, widthCm: 8, heightCm: 5 });
   });
 
-  it("takes the max box across line items and sums weight", () => {
+  it("does not combine different product boxes into one invented size", () => {
     expect(
       shopifyParcelFromLineItems([
         { title: "A", quantity: 2, grams: 200, length_cm: 20, width_cm: 10, height_cm: 8 },
         { title: "B", quantity: 1, grams: 300, length_cm: 30, width_cm: 12, height_cm: 4 },
       ])
-    ).toEqual({ weightGrams: 700, lengthCm: 30, widthCm: 12, heightCm: 8 });
+    ).toEqual({ weightGrams: 700, lengthCm: null, widthCm: null, heightCm: null });
   });
 
   it("keeps size empty when Shopify has weight but no dimensions", () => {
@@ -1015,7 +1015,7 @@ describe("shopify product shipping hydrate", () => {
       [{ title: "Kurta", quantity: 1, grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
       { lengthCm: 30, widthCm: 20, heightCm: 12, weightGrams: 800 }
     );
-    expect(metafieldDims).toEqual({ lengthCm: 20, widthCm: 15, heightCm: 10 });
+    expect(metafieldDims).toEqual({ lengthCm: 20, widthCm: 15, heightCm: 10, dimensionSource: "shopify" });
     expect(
       shopifyResolvedShipmentDims([{ title: "Kurta", quantity: 1, grams: 500 }], {
         lengthCm: 30,
@@ -1023,7 +1023,7 @@ describe("shopify product shipping hydrate", () => {
         heightCm: 12,
         weightGrams: 800,
       })
-    ).toEqual({ lengthCm: 30, widthCm: 20, heightCm: 12 });
+    ).toEqual({ lengthCm: 30, widthCm: 20, heightCm: 12, dimensionSource: "postbus_default" });
   });
 
   it("does not invent Shopify saved-package dimensions when none were fetched", () => {
@@ -1055,7 +1055,7 @@ describe("shopify product shipping hydrate", () => {
     ]);
   });
 
-  it("passes clamped Shopify dimensions into shipment create", async () => {
+  it("passes measured Shopify dimensions into shipment create", async () => {
     createShipmentsForOrders.mockClear();
     const result = await upsertShopifyOrder(newOrderClient() as never, {
       organizationId: "org-1",
@@ -1082,7 +1082,15 @@ describe("shopify product shipping hydrate", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 14, widthCm: 9, heightCm: 5 }
+      expect.objectContaining({
+        enqueueBooking: false,
+        runBookingNow: false,
+        setOrderProcessing: false,
+        lengthCm: 10,
+        widthCm: 8,
+        heightCm: 5,
+        dimensionSource: "shopify",
+      })
     );
   });
 
@@ -1121,7 +1129,12 @@ describe("shopify product shipping hydrate", () => {
       expect.arrayContaining([
         {
           table: "shipments",
-          payload: { length_cm: 20, width_cm: 15, height_cm: 10, weight_grams: 500 },
+          payload: expect.objectContaining({
+            length_cm: 20,
+            width_cm: 15,
+            height_cm: 10,
+            weight_grams: 500,
+          }),
         },
       ])
     );

@@ -80,6 +80,8 @@ export const env = {
   // Outbound merchant webhooks. Empty allowlist sends nothing. MERCHANT_WEBHOOKS_ENABLED=false stops fan-out.
   merchantWebhooksEnabled: optional(process.env.MERCHANT_WEBHOOKS_ENABLED).toLowerCase() !== "false",
   merchantWebhooksOrgAllowlist: optional(process.env.MERCHANT_WEBHOOKS_ORG_ALLOWLIST),
+  // Empty keeps live 14 × 9 × 1 cm booking fill. Comma-separated organization UUIDs, or * for every workspace.
+  strictParcelDimensionsOrgIds: optional(process.env.POSTBUS_STRICT_PARCEL_DIMENSIONS_ORG_IDS),
 };
 
 assertStagingAuthIsolation({

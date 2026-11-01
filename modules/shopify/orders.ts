@@ -32,6 +32,18 @@ import {
 import { selectActiveShopifyLineItems } from "@/modules/shopify/line-items";
 import { shopifyLineItemGid } from "@/modules/shopify/eligibility";
 import type { FulfillmentStatus } from "@/types/domain";
+import {
+  dimsFromMetafieldEntries,
+  mergeParcelDimensionsMetadata,
+  manualDimensionLock,
+  parcelDimensionsMetadata,
+  readParcelDimensionSource,
+  resolveShipmentDimensions,
+  type DimensionSource,
+  type MetafieldEntry,
+  type PackageOption,
+  type ShipmentUnit,
+} from "@/modules/shopify/dimensions";
 
 export {
   isShopifyCodGateway,
@@ -39,6 +51,8 @@ export {
   mapShopifyPaymentStatus,
   normalizeShopifyPaymentFields,
 } from "@/modules/shopify/payment";
+
+export { shopifyDimensionToCm } from "@/modules/shopify/dimensions";
 
 export const SHOPIFY_API_VERSION = "2025-01";
 export const SHOPIFY_GRAPHQL_API_VERSION = "2026-04";
@@ -242,35 +256,13 @@ type ShopifyVariantShipping = {
   heightCm?: number | null;
 };
 
-const SHOPIFY_PARCEL_LENGTH_CM = { min: 14, max: 150 };
-const SHOPIFY_PARCEL_WIDTH_CM = { min: 9, max: 150 };
-const SHOPIFY_PARCEL_HEIGHT_CM = { min: 1, max: 150 };
-
-const SHOPIFY_CM_PER_UNIT: Record<string, number> = {
-  cm: 1,
-  centimeter: 1,
-  centimeters: 1,
-  mm: 0.1,
-  millimeter: 0.1,
-  millimeters: 0.1,
-  in: 2.54,
-  inch: 2.54,
-  inches: 2.54,
-  ft: 30.48,
-  foot: 30.48,
-  feet: 30.48,
-  m: 100,
-  meter: 100,
-  meters: 100,
-  metre: 100,
-  metres: 100,
-};
-
 const SHOPIFY_VARIANT_SHIPPING_QUERY = `
   query ShopifyVariantShipping($ids: [ID!]!) {
     nodes(ids: $ids) {
       ... on ProductVariant {
         id
+        metafields(first: 25) { nodes { namespace key value type } }
+        product { metafields(first: 25) { nodes { namespace key value type } } }
         customLength: metafield(namespace: "custom", key: "length") { value type }
         customWidth: metafield(namespace: "custom", key: "width") { value type }
         customHeight: metafield(namespace: "custom", key: "height") { value type }
@@ -777,42 +769,6 @@ export function shopifyVariantGid(id: number | string | null | undefined) {
   return `gid://shopify/ProductVariant/${raw}`;
 }
 
-function clampShopifyCm(value: number, min: number, max: number) {
-  if (!Number.isFinite(value) || value <= 0) return null;
-  const rounded = Math.round(value * 10) / 10;
-  return Math.min(max, Math.max(min, rounded));
-}
-
-export function shopifyDimensionToCm(value: unknown, unit?: string | null): number | null {
-  if (value == null || value === "") return null;
-  if (typeof value === "object") {
-    const row = value as { value?: unknown; unit?: string | null };
-    return shopifyDimensionToCm(row.value, row.unit ?? unit);
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-      try {
-        return shopifyDimensionToCm(JSON.parse(trimmed) as unknown, unit);
-      } catch {
-        // Fall through to numeric + unit suffix parsing.
-      }
-    }
-    const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/);
-    if (match) {
-      return shopifyDimensionToCm(Number(match[1]), match[2] || unit);
-    }
-  }
-  const amount = shopifyNumeric(value);
-  if (amount == null || amount <= 0) return null;
-  const key = String(unit || "cm").trim().toLowerCase();
-  const factor = SHOPIFY_CM_PER_UNIT[key] ?? (key.endsWith("s") ? SHOPIFY_CM_PER_UNIT[key.slice(0, -1)] : undefined);
-  if (!factor) return amount;
-  const cm = amount * factor;
-  return cm > 0 ? cm : null;
-}
-
 function metafieldMapFromVariantNode(node: Record<string, unknown> | null | undefined) {
   const map = new Map<string, string>();
   if (!node) return map;
@@ -824,48 +780,57 @@ function metafieldMapFromVariantNode(node: Record<string, unknown> | null | unde
   return map;
 }
 
-function dimsFromMetafields(fields: Map<string, string>): { lengthCm: number; widthCm: number; heightCm: number } | null {
-  const groups = [
-    ["custom.length", "custom.width", "custom.height"],
-    ["custom.length_cm", "custom.width_cm", "custom.height_cm"],
-    ["custom.package_length", "custom.package_width", "custom.package_height"],
-    ["shipping.length", "shipping.width", "shipping.height"],
-    ["shipping.length_cm", "shipping.width_cm", "shipping.height_cm"],
-  ] as const;
-  for (const [lengthKey, widthKey, heightKey] of groups) {
-    const lengthCm = shopifyDimensionToCm(fields.get(lengthKey));
-    const widthCm = shopifyDimensionToCm(fields.get(widthKey));
-    const heightCm = shopifyDimensionToCm(fields.get(heightKey));
-    if (lengthCm && widthCm && heightCm) return { lengthCm, widthCm, heightCm };
+function dimsFromMetafields(fields: Map<string, string>) {
+  const entries: MetafieldEntry[] = [];
+  for (const [key, value] of fields) {
+    const dot = key.indexOf(".");
+    entries.push({
+      namespace: dot >= 0 ? key.slice(0, dot) : "custom",
+      key: dot >= 0 ? key.slice(dot + 1) : key,
+      value,
+    });
   }
-  return null;
+  return dimsFromMetafieldEntries(entries);
+}
+
+function metafieldNodes(value: unknown): MetafieldEntry[] {
+  const nodes = (value as { nodes?: MetafieldEntry[] } | null | undefined)?.nodes;
+  return Array.isArray(nodes) ? nodes : [];
+}
+
+export function shopifyShipmentUnits(items: ShopifyRemoteLineItem[]): ShipmentUnit[] {
+  const units: ShipmentUnit[] = [];
+  for (const item of items) {
+    if (item.requires_shipping === false) continue;
+    const remaining = item.unfulfilled_quantity ?? item.fulfillable_quantity ?? item.quantity;
+    const quantity = remaining == null ? 0 : Number(remaining) || 0;
+    if (quantity <= 0) continue;
+    units.push({
+      quantity,
+      lengthCm: shopifyNumeric(item.length_cm),
+      widthCm: shopifyNumeric(item.width_cm),
+      heightCm: shopifyNumeric(item.height_cm),
+    });
+  }
+  return units;
 }
 
 export function shopifyParcelFromLineItems(items: ShopifyRemoteLineItem[]): ShopifyParcelDims {
   let weightGrams = 0;
-  let maxL = 0;
-  let maxW = 0;
-  let maxH = 0;
-  let hasBox = false;
   for (const item of items) {
-    const quantity = Number(item.quantity) || 1;
+    if (item.requires_shipping === false) continue;
+    const remaining = item.unfulfilled_quantity ?? item.fulfillable_quantity ?? item.quantity;
+    const quantity = remaining == null ? 0 : Number(remaining) || 0;
     const grams = shopifyLineItemWeightGrams(item);
     if (grams && quantity > 0) weightGrams += grams * quantity;
-    const lengthCm = shopifyNumeric(item.length_cm);
-    const widthCm = shopifyNumeric(item.width_cm);
-    const heightCm = shopifyNumeric(item.height_cm);
-    if (lengthCm && widthCm && heightCm && lengthCm > 0 && widthCm > 0 && heightCm > 0) {
-      hasBox = true;
-      maxL = Math.max(maxL, lengthCm);
-      maxW = Math.max(maxW, widthCm);
-      maxH = Math.max(maxH, heightCm);
-    }
   }
+  const resolved = resolveShipmentDimensions({ units: shopifyShipmentUnits(items) });
+  const single = resolved?.source === "shopify" ? resolved : null;
   return {
     weightGrams: weightGrams > 0 ? Math.round(weightGrams) : null,
-    lengthCm: hasBox ? clampShopifyCm(maxL, SHOPIFY_PARCEL_LENGTH_CM.min, SHOPIFY_PARCEL_LENGTH_CM.max) : null,
-    widthCm: hasBox ? clampShopifyCm(maxW, SHOPIFY_PARCEL_WIDTH_CM.min, SHOPIFY_PARCEL_WIDTH_CM.max) : null,
-    heightCm: hasBox ? clampShopifyCm(maxH, SHOPIFY_PARCEL_HEIGHT_CM.min, SHOPIFY_PARCEL_HEIGHT_CM.max) : null,
+    lengthCm: single?.lengthCm ?? null,
+    widthCm: single?.widthCm ?? null,
+    heightCm: single?.heightCm ?? null,
   };
 }
 
@@ -873,36 +838,83 @@ export type ShopifyShipmentDimExtras = {
   lengthCm?: number;
   widthCm?: number;
   heightCm?: number;
+  dimensionSource?: DimensionSource;
+  dimensionPackageId?: string;
+  dimensionPackageName?: string;
 };
 
-export function shopifyShipmentParcelExtras(lineItems: ShopifyRemoteLineItem[]): ShopifyShipmentDimExtras {
-  const parcel = shopifyParcelFromLineItems(lineItems);
-  if (parcel.lengthCm == null || parcel.widthCm == null || parcel.heightCm == null) return {};
-  return { lengthCm: parcel.lengthCm, widthCm: parcel.widthCm, heightCm: parcel.heightCm };
+export function shopifyShipmentParcelExtras(
+  lineItems: ShopifyRemoteLineItem[],
+  workspace?: WorkspaceParcelDefaults | null,
+  packages?: PackageOption[]
+): ShopifyShipmentDimExtras {
+  return shopifyResolvedShipmentDims(lineItems, workspace, packages);
 }
 
-/** Metafield box first; else complete workspace L×W×H. Saved Shopify packages are not readable on Admin 2026-04. */
+/** Metafield box first; else one PostBus package or merchant default. Saved Shopify packages are not readable on Admin 2026-04. */
 export function shopifyResolvedShipmentDims(
   lineItems: ShopifyRemoteLineItem[],
-  workspace?: WorkspaceParcelDefaults | null
+  workspace?: WorkspaceParcelDefaults | null,
+  packages?: PackageOption[]
 ): ShopifyShipmentDimExtras {
-  const fromItems = shopifyShipmentParcelExtras(lineItems);
-  if (fromItems.lengthCm != null && fromItems.widthCm != null && fromItems.heightCm != null) {
-    return fromItems;
+  const resolved = resolveShipmentDimensions({
+    units: shopifyShipmentUnits(lineItems),
+    packages,
+    defaultPackage:
+      workspace?.lengthCm != null && workspace.widthCm != null && workspace.heightCm != null
+        ? { lengthCm: workspace.lengthCm, widthCm: workspace.widthCm, heightCm: workspace.heightCm }
+        : null,
+  });
+  if (!resolved) return {};
+  return {
+    lengthCm: resolved.lengthCm,
+    widthCm: resolved.widthCm,
+    heightCm: resolved.heightCm,
+    dimensionSource: resolved.source,
+    ...(resolved.packageId ? { dimensionPackageId: resolved.packageId } : {}),
+    ...(resolved.packageName ? { dimensionPackageName: resolved.packageName } : {}),
+  };
+}
+
+function shipmentDimChoice(extras: ShopifyShipmentDimExtras) {
+  if (extras.lengthCm == null || extras.widthCm == null || extras.heightCm == null || !extras.dimensionSource) {
+    return null;
   }
-  const lengthCm = workspace?.lengthCm != null
-    ? clampShopifyCm(workspace.lengthCm, SHOPIFY_PARCEL_LENGTH_CM.min, SHOPIFY_PARCEL_LENGTH_CM.max)
-    : null;
-  const widthCm = workspace?.widthCm != null
-    ? clampShopifyCm(workspace.widthCm, SHOPIFY_PARCEL_WIDTH_CM.min, SHOPIFY_PARCEL_WIDTH_CM.max)
-    : null;
-  const heightCm = workspace?.heightCm != null
-    ? clampShopifyCm(workspace.heightCm, SHOPIFY_PARCEL_HEIGHT_CM.min, SHOPIFY_PARCEL_HEIGHT_CM.max)
-    : null;
-  if (lengthCm != null && widthCm != null && heightCm != null) {
-    return { lengthCm, widthCm, heightCm };
+  return {
+    lengthCm: extras.lengthCm,
+    widthCm: extras.widthCm,
+    heightCm: extras.heightCm,
+    source: extras.dimensionSource,
+    packageId: extras.dimensionPackageId,
+    packageName: extras.dimensionPackageName,
+  };
+}
+
+async function loadOrganizationPackages(supabase: SupabaseClient, organizationId: string): Promise<PackageOption[]> {
+  try {
+    const { data, error } = await supabase
+      .from("user_shipment_presets")
+      .select("id, name, length_cm, width_cm, height_cm")
+      .eq("organization_id", organizationId);
+    if (error || !Array.isArray(data)) return [];
+    return data.flatMap((row) => {
+      const lengthCm = Number((row as { length_cm?: number }).length_cm);
+      const widthCm = Number((row as { width_cm?: number }).width_cm);
+      const heightCm = Number((row as { height_cm?: number }).height_cm);
+      if (!(lengthCm > 0 && widthCm > 0 && heightCm > 0)) return [];
+      return [
+        {
+          id: String((row as { id?: string }).id ?? ""),
+          name: String((row as { name?: string }).name ?? "Package"),
+          lengthCm,
+          widthCm,
+          heightCm,
+        },
+      ];
+    });
+  } catch {
+    return [];
   }
-  return {};
 }
 
 async function loadWorkspaceParcelDefaults(supabase: SupabaseClient, organizationId: string) {
@@ -1118,13 +1130,15 @@ async function applyShopifyParcelToShipment(
 ) {
   const parcel = shopifyParcelFromLineItems(input.lineItems);
   const workspace = await loadWorkspaceParcelDefaults(supabase, input.organizationId);
-  const extras = shopifyResolvedShipmentDims(input.lineItems, workspace);
+  const packages = await loadOrganizationPackages(supabase, input.organizationId);
+  const extras = shopifyResolvedShipmentDims(input.lineItems, workspace, packages);
+  const choice = shipmentDimChoice(extras);
   const orderLocked = SHOPIFY_WEIGHT_LOCKED_ORDER.has((input.orderStatus ?? "").toUpperCase());
   if (orderLocked) return;
 
   const { data: shipments } = await supabase
     .from("shipments")
-    .select("id, status, length_cm, width_cm, height_cm, weight_grams")
+    .select("id, status, length_cm, width_cm, height_cm, weight_grams, metadata")
     .eq("organization_id", input.organizationId)
     .eq("order_id", input.orderId);
   const rows = Array.isArray(shipments) ? shipments : [];
@@ -1168,6 +1182,7 @@ async function applyShopifyParcelToShipment(
     .eq("id", input.orderId)
     .maybeSingle();
   const autoWeight = String((order as { parcel_weight_mode?: string } | null)?.parcel_weight_mode ?? "auto").toLowerCase() !== "manual";
+  const singleOpenShipment = unlocked.length === 1;
 
   for (const row of unlocked as Array<{
     id: string;
@@ -1175,14 +1190,24 @@ async function applyShopifyParcelToShipment(
     width_cm?: number | null;
     height_cm?: number | null;
     weight_grams?: number | null;
+    metadata?: unknown;
   }>) {
     const hasDims =
       Number(row.length_cm) > 0 && Number(row.width_cm) > 0 && Number(row.height_cm) > 0;
-    const patch: Record<string, number> = {};
-    if (!hasDims && extras.lengthCm != null && extras.widthCm != null && extras.heightCm != null) {
-      patch.length_cm = extras.lengthCm;
-      patch.width_cm = extras.widthCm;
-      patch.height_cm = extras.heightCm;
+    const existingSource = readParcelDimensionSource(row.metadata);
+    const patch: Record<string, unknown> = {};
+    const replaceDefault = existingSource === "postbus_default" && choice != null && choice.source !== "postbus_default";
+    const refreshShopify = existingSource === "shopify" && choice?.source === "shopify";
+    if (
+      singleOpenShipment &&
+      choice &&
+      !manualDimensionLock(existingSource) &&
+      (!hasDims || replaceDefault || refreshShopify)
+    ) {
+      patch.length_cm = choice.lengthCm;
+      patch.width_cm = choice.widthCm;
+      patch.height_cm = choice.heightCm;
+      patch.metadata = mergeParcelDimensionsMetadata(row.metadata, parcelDimensionsMetadata(choice));
     }
     if (autoWeight && parcel.weightGrams != null && parcel.weightGrams >= 1) {
       patch.weight_grams = parcel.weightGrams;
@@ -2591,7 +2616,10 @@ async function fetchShopifyProductsByIds(shop: string, token: string, productIds
 }
 
 export function parseShopifyVariantShippingNode(node: Record<string, unknown> | null | undefined): ShopifyVariantShipping {
-  const dims = dimsFromMetafields(metafieldMapFromVariantNode(node));
+  const product = node?.product as { metafields?: unknown } | null | undefined;
+  const dims =
+    dimsFromMetafields(metafieldMapFromVariantNode(node)) ??
+    dimsFromMetafieldEntries([...metafieldNodes(node?.metafields), ...metafieldNodes(product?.metafields)]);
   return {
     grams: null,
     weight: null,

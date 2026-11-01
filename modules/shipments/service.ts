@@ -20,6 +20,7 @@ import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { INDIA_POST_SERVICES } from "@/types/domain";
 import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 import { merchantSmartAutoRetryView, resumeSmartAutoRetryAfterCorrection } from "@/modules/india-post/smart-auto-retry";
+import { parcelDimensionsMetadata } from "@/modules/shopify/dimensions";
 
 const OPEN_SHIPMENT_STATUSES = ["DRAFT", "QUEUED", "FAILED"] as const;
 
@@ -121,6 +122,9 @@ export async function createShipmentsForOrders(
     lengthCm?: number;
     widthCm?: number;
     heightCm?: number;
+    dimensionSource?: "shopify" | "postbus_package" | "postbus_default" | "postbus";
+    dimensionPackageId?: string;
+    dimensionPackageName?: string;
     serviceCode?: string;
     enqueueBooking?: boolean;
     runBookingNow?: boolean;
@@ -413,6 +417,20 @@ export async function createShipmentsForOrders(
         length_cm: extras?.lengthCm ?? null,
         width_cm: extras?.widthCm ?? null,
         height_cm: extras?.heightCm ?? null,
+        ...(extras?.dimensionSource && extras.lengthCm && extras.widthCm && extras.heightCm
+          ? {
+              metadata: {
+                parcelDimensions: parcelDimensionsMetadata({
+                  lengthCm: extras.lengthCm,
+                  widthCm: extras.widthCm,
+                  heightCm: extras.heightCm,
+                  source: extras.dimensionSource,
+                  packageId: extras.dimensionPackageId,
+                  packageName: extras.dimensionPackageName,
+                }),
+              },
+            }
+          : {}),
         status: enqueueBooking ? "QUEUED" : "DRAFT",
       })
       .select()
@@ -697,7 +715,7 @@ export async function updateShipmentDimensions(
 ) {
   const { data: shipment, error } = await supabase
     .from("shipments")
-    .select("id, status, order_id, organization_id")
+    .select("id, status, order_id, organization_id, metadata")
     .eq("organization_id", ctx.organizationId)
     .eq("id", shipmentId)
     .maybeSingle();
@@ -767,6 +785,15 @@ export async function updateShipmentDimensions(
     length_cm: input.lengthCm,
     width_cm: input.widthCm,
     height_cm: input.heightCm,
+    metadata: {
+      ...((shipment as { metadata?: Record<string, unknown> }).metadata ?? {}),
+      parcelDimensions: parcelDimensionsMetadata({
+        lengthCm: input.lengthCm,
+        widthCm: input.widthCm,
+        heightCm: input.heightCm,
+        source: "postbus",
+      }),
+    },
   };
   if (boxWeight != null && boxWeight > 0) {
     updatePayload.weight_grams = boxWeight;

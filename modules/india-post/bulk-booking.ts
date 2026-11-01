@@ -21,6 +21,7 @@ import { createManualOrder } from "@/modules/orders/service";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
 import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/modules/india-post/parcel-defaults";
+import { isStrictParcelDimensionsOrg } from "@/modules/shopify/strict-parcel-dimensions";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
@@ -379,7 +380,8 @@ export async function validateOrdersForBooking(
       strictWeight: true,
       strictDimensions: true,
     }),
-      parcelDefaultsFromConnection(store.connection)
+      parcelDefaultsFromConnection(store.connection),
+      { syntheticDimensions: !isStrictParcelDimensionsOrg(ctx.organizationId) }
     );
     const rowIssues = validateIndiaPostArticle(draft);
     if (draft.barcode) {
@@ -591,7 +593,8 @@ export async function validateExcelBuffer(
         };
       })(),
     }),
-      parcelDefaultsFromConnection(store.connection)
+      parcelDefaultsFromConnection(store.connection),
+      { syntheticDimensions: !isStrictParcelDimensionsOrg(ctx.organizationId) }
     );
     if (indiaPostRequiresOtp(serviceCode)) {
       if (article.otp && ["0", "FALSE", "false", ""].includes(article.otp)) {

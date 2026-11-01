@@ -19,7 +19,10 @@ import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
 import { orderNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
-import { isIndiaPostAcceptedStatus, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { indiaPostStatusOf, isIndiaPostAcceptedStatus, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { dimensionSourceLabel, formatParcelSize, readParcelDimensionSource } from "@/modules/shopify/dimensions";
+import { isStrictParcelDimensionsOrg } from "@/modules/shopify/strict-parcel-dimensions";
+import { useMe } from "@/lib/hooks/use-me";
 import { isParcelArticle } from "@/modules/india-post/article-validator";
 import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
 import type { OrderRecord } from "@/types/api";
@@ -77,6 +80,12 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const width = Number(shipment?.widthCm ?? shipment?.width_cm ?? 0);
   const height = Number(shipment?.heightCm ?? shipment?.height_cm ?? 0);
   const hasDimensions = length > 0 && width > 0 && height > 0;
+  const me = useMe();
+  const strictOrg = isStrictParcelDimensionsOrg(me.data?.organization?.id);
+  const sourceLabel = dimensionSourceLabel(
+    readParcelDimensionSource((shipment as { metadata?: unknown } | null | undefined)?.metadata)
+  );
+  const sizeLabel = formatParcelSize(length, width, height);
 
   const currentWeightGrams = bookingBoxWeightGrams({
     parcelWeightMode: order.parcelWeightMode ?? order.parcel_weight_mode,
@@ -102,10 +111,11 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const isParcel = isParcelArticle(serviceCode, currentWeightGrams);
 
   const shipmentStatus = shipment?.status;
+  const shipmentStatusName = indiaPostStatusOf(shipmentStatus);
   const isLocked =
     Boolean(disabled) ||
     isIndiaPostAcceptedStatus(shipmentStatus) ||
-    isIndiaPostBookingInFlight(shipmentStatus);
+    (isIndiaPostBookingInFlight(shipmentStatus) && shipmentStatusName !== "QUEUED");
 
   const lineItemsList = (order.lineItems ?? order.line_items ?? []).filter(
     (item): item is typeof item & { id: string } => Boolean(item.id)
@@ -244,7 +254,6 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const parsedBoxWeight = Number(boxWeightInput) || 0;
   const billableWeightGrams = Math.max(parsedBoxWeight, volumetricGrams);
 
-  const sizeLabel = `${length} × ${width} × ${height} cm`;
   const needsSetup = !hasDimensions || !hasWeight;
 
   // 1. Non-parcel (e.g. Speed Post DOC)
@@ -266,8 +275,10 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   }
 
   const optionalHint = isLocked
-    ? " You can still ship; India Post uses Settings defaults when these are empty."
-    : " Optional — click to add. If skipped, India Post uses Settings → Shipping defaults.";
+    ? " This shipment is already with India Post and its size cannot be changed."
+    : strictOrg
+      ? " Parcel length, width, and height are required before booking unless Settings has a default package."
+      : " Optional — click to add. If skipped, India Post uses Settings → Shipping defaults.";
 
   let triggerContent: React.ReactNode;
   let triggerTitle: string;
@@ -309,15 +320,16 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
     );
   } else {
     triggerTitle = isLocked
-      ? `Parcel ${sizeLabel} · ${currentWeightGrams}g · Booked`
-      : `Parcel ${sizeLabel} · ${currentWeightGrams}g · Click to edit`;
+      ? `Parcel ${sizeLabel} · ${currentWeightGrams}g · Booked${sourceLabel ? ` · ${sourceLabel}` : ""}`
+      : `Parcel ${sizeLabel} · ${currentWeightGrams}g · Click to edit${sourceLabel ? ` · ${sourceLabel}` : ""}`;
     triggerContent = (
       <ParcelPill tone="ok">
         <Check className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
         <span className="tabular-nums font-medium">
-          {length}×{width}×{height}
+          {sizeLabel}
           {currentWeightGrams > 0 ? ` · ${currentWeightGrams}g` : ""}
         </span>
+        {sourceLabel ? <span className="font-medium text-muted">{sourceLabel}</span> : null}
       </ParcelPill>
     );
   }
@@ -366,7 +378,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                     {needsSetup ? "Add parcel size" : "Edit parcel"}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-muted">
-                    Order {orderNumber(order)} · Optional. Empty fields use Settings defaults at booking.
+                    Order {orderNumber(order)} · {strictOrg ? "Size is required unless Settings has a default package." : "Optional. Empty fields use Settings defaults at booking."}
                   </DialogDescription>
                 </div>
               </div>
@@ -376,9 +388,13 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
               {needsSetup ? (
                 <p className="rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
                   {!hasDimensions && !hasWeight
-                    ? "You can still ship without entering these. India Post booking will use Settings → Shipping defaults (or 14 × 9 × 1 cm and 100 g)."
+                    ? strictOrg
+                      ? "Parcel length, width, and height are required before booking when Settings has no default package. Empty weight uses the Settings weight, or 100 g."
+                      : "You can still ship without entering these. India Post booking will use Settings → Shipping defaults (or 14 × 9 × 1 cm and 100 g)."
                     : !hasDimensions
-                      ? `Weight is ${currentWeightGrams}g. Size is optional — add L × W × H here, or booking uses Settings defaults.`
+                      ? strictOrg
+                        ? `Weight is ${currentWeightGrams}g. Enter length, width, and height. Booking stops if Settings has no default package.`
+                        : `Weight is ${currentWeightGrams}g. Size is optional — add L × W × H here, or booking uses Settings defaults.`
                       : "Size is saved. Weight is optional — add it here, or booking uses the Settings default weight."}
                 </p>
               ) : null}
