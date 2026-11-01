@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
 import { ShopifyPaymentConfirm } from "@/components/orders/shopify-payment-confirm";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
+import { AddToQueueButton } from "@/components/booking-queue/add-to-queue-button";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import {
   OrderDateFilter,
@@ -1011,6 +1012,11 @@ export default function OrdersPage() {
                   size="xs"
                   onQueued={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
                 />
+                <AddToQueueButton
+                  selectedIds={selected}
+                  size="xs"
+                  onAdded={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
+                />
               </>
             ) : null}
             <Link href="/dashboard/orders/bulk-excel" className={buttonVariants({ variant: "secondary", size: "xs" })}>
@@ -1143,6 +1149,10 @@ export default function OrdersPage() {
                     selectedIds={selected}
                     size="sm"
                     onQueued={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
+                  />
+                  <AddToQueueButton
+                    selectedIds={selected}
+                    onAdded={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
                   />
                 </>
               ) : null}

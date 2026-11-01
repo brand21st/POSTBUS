@@ -73,9 +73,28 @@ function issuesOf(row: ImportRow) {
   return (row.issues ?? []).map((issue) => issue.error).filter(Boolean).join("; ");
 }
 
-export function BulkExcelWizard() {
+/** Wizard step for a saved import, so a refresh or a shared link resumes where it was. */
+export function wizardStepForImportStatus(status: string) {
+  if (status === "booking" || status === "completed") return 4;
+  if (status === "validated") return 2;
+  if (status === "draft") return 3;
+  return 1;
+}
+
+export function BulkExcelWizard({
+  embedded = false,
+  initialBatchId = null,
+  onBatchChange,
+}: {
+  /** Inside the Bulk Booking dashboard: no page header of its own. */
+  embedded?: boolean;
+  /** Resume a saved import (from ?import=). */
+  initialBatchId?: string | null;
+  onBatchChange?: (batchId: string | null) => void;
+} = {}) {
   const [step, setStep] = useState(0);
-  const [batchId, setBatchId] = useState<string | null>(null);
+  const [batchId, setBatchId] = useState<string | null>(initialBatchId);
+  const [resuming, setResuming] = useState(Boolean(initialBatchId));
   const [map, setMap] = useState<Record<string, string>>({});
   const [profileName, setProfileName] = useState("");
   const [serviceCode, setServiceCode] = useState("SP_INLAND_PARCEL");
@@ -90,7 +109,16 @@ export function BulkExcelWizard() {
   const batch = useQuery({
     queryKey: ["bulk-excel", batchId],
     enabled: Boolean(batchId) && step < 4,
-    queryFn: () => api<ImportBatch>(`/api/v1/bookings/excel-imports/${batchId}`),
+    queryFn: async () => {
+      const data = await api<ImportBatch>(`/api/v1/bookings/excel-imports/${batchId}`);
+      if (resuming) {
+        setResuming(false);
+        setMap(data.columnMap);
+        setServiceCode(data.serviceCode || "SP_INLAND_PARCEL");
+        setStep(wizardStepForImportStatus(data.status));
+      }
+      return data;
+    },
   });
 
   const progress = useQuery({
@@ -126,6 +154,7 @@ export function BulkExcelWizard() {
     },
     onSuccess: (data) => {
       setBatchId(data.id);
+      onBatchChange?.(data.id);
       setMap(data.columnMap);
       setServiceCode(data.serviceCode || "SP_INLAND_PARCEL");
       setStep(1);
@@ -255,6 +284,7 @@ export function BulkExcelWizard() {
 
   return (
     <div className="min-w-0 space-y-4">
+      {embedded ? null : (
       <PageHeader
         title="Bulk Excel Booking"
         description="Upload a merchant workbook, validate it, then book with the existing India Post pipeline."
@@ -269,6 +299,24 @@ export function BulkExcelWizard() {
           </Link>
         }
       />
+      )}
+      {embedded && step === 0 && batchId && resuming ? (
+        <p className="text-sm text-muted">Opening the saved import…</p>
+      ) : null}
+      {embedded && step > 0 ? (
+        <button
+          type="button"
+          className="text-sm text-brand"
+          onClick={() => {
+            setBatchId(null);
+            setResuming(false);
+            setStep(0);
+            onBatchChange?.(null);
+          }}
+        >
+          Start a new import
+        </button>
+      ) : null}
       <ol className="flex flex-wrap gap-2 text-xs">
         {STEPS.map((label, index) => (
           <li key={label} className={index === step ? "font-semibold text-brand" : "text-muted"}>
@@ -277,7 +325,7 @@ export function BulkExcelWizard() {
         ))}
       </ol>
 
-      {step === 0 ? (
+      {step === 0 && !(batchId && resuming) ? (
         <section
           className="rounded-xl border border-dashed border-border p-6"
           onDragOver={(event) => event.preventDefault()}

@@ -3,7 +3,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { ENQUEUE_MAX_ORDERS, enqueueOrders, listQueueItems, queueSummary } from "@/modules/booking-queue/service";
+import {
+  ENQUEUE_MAX_ORDERS,
+  enqueueOrders,
+  getQueueItem,
+  listBookingHistory,
+  listQueueItems,
+  queueSummary,
+} from "@/modules/booking-queue/service";
 
 const enqueueSchema = z.object({
   orderIds: z.array(z.string().uuid()).min(1).max(ENQUEUE_MAX_ORDERS),
@@ -28,6 +35,8 @@ function listQuery(request: NextRequest) {
 /**
  * GET  booking-queue            paginated queue items (?state=&source=&q=&from=&to=&runId=&page=&pageSize=)
  * GET  booking-queue/summary    counts per bucket, oldest waiting item, active runs, settings
+ * GET  booking-queue/items/:id  one item with its timeline
+ * GET  booking-queue/history    every booked shipment, however it was booked (?q=&source=&from=&to=&page=)
  * POST booking-queue/enqueue    { orderIds } add existing orders; validates, never books
  * Off unless the workspace is in BOOKING_QUEUE_ORGS: reads report enabled:false, enqueue is refused.
  */
@@ -41,6 +50,22 @@ export async function handleBookingQueueRoutes(
   if (slugs[0] !== "booking-queue") return null;
   if (method === "GET" && slugs.length === 1) return listQueueItems(supabase, ctx, listQuery(request));
   if (method === "GET" && slugs[1] === "summary" && slugs.length === 2) return queueSummary(supabase, ctx);
+  if (method === "GET" && slugs[1] === "items" && slugs[2] && slugs.length === 3) {
+    const id = z.string().uuid().safeParse(slugs[2]);
+    if (!id.success) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Queue item not found.");
+    return getQueueItem(supabase, ctx, id.data);
+  }
+  if (method === "GET" && slugs[1] === "history" && slugs.length === 2) {
+    const query = listQuery(request);
+    return listBookingHistory(supabase, ctx, {
+      page: query.page,
+      pageSize: query.pageSize,
+      search: query.search,
+      source: query.source,
+      from: query.from,
+      to: query.to,
+    });
+  }
   if (method === "POST" && slugs[1] === "enqueue" && slugs.length === 2) {
     const parsed = enqueueSchema.safeParse(await request.json().catch(() => ({})));
     if (!parsed.success) {

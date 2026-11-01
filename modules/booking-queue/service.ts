@@ -411,7 +411,7 @@ export function publicQueueItem(row: ItemRow): QueueListItem {
 }
 
 /** Order and shipment ids matching a search across order number, customer and barcode. */
-async function searchTargets(supabase: SupabaseClient, organizationId: string, search: string) {
+export async function searchTargets(supabase: SupabaseClient, organizationId: string, search: string) {
   const term = search.replace(/[%_,()]/g, " ").trim();
   if (!term) return null;
   const like = `%${term}%`;
@@ -553,5 +553,194 @@ export async function queueSummary(supabase: SupabaseClient, ctx: TenantContext)
           paused: Boolean(settings.data.paused_at),
         }
       : DEFAULT_SETTINGS,
+  };
+}
+
+export type QueueItemEvent = {
+  id: number;
+  fromState: string | null;
+  toState: string;
+  actorId: string | null;
+  reason: string | null;
+  runId: string | null;
+  createdAt: string;
+};
+
+/** One queue item with its timeline, for the detail drawer. */
+export async function getQueueItem(supabase: SupabaseClient, ctx: TenantContext, itemId: string) {
+  assertBookingQueueEnabled(ctx);
+  const { data, error } = await supabase
+    .from("booking_queue_items")
+    .select(ITEM_SELECT)
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", itemId)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Queue item not found.");
+  const { data: events, error: eventsError } = await supabase
+    .from("booking_queue_events")
+    .select("id, from_state, to_state, actor_id, reason, run_id, created_at")
+    .eq("organization_id", ctx.organizationId)
+    .eq("item_id", itemId)
+    .order("created_at", { ascending: true })
+    .limit(200);
+  if (eventsError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, eventsError.message);
+  return {
+    item: publicQueueItem(data as unknown as ItemRow),
+    events: (events ?? []).map(
+      (row): QueueItemEvent => ({
+        id: Number(row.id),
+        fromState: (row.from_state as string | null) ?? null,
+        toState: String(row.to_state),
+        actorId: (row.actor_id as string | null) ?? null,
+        reason: (row.reason as string | null) ?? null,
+        runId: (row.run_id as string | null) ?? null,
+        createdAt: String(row.created_at),
+      })
+    ),
+  };
+}
+
+export type BookingHistoryQuery = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  source?: string;
+  from?: string;
+  to?: string;
+};
+
+export type BookingHistoryRow = {
+  shipmentId: string;
+  orderId: string | null;
+  orderNumber: string | null;
+  source: string;
+  customerName: string | null;
+  phone: string | null;
+  pincode: string | null;
+  serviceCode: string | null;
+  barcode: string | null;
+  shipmentStatus: string | null;
+  bookedAt: string;
+  queueItemId: string | null;
+  runId: string | null;
+  bookedVia: "QUEUE" | "DIRECT";
+};
+
+type HistoryShipmentRow = {
+  id: string;
+  order_id: string | null;
+  barcode: string | null;
+  tracking_number: string | null;
+  status: string | null;
+  service_code: string | null;
+  booked_at: string;
+  orders?: {
+    order_number?: string | null;
+    source?: string | null;
+    customers?: { name?: string | null; phone?: string | null } | null;
+    shipping_address?: { pincode?: string | null } | null;
+  } | null;
+};
+
+type HistoryItemRow = { id: string; shipment_id: string; run_id: string | null; source: string; state: string };
+
+/** Picks the queue item that recorded a booking, else the newest one, per shipment. */
+export function historyItemsByShipment(items: HistoryItemRow[]) {
+  const byShipment = new Map<string, HistoryItemRow>();
+  for (const item of items) {
+    const key = String(item.shipment_id);
+    const current = byShipment.get(key);
+    if (!current || (item.state === "BOOKED" && current.state !== "BOOKED")) byShipment.set(key, item);
+  }
+  return byShipment;
+}
+
+export function publicHistoryRow(row: HistoryShipmentRow, item: HistoryItemRow | undefined): BookingHistoryRow {
+  return {
+    shipmentId: row.id,
+    orderId: row.order_id,
+    orderNumber: row.orders?.order_number ?? null,
+    source: item?.source ?? queueSourceOf(row.orders?.source),
+    customerName: row.orders?.customers?.name ?? null,
+    phone: row.orders?.customers?.phone ?? null,
+    pincode: row.orders?.shipping_address?.pincode ?? null,
+    serviceCode: row.service_code,
+    barcode: row.barcode || row.tracking_number || null,
+    shipmentStatus: row.status,
+    bookedAt: row.booked_at,
+    queueItemId: item?.id ?? null,
+    runId: item?.run_id ?? null,
+    bookedVia: item?.run_id ? "QUEUE" : "DIRECT",
+  };
+}
+
+/**
+ * Every shipment India Post booked for this workspace, however it was booked. A read model over
+ * shipments: bookings from the Orders page appear without queue rows or new booking requests.
+ */
+export async function listBookingHistory(supabase: SupabaseClient, ctx: TenantContext, query: BookingHistoryQuery = {}) {
+  const page = Math.max(1, Math.floor(Number(query.page) || 1));
+  const pageSize = Math.min(LIST_MAX_PAGE_SIZE, Math.max(1, Math.floor(Number(query.pageSize) || 25)));
+  const empty = { enabled: true, items: [] as BookingHistoryRow[], page, pageSize, total: 0 };
+  if (!bookingQueueEnabledFor(ctx.organizationId)) return { ...empty, enabled: false };
+
+  const source = query.source ? queueSourceOf(query.source) : null;
+  // EXCEL is a queue source, not an order source: those orders are stored as MANUAL.
+  const orderSource = source && source !== "EXCEL" ? source : null;
+  const orderEmbed = orderSource ? "orders!inner" : "orders";
+  let request = supabase
+    .from("shipments")
+    .select(
+      `id, order_id, barcode, tracking_number, status, service_code, booked_at, ${orderEmbed}(order_number, source, customers(name, phone), shipping_address:addresses!shipping_address_id(pincode))`,
+      { count: "exact" }
+    )
+    .eq("organization_id", ctx.organizationId)
+    .not("booked_at", "is", null);
+  if (orderSource) request = request.eq("orders.source", orderSource);
+  if (query.from) request = request.gte("booked_at", query.from);
+  if (query.to) request = request.lte("booked_at", query.to);
+  if (source === "EXCEL") {
+    const { data: excelItems } = await supabase
+      .from("booking_queue_items")
+      .select("shipment_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("source", "EXCEL")
+      .eq("state", "BOOKED")
+      .limit(SEARCH_ID_LIMIT * 5);
+    const ids = (excelItems ?? []).map((row) => String(row.shipment_id));
+    if (!ids.length) return empty;
+    request = request.in("id", ids);
+  }
+  if (query.search?.trim()) {
+    const targets = await searchTargets(supabase, ctx.organizationId, query.search);
+    if (targets) {
+      const clauses = [
+        targets.orderIds.length ? `order_id.in.(${targets.orderIds.join(",")})` : "",
+        targets.shipmentIds.length ? `id.in.(${targets.shipmentIds.join(",")})` : "",
+      ].filter(Boolean);
+      if (!clauses.length) return empty;
+      request = request.or(clauses.join(","));
+    }
+  }
+  const from = (page - 1) * pageSize;
+  const { data, error, count } = await request.order("booked_at", { ascending: false }).range(from, from + pageSize - 1);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  const rows = (data ?? []) as unknown as HistoryShipmentRow[];
+  const { data: items } = rows.length
+    ? await supabase
+        .from("booking_queue_items")
+        .select("id, shipment_id, run_id, source, state")
+        .eq("organization_id", ctx.organizationId)
+        .in("shipment_id", rows.map((row) => row.id))
+        .order("created_at", { ascending: false })
+    : { data: [] as HistoryItemRow[] };
+  const itemByShipment = historyItemsByShipment((items ?? []) as HistoryItemRow[]);
+  return {
+    enabled: true,
+    items: rows.map((row) => publicHistoryRow(row, itemByShipment.get(row.id))),
+    page,
+    pageSize,
+    total: count ?? 0,
   };
 }
