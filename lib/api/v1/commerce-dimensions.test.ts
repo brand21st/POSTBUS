@@ -304,11 +304,16 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
     )) as Record<string, unknown>;
 
     expect(supabase.updates).toHaveLength(1);
-    expect(supabase.updates[0].values).toEqual({
-      length_cm: 25,
-      width_cm: 18,
-      height_cm: 12,
-    });
+    expect(supabase.updates[0].values).toEqual(
+      expect.objectContaining({
+        length_cm: 25,
+        width_cm: 18,
+        height_cm: 12,
+        metadata: expect.objectContaining({
+          parcelDimensions: expect.objectContaining({ source: "postbus_custom" }),
+        }),
+      })
+    );
     expect(result.lengthCm).toBe(25);
   });
 
@@ -421,12 +426,17 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
     // 3. Shipment updated with box weight and dimensions
     const shipmentUpdate = supabase.updates.find((u) => u.table === "shipments");
     expect(shipmentUpdate).toBeDefined();
-    expect(shipmentUpdate?.values).toEqual({
-      length_cm: 25,
-      width_cm: 15,
-      height_cm: 10,
-      weight_grams: 750,
-    });
+    expect(shipmentUpdate?.values).toEqual(
+      expect.objectContaining({
+        length_cm: 25,
+        width_cm: 15,
+        height_cm: 10,
+        weight_grams: 750,
+        metadata: expect.objectContaining({
+          parcelDimensions: expect.objectContaining({ source: "postbus_custom" }),
+        }),
+      })
+    );
 
     expect(result.id).toBe("ship-101");
     expect(result.lengthCm).toBe(25);
