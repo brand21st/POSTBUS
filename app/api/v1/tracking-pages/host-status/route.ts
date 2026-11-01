@@ -9,7 +9,7 @@ import { getTrackingPage } from "@/modules/tracking-pages/service";
 export const GET = apiRoute(async (request: NextRequest) => {
   const ctx = await requireTenant();
   const supabase = await createServerSupabase();
-  await assertTrackingPagePlan(supabase, ctx.organizationId);
+  await assertTrackingPagePlan(supabase, ctx.organizationId, "GET");
   const page = await getTrackingPage(supabase, ctx.organizationId);
   if (!page) {
     return {

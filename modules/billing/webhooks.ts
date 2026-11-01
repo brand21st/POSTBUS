@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logError, logInfo } from "@/lib/logger";
 import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/billing";
@@ -11,6 +12,7 @@ import {
   type SubscriptionRow,
 } from "@/modules/billing/subscriptions";
 import { resolvePurchaseByOrder } from "@/modules/billing/purchase";
+import { recordPaymentAttempt } from "@/modules/billing/attempts";
 import { classifyPlatformRazorpayPayment, type PlatformPaymentDomain } from "@/modules/addons/classify";
 import { isAddonPaymentRow } from "@/modules/addons/constants";
 import { fetchRazorpaySubscription } from "@/modules/razorpay/client";
@@ -18,8 +20,9 @@ import { fetchRazorpaySubscription } from "@/modules/razorpay/client";
 export { classifyPlatformRazorpayPayment };
 export type { PlatformPaymentDomain };
 
+/** Razorpay's event id; otherwise a hash of the whole signed body (a body prefix is the same for every event). */
 export function razorpayWebhookEventId(headerId: string, event: string | undefined, rawBody: string) {
-  return headerId || `${event ?? "event"}:${Buffer.from(rawBody).toString("base64").slice(0, 40)}`;
+  return headerId || `${event ?? "event"}:${createHash("sha256").update(rawBody).digest("hex")}`;
 }
 
 export function isUniqueViolation(error: { code?: string } | null | undefined) {
@@ -58,13 +61,23 @@ async function loadSubscriptionByOrderId(supabase: SupabaseClient, razorpayOrder
     .eq("razorpay_order_id", razorpayOrderId)
     .maybeSingle();
   if (data) return data as SubscriptionRow;
-  const { data: payment } = await supabase
+  // Several rows may share an order (legacy FAILED attempts); prefer the intent row.
+  const { data: rows } = await supabase
     .from("payments")
-    .select("subscription_id, payment_purpose, billing_cycle")
+    .select("subscription_id, payment_purpose, billing_cycle, status")
     .eq("razorpay_order_id", razorpayOrderId)
     .not("subscription_id", "is", null)
-    .maybeSingle();
-  if (!payment?.subscription_id || isAddonPaymentRow(payment)) return null;
+    .limit(20);
+  const candidates = (rows ?? []) as Array<{
+    subscription_id: string | null;
+    payment_purpose?: string | null;
+    billing_cycle?: string | null;
+    status?: string | null;
+  }>;
+  const payment =
+    candidates.find((row) => row.status !== "FAILED" && !isAddonPaymentRow(row)) ??
+    candidates.find((row) => !isAddonPaymentRow(row));
+  if (!payment?.subscription_id) return null;
   const { data: byPayment } = await supabase
     .from("subscriptions")
     .select("*, plans!plan_id(*)")
@@ -173,10 +186,12 @@ async function upsertPayment(
   if (!input.razorpayPaymentId) return;
   const { data: existing } = await supabase
     .from("payments")
-    .select("id")
+    .select("id, status")
     .eq("razorpay_payment_id", input.razorpayPaymentId)
     .maybeSingle();
   if (existing) {
+    // A captured payment is never downgraded by a late or out-of-order failure event.
+    if (existing.status === "CAPTURED" && input.status === "FAILED") return;
     await supabase
       .from("payments")
       .update({
@@ -351,38 +366,74 @@ export async function processRazorpayEvent(
         razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
         failureReason: String(paymentEntity.error_description ?? paymentEntity.error_reason ?? "Payment failed"),
       });
-    } else if (subscription) {
-    const recurringFailure = Boolean(
-      razorpaySubscriptionId && razorpaySubscriptionId === subscription.razorpay_subscription_id
-    );
-    if (recurringFailure && subscription.status !== "TRIAL") {
-      await supabase.from("subscriptions").update({ status: "PAYMENT_FAILED" }).eq("id", subscription.id);
-      await writeSubscriptionHistory(supabase, {
-        organizationId: subscription.organization_id,
-        subscriptionId: subscription.id,
-        fromStatus: subscription.status,
-        toStatus: "PAYMENT_FAILED",
-        reason: event,
-        actor: "WEBHOOK",
-      });
-    }
-    await upsertPayment(supabase, {
-      organizationId: subscription.organization_id,
-      subscriptionId: subscription.id,
-      planId: subscription.plan_id,
-      amountPaise: Number(paymentEntity.amount ?? subscription.amount_paise ?? 0),
-      status: "FAILED",
-      razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : `failed-${eventId}`,
-      razorpayOrderId: razorpayOrderId || null,
-      razorpaySubscriptionId,
-      billingCycle: subscription.billing_cycle,
-      failureReason: String(paymentEntity.error_description ?? paymentEntity.error_reason ?? "Payment failed"),
-    });
-    await insertBillingNotification(supabase, {
-      organizationId: subscription.organization_id,
-      ...BILLING_NOTICE.paymentFailed,
-      entityId: subscription.id,
-    });
+    } else {
+      const failureReason = String(
+        paymentEntity.error_description ?? paymentEntity.error_reason ?? "Payment failed"
+      ).slice(0, 500);
+      const failedPaymentId = paymentEntity.id ? String(paymentEntity.id) : null;
+      // One-time Orders checkout: the failure is an attempt on the purchase intent.
+      // It must not add a second payments row for the order (that made a later
+      // successful retry ambiguous) and must not change the intent's status.
+      const resolvedIntent = razorpayOrderId ? await resolvePurchaseByOrder(supabase, razorpayOrderId) : null;
+      const intent = resolvedIntent && "purchase" in resolvedIntent ? resolvedIntent.purchase : null;
+      if (razorpayOrderId && failedPaymentId && (intent || failedDomain === "SUBSCRIPTION")) {
+        await recordPaymentAttempt(supabase, {
+          organizationId: intent?.organization_id ?? subscription?.organization_id ?? null,
+          purchaseId: intent?.id ?? null,
+          razorpayOrderId,
+          razorpayPaymentId: failedPaymentId,
+          status: "FAILED",
+          amountPaise: paymentEntity.amount != null ? Number(paymentEntity.amount) : null,
+          currency: paymentEntity.currency ? String(paymentEntity.currency) : null,
+          method: paymentEntity.method ? String(paymentEntity.method) : null,
+          errorCode: paymentEntity.error_code ? String(paymentEntity.error_code) : null,
+          errorReason: failureReason,
+          source: "webhook",
+          eventId,
+        });
+        if (intent?.status === "PENDING") {
+          await supabase.from("payments").update({ failure_reason: failureReason }).eq("id", intent.id);
+        }
+      }
+      if (subscription) {
+        const recurringFailure = Boolean(
+          razorpaySubscriptionId && razorpaySubscriptionId === subscription.razorpay_subscription_id
+        );
+        if (recurringFailure && subscription.status !== "TRIAL") {
+          await supabase.from("subscriptions").update({ status: "PAYMENT_FAILED" }).eq("id", subscription.id);
+          await writeSubscriptionHistory(supabase, {
+            organizationId: subscription.organization_id,
+            subscriptionId: subscription.id,
+            fromStatus: subscription.status,
+            toStatus: "PAYMENT_FAILED",
+            reason: event,
+            actor: "WEBHOOK",
+          });
+        }
+        if (recurringFailure && !intent) {
+          // Razorpay recurring subscriptions have no Orders purchase intent.
+          await upsertPayment(supabase, {
+            organizationId: subscription.organization_id,
+            subscriptionId: subscription.id,
+            planId: subscription.plan_id,
+            amountPaise: Number(paymentEntity.amount ?? subscription.amount_paise ?? 0),
+            status: "FAILED",
+            razorpayPaymentId: failedPaymentId ?? `failed-${eventId}`,
+            razorpayOrderId: razorpayOrderId || null,
+            razorpaySubscriptionId,
+            billingCycle: subscription.billing_cycle,
+            failureReason,
+          });
+        }
+      }
+      const noticeOrg = subscription?.organization_id ?? intent?.organization_id;
+      if (noticeOrg) {
+        await insertBillingNotification(supabase, {
+          organizationId: noticeOrg,
+          ...BILLING_NOTICE.paymentFailed,
+          entityId: subscription?.id ?? intent?.subscription_id ?? null,
+        });
+      }
     }
   }
 

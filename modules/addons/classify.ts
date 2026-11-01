@@ -16,18 +16,29 @@ export async function classifyPlatformRazorpayPayment(
   }
 ): Promise<PlatformPaymentDomain> {
   if (input.razorpayOrderId) {
+    // Several rows can share an order (legacy FAILED attempt rows). maybeSingle
+    // errors on two rows, which left a captured subscription payment unmatched.
     const { data } = await supabase
       .from("payments")
       .select("billing_cycle, payment_purpose")
       .eq("razorpay_order_id", input.razorpayOrderId)
-      .maybeSingle();
-    if (isAddonPaymentRow(data)) return "ADDON";
-    const purpose = String(data?.payment_purpose ?? "");
-    const cycle = String(data?.billing_cycle ?? "");
-    if (purpose === AI_CREDITS_PAYMENT_PURPOSE || cycle === AI_CREDITS_BILLING_CYCLE) {
+      .limit(20);
+    const rows = (data ?? []) as Array<{ billing_cycle?: string | null; payment_purpose?: string | null }>;
+    if (rows.some((row) => isAddonPaymentRow(row) || row.payment_purpose === ADDON_PAYMENT_PURPOSE)) {
+      return "ADDON";
+    }
+    if (
+      rows.some(
+        (row) =>
+          row.payment_purpose === AI_CREDITS_PAYMENT_PURPOSE || row.billing_cycle === AI_CREDITS_BILLING_CYCLE
+      )
+    ) {
       return "AI_CREDITS";
     }
-    if (purpose === ADDON_PAYMENT_PURPOSE) return "ADDON";
+    // A subscription purchase intent exists even when it names no subscription row.
+    if (rows.some((row) => !row.payment_purpose || row.payment_purpose === "subscription")) {
+      return "SUBSCRIPTION";
+    }
   }
   if (input.subscriptionMatched) return "SUBSCRIPTION";
   return "UNMATCHED_PLATFORM";

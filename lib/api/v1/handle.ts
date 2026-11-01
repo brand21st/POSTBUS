@@ -76,7 +76,7 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
 
   const ctx = await requireTenant(permissionForTenantRoute(method, path, slugs));
   const planFeature = lockedFeatureForApi(method, path, slugs);
-  if (planFeature) await assertPlanFeature(supabase, ctx.organizationId, planFeature);
+  if (planFeature) await assertPlanFeature(supabase, ctx.organizationId, planFeature, { method });
   return (
     (await handleTariffRoutes(request, supabase, ctx, path)) ??
     (await handleBillingRoutes(request, supabase, ctx, key)) ??

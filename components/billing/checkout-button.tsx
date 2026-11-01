@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import posthog from "posthog-js";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,7 @@ export function CheckoutButton({
   variant?: "primary" | "secondary";
   disabled?: boolean;
 }) {
+  const client = useQueryClient();
   const start = useMutation({
     mutationFn: () =>
       api<CheckoutResponse>("/api/v1/billing/subscribe", {
@@ -83,6 +84,8 @@ export function CheckoutButton({
           modal: {
             ondismiss: () => {
               toast.message("Payment was not completed. Your current plan remains unchanged.");
+              // Show the server's view of the unfinished checkout; nothing changes client-side.
+              void client.invalidateQueries({ queryKey: ["billing"] });
             },
           },
           handler: async (response: {
@@ -114,6 +117,7 @@ export function CheckoutButton({
         });
         checkout.on("payment.failed", (response) => {
           toast.error(response.error?.description || "Payment failed.");
+          void client.invalidateQueries({ queryKey: ["billing"] });
         });
         checkout.open();
       } catch (error) {

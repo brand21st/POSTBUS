@@ -42,6 +42,18 @@ function createAiCreditsStore() {
         not() {
           return query;
         },
+        // List reads (payment classification, purchase-intent lookup) resolve here.
+        limit() {
+          return Promise.resolve({
+            data:
+              table === "payments"
+                ? state.payments.filter(
+                    (row) => !filters.razorpay_order_id || row.razorpay_order_id === filters.razorpay_order_id
+                  )
+                : [],
+            error: null,
+          });
+        },
         async maybeSingle() {
           if (table === "payments") {
             const payment = state.payments.find((row) => {

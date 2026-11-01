@@ -70,6 +70,10 @@ export function PlanPicker({
               <span className="mb-4 w-fit rounded-full bg-surface-soft px-2.5 py-1 text-[11px] font-semibold text-ink">
                 Renew
               </span>
+            ) : isCurrent && trial ? (
+              <span className="mb-4 w-fit rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-900">
+                Free trial
+              </span>
             ) : isCurrent ? (
               <span className="mb-4 w-fit rounded-full bg-brand px-2.5 py-1 text-[11px] font-semibold text-white">
                 Current plan

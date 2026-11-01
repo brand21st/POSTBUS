@@ -1,7 +1,11 @@
 import { BILLING_ANNOUNCEMENT_TIMEZONE, istCalendarDate } from "@/lib/dashboard/billing-announcement";
 
-export const LEGACY_JOIN_ON_OR_BEFORE_IST = "2026-10-26";
-export const NEW_TRIAL_START_IST = "2026-10-27";
+// Official policy (owner decision, 2026-11-01): merchants who joined before
+// 2026-11-01 00:00 IST pay from November 1; merchants who join on or after it get
+// a 7-day trial. The Oct 27-31 rolling trials are corrected by a reviewed,
+// reversible script (supabase/remediation), not by this constant.
+export const LEGACY_JOIN_ON_OR_BEFORE_IST = "2026-10-31";
+export const NEW_TRIAL_START_IST = "2026-11-01";
 export const LEGACY_TRIAL_END_IST = "2026-11-01T00:00:00+05:30";
 export const LEGACY_TRIAL_END_UTC = "2026-10-31T18:30:00.000Z";
 export const NEW_TRIAL_DAYS = 7;

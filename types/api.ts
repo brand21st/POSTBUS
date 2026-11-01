@@ -42,6 +42,11 @@ export type MeSubscription = {
   trial?: boolean;
   trialEnd?: string | null;
   coverageEnded?: boolean;
+  /** Server decision: may run paid operations. */
+  entitled?: boolean;
+  accessState?: string | null;
+  /** Plan features whose existing records stay readable after coverage ends. */
+  historyFeatures?: string[];
 };
 
 export type MeResponse = {

@@ -7,6 +7,7 @@ import { mergeFullPlanFeatures } from "@/modules/billing/plan-features";
 import { amountForCycle } from "@/modules/billing/prices";
 import { LIVE_STATUSES, PAYABLE_STATUSES } from "@/modules/billing/usage";
 import { NEW_TRIAL_DAYS } from "@/modules/billing/trial-policy";
+import { decideBillingAccess } from "@/modules/billing/access";
 import {
   cancelRazorpaySubscription,
   createRazorpayCustomer,
@@ -14,7 +15,6 @@ import {
   createRazorpayPlan,
   fetchRazorpayPayment,
   pauseRazorpaySubscription,
-  resumeRazorpaySubscription,
 } from "@/modules/razorpay/client";
 import { verifyCheckoutSignature, verifyOrderCheckoutSignature } from "@/modules/razorpay/signature";
 import {
@@ -915,6 +915,18 @@ export async function resumeSubscription(
       "Trial access cannot be resumed as a paid plan. Pay from Billing to continue after the trial."
     );
   }
+  // Resume only undoes a scheduled cancellation inside a period that is still
+  // covered. It never changes status or extends a period, so it cannot turn an
+  // unpaid, failed, paused, or ended subscription into paid access.
+  if (live.status === "PAUSED") {
+    throw new AppError(
+      ERROR_CODES.FORBIDDEN,
+      "This subscription was paused by PostBus support. Contact support to resume it."
+    );
+  }
+  if (live.status === "PAYMENT_FAILED") {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "The last payment failed. Pay from Billing to continue.");
+  }
   const paidEvidence = await hasCapturedSubscriptionPayment(supabase, input.organizationId);
   if (!paidEvidence) {
     throw new AppError(
@@ -922,14 +934,21 @@ export async function resumeSubscription(
       "This subscription cannot be resumed without a captured payment."
     );
   }
-  if (live.razorpay_subscription_id && live.status === "PAUSED") {
-    await resumeRazorpaySubscription(live.razorpay_subscription_id);
+  if (!live.cancel_at_period_end) return { status: live.status };
+  if (!decideBillingAccess(live).operational) {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "This billing period has ended. Pay from Billing to continue.");
   }
-  const nextStatus =
-    live.status === "PAUSED" || live.status === "PAYMENT_FAILED" ? "ACTIVE" : live.status;
+  if (live.razorpay_subscription_id) {
+    // Razorpay cannot undo a cancellation, so renewals would silently stop.
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      "This cancellation cannot be undone. Pay for a plan again when the current period ends."
+    );
+  }
+  const nextStatus = live.status;
   await supabase
     .from("subscriptions")
-    .update({ status: nextStatus, cancel_at_period_end: false, cancelled_at: null })
+    .update({ cancel_at_period_end: false, cancelled_at: null })
     .eq("id", live.id);
   await writeSubscriptionHistory(supabase, {
     organizationId: input.organizationId,

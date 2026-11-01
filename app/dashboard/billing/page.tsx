@@ -14,10 +14,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate, formatNumber, formatPaise } from "@/lib/format";
 import { api } from "@/lib/hooks/use-api";
-import { subscriptionCoverageEnded } from "@/modules/billing/usage";
+import type { BillingDisplay, BillingTone } from "@/modules/billing/display";
 
 type BillingPayload = {
   configurationRequired?: boolean;
+  display?: BillingDisplay;
   plan?: (PublicPlan & { id?: string; slug?: string; description?: string | null; features?: string[] }) | null;
   subscription?: {
     status?: string;
@@ -54,7 +55,14 @@ export default function BillingPage() {
     queryKey: ["billing", "payments"],
     queryFn: () =>
       api<{
-        payments: Array<{ id: string; amount_paise: number; status: string; created_at: string; razorpay_payment_id?: string }>;
+        payments: Array<{
+          id: string;
+          amount_paise: number;
+          status: string;
+          created_at: string;
+          razorpay_payment_id?: string;
+          display?: { label: string; tone: BillingTone };
+        }>;
       }>("/api/v1/billing/payments"),
   });
   const aiCredits = useQuery({
@@ -94,20 +102,12 @@ export default function BillingPage() {
   const catalogPlan = (plans.data?.plans ?? []).find(
     (plan) => plan.id === data?.plan?.id || plan.slug === data?.plan?.slug
   );
-  const currentPlanName = catalogPlan?.name ?? data?.plan?.name ?? "No plan";
-  const onTrial = data?.subscription?.status === "TRIAL" && !data.subscription.coverageEnded;
-  const coverageEnded = Boolean(
-    data?.subscription?.coverageEnded ||
-      (data?.subscription &&
-        subscriptionCoverageEnded({
-          status: data.subscription.status,
-          current_period_end: data.subscription.currentPeriodEnd,
-          expires_at: data.subscription.expiresAt,
-          trial_end: data.subscription.trialEnd,
-          cancel_at_period_end: data.subscription.cancelAtPeriodEnd,
-          razorpay_subscription_id: data.subscription.razorpaySubscriptionId,
-        }))
-  );
+  // Every status label below comes from the server's billing decision (data.display).
+  const display = data?.display;
+  const onTrial = display?.state === "TRIAL";
+  const covered = onTrial || display?.state === "ACTIVE" || display?.state === "COMPLIMENTARY";
+  const coverageEnded = !covered;
+  const currentPlanName = covered ? catalogPlan?.name ?? data?.plan?.name ?? "No plan" : "No active plan";
 
   return (
     <div className="space-y-6">
@@ -129,19 +129,21 @@ export default function BillingPage() {
                 <CardDescription>Current plan</CardDescription>
                 <CardTitle className="flex flex-wrap items-center gap-2">
                   {currentPlanName}
-                  {catalogPlan || data?.plan ? (
-                    <span className="rounded-full bg-brand px-2.5 py-0.5 text-[11px] font-semibold text-white">
-                      {coverageEnded ? "Period ended" : "Current plan"}
-                    </span>
-                  ) : null}
+                  {display ? <BillingPill tone={display.tone} label={display.label} /> : null}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <StatusBadge value={data?.subscription?.status} />
-                <p className="capitalize text-muted">{data?.subscription?.billingCycle ?? "monthly"} billing</p>
-                <p>{formatPaise(data?.subscription?.amountPaise)}</p>
-                {data?.subscription?.status === "TRIAL" ? (
-                  <p className="text-muted">{data.plan?.description ?? "3-day trial with every PostBus feature unlocked."}</p>
+                {display?.paidActive || display?.state === "COMPLIMENTARY" ? (
+                  <>
+                    <p className="capitalize text-muted">{data?.subscription?.billingCycle ?? "monthly"} billing</p>
+                    <p>{formatPaise(data?.subscription?.amountPaise)}</p>
+                  </>
+                ) : null}
+                {onTrial ? (
+                  <p className="text-muted">Free trial with every PostBus feature unlocked. No payment has been taken.</p>
+                ) : null}
+                {display?.cancelScheduled && covered && !onTrial ? (
+                  <p className="text-muted">Cancels at the end of the current period.</p>
                 ) : null}
               </CardContent>
             </Card>
@@ -173,17 +175,45 @@ export default function BillingPage() {
             </Card>
           </div>
 
+          {display?.checkout ? (
+            <div
+              role="status"
+              className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm"
+            >
+              <BillingPill
+                tone={
+                  display.checkout.state === "PAYMENT_PENDING"
+                    ? "warning"
+                    : display.checkout.state === "PAYMENT_FAILED"
+                      ? "danger"
+                      : "neutral"
+                }
+                label={display.checkout.label}
+              />
+              <span className="text-muted">
+                {(plans.data?.plans ?? []).find((plan) => plan.id === display.checkout?.planId)?.name ?? "Plan"} checkout
+                started {formatDate(display.checkout.createdAt)}.{" "}
+                {display.checkout.state === "PAYMENT_PENDING"
+                  ? "Your plan changes only after Razorpay confirms the payment."
+                  : "No plan was activated and nothing was charged. You can pay again below."}
+              </span>
+            </div>
+          ) : null}
+
           <AiCreditsSection credits={aiCredits.data} />
 
-          {data?.subscription?.status === "TRIAL" && (data.plan?.features?.length ?? 0) > 0 ? (
+          {onTrial && (data?.plan?.features?.length ?? 0) > 0 ? (
             <Card>
               <CardHeader>
                 <CardDescription>Trial access</CardDescription>
-                <CardTitle className="text-base">Full features unlocked for 3 days</CardTitle>
+                <CardTitle className="text-base">
+                  Full features unlocked · {display?.trialDaysRemaining ?? 0}{" "}
+                  {display?.trialDaysRemaining === 1 ? "day" : "days"} left
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <ul className="grid gap-2 text-sm text-ink sm:grid-cols-2">
-                  {data.plan?.features?.map((feature) => (
+                  {data?.plan?.features?.map((feature) => (
                     <li key={feature} className="flex gap-2">
                       <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
                       {feature}
@@ -195,8 +225,7 @@ export default function BillingPage() {
           ) : null}
 
           <div className="flex flex-wrap gap-2">
-            {coverageEnded ? null : data?.subscription?.cancelAtPeriodEnd &&
-            data.subscription.status !== "TRIAL" ? (
+            {!display?.paidActive ? null : display.cancelScheduled ? (
               <Button variant="secondary" onClick={() => resume.mutate()} disabled={resume.isPending}>
                 Resume subscription
               </Button>
@@ -231,10 +260,10 @@ export default function BillingPage() {
               plans={plans.data?.plans ?? []}
               cycle={cycle}
               cta="checkout"
-              currentPlanId={data?.plan?.id}
-              currentPlanSlug={data?.plan?.slug}
+              currentPlanId={covered ? data?.plan?.id : null}
+              currentPlanSlug={covered ? data?.plan?.slug : null}
               currentCycle={data?.subscription?.billingCycle}
-              subscriptionStatus={data?.subscription?.status}
+              subscriptionStatus={onTrial ? "TRIAL" : display?.paidActive ? "ACTIVE" : data?.subscription?.status}
               coverageEnded={coverageEnded}
             />
           </div>
@@ -262,7 +291,11 @@ export default function BillingPage() {
                       <tr key={payment.id} className="border-t border-border">
                         <td className="py-3">{formatPaise(payment.amount_paise)}</td>
                         <td className="py-3">
-                          <StatusBadge value={payment.status} />
+                          {payment.display ? (
+                            <BillingPill tone={payment.display.tone} label={payment.display.label} />
+                          ) : (
+                            <StatusBadge value={payment.status} />
+                          )}
                         </td>
                         <td className="py-3 font-mono text-xs">{payment.razorpay_payment_id ?? payment.id.slice(0, 8)}</td>
                         <td className="py-3">{formatDate(payment.created_at)}</td>
@@ -311,5 +344,18 @@ export default function BillingPage() {
         </>
       )}
     </div>
+  );
+}
+
+const PILL_TONE: Record<BillingTone, string> = {
+  success: "bg-emerald-100 text-emerald-800",
+  warning: "bg-amber-100 text-amber-900",
+  danger: "bg-rose-100 text-rose-800",
+  neutral: "bg-surface-soft text-ink",
+};
+
+function BillingPill({ tone, label }: { tone: BillingTone; label: string }) {
+  return (
+    <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${PILL_TONE[tone]}`}>{label}</span>
   );
 }

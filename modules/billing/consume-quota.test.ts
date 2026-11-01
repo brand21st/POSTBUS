@@ -19,6 +19,10 @@ function chain(result: unknown, inserts: unknown[]) {
   return self;
 }
 
+// Relative dates: a fixed period end made this suite fail once the date passed.
+const PERIOD_START = new Date(Date.now() - 10 * 86_400_000).toISOString();
+const PERIOD_END = new Date(Date.now() + 20 * 86_400_000).toISOString();
+
 function mockSupabase(options?: { consume?: unknown }) {
   const inserts: unknown[] = [];
   const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
@@ -28,8 +32,8 @@ function mockSupabase(options?: { consume?: unknown }) {
           id: "usage-1",
           orders_used: 2,
           order_limit: 100,
-          period_start: "2026-10-01",
-          period_end: "2026-11-01",
+          period_start: PERIOD_START.slice(0, 10),
+          period_end: PERIOD_END.slice(0, 10),
           alert_80_sent_at: null,
           alert_90_sent_at: null,
           alert_100_sent_at: null,
@@ -57,8 +61,8 @@ function mockSupabase(options?: { consume?: unknown }) {
             id: "sub-1",
             status: "ACTIVE",
             order_limit: 100,
-            current_period_start: "2026-10-01",
-            current_period_end: "2026-11-01",
+            current_period_start: PERIOD_START.slice(0, 10),
+            current_period_end: PERIOD_END.slice(0, 10),
             plans: { name: "Pro", monthly_order_limit: 100 },
           },
           inserts
