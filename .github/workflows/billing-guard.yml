@@ -24,6 +24,8 @@ jobs:
       - name: Static billing guard
         run: node scripts/ci/billing-guard.mjs
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        # Same as the Dockerfile: package-lock.json is not fully in sync with
+        # package.json, so `npm ci` refuses to install.
+        run: npm install --no-audit --no-fund
       - name: Billing regression tests
         run: npm run verify:billing
