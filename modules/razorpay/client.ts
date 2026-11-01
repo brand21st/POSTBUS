@@ -146,6 +146,14 @@ export async function fetchRazorpayPayment(id: string) {
   return razorpayRequest("GET", `/payments/${id}`);
 }
 
+/** Read-only: every payment attempt made against a Razorpay order. */
+export async function fetchRazorpayOrderPayments(orderId: string) {
+  return razorpayRequest<{ count?: number; items?: RazorpayEntity[] }>(
+    "GET",
+    `/orders/${encodeURIComponent(orderId)}/payments`
+  );
+}
+
 export async function refundRazorpayPayment(id: string, amountPaise?: number) {
   return razorpayRequest("POST", `/payments/${id}/refund`, amountPaise ? { amount: amountPaise } : {});
 }

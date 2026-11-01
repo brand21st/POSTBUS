@@ -66,6 +66,9 @@ export async function handleSessionRoutes(
         trial: Boolean(entitlements?.trial),
         trialEnd: entitlements?.trialEnd ?? null,
         coverageEnded: Boolean(entitlements?.coverageEnded),
+        entitled: Boolean(entitlements?.entitled),
+        accessState: entitlements?.accessState ?? "NONE",
+        historyFeatures: entitlements?.historyFeatures ?? [],
       },
       merchantApi: {
         enabled: isMerchantApiOpenForOrg(organization?.id),

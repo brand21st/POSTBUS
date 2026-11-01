@@ -2,30 +2,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/billing";
 import { TRIAL_ENDED_MESSAGE, trialIsLive } from "@/modules/billing/trial-policy";
+import { coverageEndedAt, decideBillingAccess, type BillingAccessRow } from "@/modules/billing/access";
 
 export const LIVE_STATUSES = ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"] as const;
 export const PAYABLE_STATUSES = [...LIVE_STATUSES, "EXPIRED", "CANCELLED"] as const;
 export const BOOKABLE_STATUSES = ["TRIAL", "ACTIVE", "PAST_DUE"] as const;
 
 /** One-time checkout (no Razorpay subscription) or trial/cancel-at-end: coverage stops at period end. */
-export function subscriptionCoverageEnded(
-  row: {
-    status?: string | null;
-    current_period_end?: string | null;
-    expires_at?: string | null;
-    trial_end?: string | null;
-    cancel_at_period_end?: boolean | null;
-    razorpay_subscription_id?: string | null;
-  },
-  now = Date.now()
-) {
-  const end = row.current_period_end || row.expires_at || row.trial_end;
-  if (!end || new Date(end).getTime() > now) return false;
-  const status = (row.status ?? "").toUpperCase();
-  if (status === "TRIAL") return true;
-  if (row.cancel_at_period_end) return true;
-  if (!row.razorpay_subscription_id) return true;
-  return false;
+export function subscriptionCoverageEnded(row: BillingAccessRow, now = Date.now()) {
+  return coverageEndedAt(row, now);
 }
 
 export const ORDER_LIMIT_MESSAGE =
@@ -119,12 +104,9 @@ export async function getQuotaSnapshot(
   const ordersUsed = usage?.orders_used ?? 0;
   const remaining = orderLimit === null ? null : Math.max(0, orderLimit - ordersUsed);
   const accountOk = (org?.account_status ?? "ACTIVE") === "ACTIVE";
-  const coverageEnded = subscription ? subscriptionCoverageEnded(subscription) : true;
-  const statusOk = Boolean(
-    subscription &&
-      BOOKABLE_STATUSES.includes(subscription.status as (typeof BOOKABLE_STATUSES)[number]) &&
-      !coverageEnded
-  );
+  const access = decideBillingAccess(subscription);
+  const coverageEnded = access.coverageEnded;
+  const statusOk = access.operational;
   const limitOk = remaining === null || remaining > 0;
   return {
     organizationId,

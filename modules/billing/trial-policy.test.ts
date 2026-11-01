@@ -23,16 +23,17 @@ describe("trialEndForOrganization", () => {
     expect(trialCohortForOrganization("2026-10-26T23:59:59.000+05:30")).toBe(TRIAL_COHORT_LEGACY);
   });
 
-  it("gives October 27 signups a 7-day trial from registration time", () => {
-    const created = "2026-10-27T11:20:00.000+05:30";
-    const end = trialEndForOrganization(created);
-    expect(trialCohortForOrganization(created)).toBe(TRIAL_COHORT_ROLLING);
-    expect(end.toISOString()).toBe(new Date("2026-11-03T11:20:00.000+05:30").toISOString());
+  it("treats October 27 to October 31 signups as existing merchants billed from November 1", () => {
+    for (const created of ["2026-10-27T11:20:00.000+05:30", "2026-10-30T18:00:00.000+05:30", "2026-10-31T23:59:59.999+05:30"]) {
+      expect(trialCohortForOrganization(created)).toBe(TRIAL_COHORT_LEGACY);
+      expect(trialEndForOrganization(created).toISOString()).toBe(LEGACY_TRIAL_END_UTC);
+    }
   });
 
-  it("gives October 30 signups a 7-day trial from registration time", () => {
-    const created = "2026-10-30T18:00:00.000+05:30";
-    expect(trialEndForOrganization(created).toISOString()).toBe(new Date("2026-11-06T18:00:00.000+05:30").toISOString());
+  it("splits the cohort exactly at 2026-11-01 00:00 IST (2026-10-31T18:30Z)", () => {
+    expect(trialCohortForOrganization("2026-10-31T18:29:59.999Z")).toBe(TRIAL_COHORT_LEGACY);
+    expect(trialCohortForOrganization("2026-10-31T18:30:00.000Z")).toBe(TRIAL_COHORT_ROLLING);
+    expect(trialEndForOrganization("2026-10-31T18:30:00.000Z").toISOString()).toBe("2026-11-07T18:30:00.000Z");
   });
 
   it("gives November 1 signups a 7-day trial, not a same-day expiry", () => {

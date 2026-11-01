@@ -12,6 +12,11 @@ import { logError, logInfo } from "@/lib/logger";
  */
 export const BILLING_EXPIRING_NOTICES_ENABLED = false;
 
+/** Set BILLING_EXPIRE_ONE_TIME_ACTIVE=true only after the owner approves the data change. */
+export function expireOneTimeActivePeriodsEnabled() {
+  return process.env.BILLING_EXPIRE_ONE_TIME_ACTIVE === "true";
+}
+
 export async function runBillingSweep(supabase: SupabaseClient) {
   const started = Date.now();
   const nowIso = new Date().toISOString();
@@ -30,9 +35,14 @@ export async function runBillingSweep(supabase: SupabaseClient) {
   let failures = 0;
   const eligible = expiring?.length ?? 0;
 
+  const expireOneTime = expireOneTimeActivePeriodsEnabled();
   for (const row of expiring ?? []) {
+    // One-time Orders periods (no Razorpay subscription) never renew by themselves.
+    // Access already stops at period end (modules/billing/access.ts); flipping the
+    // status is opt-in because it rewrites existing production rows.
+    const oneTimeEnded = expireOneTime && row.status === "ACTIVE" && !row.razorpay_subscription_id;
     const shouldExpire =
-      row.cancel_at_period_end || row.status === "TRIAL" || row.status === "PAYMENT_FAILED";
+      row.cancel_at_period_end || row.status === "TRIAL" || row.status === "PAYMENT_FAILED" || oneTimeEnded;
     if (!shouldExpire) {
       skipped += 1;
       continue;

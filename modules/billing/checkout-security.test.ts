@@ -695,14 +695,18 @@ describe("P0 checkout payment bypass", () => {
     expect(db.state.subscription.trial_end).toBe("2026-10-31T18:30:00.000Z");
   });
 
-  it("17. paid cancelled subscription may resume", async () => {
+  it("17. paid cancelled subscription may resume inside its covered period", async () => {
+    const future = new Date(Date.now() + 10 * 86_400_000).toISOString();
     const db = createDb({
       subscription: liveSub({
         status: "ACTIVE",
         plan_id: PRO.id,
         amount_paise: 149900,
         cancel_at_period_end: true,
-        razorpay_subscription_id: "sub_rzp",
+        current_period_end: future,
+        expires_at: future,
+        trial_end: null,
+        razorpay_subscription_id: null,
       }),
       payments: [
         {
@@ -1303,3 +1307,90 @@ describe("P0 checkout payment bypass", () => {
   });
 });
 
+
+describe("resume never grants paid access (F-02 / F-08)", () => {
+  const paid: Payment = {
+    id: "p-paid",
+    organization_id: "org-1",
+    subscription_id: "sub-1",
+    plan_id: PRO.id,
+    amount_paise: 149900,
+    currency: "INR",
+    status: "CAPTURED",
+    billing_cycle: "monthly",
+    razorpay_order_id: "order_old",
+    razorpay_payment_id: "pay_old",
+    payment_purpose: "subscription",
+  };
+  const future = () => new Date(Date.now() + 5 * 86_400_000).toISOString();
+  const past = "2026-10-01T00:00:00.000Z";
+
+  it("refuses a support pause and a failed payment even with an older captured payment", async () => {
+    for (const status of ["PAUSED", "PAYMENT_FAILED"]) {
+      const db = createDb({
+        subscription: liveSub({ status, cancel_at_period_end: true, current_period_end: future(), trial_end: null }),
+        payments: [{ ...paid }],
+      });
+      await expect(
+        resumeSubscription(db.supabase as never, { organizationId: "org-1", userId: "user-1" })
+      ).rejects.toBeInstanceOf(AppError);
+      expect(db.state.subscription.status).toBe(status);
+    }
+  });
+
+  it("refuses to resume once the paid period has ended", async () => {
+    const db = createDb({
+      subscription: liveSub({ status: "ACTIVE", cancel_at_period_end: true, current_period_end: past, expires_at: past, trial_end: null }),
+      payments: [{ ...paid }],
+    });
+    await expect(
+      resumeSubscription(db.supabase as never, { organizationId: "org-1", userId: "user-1" })
+    ).rejects.toThrow(/period has ended/);
+    expect(db.state.subscription.cancel_at_period_end).toBe(true);
+  });
+
+  it("only clears the cancellation flag; status and period stay as they were", async () => {
+    const end = future();
+    const db = createDb({
+      subscription: liveSub({ status: "ACTIVE", cancel_at_period_end: true, current_period_end: end, expires_at: end, trial_end: null }),
+      payments: [{ ...paid }],
+    });
+    await resumeSubscription(db.supabase as never, { organizationId: "org-1", userId: "user-1" });
+    expect(db.state.subscription).toMatchObject({ status: "ACTIVE", cancel_at_period_end: false, current_period_end: end });
+  });
+});
+
+describe("authorized but uncaptured payments (F-11)", () => {
+  it("verify refuses an authorized payment and leaves the trial unchanged", async () => {
+    const db = createDb({
+      subscription: liveSub(),
+      payments: [
+        {
+          id: "intent",
+          organization_id: "org-1",
+          subscription_id: "sub-1",
+          plan_id: PRO.id,
+          amount_paise: 149900,
+          currency: "INR",
+          status: "PENDING",
+          billing_cycle: "monthly",
+          razorpay_order_id: "order_pro",
+          razorpay_payment_id: null,
+          payment_purpose: "subscription",
+        },
+      ],
+    });
+    razorpayState.payment = { ...razorpayState.payment, status: "authorized" };
+    await expect(
+      verifyCheckout(db.supabase as never, {
+        organizationId: "org-1",
+        userId: "user-1",
+        paymentId: "pay_1",
+        razorpayOrderId: "order_pro",
+        signature: "valid",
+      })
+    ).rejects.toThrow(/not captured/);
+    expect(db.state.subscription.status).toBe("TRIAL");
+    expect(db.state.payments[0].status).toBe("PENDING");
+  });
+});

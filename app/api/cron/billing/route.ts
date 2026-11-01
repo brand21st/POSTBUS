@@ -19,6 +19,20 @@ export async function POST(request: NextRequest) {
     const result = await runBillingSweep(createAdminClient());
     const { runAddonBillingSweep } = await import("@/modules/addons/cron");
     const addons = await runAddonBillingSweep(createAdminClient());
+    // Recover captured payments whose browser verify and webhook both failed.
+    // Read-only against Razorpay; activation goes through the same fulfillment RPC.
+    let reconciliation: Record<string, unknown> | null = null;
+    try {
+      const { isBillingConfiguredAsync } = await import("@/modules/razorpay/config");
+      if (await isBillingConfiguredAsync()) {
+        const { reconcilePendingSubscriptionPayments } = await import("@/modules/billing/reconcile");
+        reconciliation = await reconcilePendingSubscriptionPayments(createAdminClient());
+      }
+    } catch (reconcileError) {
+      logError("billing.reconcile_http_failed", {
+        message: reconcileError instanceof Error ? reconcileError.message : "unknown",
+      });
+    }
     logInfo("billing.cron_http_ok", {
       durationMs: Date.now() - started,
       expired: result.expired,
@@ -38,6 +52,7 @@ export async function POST(request: NextRequest) {
         durationMs: result.durationMs,
         status: result.status,
         addons,
+        reconciliation,
       },
     });
   } catch (error) {

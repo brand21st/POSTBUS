@@ -17,7 +17,9 @@ import {
   startCheckout,
   verifyCheckout,
 } from "@/modules/billing/subscriptions";
-import { getQuotaSnapshot, subscriptionCoverageEnded } from "@/modules/billing/usage";
+import { getQuotaSnapshot } from "@/modules/billing/usage";
+import { decideBillingAccess } from "@/modules/billing/access";
+import { billingDisplay, paymentDisplayStatus } from "@/modules/billing/display";
 import { NEW_TRIAL_DAYS } from "@/modules/billing/trial-policy";
 
 const subscribeSchema = z.object({
@@ -36,6 +38,59 @@ const verifySchema = z.object({
   razorpaySignature: z.string().min(1),
   razorpaySubscriptionId: z.string().min(1).optional(),
 });
+
+async function loadBillingDisplay(
+  supabase: SupabaseClient,
+  organizationId: string,
+  subscription: Awaited<ReturnType<typeof getLiveSubscription>>,
+  access: ReturnType<typeof decideBillingAccess>
+) {
+  let hasCapturedPaymentForPeriod = false;
+  if (subscription?.id && access.operational && subscription.status !== "TRIAL") {
+    const periodStart = subscription.current_period_start
+      ? new Date(new Date(subscription.current_period_start).getTime() - 86_400_000).toISOString()
+      : null;
+    let paid = supabase
+      .from("payments")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("subscription_id", subscription.id)
+      .eq("status", "CAPTURED")
+      .eq("payment_purpose", "subscription");
+    if (periodStart) paid = paid.gte("paid_at", periodStart);
+    const { data } = await paid.limit(1);
+    hasCapturedPaymentForPeriod = Boolean(data?.length);
+  }
+  const { data: latest } = await supabase
+    .from("payments")
+    .select("id, status, plan_id, created_at, failure_reason")
+    .eq("organization_id", organizationId)
+    .eq("payment_purpose", "subscription")
+    .in("status", ["PENDING", "CAPTURED", "REFUNDED"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const newest = (latest?.[0] ?? null) as
+    | { id: string; status: string; plan_id: string | null; created_at: string; failure_reason: string | null }
+    | null;
+  let latestCheckout = null;
+  if (newest?.status === "PENDING") {
+    // payment_attempts arrives with the hardening migration; ignore it if missing.
+    const { count } = await supabase
+      .from("payment_attempts")
+      .select("id", { count: "exact", head: true })
+      .eq("purchase_id", newest.id)
+      .eq("status", "FAILED");
+    latestCheckout = { ...newest, failed_attempts: count ?? 0 };
+  }
+  return billingDisplay({
+    access,
+    status: subscription?.status ?? null,
+    cancelAtPeriodEnd: subscription?.cancel_at_period_end,
+    trialEnd: subscription?.trial_end,
+    hasCapturedPaymentForPeriod,
+    latestCheckout,
+  });
+}
 
 function clientIp(request: NextRequest) {
   return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
@@ -74,13 +129,16 @@ export async function handleBillingRoutes(
     const razorpay = await getRazorpayConfig();
     const catalog = await listActivePlans(supabase);
     const mapped = plan ? mapPlan(plan) : null;
-    const coverageEnded = subscription ? subscriptionCoverageEnded(subscription) : false;
-    const trialLive = mapped && subscription?.status === "TRIAL" && !coverageEnded;
+    const access = decideBillingAccess(subscription);
+    const coverageEnded = subscription ? access.coverageEnded : false;
+    const trialLive = mapped && access.state === "TRIAL";
     const trialPlan = trialLive ? applyFullTrialAccess(mapped, catalog, NEW_TRIAL_DAYS) : mapped;
     const trialLimit = trialLive && trialPlan ? trialPlan.monthlyOrderLimit : usage.orderLimit;
     const remaining =
       trialLimit == null ? usage.remaining : Math.max(0, trialLimit - usage.ordersUsed);
+    const display = await loadBillingDisplay(supabase, ctx.organizationId, subscription, access);
     return {
+      display,
       configurationRequired: !razorpay.keyId || !razorpay.keySecret,
       configured: Boolean(razorpay.keyId && razorpay.keySecret),
       keyId: razorpay.keyId || null,
@@ -126,7 +184,11 @@ export async function handleBillingRoutes(
       .eq("organization_id", ctx.organizationId)
       .order("created_at", { ascending: false })
       .limit(50);
-    return { payments: data ?? [] };
+    const now = Date.now();
+    const rows = (data ?? []) as Array<Record<string, unknown> & { status: string; created_at: string; failure_reason?: string | null }>;
+    return {
+      payments: rows.map((row) => ({ ...row, display: paymentDisplayStatus(row, now) })),
+    };
   }
 
   if (key === "GET billing/invoices") {

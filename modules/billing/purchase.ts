@@ -14,6 +14,21 @@ export type PurchaseRow = {
   payment_purpose?: string | null;
 };
 
+/**
+ * Rows that represent the purchase intent for an order. FAILED rows are attempt
+ * history (older payment.failed handling inserted them for the same order) and
+ * must never make a retried, captured payment ambiguous.
+ */
+export const PURCHASE_INTENT_STATUSES = ["PENDING", "CAPTURED", "REFUNDED"] as const;
+
+export function isPurchaseIntentRow(row: Pick<PurchaseRow, "status" | "payment_purpose">) {
+  const purpose = row.payment_purpose ?? "subscription";
+  return (
+    purpose === "subscription" &&
+    (PURCHASE_INTENT_STATUSES as readonly string[]).includes(String(row.status ?? "").toUpperCase())
+  );
+}
+
 export function isCapturedRazorpayStatus(status: string | null | undefined) {
   return String(status ?? "").toLowerCase() === "captured";
 }
@@ -33,9 +48,7 @@ export async function loadPurchasesByOrder(
       "id, organization_id, subscription_id, plan_id, amount_paise, currency, status, billing_cycle, razorpay_order_id, razorpay_payment_id, payment_purpose"
     )
     .eq("razorpay_order_id", razorpayOrderId);
-  return ((data ?? []) as PurchaseRow[]).filter(
-    (row) => !row.payment_purpose || row.payment_purpose === "subscription"
-  );
+  return ((data ?? []) as PurchaseRow[]).filter(isPurchaseIntentRow);
 }
 
 export async function resolvePurchaseByOrder(

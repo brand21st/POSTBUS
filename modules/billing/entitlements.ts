@@ -8,7 +8,7 @@ import {
   type SubscriptionRow,
 } from "@/modules/billing/subscriptions";
 import { trialIsLive } from "@/modules/billing/trial-policy";
-import { subscriptionCoverageEnded } from "@/modules/billing/usage";
+import { decideBillingAccess, type BillingAccessState } from "@/modules/billing/access";
 
 export const FEATURE = {
   shopify: "Shopify order sync",
@@ -172,7 +172,13 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
 }
 
 export type PlanEntitlements = {
+  /** Features usable now. Empty when the trial or paid period has ended. */
   features: string[];
+  /** Plan features whose own history stays readable (GET) after coverage ends. */
+  historyFeatures: string[];
+  /** Server decision: may run paid operations. */
+  entitled: boolean;
+  accessState: BillingAccessState;
   trial: boolean;
   planName: string | null;
   planSlug: string | null;
@@ -180,6 +186,21 @@ export type PlanEntitlements = {
   trialEnd: string | null;
   coverageEnded: boolean;
 };
+
+export const SUBSCRIPTION_REQUIRED_MESSAGE =
+  "Your trial or subscription has ended. Upgrade your plan to continue using this feature.";
+
+/**
+ * Features whose existing records stay readable after coverage ends, so merchants
+ * keep their invoices, manifests, and tracking-page settings. Writes still need
+ * an active trial or paid period.
+ */
+export const READ_ONLY_HISTORY_FEATURES = new Set<string>([
+  FEATURE.invoices,
+  FEATURE.manifests,
+  FEATURE.trackingPage,
+  FEATURE.packing,
+]);
 
 async function loadEntitlementSubscription(supabase: SupabaseClient, organizationId: string) {
   const live = await getLiveSubscription(supabase, organizationId);
@@ -194,35 +215,62 @@ async function loadEntitlementSubscription(supabase: SupabaseClient, organizatio
   return (data as SubscriptionRow | null) ?? null;
 }
 
-export async function getOrganizationEntitlements(
-  supabase: SupabaseClient,
-  organizationId: string
-): Promise<PlanEntitlements> {
-  const live = await loadEntitlementSubscription(supabase, organizationId);
+export function entitlementsForSubscription(
+  live: SubscriptionRow | null,
+  now = Date.now()
+): PlanEntitlements {
   const plan = asPlan(live?.plans);
   const mapped = plan ? mapPlan(plan) : null;
-  const trial = live ? trialIsLive(live) : false;
-  const coverageEnded = live ? subscriptionCoverageEnded(live) || live.status === "EXPIRED" : true;
+  const access = decideBillingAccess(live, now);
+  const trial = access.state === "TRIAL";
+  const planFeatures = expandPlanFeatures(mapped?.features ?? [], {
+    trial: live ? trialIsLive(live, now) : false,
+    slug: mapped?.slug,
+  });
+  // An ended trial still has the Business plan_id; history follows what the plan covered.
+  const historySource = live && (live.status ?? "").toUpperCase() === "TRIAL" ? [...BUSINESS_FEATURES] : planFeatures;
   return {
-    features: expandPlanFeatures(mapped?.features ?? [], {
-      trial,
-      slug: mapped?.slug,
-    }),
+    features: access.operational ? planFeatures : [],
+    historyFeatures: historySource.filter((feature) => READ_ONLY_HISTORY_FEATURES.has(feature)),
+    entitled: access.operational,
+    accessState: access.state,
     trial,
     planName: mapped?.name ?? null,
     planSlug: mapped?.slug ?? null,
     status: live?.status ?? null,
     trialEnd: live?.trial_end ?? live?.current_period_end ?? null,
-    coverageEnded,
+    coverageEnded: access.coverageEnded,
   };
 }
 
+export async function getOrganizationEntitlements(
+  supabase: SupabaseClient,
+  organizationId: string
+): Promise<PlanEntitlements> {
+  const live = await loadEntitlementSubscription(supabase, organizationId);
+  return entitlementsForSubscription(live);
+}
+
+/**
+ * Server-side plan gate. Without an active trial or paid period every paid
+ * feature is refused, except GET reads of the merchant's own history for
+ * READ_ONLY_HISTORY_FEATURES that their plan covered.
+ */
 export async function assertPlanFeature(
   supabase: SupabaseClient,
   organizationId: string,
-  feature: string
+  feature: string,
+  options: { method?: string } = {}
 ) {
   const entitlements = await getOrganizationEntitlements(supabase, organizationId);
-  if (hasPlanFeature(entitlements.features, feature)) return entitlements;
-  throw new AppError(ERROR_CODES.FORBIDDEN, UPGRADE_PLAN_MESSAGE, { feature });
+  if (entitlements.entitled) {
+    if (hasPlanFeature(entitlements.features, feature)) return entitlements;
+    throw new AppError(ERROR_CODES.FORBIDDEN, UPGRADE_PLAN_MESSAGE, { feature });
+  }
+  const method = (options.method ?? "").toUpperCase();
+  if (method === "GET" && hasPlanFeature(entitlements.historyFeatures, feature)) return entitlements;
+  throw new AppError(ERROR_CODES.FORBIDDEN, SUBSCRIPTION_REQUIRED_MESSAGE, {
+    feature,
+    billing: entitlements.accessState,
+  });
 }

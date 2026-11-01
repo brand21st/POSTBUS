@@ -24,6 +24,14 @@ function fakeSupabase(state: {
   activations: number;
 }) {
   return {
+    // Fulfillment RPC stand-in: a captured order replays as a duplicate.
+    async rpc(_name: string, args: Record<string, unknown>) {
+      const row = state.payments.find((payment) => payment.razorpay_order_id === args.p_razorpay_order_id);
+      if (row?.status === "CAPTURED" && row.razorpay_payment_id === args.p_razorpay_payment_id) {
+        return { data: { handled: true, duplicate: true }, error: null };
+      }
+      return { data: { handled: false, notFound: true }, error: null };
+    },
     from(table: string) {
       const filters: Record<string, unknown> = {};
       const query: Record<string, unknown> = {
@@ -105,6 +113,19 @@ function fakeSupabase(state: {
           };
         },
         upsert: async () => ({ error: null }),
+        // List reads (classification, purchase-intent lookup) await the builder itself.
+        then(resolve: (value: unknown) => void) {
+          if (table === "payments") {
+            resolve({
+              data: state.payments.filter(
+                (row) => !filters.razorpay_order_id || row.razorpay_order_id === filters.razorpay_order_id
+              ),
+              error: null,
+            });
+            return;
+          }
+          resolve({ data: [], error: null });
+        },
       };
       return query;
     },

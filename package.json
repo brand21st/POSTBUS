@@ -10,6 +10,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "verify:billing": "node scripts/ci/billing-guard.mjs && vitest run modules/billing modules/razorpay app/api/webhooks app/api/cron scripts/ci",
     "workers": "tsx workers/index.ts",
     "jobs:drain": "node scripts/drain-jobs.mjs",
     "staging:up": "node scripts/staging/provision.mjs",
