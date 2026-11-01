@@ -1,10 +1,12 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles } from "lucide-react";
+import { Check, Info, ShieldCheck, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { AiMark, AiPill } from "@/components/ui/ai-mark";
 import { api } from "@/lib/hooks/use-api";
+import { cn } from "@/lib/utils";
 import type { PackageDecision } from "@/modules/autopack/decide";
 
 type Recommendation = {
@@ -25,15 +27,18 @@ function trim(value: number) {
 
 /**
  * Shows the past box AutoPack would use for this exact order (Shopify only).
- * "Use this" only fills the form; the merchant still saves. "Not right" stops the suggestion for this order.
+ * "Apply size" only fills the form; the merchant still saves. "Not right" stops the suggestion for this order.
  */
 export function AutoPackSuggestion({
   orderId,
   enabled,
+  applied,
   onUse,
 }: {
   orderId: string;
   enabled: boolean;
+  /** The form currently holds this suggestion's box. */
+  applied?: boolean;
   onUse: (pick: AutoPackPick) => void;
 }) {
   const queryClient = useQueryClient();
@@ -53,22 +58,36 @@ export function AutoPackSuggestion({
         body: JSON.stringify({ evidenceId }),
       }),
     onSuccess: () => {
-      toast.success("AutoPack will not suggest that box for this order again.");
+      toast.success("Got it. AutoPack won't suggest that box for this order again.");
       void queryClient.invalidateQueries({ queryKey });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not reject the suggestion."),
   });
 
+  if (!enabled) return null;
+
+  if (recommendation.isPending) {
+    return (
+      <div className="flex items-center gap-2.5 rounded-xl border border-violet-200/70 bg-violet-50/40 px-3 py-2.5 dark:border-violet-900/40 dark:bg-violet-950/20">
+        <AiMark size="sm" className="animate-pulse motion-reduce:animate-none" />
+        <span className="text-xs text-muted">AutoPack is checking past boxes for these items…</span>
+      </div>
+    );
+  }
+
   const decision = recommendation.data?.decision;
-  if (!enabled || !decision) return null;
+  if (!decision) return null;
 
   if (decision.kind === "MANUAL_REVIEW_REQUIRED") {
     if (!SHOWN_REVIEW_REASONS.has(decision.reason)) return null;
     return (
-      <p className="rounded-lg border border-slate-200/80 bg-slate-50 px-3 py-2 text-[11px] leading-4 text-slate-700 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300">
-        <Sparkles className="mr-1 inline size-3 text-brand" aria-hidden />
-        AutoPack: {decision.message}
-      </p>
+      <div className="flex items-start gap-2.5 rounded-xl border border-border bg-surface-soft/60 px-3 py-2.5">
+        <AiMark size="sm" className="mt-px opacity-80" />
+        <p className="text-xs leading-5 text-muted">
+          <span className="font-semibold text-ink">AutoPack · </span>
+          {decision.message}
+        </p>
+      </div>
     );
   }
 
@@ -79,38 +98,66 @@ export function AutoPackSuggestion({
   const box = decision.box;
 
   return (
-    <div className="space-y-1.5 rounded-lg border border-brand/30 bg-brand/5 px-3 py-2">
-      <p className="text-[11px] leading-4 text-ink">
-        <Sparkles className="mr-1 inline size-3 text-brand" aria-hidden />
-        <span className="font-semibold">
-          AutoPack: {trim(box.lengthCm)} × {trim(box.widthCm)} × {trim(box.heightCm)} cm
-        </span>
-        {decision.kind === "SAVED_PACKAGE" ? ` (${decision.presetName})` : ""}
-        <span className="text-muted">
-          {" "}
-          · {measured ? "Measured box" : "Booked before, not marked measured"} for these exact items
-        </span>
-      </p>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={() => onUse({ ...box, evidenceId })}
-        >
-          Use this
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="h-7 text-xs"
-          disabled={reject.isPending}
-          onClick={() => reject.mutate(evidenceId)}
-        >
-          Not right
-        </Button>
+    <section
+      aria-label="AutoPack suggestion"
+      className={cn(
+        "relative overflow-hidden rounded-xl p-px",
+        applied
+          ? "bg-emerald-300/70 dark:bg-emerald-800/60"
+          : "bg-gradient-to-br from-rose-400/60 via-fuchsia-400/50 to-violet-500/60"
+      )}
+    >
+      <div className="rounded-[11px] bg-card px-3 py-2.5">
+        <div className="flex items-start gap-2.5">
+          <AiMark />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="text-xs font-semibold text-ink">AutoPack suggestion</p>
+              <AiPill />
+            </div>
+            <p className="mt-0.5 text-[15px] font-semibold tabular-nums tracking-tight text-ink">
+              {trim(box.lengthCm)} × {trim(box.widthCm)} × {trim(box.heightCm)}
+              <span className="ml-1 text-xs font-medium text-muted">cm</span>
+              {decision.kind === "SAVED_PACKAGE" ? (
+                <span className="ml-1.5 text-xs font-medium text-muted">· {decision.presetName}</span>
+              ) : null}
+            </p>
+            <p className="mt-1 flex items-center gap-1 text-[11px] leading-4 text-muted">
+              {measured ? (
+                <ShieldCheck className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+              ) : (
+                <Info className="size-3 shrink-0" aria-hidden />
+              )}
+              {measured ? "Measured box used before for these exact items" : "Booked before for these exact items · not marked measured"}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-2.5 flex items-center gap-2 pl-[42px]">
+          {applied ? (
+            <span className="inline-flex h-8 items-center gap-1 rounded-lg bg-emerald-50 px-2.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <Check className="size-3.5" aria-hidden />
+              Applied. Save to keep it
+            </span>
+          ) : (
+            <Button type="button" size="xs" onClick={() => onUse({ ...box, evidenceId })}>
+              <Check className="size-3.5" aria-hidden />
+              Apply size
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="text-muted"
+            disabled={reject.isPending}
+            onClick={() => reject.mutate(evidenceId)}
+          >
+            <Undo2 className="size-3.5" aria-hidden />
+            Not right
+          </Button>
+        </div>
       </div>
-    </div>
+    </section>
   );
 }

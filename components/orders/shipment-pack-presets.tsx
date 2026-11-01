@@ -273,50 +273,60 @@ export function ShipmentPackPresets({
         </p>
       ) : null}
 
-      <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
-        {BUILTIN_BOX_SIZES.map((size) => {
-          const selected = Boolean(
-            sizeCurrent &&
-              sameSize(sizeCurrent, size) &&
-              !presets.some((preset) => preset.id === activeId && sameSize(preset, size))
-          );
-          return (
-            <PresetChip
-              key={size.label}
-              tone="box"
-              label={`${size.label} ${size.lengthCm}×${size.widthCm}×${size.heightCm}`}
-              selected={selected}
-              onApply={() => onApplySize(size)}
-            />
-          );
-        })}
-        {presets.map((preset) => {
-          const pack: PackApply = {
-            presetId: preset.id,
-            weightGrams: preset.weightGrams,
-            lengthCm: preset.lengthCm,
-            widthCm: preset.widthCm,
-            heightCm: preset.heightCm,
-            serviceCode: preset.serviceCode,
-          };
-          return (
-            <PresetChip
-              key={preset.id}
-              tone="saved"
-              label={`${preset.name} · ${Math.round(preset.weightGrams)} g · ${trimNum(preset.lengthCm)}×${trimNum(preset.widthCm)}×${trimNum(preset.heightCm)}`}
-              selected={preset.id === activeId}
-              onApply={() => {
-                onApply(pack);
-                touch.mutate(preset.id);
-              }}
-              onRemove={() => {
-                const ok = window.confirm(`Remove pack size “${preset.name}”?`);
-                if (!ok) return;
-                remove.mutate(preset.id);
-              }}
-            />
-          );
-        })}
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="mr-0.5 w-11 shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted">Quick</span>
+          {BUILTIN_BOX_SIZES.map((size) => {
+            const selected = Boolean(
+              sizeCurrent &&
+                sameSize(sizeCurrent, size) &&
+                !presets.some((preset) => preset.id === activeId && sameSize(preset, size))
+            );
+            return (
+              <PresetChip
+                key={size.label}
+                tone="box"
+                label={`${size.label} ${size.lengthCm}×${size.widthCm}×${size.heightCm}`}
+                selected={selected}
+                onApply={() => onApplySize(size)}
+              />
+            );
+          })}
+        </div>
+        {presets.length ? (
+          <div className="flex items-start gap-1">
+            <span className="mr-0.5 mt-1 w-11 shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted">Saved</span>
+            <div className="flex max-h-[4.5rem] min-w-0 flex-1 flex-wrap gap-1 overflow-y-auto pr-1">
+              {presets.map((preset) => {
+                const pack: PackApply = {
+                  presetId: preset.id,
+                  weightGrams: preset.weightGrams,
+                  lengthCm: preset.lengthCm,
+                  widthCm: preset.widthCm,
+                  heightCm: preset.heightCm,
+                  serviceCode: preset.serviceCode,
+                };
+                return (
+                  <PresetChip
+                    key={preset.id}
+                    tone="saved"
+                    label={`${preset.name} · ${Math.round(preset.weightGrams)} g · ${trimNum(preset.lengthCm)}×${trimNum(preset.widthCm)}×${trimNum(preset.heightCm)}`}
+                    selected={preset.id === activeId}
+                    onApply={() => {
+                      onApply(pack);
+                      touch.mutate(preset.id);
+                    }}
+                    onRemove={() => {
+                      const ok = window.confirm(`Remove pack size “${preset.name}” for everyone in this workspace?`);
+                      if (!ok) return;
+                      remove.mutate(preset.id);
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

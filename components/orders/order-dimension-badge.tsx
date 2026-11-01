@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
 import { AutoPackSuggestion, type AutoPackPick } from "@/components/orders/autopack-suggestion";
 import { Checkbox } from "@/components/ui/checkbox";
+import { AiMark } from "@/components/ui/ai-mark";
 import { orderNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
@@ -404,7 +405,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                     {needsSetup ? "Add parcel size" : "Edit parcel"}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-muted">
-                    Order {orderNumber(order)} · {strictOrg ? "Size is required unless Settings has a default package." : "Optional. Empty fields use Settings defaults at booking."}
+                    Order <span className="font-medium text-ink">{orderNumber(order)}</span>
+                    {hasWeight ? <> · {currentWeightGrams} g</> : null}
                   </DialogDescription>
                 </div>
               </div>
@@ -412,22 +414,30 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
 
             <div className="space-y-4 py-3">
               {needsSetup ? (
-                <p className="rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-                  {!hasDimensions && !hasWeight
-                    ? strictOrg
-                      ? "Parcel length, width, and height are required before booking when Settings has no default package. Empty weight uses the Settings weight, or 100 g."
-                      : "You can still ship without entering these. India Post booking will use Settings → Shipping defaults (or 14 × 9 × 1 cm and 100 g)."
-                    : !hasDimensions
-                      ? strictOrg
-                        ? `Weight is ${currentWeightGrams}g. Enter length, width, and height. Booking stops if Settings has no default package.`
-                        : `Weight is ${currentWeightGrams}g. Size is optional — add L × W × H here, or booking uses Settings defaults.`
-                      : "Size is saved. Weight is optional — add it here, or booking uses the Settings default weight."}
-                </p>
+                <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+                  <p>
+                    {!hasDimensions && !hasWeight
+                      ? "Add the box size to book. Empty weight uses your Settings weight, or 100 g."
+                      : !hasDimensions
+                        ? "Add the box size to book this parcel."
+                        : "Size is saved. Empty weight uses your Settings weight, or 100 g."}
+                    {!hasDimensions ? (
+                      <span className="text-amber-800/80 dark:text-amber-300/80"> Not needed if Settings has a default package.</span>
+                    ) : null}
+                  </p>
+                </div>
               ) : null}
 
               <AutoPackSuggestion
                 orderId={String(order.id)}
                 enabled={open && isShopifyOrder && !isLocked}
+                applied={
+                  autopackPick != null &&
+                  Number(lengthInput) === autopackPick.lengthCm &&
+                  Number(widthInput) === autopackPick.widthCm &&
+                  Number(heightInput) === autopackPick.heightCm
+                }
                 onUse={(pick) => {
                   setLengthInput(String(pick.lengthCm));
                   setWidthInput(String(pick.widthCm));
@@ -463,81 +473,47 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                 }}
               />
 
-              {/* Dimension Inputs */}
-              <div className="grid grid-cols-3 gap-2.5">
-                <div className="space-y-1">
-                  <Label htmlFor={lengthId} className="text-xs font-medium text-ink">
-                    Length
-                  </Label>
-                  <div className="relative flex items-center">
-                    <Input
-                      id={lengthId}
-                      type="number"
-                      step="0.1"
-                      min={14}
-                      max={150}
-                      placeholder="20"
-                      value={lengthInput}
-                      onChange={(e) => setLengthInput(e.target.value)}
-                      disabled={saveMutation.isPending}
-                      className="h-9 pr-7 text-xs font-semibold tabular-nums"
-                      required
-                      autoFocus
-                    />
-                    <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-muted">
-                      cm
-                    </span>
-                  </div>
+              {/* Box size */}
+              <fieldset className="space-y-1.5">
+                <legend className="mb-1.5 flex w-full items-center justify-between text-xs font-semibold text-ink">
+                  <span>Box size</span>
+                  <span className="text-[11px] font-normal text-muted">cm · L × W × H</span>
+                </legend>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: lengthId, label: "Length", min: 14, example: "20", value: lengthInput, set: setLengthInput },
+                      { id: widthId, label: "Width", min: 9, example: "15", value: widthInput, set: setWidthInput },
+                      { id: heightId, label: "Height", min: 1, example: "10", value: heightInput, set: setHeightInput },
+                    ] as const
+                  ).map((field, index) => (
+                    <div key={field.label} className="space-y-1">
+                      <Label htmlFor={field.id} className="text-[11px] font-medium text-muted">
+                        {field.label}
+                      </Label>
+                      <div className="relative flex items-center">
+                        <Input
+                          id={field.id}
+                          type="number"
+                          inputMode="decimal"
+                          step="0.1"
+                          min={field.min}
+                          max={150}
+                          placeholder={`e.g. ${field.example}`}
+                          value={field.value}
+                          onChange={(e) => field.set(e.target.value)}
+                          disabled={saveMutation.isPending}
+                          className="h-10 pr-8 text-sm font-semibold tabular-nums placeholder:font-normal placeholder:text-muted/50"
+                          required
+                          autoFocus={index === 0 && !autopackPick}
+                        />
+                        <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-muted">cm</span>
+                      </div>
+                      <p className="text-[10px] text-muted/80">min {field.min}</p>
+                    </div>
+                  ))}
                 </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor={widthId} className="text-xs font-medium text-ink">
-                    Width
-                  </Label>
-                  <div className="relative flex items-center">
-                    <Input
-                      id={widthId}
-                      type="number"
-                      step="0.1"
-                      min={9}
-                      max={150}
-                      placeholder="15"
-                      value={widthInput}
-                      onChange={(e) => setWidthInput(e.target.value)}
-                      disabled={saveMutation.isPending}
-                      className="h-9 pr-7 text-xs font-semibold tabular-nums"
-                      required
-                    />
-                    <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-muted">
-                      cm
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor={heightId} className="text-xs font-medium text-ink">
-                    Height
-                  </Label>
-                  <div className="relative flex items-center">
-                    <Input
-                      id={heightId}
-                      type="number"
-                      step="0.1"
-                      min={1}
-                      max={150}
-                      placeholder="10"
-                      value={heightInput}
-                      onChange={(e) => setHeightInput(e.target.value)}
-                      disabled={saveMutation.isPending}
-                      className="h-9 pr-7 text-xs font-semibold tabular-nums"
-                      required
-                    />
-                    <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-muted">
-                      cm
-                    </span>
-                  </div>
-                </div>
-              </div>
+              </fieldset>
 
               {/* Weight Section */}
               <div className="space-y-2 rounded-xl border border-border/80 bg-surface-soft/60 p-3">
@@ -643,11 +619,11 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                         <button
                           type="button"
                           onClick={syncBoxFromItems}
-                          className="inline-flex items-center gap-0.5 text-[10px] font-medium text-brand hover:underline"
+                          className="inline-flex items-center gap-0.5 rounded-md px-1 text-[10px] font-medium text-muted transition hover:bg-card hover:text-ink"
                           title="Set box weight from total item weights"
                         >
-                          <Zap className="size-2.5" />
-                          <span>Use items sum ({itemsTotalWeight}g)</span>
+                          <Zap className="size-2.5" aria-hidden />
+                          <span>Use items total · {itemsTotalWeight} g</span>
                         </button>
                       ) : null}
                     </div>
@@ -672,7 +648,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
 
               {/* Volumetric Weight & Tariff Live Preview */}
               <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-surface-soft px-3 py-2 text-[11px] text-muted">
-                <span>Limits: L ≥ 14, W ≥ 9, H ≥ 1 cm</span>
+                <span>{volumetricGrams > 0 ? "Billed on the higher of actual and volumetric weight" : "Enter the box size to see the billable weight"}</span>
                 <div className="flex items-center gap-2 font-medium text-ink">
                   {volumetricGrams > 0 ? (
                     <span title="Volumetric weight: (L × W × H) / 5000">
@@ -688,16 +664,29 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
               </div>
 
               {isShopifyOrder ? (
-                <label className="flex items-start gap-2 text-[11px] leading-4 text-muted">
+                <label
+                  className={cn(
+                    "flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition",
+                    measured
+                      ? "border-violet-300 bg-violet-50/60 dark:border-violet-800 dark:bg-violet-950/30"
+                      : "border-border hover:border-violet-200 hover:bg-violet-50/30 dark:hover:border-violet-900"
+                  )}
+                >
                   <Checkbox
                     checked={measured}
                     onCheckedChange={(value) => setMeasured(value === true)}
                     disabled={saveMutation.isPending}
                     className="mt-0.5"
                   />
-                  <span>
-                    <span className="font-medium text-ink">I measured this box.</span> AutoPack may reuse it for
-                    orders with exactly these items and quantities when AutoPack box selection is on.
+                  <span className="min-w-0 flex-1 text-[11px] leading-4 text-muted">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-ink">
+                      I measured this box
+                      <AiMark size="xs" />
+                    </span>
+                    <span className="mt-0.5 block">
+                      AutoPack can reuse this size for orders with exactly the same items and quantities, when AutoPack
+                      box selection is on in Automation.
+                    </span>
                   </span>
                 </label>
               ) : null}
