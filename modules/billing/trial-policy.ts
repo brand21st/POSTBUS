@@ -1,4 +1,4 @@
-import { BILLING_ANNOUNCEMENT_TIMEZONE, istCalendarDate } from "@/lib/dashboard/billing-announcement";
+import { BILLING_ANNOUNCEMENT_TIMEZONE, hideBillingAnnouncementForPaidPlan, istCalendarDate } from "@/lib/dashboard/billing-announcement";
 
 // Official policy (owner decision, 2026-11-01): merchants who joined before
 // 2026-11-01 00:00 IST pay from November 1; merchants who join on or after it get
@@ -79,7 +79,12 @@ export function trialBannerCopy(input: {
   trialEnd?: string | null;
   cohort?: string | null;
   now?: number;
+  status?: string | null;
+  accessState?: string | null;
 }) {
+  if (hideBillingAnnouncementForPaidPlan(input.accessState) || hideBillingAnnouncementForPaidPlan(input.status)) {
+    return null;
+  }
   const now = input.now ?? Date.now();
   if (input.coverageEnded || (!input.trial && (input.trialEnd ? new Date(input.trialEnd).getTime() <= now : false))) {
     return {

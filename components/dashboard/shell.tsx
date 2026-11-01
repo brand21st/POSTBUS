@@ -17,6 +17,7 @@ import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { TrialEndedModal } from "@/components/billing/trial-ended-modal";
 import { TrialStatusBar } from "@/components/dashboard/trial-status-bar";
+import { hideBillingAnnouncementForPaidPlan } from "@/lib/dashboard/billing-announcement";
 import { trialBannerCopy } from "@/modules/billing/trial-policy";
 import {
   shouldMountDashboardChildren,
@@ -83,15 +84,23 @@ export function DashboardShell({
 
   const subscription = me.data?.subscription;
   const [trialElapsed, setTrialElapsed] = useState(false);
+  const paidPlan =
+    hideBillingAnnouncementForPaidPlan(subscription?.accessState) ||
+    hideBillingAnnouncementForPaidPlan(subscription?.status);
   const trialExpired =
-    subscription?.status === "EXPIRED" ||
-    ((subscription?.status === "TRIAL" || Boolean(subscription?.trial)) &&
-      (Boolean(subscription?.coverageEnded) || trialElapsed));
-  const trialCopy = trialBannerCopy({
-    trial: Boolean(subscription?.trial) && !trialElapsed,
-    coverageEnded: trialExpired,
-    trialEnd: subscription?.trialEnd,
-  });
+    !paidPlan &&
+    (subscription?.status === "EXPIRED" ||
+      ((subscription?.status === "TRIAL" || Boolean(subscription?.trial)) &&
+        (Boolean(subscription?.coverageEnded) || trialElapsed)));
+  const trialCopy = paidPlan
+    ? null
+    : trialBannerCopy({
+        trial: Boolean(subscription?.trial) && !trialElapsed,
+        coverageEnded: trialExpired,
+        trialEnd: subscription?.trialEnd,
+        status: subscription?.status,
+        accessState: subscription?.accessState,
+      });
 
   useEffect(() => {
     setTrialElapsed(false);
