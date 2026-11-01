@@ -1,6 +1,6 @@
-# PostBus
+# 
 
-Shopify-to-India Post shipping automation for Indian merchants. This repository is the full product: public marketing site, merchant dashboard, APIs, Supabase schema, and background workers.
+
 
 Website: [postbus.in](https://postbus.in)
 
