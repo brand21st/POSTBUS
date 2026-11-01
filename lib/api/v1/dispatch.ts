@@ -6,6 +6,7 @@ import { handleAddonRoutes } from "@/lib/api/v1/addons";
 import { handleAiAccountantRoutes } from "@/lib/api/v1/ai-accountant";
 import { handleAutoPackRoutes } from "@/lib/api/v1/autopack";
 import { handleBillingRoutes } from "@/lib/api/v1/billing";
+import { handleBookingQueueRoutes } from "@/lib/api/v1/booking-queue";
 import { handleCommerceRoutes } from "@/lib/api/v1/commerce";
 import { handleIntegrationRoutes } from "@/lib/api/v1/integrations";
 import { handleInventoryRoutes } from "@/lib/api/v1/inventory";
@@ -55,6 +56,7 @@ export async function dispatchTenantRoutes(
     (await handleUiRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleShipmentPresetRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleAutoPackRoutes(request, supabase, ctx, method, slugs)) ??
+    (await handleBookingQueueRoutes(request, supabase, ctx, method, slugs)) ??
     (await handleOrderDefaultRoutes(request, supabase, ctx, method, slugs)) ??
     (await handlePrintStationRoutes(request, supabase, ctx, key, method, slugs)) ??
     (await handlePrintDeviceTenantRoutes(request, supabase, ctx, method, slugs)) ??

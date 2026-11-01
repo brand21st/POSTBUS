@@ -164,7 +164,7 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
     return FEATURE.bulk;
   }
   if (path === "orders/bulk/status") return FEATURE.bulk;
-  if (slugs[0] === "bookings") return FEATURE.bulk;
+  if (slugs[0] === "bookings" || slugs[0] === "booking-queue") return FEATURE.bulk;
   if (slugs[0] === "integrations") {
     if (slugs[1] === "shopify" && method !== "GET") return FEATURE.shopify;
     if (slugs[1] === "woocommerce" && method !== "GET") return FEATURE.woocommerce;
