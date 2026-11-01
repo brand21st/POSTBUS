@@ -2545,19 +2545,38 @@ async function refreshStoredShopifyShipping(
   }
 }
 
-export async function upsertShopifyOrder(
-  supabase: SupabaseClient,
-  input: {
-    organizationId: string;
-    userId?: string;
-    shopDomain: string;
-    remote: ShopifyRemoteOrder;
-    createShipment?: boolean;
-    enqueueBooking?: boolean;
-    autoShopifyProcessing?: boolean;
-    allowAddressAi?: boolean;
+type UpsertShopifyOrderInput = {
+  organizationId: string;
+  userId?: string;
+  shopDomain: string;
+  remote: ShopifyRemoteOrder;
+  createShipment?: boolean;
+  enqueueBooking?: boolean;
+  autoShopifyProcessing?: boolean;
+  allowAddressAi?: boolean;
+  /** The Bulk Booking queue owns booking for Shopify orders in this workspace. */
+  enrollInQueue?: boolean;
+};
+
+/**
+ * Imports or updates one Shopify order. When the Bulk Booking queue owns Shopify bookings, the
+ * order is offered to the queue afterwards (new orders, and updates such as payment turning paid).
+ */
+export async function upsertShopifyOrder(supabase: SupabaseClient, input: UpsertShopifyOrderInput) {
+  const result = await upsertShopifyOrderRecord(supabase, input);
+  if (input.enrollInQueue && result.orderId && !result.skipped) {
+    const { enrollOrderAutomatically } = await import("@/modules/booking-queue/auto-enroll");
+    await enrollOrderAutomatically(supabase, {
+      organizationId: input.organizationId,
+      orderId: result.orderId,
+      source: "SHOPIFY",
+      userId: input.userId,
+    });
   }
-) {
+  return result;
+}
+
+async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertShopifyOrderInput) {
   const remote = input.remote;
   const contact = await resolveShopifyShipping(remote, {
     allowAddressAi: input.allowAddressAi,
@@ -2987,21 +3006,28 @@ export async function upsertShopifyOrder(
   return { imported: true, updated: false, skipped: false, orderId: order.id as string };
 }
 
-async function shopifyOrderAutomation(supabase: SupabaseClient, organizationId: string) {
+/** Exported for tests: which booking path a Shopify import uses. */
+export async function shopifyOrderAutomation(supabase: SupabaseClient, organizationId: string) {
+  // When the Bulk Booking queue owns Shopify bookings, the direct auto-booking path is off:
+  // an order must never be booked both directly and through the queue.
+  const { resolveImportBookingRoute } = await import("@/modules/booking-queue/settings");
+  const enrollInQueue = (await resolveImportBookingRoute(supabase, organizationId, "SHOPIFY")) === "QUEUE";
   try {
     const automation = await getAutomationSettings(supabase, organizationId);
     return {
       autoShopifySync: Boolean(automation.autoShopifySync),
       createShipment: Boolean(automation.autoShipmentCreation),
-      enqueueBooking: Boolean(automation.autoBooking),
+      enqueueBooking: enrollInQueue ? false : Boolean(automation.autoBooking),
       autoShopifyProcessing: Boolean(automation.autoShopifyProcessing),
+      enrollInQueue,
     };
   } catch {
     return {
       autoShopifySync: AUTOMATION_DEFAULTS.auto_shopify_sync,
       createShipment: AUTOMATION_DEFAULTS.auto_shipment_creation,
-      enqueueBooking: AUTOMATION_DEFAULTS.auto_booking,
+      enqueueBooking: enrollInQueue ? false : AUTOMATION_DEFAULTS.auto_booking,
       autoShopifyProcessing: AUTOMATION_DEFAULTS.auto_shopify_processing,
+      enrollInQueue,
     };
   }
 }
@@ -3103,6 +3129,7 @@ export async function importShopifyWebhookOrder(
     remote,
     createShipment: automation.createShipment,
     enqueueBooking: automation.enqueueBooking,
+    enrollInQueue: automation.enrollInQueue,
     autoShopifyProcessing: automation.autoShopifyProcessing,
   });
 }
@@ -3431,6 +3458,7 @@ export async function syncUnfulfilledShopifyOrders(
           remote,
           createShipment: automation.createShipment,
           enqueueBooking: automation.enqueueBooking,
+          enrollInQueue: automation.enrollInQueue,
           allowAddressAi,
           autoShopifyProcessing: automation.autoShopifyProcessing,
         });
@@ -3535,6 +3563,7 @@ async function syncAppInstallationOrders(
           remote,
           createShipment: automation.createShipment,
           enqueueBooking: automation.enqueueBooking,
+          enrollInQueue: automation.enrollInQueue,
           allowAddressAi,
           autoShopifyProcessing: automation.autoShopifyProcessing,
         });

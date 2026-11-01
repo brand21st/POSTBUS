@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { FileSpreadsheet } from "lucide-react";
 import { BulkExcelWizard } from "@/components/bookings/bulk-excel-wizard";
+import { AutomationSettingsButton } from "@/components/booking-queue/automation-settings-dialog";
 import { BookingDetailDialog } from "@/components/booking-queue/booking-detail-dialog";
 import { historyColumns, queueColumns } from "@/components/booking-queue/queue-columns";
 import { ApproveAllWaiting, QueueBulkActions } from "@/components/booking-queue/queue-actions";
@@ -165,9 +166,12 @@ export function BookingQueueDashboard({ summary }: { summary: QueueSummary }) {
           </span>
         }
         actions={
-          <Link href="/dashboard/orders" className="text-sm text-muted hover:text-foreground">
-            Back to orders
-          </Link>
+          <>
+            <AutomationSettingsButton />
+            <Link href="/dashboard/orders" className="text-sm text-muted hover:text-foreground">
+              Back to orders
+            </Link>
+          </>
         }
       />
 

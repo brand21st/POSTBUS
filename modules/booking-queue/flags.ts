@@ -13,3 +13,15 @@ export function bookingQueueEnabledFor(organizationId: string, raw = process.env
     .filter(Boolean)
     .includes(organizationId.trim().toLowerCase());
 }
+
+/**
+ * Automatic booking (AUTOMATIC mode) has its own, narrower gate: BOOKING_QUEUE_AUTOMATION_ORGS,
+ * same format. It also needs the queue itself to be on.
+ */
+export function bookingQueueAutomationEnabledFor(
+  organizationId: string,
+  raw = process.env.BOOKING_QUEUE_AUTOMATION_ORGS
+) {
+  // An unset variable must mean "off": pass "" so the queue allowlist is never used as a fallback.
+  return bookingQueueEnabledFor(organizationId) && bookingQueueEnabledFor(organizationId, raw ?? "");
+}

@@ -9,7 +9,7 @@ import {
   type EnrollmentBlock,
   type QueueOrderSnapshot,
 } from "@/modules/booking-queue/eligibility";
-import { bookingQueueEnabledFor } from "@/modules/booking-queue/flags";
+import { bookingQueueAutomationEnabledFor, bookingQueueEnabledFor } from "@/modules/booking-queue/flags";
 import {
   ACTIVE_QUEUE_STATES,
   canTransitionQueueItem,
@@ -28,7 +28,7 @@ const LIST_MAX_PAGE_SIZE = 100;
 const SEARCH_ID_LIMIT = 200;
 const SYNC_BATCH = 500;
 
-export type EnqueueVia = "ORDERS_PAGE" | "QUEUE_PAGE" | "API";
+export type EnqueueVia = "ORDERS_PAGE" | "QUEUE_PAGE" | "API" | "AUTO";
 
 export type EnqueueSkip = {
   orderId: string;
@@ -61,7 +61,7 @@ export async function enqueueOrders(
   supabase: SupabaseClient,
   ctx: TenantContext,
   orderIds: string[],
-  options: { via: EnqueueVia } = { via: "ORDERS_PAGE" }
+  options: { via: EnqueueVia; autoApprove?: boolean } = { via: "ORDERS_PAGE" }
 ): Promise<EnqueueResult> {
   assertBookingQueueEnabled(ctx);
   const ids = uniqueIds(orderIds);
@@ -169,7 +169,12 @@ export async function enqueueOrders(
   }
   if (!inserted.length) return { enqueued: [], skipped };
 
-  const states = await validateQueuedOrders(supabase, ctx, inserted.map((row) => ({ orderId: row.orderId, itemId: row.itemId })));
+  const states = await validateQueuedOrders(
+    supabase,
+    ctx,
+    inserted.map((row) => ({ orderId: row.orderId, itemId: row.itemId })),
+    { approve: options.autoApprove === true }
+  );
   logInfo("booking_queue.enqueued", {
     organizationId: ctx.organizationId,
     via: options.via,
@@ -189,7 +194,8 @@ export async function enqueueOrders(
 export async function validateQueuedOrders(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  items: Array<{ orderId: string; itemId: string }>
+  items: Array<{ orderId: string; itemId: string }>,
+  options: { approve?: boolean } = {}
 ) {
   const states = new Map<string, BookingQueueState>();
   if (!items.length) return states;
@@ -216,7 +222,8 @@ export async function validateQueuedOrders(
     // validateOrdersForBooking returns no row when origin lookup fails; its batch issues carry the reason.
     const issues = row ? row.issues : batchIssues.filter((issue) => !issue.orderId || issue.orderId === item.orderId);
     const valid = Boolean(row?.valid);
-    const next: BookingQueueState = valid ? "WAITING_APPROVAL" : "INVALID";
+    // Automatic mode skips the approval step for valid orders; they wait for the next run.
+    const next: BookingQueueState = valid ? (options.approve ? "READY_FOR_BOOKING" : "WAITING_APPROVAL") : "INVALID";
     const firstError = issues.map((issue) => issue.error).find(Boolean) ?? null;
     const { data } = await supabase
       .from("booking_queue_items")
@@ -627,7 +634,8 @@ export async function queueSummary(supabase: SupabaseClient, ctx: TenantContext)
     activeRuns: runs.count ?? 0,
     settings: settings.data
       ? {
-          mode: settings.data.mode === "AUTOMATIC" ? "AUTOMATIC" : "MANUAL",
+          // Outside the automation rollout a saved AUTOMATIC mode behaves as manual.
+          mode: settings.data.mode === "AUTOMATIC" && bookingQueueAutomationEnabledFor(ctx.organizationId) ? "AUTOMATIC" : "MANUAL",
           batchThreshold: Number(settings.data.batch_threshold) || DEFAULT_SETTINGS.batchThreshold,
           maxWaitMinutes: settings.data.max_wait_minutes == null ? null : Number(settings.data.max_wait_minutes),
           paused: Boolean(settings.data.paused_at),

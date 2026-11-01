@@ -11,6 +11,7 @@ import {
   QUEUE_ACTION_MAX_ITEMS,
   revalidateItems,
 } from "@/modules/booking-queue/actions";
+import { getBookingAutomationSettings, saveBookingAutomationSettings } from "@/modules/booking-queue/settings";
 import {
   ENQUEUE_MAX_ORDERS,
   enqueueOrders,
@@ -63,6 +64,8 @@ function listQuery(request: NextRequest) {
  * POST booking-queue/exclude    { itemIds } leave orders out of booking
  * POST booking-queue/revalidate { itemIds } check orders again
  * POST booking-queue/dispatch   { itemIds, idempotencyKey } book approved orders with India Post
+ * GET  booking-queue/settings   automation settings (mode, sources, batch size, maximum wait, paused)
+ * PATCH booking-queue/settings  { version, ... } save; owners and admins only
  * Off unless the workspace is in BOOKING_QUEUE_ORGS: reads report enabled:false, enqueue is refused.
  */
 export async function handleBookingQueueRoutes(
@@ -75,6 +78,10 @@ export async function handleBookingQueueRoutes(
   if (slugs[0] !== "booking-queue") return null;
   if (method === "GET" && slugs.length === 1) return listQueueItems(supabase, ctx, listQuery(request));
   if (method === "GET" && slugs[1] === "summary" && slugs.length === 2) return queueSummary(supabase, ctx);
+  if (slugs[1] === "settings" && slugs.length === 2) {
+    if (method === "GET") return getBookingAutomationSettings(supabase, ctx);
+    if (method === "PATCH") return saveBookingAutomationSettings(supabase, ctx, await request.json().catch(() => ({})));
+  }
   if (method === "GET" && slugs[1] === "items" && slugs[2] && slugs.length === 3) {
     const id = z.string().uuid().safeParse(slugs[2]);
     if (!id.success) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Queue item not found.");

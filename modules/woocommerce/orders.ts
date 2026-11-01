@@ -583,7 +583,8 @@ function addressRow(address: {
   };
 }
 
-async function maybeAutoShip(
+/** Exported for tests: shipment and booking automation after a WooCommerce import. */
+export async function maybeAutoShip(
   supabase: SupabaseClient,
   input: { organizationId: string; userId?: string },
   mapped: ReturnType<typeof mapWooOrder>,
@@ -601,17 +602,31 @@ async function maybeAutoShip(
   if (shipment && (isIndiaPostAcceptedStatus(shipment.status) || shipment.status === "BOOKING" || shipment.status === "QUEUED")) {
     return;
   }
+  // When the Bulk Booking queue owns WooCommerce bookings, the direct auto-booking path is off:
+  // an order must never be booked both directly and through the queue.
+  const { resolveImportBookingRoute } = await import("@/modules/booking-queue/settings");
+  const route = await resolveImportBookingRoute(supabase, input.organizationId, "WOOCOMMERCE");
   let automation;
   try {
     automation = await getAutomationSettings(supabase, input.organizationId);
   } catch {
-    return;
+    automation = null;
   }
-  if (!automation.autoShipmentCreation) return;
-  const pending = mapped.payment.paymentStatus === "PENDING";
-  await createShipmentsForOrders(supabase, tenant(input.organizationId, input.userId), [orderId], {
-    enqueueBooking: Boolean(automation.autoBooking) && !pending,
-  });
+  if (automation?.autoShipmentCreation) {
+    const pending = mapped.payment.paymentStatus === "PENDING";
+    await createShipmentsForOrders(supabase, tenant(input.organizationId, input.userId), [orderId], {
+      enqueueBooking: route === "LEGACY" && Boolean(automation.autoBooking) && !pending,
+    });
+  }
+  if (route === "QUEUE") {
+    const { enrollOrderAutomatically } = await import("@/modules/booking-queue/auto-enroll");
+    await enrollOrderAutomatically(supabase, {
+      organizationId: input.organizationId,
+      orderId,
+      source: "WOOCOMMERCE",
+      userId: input.userId,
+    });
+  }
 }
 
 export async function markWooOrderDeleted(

@@ -15,6 +15,8 @@ export function permissionForTenantRoute(
 
   // Workspace-wide rows-per-file limit for India Post Excel booking.
   if (key === "PATCH bookings/excel-settings") return "integrations.manage";
+  // Bulk Booking automation decides whether orders book without a person: owners and admins.
+  if (key === "PATCH booking-queue/settings") return "integrations.manage";
   if (root === "bookings" || root === "booking-queue") {
     return method === "GET" ? "shipments.read" : "shipments.write";
   }
