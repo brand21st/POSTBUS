@@ -4,12 +4,28 @@ import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { writeWorkbook } from "@/lib/xlsx/write";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
+import { mapExcelRowToArticle } from "@/modules/india-post/article-mapper";
+import type { DraftArticle } from "@/modules/india-post/article-types";
+import {
+  ARTICLE_DETAILS_HEADERS,
+  articleDetailsFilename,
+  articleDetailsParts,
+  articleDetailsRow,
+  articleDetailsWorkbook,
+  EXCEL_BOOKING_LIMIT_DEFAULT,
+  EXCEL_BOOKING_LIMIT_JSON_MAX,
+  EXCEL_BOOKING_LIMIT_MAX,
+  indiaDate,
+  normalizeExcelBookingLimit,
+  parseExcelBookingLimit,
+} from "@/modules/india-post/article-details-sheet";
 import { barcodePrefixAllowedForService } from "@/modules/india-post/barcode";
 import {
   assessImportRows,
   canResumeBulkExcelBooking,
   canStartBulkExcelBooking,
   importRowsAwaitingShipment,
+  withArticleKeys,
   type AssessedImportRow,
   type ImportStoreDefaults,
 } from "@/modules/india-post/bulk-excel-validate";
@@ -308,6 +324,47 @@ async function writeAssessed(supabase: SupabaseClient, stored: ImportRow[], asse
   }
 }
 
+async function excelBookingLimit(supabase: SupabaseClient, organizationId: string) {
+  const { data } = await supabase
+    .from("india_post_connections")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  return normalizeExcelBookingLimit((data as { excel_booking_limit?: unknown } | null)?.excel_booking_limit);
+}
+
+function excelBookingSettingsPayload(limit: number) {
+  return {
+    limit,
+    max: EXCEL_BOOKING_LIMIT_MAX,
+    jsonMax: EXCEL_BOOKING_LIMIT_JSON_MAX,
+    defaultLimit: EXCEL_BOOKING_LIMIT_DEFAULT,
+  };
+}
+
+export async function getExcelBookingSettings(supabase: SupabaseClient, ctx: TenantContext) {
+  return excelBookingSettingsPayload(await excelBookingLimit(supabase, ctx.organizationId));
+}
+
+export async function saveExcelBookingSettings(supabase: SupabaseClient, ctx: TenantContext, value: unknown) {
+  let limit: number;
+  try {
+    limit = parseExcelBookingLimit(value);
+  } catch (error) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, error instanceof Error ? error.message : "Invalid limit.");
+  }
+  const { error } = await supabase
+    .from("india_post_connections")
+    .upsert({ organization_id: ctx.organizationId, excel_booking_limit: limit }, { onConflict: "organization_id" });
+  if (error) {
+    if (/excel_booking_limit/.test(error.message)) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "The Excel booking limit is not available yet. Apply the latest database migration.");
+    }
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+  return excelBookingSettingsPayload(limit);
+}
+
 export async function excelTemplateBytes() {
   return postbridgeTemplateWorkbook();
 }
@@ -387,6 +444,13 @@ export async function createImportBatch(
     }
   }
   const remapped = remapMerchantRows(parsed, columnMap);
+  const limit = await excelBookingLimit(supabase, ctx.organizationId);
+  if (remapped.rows.length > limit) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `This workbook has ${remapped.rows.length} shipment rows. Your India Post Excel limit is ${limit} rows per file. Split the workbook or raise the limit.`
+    );
+  }
   const serviceCode = await defaultService(supabase, ctx.organizationId);
   const { data: batch, error } = await supabase
     .from("bulk_import_batches")
@@ -871,6 +935,94 @@ export async function retryImportFailures(supabase: SupabaseClient, ctx: TenantC
     await retryShipment(supabase, ctx, id);
   }
   return { retried: ids.length };
+}
+
+const SHEET_READY_STATUSES = new Set(["validated", "draft", "booking", "completed"]);
+const SHEET_ROW_STATUSES = new Set(["valid", "queued"]);
+
+/** Rebuild the article from the validated row so the sheet matches what PostBus books. */
+function importRowArticle(batch: BatchRow, row: ImportRow): DraftArticle {
+  const draft = mapExcelRowToArticle({
+    serial: String(row.excel_row_number),
+    serviceCode: batch.service_code || DEFAULT_INDIA_POST_SERVICE,
+    customerId: "",
+    contractId: "",
+    officeId: "",
+    originPin: "",
+    row: withArticleKeys(row.mapped_fields),
+  });
+  const normalized = row.normalized;
+  return {
+    ...draft,
+    barcode: String(row.barcode || draft.barcode || "").toUpperCase(),
+    weightGrams: Number(normalized.weightGrams) || draft.weightGrams,
+    lengthCm: Number(normalized.lengthCm) || draft.lengthCm,
+    widthCm: Number(normalized.widthCm) || draft.widthCm,
+    heightCm: Number(normalized.heightCm) || draft.heightCm,
+  };
+}
+
+async function articleDetailsForBatch(supabase: SupabaseClient, ctx: TenantContext, batchId: string) {
+  const batch = await loadBatch(supabase, ctx.organizationId, batchId);
+  if (!SHEET_READY_STATUSES.has(batch.status)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Validate the workbook before viewing the India Post sheet.");
+  }
+  const [rows, limit, { data: org }] = await Promise.all([
+    loadRows(supabase, ctx.organizationId, batchId),
+    excelBookingLimit(supabase, ctx.organizationId),
+    supabase.from("organizations").select("name").eq("id", ctx.organizationId).maybeSingle(),
+  ]);
+  const included = rows.filter((row) => SHEET_ROW_STATUSES.has(row.status));
+  const cells = included.map((row, index) => articleDetailsRow(importRowArticle(batch, row), index + 1));
+  const storeName = String(org?.name || ctx.organizationName || "store");
+  const date = indiaDate();
+  const parts = articleDetailsParts(cells.length, limit).map((part, _index, all) => ({
+    ...part,
+    filename: articleDetailsFilename({ count: part.count, storeName, date, part: part.part, parts: all.length }),
+  }));
+  return {
+    batch,
+    included,
+    cells,
+    limit,
+    parts,
+    excluded: rows.length - included.length,
+  };
+}
+
+export async function importArticleDetailsSheet(supabase: SupabaseClient, ctx: TenantContext, batchId: string) {
+  const sheet = await articleDetailsForBatch(supabase, ctx, batchId);
+  const barcodeColumn = ARTICLE_DETAILS_HEADERS.indexOf("BARCODE NO");
+  return {
+    batchId: sheet.batch.id,
+    headers: [...ARTICLE_DETAILS_HEADERS],
+    rows: sheet.cells.map((cells, index) => ({
+      id: sheet.included[index]!.id,
+      excelRowNumber: sheet.included[index]!.excel_row_number,
+      status: sheet.included[index]!.status,
+      cells,
+    })),
+    total: sheet.cells.length,
+    excluded: sheet.excluded,
+    missingBarcodes: sheet.cells.filter((cells) => !cells[barcodeColumn]).length,
+    limit: sheet.limit,
+    parts: sheet.parts,
+  };
+}
+
+export async function importArticleDetailsWorkbook(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  batchId: string,
+  partNumber = 1
+) {
+  const sheet = await articleDetailsForBatch(supabase, ctx, batchId);
+  if (!sheet.cells.length) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "There are no valid rows to export.");
+  }
+  const part = sheet.parts.find((item) => item.part === partNumber);
+  if (!part) throw new AppError(ERROR_CODES.VALIDATION_ERROR, `File ${partNumber} does not exist for this import.`);
+  return { bytes: await articleDetailsWorkbook(sheet.cells.slice(part.from - 1, part.to)), filename: part.filename };
 }
 
 export async function importErrorWorkbook(supabase: SupabaseClient, ctx: TenantContext, batchId: string) {

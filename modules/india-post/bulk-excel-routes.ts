@@ -6,12 +6,16 @@ import {
   confirmImportBatch,
   createImportBatch,
   excelTemplateBytes,
+  getExcelBookingSettings,
   getImportBatch,
+  importArticleDetailsSheet,
+  importArticleDetailsWorkbook,
   importErrorWorkbook,
   importProgress,
   listMappingProfiles,
   patchImportRow,
   retryImportFailures,
+  saveExcelBookingSettings,
   saveImportDraft,
   saveMappingProfile,
   updateImportMapping,
@@ -49,6 +53,13 @@ export async function handleBulkExcelRoutes(
       columnMap: body.columnMap ?? {},
     });
   }
+  if (method === "GET" && slugs[1] === "excel-settings") {
+    return getExcelBookingSettings(supabase, ctx);
+  }
+  if (method === "PATCH" && slugs[1] === "excel-settings") {
+    const body = (await request.json().catch(() => ({}))) as { limit?: unknown };
+    return saveExcelBookingSettings(supabase, ctx, body.limit);
+  }
   if (slugs[1] !== "excel-imports") return null;
 
   if (method === "POST" && slugs.length === 2) {
@@ -66,6 +77,14 @@ export async function handleBulkExcelRoutes(
   if (method === "GET" && slugs[3] === "progress") return importProgress(supabase, ctx, batchId);
   if (method === "GET" && slugs[3] === "errors") {
     return xlsx(await importErrorWorkbook(supabase, ctx, batchId), "bulk-excel-errors.xlsx");
+  }
+  if (method === "GET" && slugs[3] === "india-post-sheet") {
+    return importArticleDetailsSheet(supabase, ctx, batchId);
+  }
+  if (method === "GET" && slugs[3] === "india-post-export") {
+    const part = Number(request.nextUrl.searchParams.get("part") ?? "1");
+    const file = await importArticleDetailsWorkbook(supabase, ctx, batchId, Number.isInteger(part) ? part : 1);
+    return xlsx(file.bytes, file.filename);
   }
   if (method === "PATCH" && slugs.length === 3) {
     const body = (await request.json()) as {

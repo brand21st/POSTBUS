@@ -35,7 +35,8 @@ function sheetGrid(xml: string, shared: string[]): string[][] {
     const row = Number(ref[2]) - 1;
     if (row > 100_000 || col > 200) continue;
     const type = /\bt="([^"]+)"/.exec(cell)?.[1];
-    const value = /<v>([\s\S]*?)<\/v>/.exec(cell)?.[1] ?? "";
+    // <v> may carry attributes, e.g. xml:space="preserve" for values with trailing spaces.
+    const value = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(cell)?.[1] ?? "";
     let text: string;
     if (type === "s") text = shared[Number(value)] ?? "";
     else if (type === "inlineStr") text = xmlText(/<is>([\s\S]*?)<\/is>/.exec(cell)?.[1] ?? "");

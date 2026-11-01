@@ -1,3 +1,4 @@
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { detectDelimiter, parseCsv, toCsv } from "@/lib/csv";
 import { columnIndex, excelSerialToIsoDate, isXlsx, readWorkbook } from "@/lib/xlsx/read";
@@ -16,7 +17,17 @@ describe("xlsx round trip", () => {
     expect(sheets[0]!.rows[2]![0]).toBe('<b>&"x"');
   });
 
-  it("maps column letters both ways", () => {
+  it("reads <v> values that carry xml:space", async () => {
+    const zip = await JSZip.loadAsync(await writeWorkbook([{ name: "S", rows: [["x"]] }]));
+    zip.file(
+      "xl/worksheets/sheet1.xml",
+      `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="str"><v xml:space="preserve">LENGTH </v></c><c r="B1" t="b"><v>1</v></c></row></sheetData></worksheet>`
+    );
+    const sheets = await readWorkbook(await zip.generateAsync({ type: "uint8array" }));
+    expect(sheets[0]!.rows[0]).toEqual(["LENGTH", "1"]);
+  });
+
+    it("maps column letters both ways", () => {
     for (const n of [0, 25, 26, 51, 52, 701, 702]) expect(columnIndex(columnLetters(n))).toBe(n);
     expect(columnLetters(27)).toBe("AB");
   });

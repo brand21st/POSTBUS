@@ -19,6 +19,9 @@ function party(input: {
   pincode?: string | null;
   mobile?: string | null;
   email?: string | null;
+  altContact?: string | null;
+  kyc?: string | null;
+  taxReference?: string | null;
 }): DraftParty {
   const name = text(input.name);
   const company = text(input.company) || name;
@@ -34,6 +37,9 @@ function party(input: {
     pincode: text(input.pincode),
     mobile: indiaPostMobile(input.mobile) || text(input.mobile),
     email: text(input.email) || undefined,
+    altContact: text(input.altContact) || undefined,
+    kyc: text(input.kyc) || undefined,
+    taxReference: text(input.taxReference) || undefined,
   };
 }
 
@@ -177,6 +183,7 @@ export function mapExcelRowToArticle(input: {
     shape: row.shape_of_article.trim().toUpperCase() || indiaPostShapeOfArticle(input.serviceCode, weight),
     priorityFlag: flag(row.priority_flag) ? "TRUE" : row.priority_flag.trim() ? "FALSE" : "",
     deliveryInstruction: row.delivery_instruction.trim().toUpperCase(),
+    deliverySlot: (row.delivery_slot ?? "").trim(),
     instructionRts: row.instruction_rts.trim().toUpperCase(),
     sender: party({
       name: row.sender_name,
@@ -189,6 +196,9 @@ export function mapExcelRowToArticle(input: {
       pincode: row.sender_pincode,
       mobile: row.sender_mobile_no,
       email: row.sender_emailid,
+      altContact: row.sender_alt_contact,
+      kyc: row.sender_kyc,
+      taxReference: row.sender_tax_reference,
     }),
     receiver: party({
       name: row.receiver_name,
@@ -201,6 +211,9 @@ export function mapExcelRowToArticle(input: {
       pincode: row.receiver_pincode,
       mobile: row.receiver_mobile_no,
       email: row.receiver_emailid,
+      altContact: row.receiver_alt_contact,
+      kyc: row.receiver_kyc,
+      taxReference: row.receiver_tax_reference,
     }),
     pickup: pickupFlag ? input.pickup ?? null : null,
     alt: altFlag ? input.alt ?? null : null,

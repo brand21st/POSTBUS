@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { FileSpreadsheet } from "lucide-react";
 import { toast } from "sonner";
+import { ExcelBookingLimit } from "@/components/bookings/excel-booking-limit";
+import { IndiaPostSheetView } from "@/components/bookings/india-post-sheet-view";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -287,7 +289,7 @@ export function BulkExcelWizard() {
         >
           <p className="text-sm">Drop an .xlsx file here or browse. Upload does not book with India Post.</p>
           <p className="mt-2 text-xs text-muted">
-            PostBridge-style columns are mapped automatically. Official India Post workbooks with an ArticleDetails sheet are accepted too. PIN codes, mobiles, and barcodes stay text.
+            PostBridge-style columns are mapped automatically. Official India Post workbooks with an ArticleDetails sheet are accepted too. PIN codes, mobiles, and barcodes stay text. After validation you can view and export the India Post ArticleDetails Excel.
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Input
@@ -315,6 +317,7 @@ export function BulkExcelWizard() {
           </label>
         </section>
       ) : null}
+      {step === 0 ? <ExcelBookingLimit /> : null}
 
       {step === 1 && current ? (
         <section className="space-y-3">
@@ -473,6 +476,9 @@ export function BulkExcelWizard() {
           </div>
         </section>
       ) : null}
+      {step === 3 && batchId && current?.valid ? (
+        <IndiaPostSheetView batchId={batchId} refreshKey={`${current.status}-${current.valid}`} />
+      ) : null}
 
       {step >= 4 && !progress.data ? <p className="text-sm text-muted">Loading booking progress…</p> : null}
       {step >= 4 && progress.data ? (
@@ -507,6 +513,12 @@ export function BulkExcelWizard() {
               Results
             </Button>
           </div>
+          {batchId ? (
+            <IndiaPostSheetView
+              batchId={batchId}
+              refreshKey={`${progress.data.status}-${progress.data.rows.filter((row) => row.barcode).length}`}
+            />
+          ) : null}
           <div className="overflow-auto rounded-xl border border-border">
             <table className="w-full text-sm">
               <thead>

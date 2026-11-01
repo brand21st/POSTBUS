@@ -142,14 +142,27 @@ const ARTICLE_KEYS = [
   "otp",
   "bulk_reference",
   "article_type",
+  "delivery_slot",
+  "sender_alt_contact",
+  "sender_kyc",
+  "sender_tax_reference",
+  "receiver_alt_contact",
+  "receiver_kyc",
+  "receiver_tax_reference",
 ];
 
-function fillStore(row: Record<string, string>, defaults: ImportStoreDefaults) {
+/** Every article key present (blank when missing), so mapExcelRowToArticle can read any field. */
+export function withArticleKeys(row: Record<string, string>) {
   const next: Record<string, string> = {};
   for (const key of ARTICLE_KEYS) next[key] = row[key] ?? "";
   for (const [key, value] of Object.entries(row)) {
     if (!(key in next)) next[key] = value ?? "";
   }
+  return next;
+}
+
+function fillStore(row: Record<string, string>, defaults: ImportStoreDefaults) {
+  const next = withArticleKeys(row);
   put(next, "sender_name", defaults.senderName);
   put(next, "sender_company", defaults.senderCompany || defaults.senderName);
   put(next, "sender_add_line_1", defaults.senderLine1);

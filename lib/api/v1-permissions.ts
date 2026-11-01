@@ -13,6 +13,8 @@ export function permissionForTenantRoute(
 
   if (path.startsWith("dashboard/")) return "orders.read";
 
+  // Workspace-wide rows-per-file limit for India Post Excel booking.
+  if (key === "PATCH bookings/excel-settings") return "integrations.manage";
   if (root === "bookings") {
     return method === "GET" ? "shipments.read" : "shipments.write";
   }

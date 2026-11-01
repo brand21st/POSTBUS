@@ -297,7 +297,7 @@ export async function handleCommerceRoutes(
     return summarizeBulkBookings(supabase, ctx, orderIds);
   }
 
-  if (slugs[0] === "bookings" && (slugs[1] === "excel-imports" || slugs[1] === "excel-template" || slugs[1] === "excel-import-profiles")) {
+  if (slugs[0] === "bookings" && (slugs[1] === "excel-imports" || slugs[1] === "excel-template" || slugs[1] === "excel-import-profiles" || slugs[1] === "excel-settings")) {
     const bulkExcel = await handleBulkExcelRoutes(request, supabase, ctx, method, slugs);
     if (bulkExcel !== null) return bulkExcel;
   }

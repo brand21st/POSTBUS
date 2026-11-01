@@ -1,9 +1,17 @@
 import JSZip from "jszip";
 import { columnIndex } from "@/lib/xlsx/read";
 
-/** Minimal XLSX writer: inline strings and numbers, bold header row, no other styling. */
+/** Minimal XLSX writer: inline strings, numbers and booleans, bold header row, optional column widths. */
 
-export type SheetInput = { name: string; rows: Array<Array<string | number | null | undefined>> };
+export type SheetCell = string | number | boolean | null | undefined;
+export type SheetInput = {
+  name: string;
+  rows: SheetCell[][];
+  /** Column widths in Excel character units, by column index. */
+  widths?: number[];
+  /** Keep the header row visible while scrolling. */
+  freezeHeader?: boolean;
+};
 
 function escapeXml(value: string) {
   return value
@@ -38,7 +46,7 @@ function safeSheetName(name: string, used: Set<string>) {
   return candidate;
 }
 
-function sheetXml(rows: SheetInput["rows"]) {
+function sheetXml({ rows, widths, freezeHeader }: SheetInput) {
   const body = rows
     .map((row, r) => {
       const cells = row
@@ -46,6 +54,7 @@ function sheetXml(rows: SheetInput["rows"]) {
           if (value === null || value === undefined || value === "") return "";
           const ref = `${columnLetters(c)}${r + 1}`;
           const style = r === 0 ? ' s="1"' : "";
+          if (typeof value === "boolean") return `<c r="${ref}" t="b"${style}><v>${value ? 1 : 0}</v></c>`;
           if (typeof value === "number" && Number.isFinite(value)) return `<c r="${ref}"${style}><v>${value}</v></c>`;
           return `<c r="${ref}" t="inlineStr"${style}><is><t xml:space="preserve">${escapeXml(String(value))}</t></is></c>`;
         })
@@ -53,7 +62,15 @@ function sheetXml(rows: SheetInput["rows"]) {
       return `<row r="${r + 1}">${cells}</row>`;
     })
     .join("");
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`;
+  const views = freezeHeader
+    ? `<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`
+    : "";
+  const cols = widths?.length
+    ? `<cols>${widths
+        .map((width, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.max(1, Math.min(255, width))}" customWidth="1"/>`)
+        .join("")}</cols>`
+    : "";
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${views}${cols}<sheetData>${body}</sheetData></worksheet>`;
 }
 
 export async function writeWorkbook(sheets: SheetInput[]): Promise<Uint8Array> {
@@ -87,7 +104,7 @@ export async function writeWorkbook(sheets: SheetInput[]): Promise<Uint8Array> {
     "xl/styles.xml",
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs></styleSheet>`
   );
-  sheets.forEach((sheet, i) => zip.file(`xl/worksheets/sheet${i + 1}.xml`, sheetXml(sheet.rows)));
+  sheets.forEach((sheet, i) => zip.file(`xl/worksheets/sheet${i + 1}.xml`, sheetXml(sheet)));
   return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 }
 
