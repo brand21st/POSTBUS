@@ -43,7 +43,7 @@ export function memorySupabase(
       if (op === "insert") {
         const list = (Array.isArray(payload) ? payload : [payload]) as Row[];
         const now = new Date().toISOString();
-        const inserted = list.map((row) => ({ id: testUuid(), created_at: now, ...row }));
+        const inserted: Row[] = list.map((row) => ({ id: testUuid(), created_at: now, ...row }));
         for (const columns of [["id"], ...(options.unique?.[name] ?? [])]) {
           const seen = new Set(rows.map((row) => JSON.stringify(columns.map((column) => row[column]))));
           for (const row of inserted) {
