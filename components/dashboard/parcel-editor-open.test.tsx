@@ -36,7 +36,7 @@ const order = {
   status: "READY",
   parcelWeightMode: "manual",
   parcelWeightGrams: 800,
-  shipment: { status: "DRAFT", serviceCode: "SP_INLAND_PARCEL", weightGrams: 800 },
+  shipment: { id: "shp-1", status: "DRAFT", serviceCode: "SP_INLAND_PARCEL", weightGrams: 800 },
   lineItems: [],
 } as OrderRecord;
 
@@ -45,6 +45,7 @@ const savedOrder = {
   id: "ord-saved",
   orderNumber: "veyncul-1143",
   shipment: {
+    id: "shp-saved",
     status: "DRAFT",
     serviceCode: "SP_INLAND_PARCEL",
     weightGrams: 800,
