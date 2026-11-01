@@ -37,6 +37,13 @@ export function billingAnnouncementPhase(now: Date = new Date()): BillingAnnounc
   return istCalendarDate(now) >= BILLING_START_IST_DATE ? "billing" : "free";
 }
 
+const PAID_ANNOUNCEMENT_STATES = new Set(["ACTIVE", "PAST_DUE"]);
+
+/** Hide the "choose a plan" banner once paid coverage is live. */
+export function hideBillingAnnouncementForPaidPlan(accessState?: string | null) {
+  return PAID_ANNOUNCEMENT_STATES.has((accessState ?? "").toUpperCase());
+}
+
 export function formatAnnouncementPlans(plans: AnnouncementPlan[]) {
   return plans
     .filter((plan) => plan.name.trim() && Number.isFinite(plan.monthlyPricePaise))

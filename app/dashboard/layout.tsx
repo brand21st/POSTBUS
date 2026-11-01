@@ -4,8 +4,10 @@ import { BillingAnnouncementBar } from "@/components/dashboard/billing-announcem
 import { DashboardShell } from "@/components/dashboard/shell";
 import {
   billingAnnouncementPhase,
+  hideBillingAnnouncementForPaidPlan,
   type AnnouncementPlan,
 } from "@/lib/dashboard/billing-announcement";
+import { getOrganizationEntitlements } from "@/modules/billing/entitlements";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -35,14 +37,33 @@ async function loadAnnouncementPlans(): Promise<AnnouncementPlan[]> {
   }
 }
 
-export default async function DashboardLayout({ children }: { children: ReactNode }) {
+async function loadAnnouncement() {
   const phase = billingAnnouncementPhase(new Date());
+  try {
+    const supabase = await createServerSupabase();
+    const { data: auth } = await supabase.auth.getUser();
+    if (auth.user) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("active_organization_id")
+        .eq("id", auth.user.id)
+        .maybeSingle();
+      const organizationId = profile?.active_organization_id as string | null;
+      if (organizationId) {
+        const entitlements = await getOrganizationEntitlements(supabase, organizationId);
+        if (hideBillingAnnouncementForPaidPlan(entitlements.accessState)) {
+          return null;
+        }
+      }
+    }
+  } catch {
+    // Fall through to the calendar billing banner.
+  }
   const plans = phase === "billing" ? await loadAnnouncementPlans() : [];
-  return (
-    <DashboardShell
-      announcement={<BillingAnnouncementBar phase={phase} plans={plans} />}
-    >
-      {children}
-    </DashboardShell>
-  );
+  return <BillingAnnouncementBar phase={phase} plans={plans} />;
+}
+
+export default async function DashboardLayout({ children }: { children: ReactNode }) {
+  const announcement = await loadAnnouncement();
+  return <DashboardShell announcement={announcement}>{children}</DashboardShell>;
 }
