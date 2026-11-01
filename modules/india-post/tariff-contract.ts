@@ -12,6 +12,7 @@ export const tariffFields = {
   heightCm: positive,
   insuranceValue: money.optional(),
   proofOfDelivery: z.boolean().optional(),
+  codAmount: money.optional(),
 };
 export const manualTariffSchema = z.object({ ...tariffFields, destinationPincode: z.string().regex(/^\d{6}$/) }).strict();
 export const orderTariffSchema = z.object(tariffFields).partial().strict();
@@ -52,6 +53,7 @@ export function tariffEstimateKey(input: TariffInput) {
     value.heightCm,
     value.insuranceValue ?? "",
     value.proofOfDelivery ? "POD" : "",
+    value.codAmount != null && value.codAmount > 0 ? value.codAmount : "",
   ].join("|");
 }
 
@@ -71,6 +73,7 @@ export function tariffRequest(input: TariffInput) {
   const query = new URLSearchParams({ "product-code": bp ? "BP" : "SP", weight: String(data.weightGrams), "source-pincode": data.sourcePincode, "destination-pincode": data.destinationPincode, length: String(data.lengthCm), width: String(data.widthCm), height: String(data.heightCm) });
   if (data.insuranceValue != null) query.set(bp ? "ins" : "INS", String(data.insuranceValue));
   if (!bp && data.proofOfDelivery) query.set("POD", "YES");
+  if (data.codAmount != null && data.codAmount > 0) query.set(bp ? "cod" : "COD", String(data.codAmount));
   return `${bp ? "/business-parcel-tariff/calculate" : "/speed-post/tariffs"}?${query}`;
 }
 

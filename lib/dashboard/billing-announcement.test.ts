@@ -54,6 +54,25 @@ describe("billing announcement copy", () => {
   });
 });
 
+describe("pickDashboardTopBanner", () => {
+  it("keeps a live Business trial on 1 Nov instead of the paid-billing banner", async () => {
+    const { pickDashboardTopBanner } = await import("@/lib/dashboard/top-banner");
+    const banner = pickDashboardTopBanner({
+      phase: "billing",
+      trialLive: true,
+      trialEnd: "2026-11-07T19:09:10.722Z",
+      trialCohort: "rolling_7d",
+      now: Date.parse("2026-10-31T19:10:00.000Z"),
+    });
+    expect(banner.kind).toBe("trial");
+    if (banner.kind === "trial") {
+      expect(banner.copy.ended).toBe(false);
+      expect(banner.copy.message.toLowerCase()).not.toContain("billing starts today");
+      expect(banner.copy.message).toMatch(/days remaining/i);
+    }
+  });
+});
+
 describe("formatAnnouncementPlans", () => {
   it("formats live monthly prices without inventing catalog amounts", () => {
     expect(

@@ -3,6 +3,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { listAccounts } from "@/modules/ai-accountant/chart";
 import { listJournal, postManualEntry, reverseEntry, syncLedger } from "@/modules/ai-accountant/ledger/post";
 import { loadOverview } from "@/modules/ai-accountant/overview";
+import { loadAccountantStatus } from "@/modules/ai-accountant/status";
 import { fiscalYearPeriod, isIsoDate, istDate } from "@/modules/ai-accountant/period";
 import { orderContribution } from "@/modules/ai-accountant/profit";
 import { balanceSheet, cashflow, profitAndLoss, trialBalance } from "@/modules/ai-accountant/reports/service";
@@ -14,6 +15,7 @@ import { z } from "zod";
 export async function handleBooksRoutes({ request, admin, ctx, key, slugs, accessMode }: AccountantRoute) {
   const org = ctx.organizationId;
   if (key === "GET ai-accountant") return { accessMode, ...(await loadOverview(admin, org)) };
+  if (key === "GET ai-accountant/status") return { accessMode, ...(await loadAccountantStatus(admin, org)) };
   if (key === "GET ai-accountant/settings") return { accessMode, ...(await loadAccountingWorkspace(admin, org)) };
   if (key === "PATCH ai-accountant/settings") {
     const result = await saveAccountingSettings(admin, org, await jsonBody(request));

@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Loader2, Package, Scale, Sparkles, Zap } from "lucide-react";
+import { AlertCircle, Check, Loader2, Package, Scale, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,11 +15,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
 import { orderNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
-import { isIndiaPostAcceptedStatus, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { isParcelArticle } from "@/modules/india-post/article-validator";
+import { indiaPostStatusOf, isIndiaPostAcceptedStatus, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { dimensionSourceLabel, formatParcelSize, readParcelDimensionSource } from "@/modules/shopify/dimensions";
 import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
 import type { OrderRecord } from "@/types/api";
 
@@ -27,13 +29,6 @@ type Props = {
   order: OrderRecord;
   disabled?: boolean;
 };
-
-const DIMENSION_PRESETS = [
-  { label: "Small Box", length: 15, width: 10, height: 5 },
-  { label: "Medium Box", length: 20, width: 15, height: 10 },
-  { label: "Apparel / Polybag", length: 25, width: 20, height: 5 },
-  { label: "Large Box", length: 30, width: 25, height: 15 },
-] as const;
 
 const WEIGHT_PRESETS = [
   { label: "250g", weight: 250 },
@@ -83,6 +78,12 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const width = Number(shipment?.widthCm ?? shipment?.width_cm ?? 0);
   const height = Number(shipment?.heightCm ?? shipment?.height_cm ?? 0);
   const hasDimensions = length > 0 && width > 0 && height > 0;
+  const sourceLabel = dimensionSourceLabel(
+    readParcelDimensionSource(
+      (shipment as { metadata?: unknown } | null | undefined)?.metadata
+    )
+  );
+  const sizeLabel = formatParcelSize(length, width, height);
 
   const currentWeightGrams = bookingBoxWeightGrams({
     parcelWeightMode: order.parcelWeightMode ?? order.parcel_weight_mode,
@@ -108,10 +109,11 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const isParcel = isParcelArticle(serviceCode, currentWeightGrams);
 
   const shipmentStatus = shipment?.status;
+  const shipmentStatusName = indiaPostStatusOf(shipmentStatus);
   const isLocked =
     Boolean(disabled) ||
     isIndiaPostAcceptedStatus(shipmentStatus) ||
-    isIndiaPostBookingInFlight(shipmentStatus);
+    (isIndiaPostBookingInFlight(shipmentStatus) && shipmentStatusName !== "QUEUED");
 
   const lineItemsList = (order.lineItems ?? order.line_items ?? []).filter(
     (item): item is typeof item & { id: string } => Boolean(item.id)
@@ -125,31 +127,35 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const [itemWeights, setItemWeights] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (open) {
-      setLengthInput(length > 0 ? String(length) : "");
-      setWidthInput(width > 0 ? String(width) : "");
-      setHeightInput(height > 0 ? String(height) : "");
+  const packSyncKey = `${open}:${length}:${width}:${height}:${currentWeightGrams}`;
+  const [seenPackSync, setSeenPackSync] = useState(packSyncKey);
+  if (open && packSyncKey !== seenPackSync) {
+    setSeenPackSync(packSyncKey);
+    setLengthInput(length > 0 ? String(length) : "");
+    setWidthInput(width > 0 ? String(width) : "");
+    setHeightInput(height > 0 ? String(height) : "");
 
-      const initialWeights: Record<string, string> = {};
-      lineItemsList.forEach((item) => {
-        const g = Number(item.weightGrams ?? item.weight_grams);
-        initialWeights[item.id] = Number.isFinite(g) && g > 0 ? String(Math.round(g)) : "";
-      });
-      setItemWeights(initialWeights);
+    const initialWeights: Record<string, string> = {};
+    lineItemsList.forEach((item) => {
+      const g = Number(item.weightGrams ?? item.weight_grams);
+      initialWeights[item.id] = Number.isFinite(g) && g > 0 ? String(Math.round(g)) : "";
+    });
+    setItemWeights(initialWeights);
 
-      const savedBox = Number(order.parcelWeightGrams ?? order.parcel_weight_grams ?? shipment?.weightGrams ?? shipment?.weight_grams);
-      if (Number.isFinite(savedBox) && savedBox > 0) {
-        setBoxWeightInput(String(Math.round(savedBox)));
-      } else if (currentWeightGrams > 0) {
-        setBoxWeightInput(String(Math.round(currentWeightGrams)));
-      } else {
-        setBoxWeightInput("");
-      }
-
-      setFormError(null);
+    const savedBox = Number(order.parcelWeightGrams ?? order.parcel_weight_grams ?? shipment?.weightGrams ?? shipment?.weight_grams);
+    if (Number.isFinite(savedBox) && savedBox > 0) {
+      setBoxWeightInput(String(Math.round(savedBox)));
+    } else if (currentWeightGrams > 0) {
+      setBoxWeightInput(String(Math.round(currentWeightGrams)));
+    } else {
+      setBoxWeightInput("");
     }
-  }, [open, length, width, height, currentWeightGrams]);
+
+    setFormError(null);
+  }
+  if (!open && packSyncKey !== seenPackSync) {
+    setSeenPackSync(packSyncKey);
+  }
 
   // Compute live item weight sum
   const itemsTotalWeight = lineItemsList.reduce((sum, item) => {
@@ -229,13 +235,6 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
     });
   };
 
-  const applyDimensionPreset = (preset: (typeof DIMENSION_PRESETS)[number]) => {
-    setLengthInput(String(preset.length));
-    setWidthInput(String(preset.width));
-    setHeightInput(String(preset.height));
-    setFormError(null);
-  };
-
   const applyWeightPreset = (preset: (typeof WEIGHT_PRESETS)[number]) => {
     setBoxWeightInput(String(preset.weight));
     setFormError(null);
@@ -257,7 +256,6 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const parsedBoxWeight = Number(boxWeightInput) || 0;
   const billableWeightGrams = Math.max(parsedBoxWeight, volumetricGrams);
 
-  const sizeLabel = `${length} × ${width} × ${height} cm`;
   const needsSetup = !hasDimensions || !hasWeight;
 
   // 1. Non-parcel (e.g. Speed Post DOC)
@@ -279,8 +277,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   }
 
   const optionalHint = isLocked
-    ? " You can still ship; India Post uses Settings defaults when these are empty."
-    : " Optional — click to add. If skipped, India Post uses Settings → Shipping defaults.";
+    ? " This shipment is already with India Post and its size cannot be changed."
+    : " Parcel length, width, and height are required before booking unless Settings has a default package.";
 
   let triggerContent: React.ReactNode;
   let triggerTitle: string;
@@ -322,15 +320,16 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
     );
   } else {
     triggerTitle = isLocked
-      ? `Parcel ${sizeLabel} · ${currentWeightGrams}g · Booked`
-      : `Parcel ${sizeLabel} · ${currentWeightGrams}g · Click to edit`;
+      ? `Parcel ${sizeLabel} · ${currentWeightGrams}g · Booked${sourceLabel ? ` · ${sourceLabel}` : ""}`
+      : `Parcel ${sizeLabel} · ${currentWeightGrams}g · Click to edit${sourceLabel ? ` · ${sourceLabel}` : ""}`;
     triggerContent = (
       <ParcelPill tone="ok">
         <Check className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
         <span className="tabular-nums font-medium">
-          {length}×{width}×{height}
+          {sizeLabel}
           {currentWeightGrams > 0 ? ` · ${currentWeightGrams}g` : ""}
         </span>
+        {sourceLabel ? <span className="font-medium text-muted">{sourceLabel}</span> : null}
       </ParcelPill>
     );
   }
@@ -379,7 +378,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                     {needsSetup ? "Add parcel size" : "Edit parcel"}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-muted">
-                    Order {orderNumber(order)} · Optional. Empty fields use Settings defaults at booking.
+                    Order {orderNumber(order)} · Size is required unless Settings has a default package.
                   </DialogDescription>
                 </div>
               </div>
@@ -389,45 +388,33 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
               {needsSetup ? (
                 <p className="rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
                   {!hasDimensions && !hasWeight
-                    ? "You can still ship without entering these. India Post booking will use Settings → Shipping defaults (or 14 × 9 × 1 cm and 100 g)."
+                    ? "Parcel length, width, and height are required before booking when Settings has no default package. Empty weight uses the Settings weight, or 100 g."
                     : !hasDimensions
-                      ? `Weight is ${currentWeightGrams}g. Size is optional — add L × W × H here, or booking uses Settings defaults.`
-                      : "Size is saved. Weight is optional — add it here, or booking uses the Settings default weight."}
+                      ? `Weight is ${currentWeightGrams}g. Enter length, width, and height. Booking stops if Settings has no default package.`
+                      : "Size is saved. Empty weight uses the Settings weight, or 100 g."}
                 </p>
               ) : null}
 
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-muted">
-                  <Sparkles className="size-3 text-amber-500" />
-                  <span>Quick box size</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {DIMENSION_PRESETS.map((preset) => {
-                    const selected =
-                      Number(lengthInput) === preset.length &&
-                      Number(widthInput) === preset.width &&
-                      Number(heightInput) === preset.height;
-                    return (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        onClick={() => applyDimensionPreset(preset)}
-                        className={cn(
-                          "rounded-lg border px-2 py-1 text-[11px] font-medium transition active:scale-95",
-                          selected
-                            ? "border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-600 dark:bg-amber-950/50 dark:text-amber-200"
-                            : "border-border bg-surface-soft text-ink hover:border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                        )}
-                      >
-                        {preset.label}
-                        <span className="ml-1 tabular-nums text-muted">
-                          {preset.length}×{preset.width}×{preset.height}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <ShipmentPackPresets
+                weightGrams={Number(boxWeightInput) || undefined}
+                lengthCm={Number(lengthInput) || undefined}
+                widthCm={Number(widthInput) || undefined}
+                heightCm={Number(heightInput) || undefined}
+                serviceCode={serviceCode}
+                onApplySize={(size) => {
+                  setLengthInput(String(size.lengthCm));
+                  setWidthInput(String(size.widthCm));
+                  setHeightInput(String(size.heightCm));
+                  setFormError(null);
+                }}
+                onApply={(pack) => {
+                  setLengthInput(String(pack.lengthCm));
+                  setWidthInput(String(pack.widthCm));
+                  setHeightInput(String(pack.heightCm));
+                  setBoxWeightInput(String(Math.round(pack.weightGrams)));
+                  setFormError(null);
+                }}
+              />
 
               {/* Dimension Inputs */}
               <div className="grid grid-cols-3 gap-2.5">

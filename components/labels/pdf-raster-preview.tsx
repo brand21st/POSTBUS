@@ -1,33 +1,44 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { pdfPagePreviewScale } from "@/components/labels/pdf-page-preview-scale";
 
 type PdfRasterPreviewProps = {
   bytes: ArrayBuffer;
   title: string;
 };
 
-export function usePdfFirstPageUrl(bytes: ArrayBuffer | Uint8Array | undefined) {
+export function usePdfFirstPageUrl(
+  bytes: ArrayBuffer | Uint8Array | undefined,
+  options?: { cssWidthPx?: number }
+) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const cssWidthPx = options?.cssWidthPx;
 
   useEffect(() => {
     if (!bytes) {
-      setError(null);
-      setUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-      return;
+      return () => {
+        setUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return null;
+        });
+      };
     }
     let cancelled = false;
-    setError(null);
-    (async () => {
+    void (async () => {
+      setError(null);
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
       const pdf = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
       const page = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 1.8 });
+      const base = page.getViewport({ scale: 1 });
+      const scale = pdfPagePreviewScale({
+        pageWidthPt: base.width,
+        cssWidthPx,
+        devicePixelRatio: typeof window === "undefined" ? 2 : window.devicePixelRatio || 2,
+      });
+      const viewport = page.getViewport({ scale });
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d");
       if (!context) throw new Error("Could not draw the label.");
@@ -53,7 +64,7 @@ export function usePdfFirstPageUrl(bytes: ArrayBuffer | Uint8Array | undefined) 
     return () => {
       cancelled = true;
     };
-  }, [bytes]);
+  }, [bytes, cssWidthPx]);
 
   return { url, error };
 }
@@ -65,17 +76,22 @@ export function PdfRasterPreview({ bytes, title }: PdfRasterPreviewProps) {
   useEffect(() => {
     let cancelled = false;
     const objectUrls: string[] = [];
-    setPages([]);
-    setError(null);
 
-    (async () => {
+    void (async () => {
+      setPages([]);
+      setError(null);
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
       const pdf = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
       const rendered: string[] = [];
       for (let index = 1; index <= pdf.numPages; index += 1) {
         const page = await pdf.getPage(index);
-        const viewport = page.getViewport({ scale: 1.6 });
+        const base = page.getViewport({ scale: 1 });
+        const scale = pdfPagePreviewScale({
+          pageWidthPt: base.width,
+          devicePixelRatio: typeof window === "undefined" ? 2 : window.devicePixelRatio || 2,
+        });
+        const viewport = page.getViewport({ scale });
         const canvas = document.createElement("canvas");
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Could not draw the label.");
@@ -112,7 +128,7 @@ export function PdfRasterPreview({ bytes, title }: PdfRasterPreviewProps) {
     <div className="space-y-4 bg-zinc-100 p-3">
       {pages.map((src, index) => (
         <figure key={src} className="mx-auto max-w-xl">
-          <img src={src} alt={`${title} page ${index + 1}`} className="w-full bg-white shadow-sm" />
+          <img src={src} alt={`${title} page ${index + 1}`} decoding="async" className="w-full bg-white shadow-sm" />
           {pages.length > 1 ? (
             <figcaption className="mt-1 text-center text-xs text-muted">
               Page {index + 1} of {pages.length}

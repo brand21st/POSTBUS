@@ -11,6 +11,8 @@ const SECRET_KEYS = [
   "authorization",
   "apikey",
   "api_key",
+  "consumer_key",
+  "consumer_secret",
   "access_token",
   "refresh_token",
   "id_token",

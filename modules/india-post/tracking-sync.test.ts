@@ -39,12 +39,23 @@ describe("tracking-sync enqueue", () => {
   it("queues at most the configured number of idle connected orgs", async () => {
     const { createBackgroundJob } = await import("@/modules/jobs/service");
     vi.mocked(createBackgroundJob).mockClear();
+    const jobsChain: Record<string, unknown> = {};
+    jobsChain.select = () => jobsChain;
+    jobsChain.eq = () => jobsChain;
+    jobsChain.gt = () => jobsChain;
+    jobsChain.in = () => jobsChain;
+    jobsChain.order = () => jobsChain;
+    jobsChain.update = () => jobsChain;
+    jobsChain.limit = async () => ({ data: [], error: null });
+    jobsChain.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve({ data: [], error: null }).then(resolve, reject);
     const supabase = {
       from(table: string) {
+        if (table === "background_jobs") return jobsChain;
         return {
           select() {
             return {
-              eq(column: string) {
+              eq() {
                 if (table === "automation_settings") {
                   return {
                     limit: async () => ({
@@ -53,35 +64,11 @@ describe("tracking-sync enqueue", () => {
                     }),
                   };
                 }
-                if (table === "india_post_connections") {
-                  return {
-                    maybeSingle: async () => ({
-                      data: { id: "c1", status: "CONNECTED", encrypted_username: "x" },
-                      error: null,
-                    }),
-                  };
-                }
-                if (table === "background_jobs" && column === "organization_id") {
-                  return {
-                    eq() {
-                      return {
-                        in() {
-                          return {
-                            limit: async () => ({ data: [], error: null }),
-                          };
-                        },
-                      };
-                    },
-                  };
-                }
                 return {
-                  eq() {
-                    return {
-                      in() {
-                        return { limit: async () => ({ data: [], error: null }) };
-                      },
-                    };
-                  },
+                  maybeSingle: async () => ({
+                    data: { id: "c1", status: "CONNECTED", encrypted_username: "x" },
+                    error: null,
+                  }),
                 };
               },
             };

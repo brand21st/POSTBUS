@@ -21,6 +21,9 @@ describe("rbac", () => {
     expect(hasPermission("MANAGER", "support.assign")).toBe(true);
     expect(hasPermission("MANAGER", "support.settings")).toBe(false);
     expect(hasPermission("ADMIN", "support.settings")).toBe(true);
+    expect(hasPermission("VIEWER", "accounting.read")).toBe(true);
+    expect(hasPermission("VIEWER", "accounting.write")).toBe(false);
+    expect(hasPermission("ADMIN", "accounting.write")).toBe(true);
   });
 
   it("lists permissions for a role", () => {

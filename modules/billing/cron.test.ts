@@ -57,6 +57,23 @@ describe("runBillingSweep", () => {
     expect(rows[0].status).toBe("EXPIRED");
   });
 
+  it("does not expire a manually extended trial while trial_end is still in the future", async () => {
+    const rows = [
+      {
+        id: "s1",
+        organization_id: "o1",
+        status: "TRIAL",
+        cancel_at_period_end: false,
+        current_period_end: ended,
+        trial_end: new Date(Date.now() + 7 * 86400000).toISOString(),
+        trial_manual_override: true,
+        razorpay_subscription_id: null,
+      },
+    ];
+    await runBillingSweep(fakeDb(rows));
+    expect(rows[0].status).toBe("TRIAL");
+  });
+
   it("leaves a Razorpay recurring subscription to renew", async () => {
     const rows = [{ id: "s1", organization_id: "o1", status: "ACTIVE", cancel_at_period_end: false, current_period_end: ended, razorpay_subscription_id: "sub_rzp" }];
     await runBillingSweep(fakeDb(rows));

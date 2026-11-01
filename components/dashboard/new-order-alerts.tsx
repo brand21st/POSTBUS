@@ -44,11 +44,12 @@ export function NewOrderAlerts() {
   const queryClient = useQueryClient();
   const notifications = useNotifications();
   const seen = useRef(new Set<string>());
-  const startedAt = useRef(Date.now());
+  const startedAt = useRef(0);
   const primed = useRef(false);
   const [alerts, setAlerts] = useState<NotificationRecord[]>([]);
 
   useEffect(() => {
+    if (!startedAt.current) startedAt.current = Date.now();
     function onIncoming(event: Event) {
       const detail = (event as CustomEvent<NotificationRecord[]>).detail;
       if (!Array.isArray(detail) || !detail.length) return;

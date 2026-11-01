@@ -455,7 +455,7 @@ describe("otp migration and client boundaries", () => {
   });
 
   it("keeps password sign-in and does not send OTP as session text", () => {
-    const login = readFileSync("app/(auth)/login/login-form.tsx", "utf8");
+    const login = readFileSync("app/(site)/(auth)/login/login-form.tsx", "utf8");
     const sender = readFileSync("lib/auth/otp/send-whatsapp.ts", "utf8");
     expect(login).toContain("signInWithPassword");
     expect(login).not.toContain("OTP_PEPPER");

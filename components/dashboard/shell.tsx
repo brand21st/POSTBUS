@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { MobileNav } from "@/components/dashboard/mobile-nav";
+import { IndiaPostOnboardingHost } from "@/components/dashboard/india-post-onboarding-host";
 import { ProductTour } from "@/components/dashboard/product-tour";
 import { NewOrderAlerts } from "@/components/dashboard/new-order-alerts";
 import { WebusbJobListener } from "@/components/dashboard/webusb-job-listener";
@@ -11,8 +12,12 @@ import { Topbar } from "@/components/dashboard/topbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use-api";
 import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
+import { useUserPresenceHeartbeat } from "@/lib/hooks/use-user-presence-heartbeat";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { PlanLock } from "@/components/billing/plan-lock";
+import { TrialEndedModal } from "@/components/billing/trial-ended-modal";
+import { TrialStatusBar } from "@/components/dashboard/trial-status-bar";
+import { trialBannerCopy } from "@/modules/billing/trial-policy";
 import {
   shouldMountDashboardChildren,
   shouldRedirectToLoginFromMe,
@@ -76,8 +81,39 @@ export function DashboardShell({
     if (mobileOpen) setMobileOpen(false);
   }
 
+  const subscription = me.data?.subscription;
+  const [trialElapsed, setTrialElapsed] = useState(false);
+  const trialEndKey = subscription?.trialEnd ?? "";
+  const [seenTrialEnd, setSeenTrialEnd] = useState(trialEndKey);
+  if (trialEndKey !== seenTrialEnd) {
+    setSeenTrialEnd(trialEndKey);
+    setTrialElapsed(false);
+  }
+  const trialExpired =
+    subscription?.status === "EXPIRED" ||
+    ((subscription?.status === "TRIAL" || Boolean(subscription?.trial)) &&
+      (Boolean(subscription?.coverageEnded) || trialElapsed));
+  const trialCopy = trialBannerCopy({
+    trial: Boolean(subscription?.trial) && !trialElapsed,
+    coverageEnded: trialExpired,
+    trialEnd: subscription?.trialEnd,
+    cohort: subscription?.trialCohort,
+  });
+
+  useEffect(() => {
+    const end = subscription?.trialEnd ? Date.parse(subscription.trialEnd) : NaN;
+    if (!subscription?.trial || !Number.isFinite(end)) return;
+    const wait = end - Date.now();
+    const timer = window.setTimeout(() => {
+      setTrialElapsed(true);
+      void me.refetch();
+    }, wait <= 0 ? 0 : Math.min(wait, 2_147_000_000));
+    return () => window.clearTimeout(timer);
+  }, [me.refetch, subscription?.trial, subscription?.trialEnd]);
+
   const confirmedLoss = isConfirmedSessionLoss(me.error);
   const transientAuth = isTransientApiAuthError(me.error);
+  useUserPresenceHeartbeat(Boolean(me.data) && !confirmedLoss);
 
   useEffect(() => {
     if (
@@ -121,7 +157,7 @@ export function DashboardShell({
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="sticky top-0 z-30 bg-background">
-          {announcement}
+          {trialCopy ? <TrialStatusBar {...trialCopy} /> : announcement}
           <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
         </div>
         {me.data && !confirmedLoss ? <NewOrderAlerts /> : null}
@@ -141,6 +177,7 @@ export function DashboardShell({
                 : "mx-auto w-full min-w-0 max-w-[1280px]"
             }
           >
+            {me.data && !confirmedLoss ? <IndiaPostOnboardingHost /> : null}
             {transientAuth ? (
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted">
                 <p>Connection issue. Retrying your session without signing you out…</p>
@@ -172,6 +209,7 @@ export function DashboardShell({
       </div>
       <MobileNav open={mobileOpen} onOpenChange={setMobileOpen} me={me.data} />
       <ProductTour userId={me.data?.user.id} />
+      <TrialEndedModal open={Boolean(trialExpired)} />
     </div>
   );
 }

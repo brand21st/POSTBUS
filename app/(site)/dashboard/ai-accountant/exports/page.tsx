@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
-import { NativeSelect, PeriodPicker, TableShell, td, th, useExport, usePeriod, type ExportKind } from "@/components/ai-accountant/shared";
+import { HelpHint, NativeSelect, PeriodPicker, TableShell, td, th, useExport, usePeriod, type ExportKind } from "@/components/ai-accountant/shared";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,7 +48,10 @@ export default function ExportsPage() {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Download for your CA or Tally</CardTitle>
+          <CardTitle className="flex items-center gap-1">
+            Download for your CA or Tally
+            <HelpHint label="Tally import">In Tally Prime, use Import → Masters and Vouchers and pick the XML file. Ledgers are created in standard Tally groups.</HelpHint>
+          </CardTitle>
           <CardDescription>Files are stored privately for your workspace; links expire after five minutes.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

@@ -24,6 +24,11 @@ describe("plan entitlements", () => {
     expect(expandPlanFeatures([], { trial: true, slug: "starter" })).toEqual(BUSINESS_FEATURES);
   });
 
+  it("does not keep trial unlocks after the trial flag is false", () => {
+    expect(expandPlanFeatures([], { trial: false, slug: "starter" })).toEqual(STARTER_FEATURES);
+    expect(expandPlanFeatures([], { trial: false, slug: "starter" })).not.toContain(FEATURE.wati);
+  });
+
   it("shows official India Post label buttons only on Starter", () => {
     expect(showsStarterOfficialIndiaPostLabel({ slug: "starter" })).toBe(true);
     expect(showsStarterOfficialIndiaPostLabel({ slug: "pro" })).toBe(false);
@@ -45,6 +50,7 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForPath("/dashboard/labels/templates")).toBe(FEATURE.packing);
     expect(lockedFeatureForPath("/dashboard/labels/multi-print")).toBe(FEATURE.packing);
     expect(lockedFeatureForPath("/dashboard/orders")).toBeNull();
+    expect(lockedFeatureForPath("/dashboard/orders/bulk-excel")).toBe(FEATURE.bulk);
     expect(lockedFeatureForPath("/dashboard/integrations")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/automation")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/integrations/wati")).toBe(FEATURE.wati);
@@ -52,6 +58,7 @@ describe("plan entitlements", () => {
 
   it("locks matching write APIs", () => {
     expect(lockedFeatureForApi("GET", "dashboard/analytics", ["dashboard", "analytics"])).toBe(FEATURE.analytics);
+    expect(lockedFeatureForApi("GET", "sales-invoices", ["sales-invoices"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("GET", "invoices", ["invoices"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("PUT", "invoice-template", ["invoice-template"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("GET", "tracking", ["tracking"])).toBe(FEATURE.trackingPage);
@@ -59,6 +66,7 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForApi("POST", "labels/bulk-download", ["labels", "bulk-download"])).toBe(FEATURE.bulk);
     expect(lockedFeatureForApi("POST", "labels/bulk-print", ["labels", "bulk-print"])).toBe(FEATURE.bulk);
     expect(lockedFeatureForApi("POST", "bookings/validate", ["bookings", "validate"])).toBe(FEATURE.bulk);
+    expect(lockedFeatureForApi("POST", "bookings/excel-imports", ["bookings", "excel-imports"])).toBe(FEATURE.bulk);
     expect(lockedFeatureForApi("GET", "automation", ["automation"])).toBeNull();
     expect(lockedFeatureForApi("PATCH", "automation", ["automation"])).toBe(FEATURE.automation);
     expect(lockedFeatureForApi("POST", "integrations/shopify", ["integrations", "shopify"])).toBe(FEATURE.shopify);

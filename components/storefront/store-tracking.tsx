@@ -22,10 +22,28 @@ export function StoreTracking({ workspace, config = DEFAULT_STORE_TRACKING, prev
   const seen = useRef(new Set<string>());
   const active = [config.meta, config.ga4, config.clarity, config.gtm].some((p) => p.enabled && p.id);
   const consentKey = `postbus-consent:${workspace}:v1`;
-  useEffect(() => {
-    if (preview) return;
-    try { const saved = JSON.parse(localStorage.getItem(consentKey) ?? "null"); if (saved?.decided) setConsent({ analytics: saved.analytics === true, marketing: saved.marketing === true, decided: true }); } catch { /* Storage is optional. */ }
-  }, [consentKey, preview]);
+  const storedConsent = !preview && typeof window !== "undefined"
+    ? (() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem(consentKey) ?? "null");
+          if (saved?.decided) {
+            return {
+              analytics: saved.analytics === true,
+              marketing: saved.marketing === true,
+              decided: true as const,
+            };
+          }
+        } catch {
+          /* Storage is optional. */
+        }
+        return null;
+      })()
+    : null;
+  const [seenConsentKey, setSeenConsentKey] = useState(consentKey);
+  if (!preview && storedConsent && (consentKey !== seenConsentKey || !consent.decided)) {
+    setSeenConsentKey(consentKey);
+    setConsent(storedConsent);
+  }
   function choose(next: Consent) {
     setConsent(next); setDraft(next); setPreferences(false);
     try { localStorage.setItem(consentKey, JSON.stringify(next)); } catch { /* Storage is optional. */ }
@@ -37,7 +55,7 @@ export function StoreTracking({ workspace, config = DEFAULT_STORE_TRACKING, prev
     const load = (src: string) => { const script = document.createElement("script"); script.src = src; script.async = true; script.referrerPolicy = "no-referrer"; document.head.append(script); scripts.push(script); };
     if (consent.analytics && config.ga4.enabled && config.ga4.id && config.ga4.delivery === "direct") {
       w.dataLayer ??= [];
-      w.gtag ??= function () { w.dataLayer!.push(arguments); };
+      w.gtag ??= function (...args: unknown[]) { w.dataLayer!.push(args); };
       w.gtag("consent", "default", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" });
       w.gtag("consent", "update", { analytics_storage: "granted", ad_storage: consent.marketing ? "granted" : "denied", ad_user_data: "denied", ad_personalization: "denied" });
       w.gtag("js", new Date());

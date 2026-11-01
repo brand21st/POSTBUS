@@ -1,7 +1,7 @@
 import { format, isValid, parseISO } from "date-fns";
 import { formatCurrency, formatWeightGrams, titleCase } from "@/lib/format";
-import { mapIndiaPostEventToShipmentUpdate } from "@/modules/india-post/event-mapper";
-import type { PublicTrackResult, PublicTrackedShipment, PublicTrackingEvent } from "@/types/api";
+import { mapIndiaPostEventToShipmentUpdate, matchOfficialArticleFlow } from "@/modules/india-post/event-mapper";
+import type { PublicTrackResult, PublicTrackedShipment, PublicTrackingEvent, TrackingAvailability } from "@/types/api";
 
 export const PROGRESS_STAGES = [
   "BOOKED",
@@ -24,6 +24,7 @@ export type CustomerTrackEvent = {
   timestamp: string | null;
   completed: boolean;
   latest: boolean;
+  originalEvent: string | null;
 };
 
 export type CustomerProgressStep = {
@@ -58,6 +59,8 @@ export type CustomerTrackView = {
   events: CustomerTrackEvent[];
   progress: CustomerProgressStep[];
   nextStepLabel: string | null;
+  journeyNotice: string | null;
+  trackingAvailability: TrackingAvailability | null;
   exception: {
     latestTitle: string;
     location: string | null;
@@ -73,15 +76,6 @@ const STAGE_LABELS: Record<ProgressStage, string> = {
   IN_TRANSIT: "In Transit",
   OUT_FOR_DELIVERY: "Out for Delivery",
   DELIVERED: "Delivered",
-};
-
-const STAGE_DESCRIPTIONS: Record<ProgressStage, string> = {
-  BOOKED: "Shipment booked successfully.",
-  ACCEPTED: "India Post has accepted the shipment.",
-  DISPATCHED: "Shipment dispatched to the next location.",
-  IN_TRANSIT: "Shipment is moving through the network.",
-  OUT_FOR_DELIVERY: "Shipment is out for delivery.",
-  DELIVERED: "Shipment delivered successfully.",
 };
 
 const STATUS_SUPPORT: Record<string, string> = {
@@ -128,6 +122,48 @@ export function formatTrackTime(value: string | null | undefined) {
   return format(date, "h:mm a");
 }
 
+const INDIA_POST_TIME_ZONE = "Asia/Kolkata";
+
+export function formatTrackDateIndia(value: string | null | undefined) {
+  if (!value) return null;
+  const date = parseISO(value);
+  if (!isValid(date)) return null;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: INDIA_POST_TIME_ZONE,
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
+export function formatTrackTimeIndia(value: string | null | undefined) {
+  if (!value) return null;
+  const date = parseISO(value);
+  if (!isValid(date)) return null;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: INDIA_POST_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}
+
+export function journeyNoticeFor(availability: TrackingAvailability | null | undefined, eventCount: number) {
+  if (availability === "TRACKING_DATA_STALE" && eventCount > 0) {
+    return "Showing the latest tracking updates available in PostBus. New updates are temporarily unavailable.";
+  }
+  if (availability === "TRACKING_TEMPORARILY_UNAVAILABLE") {
+    return "We couldn't refresh the latest India Post tracking updates right now. Please try again shortly.";
+  }
+  if (availability === "TRACKING_PROVIDER_UNAUTHORIZED") {
+    return "Live tracking updates are temporarily unavailable. Please try again later or contact support.";
+  }
+  if (eventCount === 0) {
+    return "Tracking updates are not available yet. Please check again later.";
+  }
+  return null;
+}
+
 function place(city?: string | null, state?: string | null): CustomerPlace | null {
   const nextCity = city?.trim();
   if (!nextCity) return null;
@@ -166,6 +202,15 @@ function uiStageFromKey(key: string): ProgressStage | null {
   return null;
 }
 
+function originalEventName(event: PublicTrackingEvent) {
+  const description = event.eventDescription?.trim();
+  if (!description) return event.eventCode?.trim() || null;
+  const official = matchOfficialArticleFlow({ eventCode: event.eventCode, eventDescription: description });
+  if (!official) return description;
+  const split = description.split("—")[0]?.trim();
+  return split || description;
+}
+
 export function classifyCustomerEvent(event: PublicTrackingEvent): {
   stage: ProgressStage | null;
   status: string;
@@ -174,6 +219,27 @@ export function classifyCustomerEvent(event: PublicTrackingEvent): {
     eventCode: event.eventCode,
     eventDescription: event.eventDescription,
   });
+  if (mapped.articleFlow === "ON_HOLD" || mapped.articleFlow === "REDIRECTED") {
+    return { stage: null, status: mapped.displayLabel || mapped.articleFlow };
+  }
+  if (mapped.articleFlow === "DESTINATION_REACHED" || mapped.articleFlow === "ITEM_RECEIVED" || mapped.articleFlow === "BAG_RECEIVED") {
+    return { stage: "IN_TRANSIT", status: "IN_TRANSIT" };
+  }
+  if (mapped.articleFlow === "BAGGED" || mapped.articleFlow === "DISPATCHED") {
+    return { stage: "DISPATCHED", status: "DISPATCHED" };
+  }
+  if (
+    mapped.articleFlow === "BOOKED" ||
+    mapped.articleFlow === "PICKUP_REQUESTED" ||
+    mapped.articleFlow === "PICKUP_ASSIGNED" ||
+    mapped.articleFlow === "PICKED_UP" ||
+    mapped.articleFlow === "INDUCTED"
+  ) {
+    return { stage: "BOOKED", status: "BOOKED" };
+  }
+  if (mapped.articleFlow === "PICKUP_CANCELLED") {
+    return { stage: null, status: "PICKUP_CANCELLED" };
+  }
   const operational = mapped.operationalStatus;
   if (operational === "OUT_FOR_DELIVERY") return { stage: "OUT_FOR_DELIVERY", status: "OUT_FOR_DELIVERY" };
   if (operational === "DELIVERED") return { stage: "DELIVERED", status: "DELIVERED" };
@@ -192,16 +258,20 @@ export function classifyCustomerEvent(event: PublicTrackingEvent): {
 }
 
 function eventTitle(event: PublicTrackingEvent, status: string, stage: ProgressStage | null) {
+  const flow = matchOfficialArticleFlow(event);
+  if (flow?.display) return flow.display;
   const description = event.eventDescription?.trim();
   if (description && description.toUpperCase() !== event.eventCode?.toUpperCase()) {
-    return titleCase(description.replace(/_/g, " "));
+    return titleCase(description.split("—")[0]?.trim().replace(/_/g, " ") || description);
   }
   if (stage) return STAGE_LABELS[stage];
   return titleCase(status.replace(/_/g, " "));
 }
 
-function eventDescription(event: PublicTrackingEvent, status: string, stage: ProgressStage | null) {
-  if (stage) return STAGE_DESCRIPTIONS[stage];
+function eventDescription(event: PublicTrackingEvent, status: string) {
+  const original = originalEventName(event);
+  const flow = matchOfficialArticleFlow(event);
+  if (flow && original) return `India Post Event: ${original}`;
   if (status === "NDR") return "Delivery could not be completed on this attempt.";
   if (status.startsWith("RTO")) return "The shipment is being returned to the origin.";
   const description = event.eventDescription?.trim();
@@ -209,15 +279,37 @@ function eventDescription(event: PublicTrackingEvent, status: string, stage: Pro
   return "Shipment update recorded.";
 }
 
-function shipmentStatusKey(shipment: PublicTrackedShipment, latestStatus: string | null) {
+const STAGE_RANK: Record<ProgressStage, number> = {
+  BOOKED: 1,
+  ACCEPTED: 2,
+  DISPATCHED: 3,
+  IN_TRANSIT: 4,
+  OUT_FOR_DELIVERY: 5,
+  DELIVERED: 6,
+};
+
+function strongestEventStage(events: PublicTrackingEvent[]) {
+  let best: ProgressStage | null = null;
+  for (const event of events) {
+    const stage = classifyCustomerEvent(event).stage;
+    if (!stage) continue;
+    if (!best || STAGE_RANK[stage] > STAGE_RANK[best]) best = stage;
+  }
+  return best;
+}
+
+function shipmentStatusKey(shipment: PublicTrackedShipment) {
   const operational = (shipment.operationalStatus ?? "").toUpperCase();
   if (operational) return operational;
   const status = (shipment.status ?? "").toUpperCase();
   if (status === "SHIPPED" || status === "MANIFEST_READY" || status === "LABEL_READY") {
-    return shipment.events?.length || latestStatus ? "IN_TRANSIT" : "BOOKED";
+    const stage = strongestEventStage(shipment.events ?? []);
+    if (!stage || stage === "BOOKED" || stage === "ACCEPTED") return "BOOKED";
+    if (stage === "DISPATCHED" || stage === "IN_TRANSIT") return "IN_TRANSIT";
+    return stage;
   }
   if (status) return status;
-  return latestStatus || "BOOKED";
+  return "BOOKED";
 }
 
 export function statusToneFor(statusKey: string): TrackStatusTone {
@@ -302,15 +394,16 @@ export function toCustomerTrackView(result: PublicTrackResult): CustomerTrackVie
     return {
       status: classified.status,
       title: eventTitle(event, classified.status, classified.stage),
-      description: eventDescription(event, classified.status, classified.stage),
+      description: eventDescription(event, classified.status),
       location: event.officeName?.trim() || null,
       timestamp: event.occurredAt ?? null,
       completed: true,
       latest: index === 0,
+      originalEvent: matchOfficialArticleFlow(event) ? originalEventName(event) : null,
     } satisfies CustomerTrackEvent;
   });
 
-  const statusKey = shipmentStatusKey(shipment, mappedEvents[0]?.status ?? null);
+  const statusKey = shipmentStatusKey(shipment);
   const origin = place(shipment.originCity, shipment.originState);
   const destination = place(shipment.destinationCity, shipment.destinationState);
   const lastUpdatedAt = shipment.lastUpdatedAt ?? mappedEvents[0]?.timestamp ?? null;
@@ -325,8 +418,13 @@ export function toCustomerTrackView(result: PublicTrackResult): CustomerTrackVie
   if (originLabel) details.push({ label: "Origin", value: originLabel });
   const destinationLabel = formatPlace(destination);
   if (destinationLabel) details.push({ label: "Destination", value: destinationLabel });
-  const booked = formatTrackDate(shipment.bookedAt);
-  if (booked) details.push({ label: "Booked Date", value: booked });
+  const booked = formatTrackDateIndia(shipment.bookedAt);
+  if (booked) details.push({ label: "Booked in PostBus", value: booked });
+  const indiaPostBooked = shipment.events.find((event) =>
+    /item[\s_]*booked/i.test(`${event.eventDescription ?? ""} ${event.eventCode ?? ""}`)
+  );
+  const indiaPostBookedOn = formatTrackDateIndia(indiaPostBooked?.occurredAt);
+  if (indiaPostBookedOn) details.push({ label: "India Post Booked On", value: indiaPostBookedOn });
   if (shipment.weightGrams && shipment.weightGrams > 0) {
     details.push({ label: "Weight", value: formatWeightGrams(shipment.weightGrams) });
   }
@@ -334,18 +432,28 @@ export function toCustomerTrackView(result: PublicTrackResult): CustomerTrackVie
   if (shipment.codAmount) {
     details.push({ label: "COD Amount", value: formatCurrency(shipment.codAmount) });
   }
-  const lastUpdated = formatTrackDateTime(lastUpdatedAt);
-  if (lastUpdated) details.push({ label: "Last Updated", value: lastUpdated });
+  const lastUpdated = formatTrackDateIndia(lastUpdatedAt);
+  const lastUpdatedTime = formatTrackTimeIndia(lastUpdatedAt);
+  if (lastUpdated) {
+    details.push({
+      label: "Last Updated",
+      value: lastUpdatedTime ? `${lastUpdated}, ${lastUpdatedTime} IST` : lastUpdated,
+    });
+  }
+  const journeyNotice = journeyNoticeFor(result.trackingAvailability, mappedEvents.length);
 
   return {
     articleNumber,
     statusKey,
-    statusLabel: titleCase(statusKey.replace(/_/g, " ")),
+    statusLabel:
+      (shipment.events[0] ? matchOfficialArticleFlow(shipment.events[0])?.display : null) ||
+      titleCase(statusKey.replace(/_/g, " ")),
     statusTone: statusToneFor(statusKey),
     statusSupport:
-      result.liveTracking === "cached" && result.liveMessage
+      journeyNotice ??
+      (result.liveTracking === "cached" && result.liveMessage
         ? result.liveMessage
-        : (STATUS_SUPPORT[statusKey] ?? "Latest carrier update is shown below."),
+        : (STATUS_SUPPORT[statusKey] ?? "Latest carrier update is shown below.")),
     serviceLabel: shipment.serviceLabel ?? null,
     lastUpdatedAt,
     expectedDeliveryAt: null,
@@ -359,6 +467,8 @@ export function toCustomerTrackView(result: PublicTrackResult): CustomerTrackVie
     events: mappedEvents,
     progress,
     nextStepLabel: next?.label ?? (statusKey === "DELIVERED" ? null : "Awaiting the next carrier update"),
+    journeyNotice,
+    trackingAvailability: result.trackingAvailability ?? null,
     exception: exceptionFor(statusKey, mappedEvents),
   };
 }

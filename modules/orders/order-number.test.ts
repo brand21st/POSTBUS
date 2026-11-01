@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   formatWhatsAppOrderNumber,
+  orderNumberSortValue,
   isOrderNumberConflict,
   isPbSequenceNumber,
+  isUuid,
   isWaPbSequenceNumber,
   nextPbOrderNumber,
   nextWaPbOrderNumber,
+  orderLookup,
   shouldReallocateOnConflict,
 } from "@/modules/orders/order-number";
 
@@ -51,6 +54,15 @@ describe("shouldReallocateOnConflict", () => {
   });
 });
 
+describe("orderNumberSortValue", () => {
+  it("keeps digits so #9 sorts before #1185", () => {
+    expect(orderNumberSortValue("#1185")).toBe(1185n);
+    expect(orderNumberSortValue("PB-10001")).toBe(10001n);
+    expect(orderNumberSortValue("#9")! < orderNumberSortValue("#1185")!).toBe(true);
+    expect(orderNumberSortValue("letter-only")).toBeNull();
+  });
+});
+
 describe("isOrderNumberConflict", () => {
   it("detects the org+number unique index", () => {
     expect(
@@ -60,5 +72,17 @@ describe("isOrderNumberConflict", () => {
       true
     );
     expect(isOrderNumberConflict("Order failed.")).toBe(false);
+  });
+});
+
+describe("orderLookup", () => {
+  it("keeps UUIDs on the id column and order numbers off it", () => {
+    expect(isUuid("c8c64456-d324-4277-9577-c3ee1086fccf")).toBe(true);
+    expect(orderLookup("c8c64456-d324-4277-9577-c3ee1086fccf")).toEqual({
+      column: "id",
+      value: "c8c64456-d324-4277-9577-c3ee1086fccf",
+    });
+    expect(orderLookup("PB-10059")).toEqual({ column: "order_number", value: "PB-10059" });
+    expect(orderLookup("")).toBeNull();
   });
 });

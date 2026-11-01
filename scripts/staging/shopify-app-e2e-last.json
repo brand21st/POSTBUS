@@ -1,0 +1,382 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "postgrest-ready",
+      "pass": true,
+      "detail": "auth=200 orgs=200"
+    },
+    {
+      "name": "auth-health",
+      "pass": true,
+      "detail": 200
+    },
+    {
+      "name": "postgrest-openapi",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "snippet": "{\"swagger\":\"2.0\",\"info\":{\"description\":\"\",\"title\":\"standard public schema\",\"vers"
+      }
+    },
+    {
+      "name": "postgrest-rpc-in-schema",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "seed-org",
+      "pass": true,
+      "detail": 201
+    },
+    {
+      "name": "seed-automation",
+      "pass": true,
+      "detail": 201
+    },
+    {
+      "name": "seed-connection",
+      "pass": true,
+      "detail": 201
+    },
+    {
+      "name": "seed-public-app-install",
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "body": [
+          {
+            "id": "0c0e6341-20ae-4506-a81f-ddafcfd52b2e",
+            "organization_id": "f3930294-4d67-4470-b3af-2e6a992c7b0e",
+            "shop_domain": "postbus-e2e-staging.myshopify.com",
+            "shopify_shop_id": null,
+            "app_client_id": "postbus-staging-public-app",
+            "status": "CONNECTED",
+            "encrypted_access_token": null,
+            "encrypted_refresh_token": null,
+            "token_expires_at": null,
+            "refresh_token_expires_at": null,
+            "granted_scopes": null,
+            "last_shopify_user_id": null,
+            "last_error": null,
+            "installed_at": "2026-11-01T01:33:32.237243+00:00",
+            "uninstalled_at": null,
+            "claimed_at": null,
+            "created_at": "2026-11-01T01:33:32.237243+00:00",
+            "updated_at": "2026-11-01T01:33:32.237243+00:00",
+            "token_version": 0,
+            "token_refresh_lease_until": null,
+            "principal_user_id": null,
+            "encrypted_principal_secret": null,
+            "encrypted_principal_session": null,
+            "principal_session_expires_at": null,
+            "principal_session_version": 0,
+            "principal_session_lease_until": null,
+            "backfill_started_at": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "seed-order-for-rpc",
+      "pass": true,
+      "detail": 201
+    },
+    {
+      "name": "postgrest-rpc-service-role",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "action": "replaced"
+      }
+    },
+    {
+      "name": "postgrest-rpc-cross-tenant",
+      "pass": true,
+      "detail": 400
+    },
+    {
+      "name": "auth-signup",
+      "pass": true,
+      "detail": 200
+    },
+    {
+      "name": "postgrest-rpc-authenticated",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "action": "replaced"
+      }
+    },
+    {
+      "name": "postgrest-rpc-authenticated-cross-tenant",
+      "pass": true,
+      "detail": 400
+    },
+    {
+      "name": "next-health",
+      "pass": true,
+      "detail": 200
+    },
+    {
+      "name": "next-runtime-loopback",
+      "pass": true,
+      "detail": "127.0.0.1:54321"
+    },
+    {
+      "name": "next-not-production-ref",
+      "pass": true,
+      "detail": true
+    },
+    {
+      "name": "cept-stub",
+      "pass": true,
+      "detail": {
+        "ok": true,
+        "provider_mode": "STUB",
+        "login": true,
+        "bulk": true
+      }
+    },
+    {
+      "name": "webhook-a-http",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "message": "OK"
+      }
+    },
+    {
+      "name": "webhook-a-partial-one-active-line",
+      "pass": true,
+      "detail": {
+        "count": 1,
+        "ids": [
+          "gid://shopify/LineItem/9"
+        ],
+        "payment": "PARTIAL",
+        "total": 1049,
+        "paid": 314.7,
+        "cod": 734.3
+      }
+    },
+    {
+      "name": "webhook-a-financials",
+      "pass": true,
+      "detail": {
+        "totalAmt": 1049,
+        "paidAmt": 314.7,
+        "codAmt": 734.3,
+        "status": "PARTIAL"
+      }
+    },
+    {
+      "name": "webhook-b-paid",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "payment": "PAID",
+        "lines": 1
+      }
+    },
+    {
+      "name": "webhook-c-cod",
+      "pass": true,
+      "detail": {
+        "payment": "COD",
+        "paid": 0,
+        "cod": 499
+      }
+    },
+    {
+      "name": "webhook-d-same-sku-two-gids",
+      "pass": true,
+      "detail": [
+        "gid://shopify/LineItem/41",
+        "gid://shopify/LineItem/42"
+      ]
+    },
+    {
+      "name": "webhook-e-repeat-no-dup-lines",
+      "pass": true,
+      "detail": {
+        "first": 200,
+        "second": 200,
+        "secondBody": {
+          "success": true,
+          "message": "OK",
+          "data": {
+            "duplicate": true,
+            "topic": "orders/updated"
+          },
+          "errors": [],
+          "requestId": "f1cac14d-5c50-464b-b4f2-ec20c1453a77",
+          "timestamp": "2026-11-01T01:33:33.596Z"
+        },
+        "lines": 1
+      }
+    },
+    {
+      "name": "webhook-f-concurrent-atomic",
+      "pass": true,
+      "detail": {
+        "count": 2,
+        "mixed": false,
+        "ids": [
+          "gid://shopify/LineItem/62",
+          "gid://shopify/LineItem/63"
+        ],
+        "s1": 200,
+        "s2": 200
+      }
+    },
+    {
+      "name": "webhook-f-not-mixed-old-and-new",
+      "pass": true,
+      "detail": [
+        "gid://shopify/LineItem/62",
+        "gid://shopify/LineItem/63"
+      ]
+    },
+    {
+      "name": "webhook-g-incomplete-edited-no-corruption",
+      "pass": true,
+      "detail": {
+        "before": [
+          {
+            "title": "Safe",
+            "sku": "SAFE",
+            "quantity": 1,
+            "source_line_item_id": "gid://shopify/LineItem/71",
+            "unit_price": 1049
+          }
+        ],
+        "after": [
+          {
+            "title": "Safe",
+            "sku": "SAFE",
+            "quantity": 1,
+            "source_line_item_id": "gid://shopify/LineItem/71",
+            "unit_price": 1049
+          }
+        ],
+        "status": 200
+      }
+    },
+    {
+      "name": "stale-older-does-not-overwrite",
+      "pass": true,
+      "detail": {
+        "total": 2000,
+        "lines": [
+          {
+            "title": "New",
+            "sku": "N",
+            "quantity": 1,
+            "source_line_item_id": "gid://shopify/LineItem/81",
+            "unit_price": 2000
+          }
+        ]
+      }
+    },
+    {
+      "name": "stale-equal-timestamp-idempotent",
+      "pass": true,
+      "detail": 2000
+    },
+    {
+      "name": "stale-missing-timestamp-imports",
+      "pass": true,
+      "detail": [
+        {
+          "title": "NoTs",
+          "sku": "Z",
+          "quantity": 1,
+          "source_line_item_id": "gid://shopify/LineItem/91",
+          "unit_price": 50
+        }
+      ]
+    },
+    {
+      "name": "webhook-h-awb-unchanged",
+      "pass": true,
+      "detail": {
+        "barcode": "ET214330016IN",
+        "status": "BOOKED",
+        "cod_amount": 734.3,
+        "weight_grams": 800,
+        "payment_mode": "COD",
+        "length_cm": 10,
+        "width_cm": 10,
+        "height_cm": 10
+      }
+    },
+    {
+      "name": "webhook-h-weight-cod-frozen",
+      "pass": true,
+      "detail": {
+        "barcode": "ET214330016IN",
+        "status": "BOOKED",
+        "cod_amount": 734.3,
+        "weight_grams": 800,
+        "payment_mode": "COD",
+        "length_cm": 10,
+        "width_cm": 10,
+        "height_cm": 10
+      }
+    },
+    {
+      "name": "webhook-h-invoice-unchanged",
+      "pass": true,
+      "detail": {
+        "invoiceBefore": {
+          "status": "ISSUED",
+          "total": 31470,
+          "paid": 31470
+        },
+        "invoiceAfter": {
+          "status": "ISSUED",
+          "total": 31470,
+          "paid": 31470
+        }
+      }
+    },
+    {
+      "name": "webhook-h-lines-not-replaced-with-new-gid",
+      "pass": true,
+      "detail": [
+        "gid://shopify/LineItem/109"
+      ]
+    },
+    {
+      "name": "webhook-invalid-hmac-rejected",
+      "pass": true,
+      "detail": 401
+    },
+    {
+      "name": "public-app-webhook-route-responded",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "message": "OK"
+      }
+    }
+  ],
+  "identity": {
+    "supabaseUrl": "http://127.0.0.1:54321",
+    "appUrl": "http://127.0.0.1:3001",
+    "serviceRole": "service_role",
+    "jwtRefLooksLocal": true,
+    "shop": "postbus-e2e-staging.myshopify.com"
+  },
+  "rpc": {
+    "serviceRole": {
+      "status": 200,
+      "action": "replaced"
+    }
+  },
+  "webhooks": {},
+  "tests": {},
+  "passed": 37,
+  "failed": []
+}

@@ -1,5 +1,6 @@
 export const PLAN_FEATURE_OPTIONS = [
   "Shopify order sync",
+  "WooCommerce order sync",
   "Shipment workspace",
   "Label and barcode workflows",
   "Everything in Starter",
@@ -70,4 +71,15 @@ export function mergeFullPlanFeatures(
     }
   }
   return { features, monthlyOrderLimit };
+}
+
+/** Drop catalog tautologies like "Everything in Starter" on the Starter card. */
+export function displayPlanFeatures(features: string[], slug?: string | null) {
+  const key = (slug ?? "").trim().toLowerCase();
+  return features.filter((line) => {
+    const text = line.trim().toLowerCase();
+    if (!key) return true;
+    if (text === `everything in ${key}`) return false;
+    return true;
+  });
 }

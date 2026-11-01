@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, Trash2, Undo2 } from "lucide-react";
 import { useReadOnly } from "@/components/ai-accountant/shell";
-import { ExportButtons, Money, NativeSelect, PeriodPicker, TableShell, istToday, qs, rupeesToPaiseInput, td, th, usePeriod } from "@/components/ai-accountant/shared";
+import { ExportButtons, HelpHint, Money, NativeSelect, PeriodPicker, TableShell, istToday, qs, rupeesToPaiseInput, td, th, usePeriod } from "@/components/ai-accountant/shared";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -143,7 +143,10 @@ export default function LedgerPage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle>{view === "journal" ? "Journal" : "Trial balance"}</CardTitle>
-            <CardDescription>Posted entries are never edited. Corrections are reversals.</CardDescription>
+            <CardDescription className="flex items-center gap-1">
+              Posted entries are never edited. Corrections are reversals.
+              <HelpHint label="reversals">Use the undo icon on an entry to post a mirror entry that cancels it. Both stay in the history, as auditors expect.</HelpHint>
+            </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="secondary" onClick={() => setView(view === "journal" ? "trial" : "journal")}>

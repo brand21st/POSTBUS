@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { publicAppOrigin, requestPublicOrigin } from "@/lib/auth/urls";
 
 function isLoopback(hostname: string) {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -19,6 +20,15 @@ export function originsMatch(sent: string | null, expected: string) {
   }
 }
 
+function allowedOrigins(request: NextRequest) {
+  return [request.nextUrl.origin, requestPublicOrigin(request), publicAppOrigin()];
+}
+
+function isSameSiteFetch(request: NextRequest) {
+  const site = (request.headers.get("sec-fetch-site") ?? "").toLowerCase();
+  return site === "same-origin" || site === "same-site";
+}
+
 const CSRF_MESSAGE = "This request must come from the PostBus app.";
 
 /** Cookie-authenticated mutations must match this request origin. */
@@ -28,7 +38,7 @@ export function assertBrowserOrigin(request: NextRequest, required: boolean) {
     if (required) throw new AppError(ERROR_CODES.FORBIDDEN, CSRF_MESSAGE);
     return;
   }
-  if (!originsMatch(sent, request.nextUrl.origin)) {
-    throw new AppError(ERROR_CODES.FORBIDDEN, CSRF_MESSAGE);
-  }
+  if (allowedOrigins(request).some((expected) => originsMatch(sent, expected))) return;
+  if (isSameSiteFetch(request)) return;
+  throw new AppError(ERROR_CODES.FORBIDDEN, CSRF_MESSAGE);
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
@@ -74,10 +74,11 @@ function ColorField({
   onChange: (hex: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
-
-  useEffect(() => {
+  const [seenValue, setSeenValue] = useState(value);
+  if (value !== seenValue) {
+    setSeenValue(value);
     setDraft(value);
-  }, [value]);
+  }
 
   return (
     <div className="grid grid-cols-[7rem_1.75rem_minmax(4.75rem,1fr)] items-center gap-2">
@@ -128,13 +129,15 @@ export function InvoiceEditor() {
     queryFn: () => api<PreviewResponse>("/api/v1/invoice-template/preview-data"),
   });
 
-  useEffect(() => {
-    if (!settings.data) return;
-    setAppearance(parseInvoiceAppearance(settings.data.appearance));
-    setGstin(settings.data.gstin ?? "");
-    setBusinessEmail(settings.data.businessEmail ?? "");
-    setWebsite(settings.data.website ?? "");
-  }, [settings.data]);
+  const invoiceSettings = settings.data;
+  const [appliedInvoice, setAppliedInvoice] = useState(invoiceSettings);
+  if (invoiceSettings && invoiceSettings !== appliedInvoice) {
+    setAppliedInvoice(invoiceSettings);
+    setAppearance(parseInvoiceAppearance(invoiceSettings.appearance));
+    setGstin(invoiceSettings.gstin ?? "");
+    setBusinessEmail(invoiceSettings.businessEmail ?? "");
+    setWebsite(invoiceSettings.website ?? "");
+  }
 
   const warnings = invoiceContrastWarnings(appearance);
   const selectedPreset = presetName(appearance);
@@ -189,7 +192,7 @@ export function InvoiceEditor() {
     paymentStatus: "COD",
     currency: "INR",
     customer: { name: "Customer", phone: "", email: "", lines: [] },
-    billing: { name: "Sample Store", phone: "9876543210", email: businessEmail, lines: ["Sample address"] },
+    billing: { name: "Customer", phone: "", email: "", lines: ["Billing address"] },
     shipping: { name: "Customer", phone: "", email: "", lines: ["Shipping address"] },
     items: [{ title: "Cotton Shirt", sku: "SHIRT-BLK", quantity: 2, unitPrice: 799, lineTotal: 1598 }],
     subtotal: 1598,

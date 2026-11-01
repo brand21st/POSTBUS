@@ -13,14 +13,12 @@ export function PublicTrackingGate({
   hostname: string;
 }) {
   const [phase, setPhase] = useState<Phase>("connecting");
-  const [host, setHost] = useState(
-    hostname.split(":")[0]?.toLowerCase() || `${subdomain}.postbus.in`
-  );
-
-  useEffect(() => {
-    const liveHost = window.location.host.split(":")[0]?.toLowerCase();
-    if (liveHost) setHost(liveHost);
-  }, []);
+  const [host] = useState(() => {
+    if (typeof window !== "undefined") {
+      return window.location.host.split(":")[0]?.toLowerCase() || hostname.split(":")[0]?.toLowerCase() || `${subdomain}.postbus.in`;
+    }
+    return hostname.split(":")[0]?.toLowerCase() || `${subdomain}.postbus.in`;
+  });
 
   useEffect(() => {
     let cancelled = false;

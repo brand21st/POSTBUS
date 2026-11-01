@@ -4,6 +4,7 @@ import { orIlike } from "@/lib/api/filters";
 import type { OrderStatus } from "@/types/domain";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { applyManualExtraCodCharge } from "@/modules/orders/extra-cod";
@@ -32,8 +33,13 @@ import {
   isOrderNumberConflict,
   nextPbOrderNumber,
   nextWaPbOrderNumber,
+  orderLookup,
   shouldReallocateOnConflict,
 } from "@/modules/orders/order-number";
+import {
+  classifyStoredShippingAddress,
+  validationPatchFromClassification,
+} from "@/modules/shopify/shipping-contact";
 
 type CreateInput = z.infer<typeof createOrderSchema> & { status?: OrderStatus };
 type OrderActor = Pick<TenantContext, "organizationId"> & { userId?: string | null };
@@ -42,7 +48,7 @@ type OrderListQuery = z.infer<typeof orderListQuery>;
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
 const ORDER_LIST_SELECT =
-  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, india_post_estimate_amount, india_post_estimated_at, india_post_estimate_key, parcel_weight_mode, parcel_weight_grams, customers(name, phone), shipping_address:addresses!shipping_address_id(pincode), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at)";
+  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, india_post_estimate_amount, india_post_estimated_at, india_post_estimate_key, parcel_weight_mode, parcel_weight_grams, customers(name, phone), shipping_address:addresses!shipping_address_id(pincode), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at, metadata)";
 
 function wantsOrderCounts(query: OrderListQuery) {
   const value = (query.includeCounts ?? "").toLowerCase();
@@ -115,6 +121,27 @@ function applyOrderListFilters(
   return builder;
 }
 
+export function resolveOrderListSort(sort?: OrderListQuery["sort"]) {
+  if (sort === "order_number") return { mode: "number" as const, ascending: true };
+  if (sort === "-order_number") return { mode: "number" as const, ascending: false };
+  if (sort === "created_at") return { mode: "created" as const, ascending: true };
+  return { mode: "created" as const, ascending: false };
+}
+
+function applyOrderListSort<T extends { order: (column: string, options?: object) => T }>(
+  builder: T,
+  sort?: OrderListQuery["sort"]
+): T {
+  const spec = resolveOrderListSort(sort);
+  if (spec.mode === "number") {
+    return builder
+      .order("order_number_sort", { ascending: spec.ascending, nullsFirst: false })
+      .order("order_number", { ascending: spec.ascending })
+      .order("created_at", { ascending: false });
+  }
+  return builder.order("created_at", { ascending: spec.ascending });
+}
+
 async function countOrders(
   supabase: SupabaseClient,
   ctx: TenantContext,
@@ -140,11 +167,10 @@ export async function listOrders(
   const from = (query.page - 1) * query.pageSize;
   const to = from + query.pageSize - 1;
 
-  const listBuilder = applyOrderListFilters(
-    supabase.from("orders").select(ORDER_LIST_SELECT).order("created_at", { ascending: false }).range(from, to),
-    ctx,
-    query
-  );
+  const listBuilder = applyOrderListSort(
+    applyOrderListFilters(supabase.from("orders").select(ORDER_LIST_SELECT), ctx, query),
+    query.sort
+  ).range(from, to);
 
   const includeCounts = wantsOrderCounts(query);
   const [listed, total, all, today, yesterday] = await Promise.all([
@@ -175,13 +201,15 @@ export async function listOrders(
 }
 
 export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id: string) {
+  const lookup = orderLookup(id);
+  if (!lookup) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
   const { data, error } = await supabase
     .from("orders")
     .select(
       "*, customers(*), shipping_address:addresses!shipping_address_id(*), billing_address:addresses!billing_address_id(*), order_line_items(*), shipments(*), shipping_invoices(id, status, invoice_number, error_message, shipment_id, created_at)"
     )
     .eq("organization_id", ctx.organizationId)
-    .eq("id", id)
+    .eq(lookup.column, lookup.value)
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
@@ -341,6 +369,16 @@ export async function createManualOrder(
     // VaChat knowledge is optional; the order should still be created.
   }
 
+  if ((input.source ?? "MANUAL") !== "API") {
+    const { publishOrderCreated } = await import("@/modules/webhooks/publish");
+    await publishOrderCreated(supabase, {
+      organizationId: ctx.organizationId,
+      orderId: order.id,
+      orderNumber,
+      status: input.status ?? "READY",
+    });
+  }
+
   return { ...order, createShipment: Boolean(input.createShipment), shipment: input.shipment };
 }
 
@@ -350,6 +388,7 @@ function insertAddress(
   customerId: string | null,
   address: CreateInput["shippingAddress"]
 ) {
+  const classified = classifyStoredShippingAddress(address);
   return supabase
     .from("addresses")
     .insert({
@@ -364,6 +403,8 @@ function insertAddress(
       state: address.state,
       pincode: address.pincode,
       country: address.country ?? "IN",
+      address_manual_override: true,
+      ...validationPatchFromClassification(classified, "manual"),
     })
     .select()
     .single()
@@ -528,15 +569,29 @@ export async function updateOrderShippingAddress(
     throw new AppError(ERROR_CODES.CONFLICT, "Address is locked after India Post booking.");
   }
 
+  const phone = input.phone ? extractIndiaMobileDigits(input.phone) ?? input.phone : null;
+  const name = input.name?.trim() || null;
+  const classified = classifyStoredShippingAddress({
+    name,
+    phone,
+    line1: input.line1,
+    line2: input.line2,
+    city: input.city,
+    state: input.state,
+    pincode: input.pincode,
+    country: input.country ?? "IN",
+  });
   const fields = {
-    name: input.name ?? null,
-    phone: input.phone ?? null,
+    name,
+    phone,
     line1: input.line1,
     line2: input.line2 ?? null,
     city: input.city,
     state: input.state,
     pincode: input.pincode,
     country: input.country ?? "IN",
+    address_manual_override: true,
+    ...validationPatchFromClassification(classified, "manual"),
   };
 
   if (order.shipping_address_id) {
@@ -551,12 +606,24 @@ export async function updateOrderShippingAddress(
       supabase,
       ctx.organizationId,
       (order.customer_id as string | null) ?? null,
-      input
+      { ...input, name: name ?? undefined, phone: phone ?? undefined }
     );
     const { error } = await supabase
       .from("orders")
       .update({ shipping_address_id: shipping.id })
       .eq("id", orderId)
+      .eq("organization_id", ctx.organizationId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+
+  if (order.customer_id && (name || phone)) {
+    const { error } = await supabase
+      .from("customers")
+      .update({
+        ...(name ? { name } : {}),
+        ...(phone ? { phone } : {}),
+      })
+      .eq("id", order.customer_id)
       .eq("organization_id", ctx.organizationId);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   }
@@ -567,10 +634,188 @@ export async function updateOrderShippingAddress(
     action: "order.shipping_address_updated",
     entity_type: "order",
     entity_id: orderId,
-    after: { pincode: input.pincode, city: input.city, state: input.state },
+    after: { pincode: input.pincode, city: input.city, state: input.state, phone, name },
   });
 
   return getOrder(supabase, ctx, orderId);
+}
+
+async function editableShippingAddress(supabase: SupabaseClient, ctx: TenantContext, orderId: string) {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, customer_id, shipping_address_id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, orderError.message);
+  if (!order?.shipping_address_id) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This order has no shipping address.");
+  const { data: shipments, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("id, status")
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+  const locked = ((shipments ?? []) as Array<{ status?: string | null }>).some(
+    (row) => !OPEN_WEIGHT_SHIPMENT_STATUSES.has((row.status ?? "").toUpperCase())
+  );
+  if (locked) throw new AppError(ERROR_CODES.CONFLICT, "Address is locked after India Post booking.");
+  const { data: address, error: addressError } = await supabase
+    .from("addresses")
+    .select("*")
+    .eq("id", order.shipping_address_id)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (addressError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, addressError.message);
+  if (!address) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipping address not found.");
+  return { order, address: address as Record<string, unknown> };
+}
+
+export async function restoreOrderShippingAddress(supabase: SupabaseClient, ctx: TenantContext, orderId: string) {
+  const { address } = await editableShippingAddress(supabase, ctx, orderId);
+  const original = address.original_shipping;
+  if (!original || typeof original !== "object") {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "No original Shopify address is stored for this order.");
+  }
+  const source = original as Record<string, unknown>;
+  const text = (key: string) => (typeof source[key] === "string" ? source[key] : "");
+  const restored = {
+    name: text("name") || null,
+    phone: text("phone") || null,
+    original_phone: text("phone") || null,
+    line1: text("address1"),
+    line2: text("address2") || null,
+    line3: null as string | null,
+    city: text("city"),
+    state: text("province"),
+    pincode: text("zip"),
+    country: text("country") || "IN",
+  };
+  const classified = classifyStoredShippingAddress(restored);
+  const { error } = await supabase
+    .from("addresses")
+    .update({
+      ...restored,
+      address_manual_override: true,
+      ...validationPatchFromClassification(classified, "restore"),
+    })
+    .eq("id", address.id)
+    .eq("organization_id", ctx.organizationId);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return getOrder(supabase, ctx, orderId);
+}
+
+export async function acceptOrderShippingAddress(supabase: SupabaseClient, ctx: TenantContext, orderId: string) {
+  const { address } = await editableShippingAddress(supabase, ctx, orderId);
+  const classified = classifyStoredShippingAddress(address);
+  if (classified.status !== "READY") {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      classified.status === "INVALID"
+        ? "Invalid shipping details still need a correction before they can be accepted."
+        : "This address still needs review before it can be accepted for booking."
+    );
+  }
+  let query = supabase
+    .from("addresses")
+    .update({
+      address_manual_override: true,
+      ...validationPatchFromClassification(classified, "manual"),
+    })
+    .eq("id", address.id)
+    .eq("organization_id", ctx.organizationId);
+  if (address.address_normalized_at) {
+    query = query.eq("address_normalized_at", address.address_normalized_at);
+  }
+  const { data, error } = await query.select("id").maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!data) throw new AppError(ERROR_CODES.CONFLICT, "This address was changed. Reload and review it again.");
+  return getOrder(supabase, ctx, orderId);
+}
+
+export async function revalidateOrderShippingAddress(supabase: SupabaseClient, ctx: TenantContext, orderId: string) {
+  const { order, address } = await editableShippingAddress(supabase, ctx, orderId);
+  const override = address.address_manual_override === true;
+  const unknownProvenance = address.address_manual_override == null;
+  if (override || unknownProvenance) {
+    const classified = classifyStoredShippingAddress(address);
+    const { error } = await supabase
+      .from("addresses")
+      .update({
+        address_manual_override: override ? true : null,
+        ...validationPatchFromClassification(classified, "revalidate"),
+      })
+      .eq("id", address.id)
+      .eq("organization_id", ctx.organizationId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    return getOrder(supabase, ctx, orderId);
+  }
+
+  const original = address.original_shipping;
+  const source = original && typeof original === "object" ? (original as Record<string, unknown>) : null;
+  const text = (row: Record<string, unknown>, key: string) => (typeof row[key] === "string" ? row[key] : "");
+  const { normalizeShopifyShipping, shopifyAddressPersistence } = await import("@/modules/shopify/shipping-contact");
+  let contact = normalizeShopifyShipping({
+    shipping_address: source
+      ? {
+          name: text(source, "name"),
+          first_name: text(source, "first_name"),
+          last_name: text(source, "last_name"),
+          phone: text(source, "phone"),
+          company: text(source, "company"),
+          address1: text(source, "address1"),
+          address2: text(source, "address2"),
+          city: text(source, "city"),
+          province: text(source, "province"),
+          zip: text(source, "zip"),
+          country: text(source, "country"),
+        }
+      : {
+          name: text(address, "name"),
+          phone: text(address, "phone"),
+          address1: text(address, "line1"),
+          address2: text(address, "line2"),
+          city: text(address, "city"),
+          province: text(address, "state"),
+          zip: text(address, "pincode"),
+          country: text(address, "country"),
+        },
+  });
+  if (contact.needsAi) {
+    try {
+      const { maybeAiNormalizeShipping } = await import("@/modules/shopify/address-ai");
+      contact = await maybeAiNormalizeShipping(contact, {
+        supabase,
+        organizationId: ctx.organizationId,
+      });
+    } catch {
+      // Keep the deterministic result when OpenRouter is unavailable.
+    }
+  }
+  const saved = shopifyAddressPersistence(contact, undefined, new Date().toISOString(), { manualOverride: false });
+  const { error } = await supabase
+    .from("addresses")
+    .update(saved)
+    .eq("id", address.id)
+    .eq("organization_id", ctx.organizationId)
+    .eq("address_manual_override", false);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (order.customer_id && (contact.name || contact.phone)) {
+    await supabase
+      .from("customers")
+      .update({
+        ...(contact.name ? { name: contact.name } : {}),
+        ...(contact.phone ? { phone: contact.phone } : {}),
+      })
+      .eq("id", order.customer_id)
+      .eq("organization_id", ctx.organizationId);
+  }
+  return getOrder(supabase, ctx, orderId);
+}
+
+function mappedAddress(address: Record<string, unknown> | null) {
+  if (!address) return null;
+  const phone = typeof address.phone === "string" ? extractIndiaMobileDigits(address.phone) ?? address.phone : address.phone;
+  return { ...address, phone };
 }
 
 function mapOrder(row: Record<string, unknown>) {
@@ -606,7 +851,11 @@ function mapOrder(row: Record<string, unknown>) {
     parcelWeightMode: row.parcel_weight_mode ?? "auto",
     parcelWeightGrams: row.parcel_weight_grams ?? null,
     customer: customer
-      ? { name: customer.name, phone: customer.phone, email: customer.email }
+      ? {
+          name: customer.name,
+          phone: extractIndiaMobileDigits(customer.phone) ?? customer.phone,
+          email: customer.email,
+        }
       : null,
     customerName: customer?.name ?? null,
     lineItems: items.map((item) => ({
@@ -625,11 +874,12 @@ function mapOrder(row: Record<string, unknown>) {
           errorMessage: invoices[0].error_message,
         }
       : null,
-    shippingAddress:
+    shippingAddress: mappedAddress(
       (row.shipping_address as Record<string, unknown> | null) ??
-      (row.addresses as Record<string, unknown> | null) ??
-      null,
-    billingAddress: (row.billing_address as Record<string, unknown> | null) ?? null,
+        (row.addresses as Record<string, unknown> | null) ??
+        null
+    ),
+    billingAddress: mappedAddress((row.billing_address as Record<string, unknown> | null) ?? null),
   };
 }
 
@@ -638,12 +888,13 @@ export async function exportOrdersCsv(
   ctx: TenantContext,
   query: z.infer<typeof orderListQuery>
 ) {
-  let builder = supabase
-    .from("orders")
-    .select("order_number, source, status, total_amount, payment_status, created_at, customers(name)")
-    .eq("organization_id", ctx.organizationId)
-    .order("created_at", { ascending: false })
-    .limit(5000);
+  let builder = applyOrderListSort(
+    supabase
+      .from("orders")
+      .select("order_number, source, status, total_amount, payment_status, created_at, customers(name)")
+      .eq("organization_id", ctx.organizationId),
+    query.sort
+  ).limit(5000);
   if (query.status) builder = builder.eq("status", query.status);
   if (query.source) builder = builder.eq("source", query.source);
   if (query.paymentStatus) builder = builder.eq("payment_status", query.paymentStatus);

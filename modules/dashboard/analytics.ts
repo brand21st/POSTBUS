@@ -21,11 +21,18 @@ export type AnalyticsOrderRow = {
   status: string | null;
 };
 
+export type AnalyticsShipmentOrder = {
+  total_amount?: number | string | null;
+};
+
 export type AnalyticsShipmentRow = {
   created_at: string;
+  booked_at?: string | null;
   payment_mode: string | null;
   cod_amount: number | string | null;
   status: string | null;
+  provider?: string | null;
+  orders?: AnalyticsShipmentOrder | AnalyticsShipmentOrder[] | null;
 };
 
 type IstParts = {
@@ -67,6 +74,22 @@ export function isCodShipment(row: Pick<AnalyticsShipmentRow, "payment_mode">) {
   return (row.payment_mode ?? "").toUpperCase() === "COD";
 }
 
+export function isIndiaPostShipment(row: Pick<AnalyticsShipmentRow, "provider">) {
+  const provider = (row.provider ?? "INDIA_POST").toUpperCase();
+  return provider === "INDIA_POST" || provider === "";
+}
+
+export function isIndiaPostBooked(
+  row: Pick<AnalyticsShipmentRow, "provider" | "booked_at" | "status">
+) {
+  return Boolean(row.booked_at) && isIndiaPostShipment(row) && isActiveShipment(row);
+}
+
+export function shipmentOrderAmount(row: Pick<AnalyticsShipmentRow, "orders">) {
+  const linked = Array.isArray(row.orders) ? row.orders[0] : row.orders;
+  return asAmount(linked?.total_amount);
+}
+
 export function istParts(value: string | Date, timeZone = ANALYTICS_TIMEZONE): IstParts {
   const date = value instanceof Date ? value : new Date(value);
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -102,7 +125,36 @@ export function startOfIstYearIso(now: Date, timeZone = ANALYTICS_TIMEZONE) {
 }
 
 export function emptyPeriod(): AnalyticsPeriodKpi {
-  return { shipments: 0, revenue: 0, orders: 0, codOrders: 0, codAmount: 0 };
+  return {
+    shipments: 0,
+    revenue: 0,
+    orders: 0,
+    codOrders: 0,
+    codAmount: 0,
+    prepaidOrders: 0,
+    prepaidAmount: 0,
+    indiaPostBooked: 0,
+    indiaPostBookedAmount: 0,
+    indiaPostCodBooked: 0,
+    indiaPostCodAmount: 0,
+    indiaPostPrepaidBooked: 0,
+    indiaPostPrepaidAmount: 0,
+  };
+}
+
+function emptySeriesPoint(key: string, label: string): AnalyticsSeriesPoint {
+  return {
+    key,
+    label,
+    revenue: 0,
+    shipments: 0,
+    orders: 0,
+    cod: 0,
+    prepaid: 0,
+    indiaPostBooked: 0,
+    indiaPostCodAmount: 0,
+    indiaPostPrepaidAmount: 0,
+  };
 }
 
 function sourceLabel(source: string) {
@@ -122,38 +174,19 @@ function inRange(parts: IstParts, now: IstParts, range: AnalyticsRange) {
 }
 
 function buildSeries(now: IstParts): Record<AnalyticsRange, AnalyticsSeriesPoint[]> {
-  const today = Array.from({ length: 24 }, (_, hour) => ({
-    key: String(hour).padStart(2, "0"),
-    label: `${String(hour).padStart(2, "0")}:00`,
-    revenue: 0,
-    shipments: 0,
-    orders: 0,
-    cod: 0,
-    prepaid: 0,
-  }));
+  const today = Array.from({ length: 24 }, (_, hour) =>
+    emptySeriesPoint(String(hour).padStart(2, "0"), `${String(hour).padStart(2, "0")}:00`)
+  );
   const month = Array.from({ length: now.day }, (_, index) => {
     const day = index + 1;
-    return {
-      key: `${now.year}-${String(now.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
-      label: String(day),
-      revenue: 0,
-      shipments: 0,
-      orders: 0,
-      cod: 0,
-      prepaid: 0,
-    };
+    return emptySeriesPoint(
+      `${now.year}-${String(now.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+      String(day)
+    );
   });
   const year = Array.from({ length: now.month }, (_, index) => {
     const monthNumber = index + 1;
-    return {
-      key: `${now.year}-${String(monthNumber).padStart(2, "0")}`,
-      label: monthLabel(monthNumber),
-      revenue: 0,
-      shipments: 0,
-      orders: 0,
-      cod: 0,
-      prepaid: 0,
-    };
+    return emptySeriesPoint(`${now.year}-${String(monthNumber).padStart(2, "0")}`, monthLabel(monthNumber));
   });
   return { today, month, year };
 }
@@ -234,6 +267,9 @@ export function aggregateAnalytics(
       if (cod) {
         periods[range].codOrders += 1;
         periods[range].codAmount += amount;
+      } else {
+        periods[range].prepaidOrders += 1;
+        periods[range].prepaidAmount += amount;
       }
       bumpSource(sources, range, source, amount);
       const index = seriesIndex(range, parts, now);
@@ -249,13 +285,38 @@ export function aggregateAnalytics(
   for (const shipment of shipments) {
     if (!isActiveShipment(shipment)) continue;
     const parts = istParts(shipment.created_at);
-    if (parts.year !== now.year) continue;
+    if (parts.year === now.year) {
+      for (const range of ranges) {
+        if (!inRange(parts, now, range)) continue;
+        periods[range].shipments += 1;
+        const index = seriesIndex(range, parts, now);
+        const point = series[range][index];
+        if (point) point.shipments += 1;
+      }
+    }
+
+    if (!isIndiaPostBooked(shipment) || !shipment.booked_at) continue;
+    const bookedParts = istParts(shipment.booked_at);
+    if (bookedParts.year !== now.year) continue;
+    const cod = isCodShipment(shipment);
+    const amount = cod ? asAmount(shipment.cod_amount) : shipmentOrderAmount(shipment);
     for (const range of ranges) {
-      if (!inRange(parts, now, range)) continue;
-      periods[range].shipments += 1;
-      const index = seriesIndex(range, parts, now);
+      if (!inRange(bookedParts, now, range)) continue;
+      periods[range].indiaPostBooked += 1;
+      periods[range].indiaPostBookedAmount += amount;
+      if (cod) {
+        periods[range].indiaPostCodBooked += 1;
+        periods[range].indiaPostCodAmount += amount;
+      } else {
+        periods[range].indiaPostPrepaidBooked += 1;
+        periods[range].indiaPostPrepaidAmount += amount;
+      }
+      const index = seriesIndex(range, bookedParts, now);
       const point = series[range][index];
-      if (point) point.shipments += 1;
+      if (!point) continue;
+      point.indiaPostBooked += 1;
+      if (cod) point.indiaPostCodAmount += amount;
+      else point.indiaPostPrepaidAmount += amount;
     }
   }
 
@@ -310,9 +371,9 @@ export async function getAnalytics(supabase: SupabaseClient, ctx: TenantContext,
     fetchPaged<AnalyticsShipmentRow>((from, to) =>
       supabase
         .from("shipments")
-        .select("created_at, payment_mode, cod_amount, status")
+        .select("created_at, booked_at, payment_mode, cod_amount, status, provider, orders(total_amount)")
         .eq("organization_id", ctx.organizationId)
-        .gte("created_at", since)
+        .or(`created_at.gte.${since},booked_at.gte.${since}`)
         .order("created_at", { ascending: true })
         .range(from, to)
     ),

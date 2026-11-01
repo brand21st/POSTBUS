@@ -89,6 +89,15 @@ export function uniformGridFitScale(
   return scale > 0 ? Math.min(1, scale) : 0;
 }
 
+function isFourBySixLabel(widthMm: number, heightMm: number) {
+  return Math.abs(widthMm - LABEL_4X6.widthMm) <= 1 && Math.abs(heightMm - LABEL_4X6.heightMm) <= 1;
+}
+
+export function sheetLabelSizeName(widthMm: number, heightMm: number) {
+  if (isFourBySixLabel(widthMm, heightMm)) return "4×6";
+  return `${Math.round(widthMm)}×${Math.round(heightMm)}`;
+}
+
 function layoutFits(
   sheetWidthMm: number,
   sheetHeightMm: number,
@@ -171,16 +180,19 @@ export function a4FourLabelPreset(sheetWidthMm: number, sheetHeightMm: number): 
   return null;
 }
 
-export function generate4x6Presets(
+export function generateSheetPresets(
   sheetWidthMm: number,
   sheetHeightMm: number,
-  paper: MultiPrintPaperId | "custom" = "custom"
+  paper: MultiPrintPaperId | "custom" = "custom",
+  labelWidthMm = LABEL_4X6.widthMm,
+  labelHeightMm = LABEL_4X6.heightMm
 ): FourBySixPreset[] {
-  if (!(sheetWidthMm > 0) || !(sheetHeightMm > 0)) return [];
-  const probe = layoutFits(sheetWidthMm, sheetHeightMm, null, null, zeroMargins, zeroGaps, 1);
+  if (!(sheetWidthMm > 0) || !(sheetHeightMm > 0) || !(labelWidthMm > 0) || !(labelHeightMm > 0)) return [];
+  const probe = layoutFits(sheetWidthMm, sheetHeightMm, null, null, zeroMargins, zeroGaps, 1, labelWidthMm, labelHeightMm);
   if (!probe.ok) return [];
 
   const paperName = multiPrintPaperName(paper);
+  const sizeName = sheetLabelSizeName(labelWidthMm, labelHeightMm);
   const byQuantity = new Map<number, FourBySixPreset>();
   for (let columns = 1; columns <= probe.columns; columns += 1) {
     for (let rows = 1; rows <= probe.rows; rows += 1) {
@@ -190,10 +202,20 @@ export function generate4x6Presets(
         sheetHeightMm,
         columns,
         rows,
-        labelWidthMm: LABEL_4X6.widthMm,
-        labelHeightMm: LABEL_4X6.heightMm,
+        labelWidthMm,
+        labelHeightMm,
       });
-      const result = layoutFits(sheetWidthMm, sheetHeightMm, columns, rows, spacing.margins, spacing.gaps, quantity);
+      const result = layoutFits(
+        sheetWidthMm,
+        sheetHeightMm,
+        columns,
+        rows,
+        spacing.margins,
+        spacing.gaps,
+        quantity,
+        labelWidthMm,
+        labelHeightMm
+      );
       if (!result.ok) continue;
       const existing = byQuantity.get(quantity);
       if (existing && !(columns > existing.columns || (columns === existing.columns && rows < existing.rows))) {
@@ -201,21 +223,33 @@ export function generate4x6Presets(
       }
       byQuantity.set(quantity, {
         id: `${paper}-${quantity}`,
-        name: `${paperName} · ${quantity} × 4×6`,
+        name: `${paperName} · ${quantity} × ${sizeName}`,
         quantity,
         columns,
         rows,
         rotation: 0,
         scale: 1,
-        labelWidthMm: LABEL_4X6.widthMm,
-        labelHeightMm: LABEL_4X6.heightMm,
+        labelWidthMm,
+        labelHeightMm,
         margins: spacing.margins,
         gaps: spacing.gaps,
       });
     }
   }
   const presets = [...byQuantity.values()];
-  const fourUp = a4FourLabelPreset(sheetWidthMm, sheetHeightMm);
-  if (fourUp && !presets.some((item) => item.quantity === 4)) presets.push(fourUp);
+  if (isFourBySixLabel(labelWidthMm, labelHeightMm)) {
+    const fourUp = a4FourLabelPreset(sheetWidthMm, sheetHeightMm);
+    if (fourUp && !presets.some((item) => item.quantity === 4)) presets.push(fourUp);
+  }
   return presets.sort((a, b) => a.quantity - b.quantity);
+}
+
+export function generate4x6Presets(
+  sheetWidthMm: number,
+  sheetHeightMm: number,
+  paper: MultiPrintPaperId | "custom" = "custom",
+  labelWidthMm = LABEL_4X6.widthMm,
+  labelHeightMm = LABEL_4X6.heightMm
+) {
+  return generateSheetPresets(sheetWidthMm, sheetHeightMm, paper, labelWidthMm, labelHeightMm);
 }

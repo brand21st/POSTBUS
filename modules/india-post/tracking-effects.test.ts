@@ -24,7 +24,10 @@ vi.mock("@/modules/vachat/knowledge", () => ({
   scheduleMerchantKnowledgeSync: vi.fn(),
 }));
 
-import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
+import {
+  enqueueTrackingStageSideEffects,
+  shouldEnqueueTrackingStageSideEffects,
+} from "@/modules/india-post/tracking-effects";
 
 describe("tracking side effects isolation", () => {
   beforeEach(() => {
@@ -61,6 +64,30 @@ describe("tracking side effects isolation", () => {
       {},
       expect.objectContaining({ stage: "in_transit", orderId: "order-a" })
     );
+  });
+
+  it("does not enqueue effects when a sync inserted no new carrier events", () => {
+    expect(
+      shouldEnqueueTrackingStageSideEffects({
+        eventsInserted: 0,
+        orderStatus: "IN_TRANSIT",
+        whatsappEvents: ["in_transit"],
+      })
+    ).toBe(false);
+    expect(
+      shouldEnqueueTrackingStageSideEffects({
+        eventsInserted: 1,
+        orderStatus: "IN_TRANSIT",
+        whatsappEvents: ["in_transit"],
+      })
+    ).toBe(true);
+    expect(
+      shouldEnqueueTrackingStageSideEffects({
+        inserted: false,
+        orderStatus: "DELIVERED",
+        whatsappEvents: ["delivered"],
+      })
+    ).toBe(false);
   });
 
   it("does not enqueue Shopify or invent NDR WhatsApp when no transit/delivery events exist", async () => {

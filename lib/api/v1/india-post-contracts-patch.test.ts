@@ -33,7 +33,7 @@ function thenable<T>(value: T) {
 }
 
 function contractsDb(initial: { connected: boolean; contracts: ContractRow[] }) {
-  let connected = initial.connected;
+  const connected = initial.connected;
   let contracts = initial.contracts.map((row) => ({ ...row }));
   const deletes: string[] = [];
   const upserts: Record<string, unknown>[] = [];

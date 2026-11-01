@@ -45,7 +45,7 @@ export const faqs = [
   },
   {
     q: "How does the free trial work?",
-    a: "New accounts get a 3-day trial with every PostBus feature unlocked. One trial per email or WhatsApp number. After the trial, choose a plan that matches your monthly order volume.",
+    a: "New accounts get a 7-day trial with every PostBus feature unlocked. One trial per email or WhatsApp number. After the trial, choose a plan that matches your monthly order volume.",
   },
   {
     q: "How does billing work?",

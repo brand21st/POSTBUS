@@ -7,7 +7,14 @@ const rasterClient = "./modules/labels/unicode/raster-client.ts";
 const canvasStub = "./modules/labels/unicode/canvas-browser-stub.ts";
 
 const nextConfig: NextConfig = {
+  distDir: process.env.POSTBUS_NEXT_DIST_DIR?.trim() || ".next",
   output: "standalone",
+  typescript: {
+    tsconfigPath: "tsconfig.build.json",
+  },
+  // The dev server treats 127.0.0.1 as a different origin from localhost and
+  // then refuses the HMR socket. Next.js 16 waits on that socket before hydration.
+  allowedDevOrigins: ["127.0.0.1"],
   poweredByHeader: false,
   compress: true,
   serverExternalPackages: ["bullmq", "ioredis", "@napi-rs/canvas", "sharp"],
@@ -53,6 +60,10 @@ const nextConfig: NextConfig = {
     ],
   },
   experimental: {
+    // Use tsc CLI instead of TypeScript's in-process incremental Program (OOM).
+    useTypeScriptCli: true,
+    // Two root layouts ((site) and (shopify)) mean no single layout for unmatched URLs.
+    globalNotFound: true,
     optimizePackageImports: [
       "lucide-react",
       "date-fns",
@@ -66,11 +77,17 @@ const nextConfig: NextConfig = {
     ],
   },
   async headers() {
+    const embedEnabled = process.env.SHOPIFY_EMBEDDED_APP_ENABLED?.toLowerCase() === "true";
+    const defaultHeaders = securityHeaderEntries();
+    if (!embedEnabled) {
+      return [{ source: "/:path*", headers: defaultHeaders }];
+    }
+    const shopifyHeaders = securityHeaderEntries({ embedShopify: true });
     return [
-      {
-        source: "/:path*",
-        headers: securityHeaderEntries(),
-      },
+      { source: "/shopify", headers: shopifyHeaders },
+      { source: "/shopify/:path*", headers: shopifyHeaders },
+      { source: "/api/shopify/:path*", headers: shopifyHeaders },
+      { source: "/:path*", headers: defaultHeaders },
     ];
   },
 };

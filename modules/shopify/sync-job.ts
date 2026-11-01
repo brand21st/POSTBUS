@@ -9,6 +9,8 @@ export type EnqueueShopifySyncInput = {
   userId?: string;
   force?: boolean;
   pageInfo?: string | null;
+  /** App installs: created_at window for the GraphQL cursor; continuation jobs must keep it. */
+  since?: string | null;
   imported?: number;
   updated?: number;
   skipped?: number;
@@ -52,6 +54,7 @@ export async function enqueueShopifyOrderSync(
     progress: {
       force: Boolean(input.force),
       pageInfo: input.pageInfo ?? null,
+      since: input.since ?? null,
       imported: input.imported ?? 0,
       updated: input.updated ?? 0,
       skipped: input.skipped ?? 0,

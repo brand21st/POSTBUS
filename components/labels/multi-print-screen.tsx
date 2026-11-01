@@ -43,6 +43,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { asPaginated } from "@/lib/dashboard/records";
 import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
+import { downloadPdfFile } from "@/lib/print/download-pdf";
 import { ApiError, api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
@@ -84,7 +85,7 @@ import {
   type MultiUpPlacementOverride,
   type MultiUpRotation,
 } from "@/modules/labels/multi-up/layout";
-import { LABEL_4X6, generate4x6Presets, type FourBySixPreset } from "@/modules/labels/multi-up/presets";
+import { LABEL_4X6, generateSheetPresets, sheetLabelSizeName, type FourBySixPreset } from "@/modules/labels/multi-up/presets";
 import {
   applySmartSnap,
   emptySnapLocks,
@@ -170,7 +171,7 @@ async function fetchLabelPage(page: number, q: string, signal?: AbortSignal) {
 
 function presetCaption(preset: FourBySixPreset | null, fallback: string) {
   if (!preset) return fallback;
-  return preset.name.includes(" × 4×6") ? `${preset.name} Labels` : preset.name;
+  return preset.name.includes(" × ") ? `${preset.name} Labels` : preset.name;
 }
 
 function chipCountLine(today: number, earlier: number, printed: number) {
@@ -244,11 +245,12 @@ function OrderIdChip({
 }
 
 function presetChoiceCopy(item: FourBySixPreset) {
+  const sizeName = sheetLabelSizeName(item.labelWidthMm, item.labelHeightMm);
   if (item.id === "A4-4-labels") {
     return { title: "4 labels", hint: "A4 2×2 · auto-fit 4×6" };
   }
-  if (item.scale === 1 && item.labelWidthMm === LABEL_4X6.widthMm) {
-    return { title: `${item.quantity} label${item.quantity === 1 ? "" : "s"}`, hint: "4×6 · full size" };
+  if (item.scale === 1) {
+    return { title: `${item.quantity} label${item.quantity === 1 ? "" : "s"}`, hint: `${sizeName} · full size` };
   }
   return { title: `${item.quantity} label${item.quantity === 1 ? "" : "s"}`, hint: `${item.columns}×${item.rows}` };
 }
@@ -375,6 +377,7 @@ export function MultiPrintScreen() {
   const [items, setItems] = useState<CopyRow[]>([]);
   const [sheetPage, setSheetPage] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewBlob = useRef<Blob | null>(null);
   const [busy, setBusy] = useState<"preview" | "download" | "print" | null>(null);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>("labels");
   const [showPdfPreview, setShowPdfPreview] = useState(false);
@@ -494,8 +497,15 @@ export function MultiPrintScreen() {
         ? `${Math.round(sheetWidthMm)}×${Math.round(sheetHeightMm)} mm`
         : null;
   const fourBySixPresets = useMemo(
-    () => generate4x6Presets(sheetWidthMm, sheetHeightMm, paper),
-    [paper, sheetHeightMm, sheetWidthMm]
+    () =>
+      generateSheetPresets(
+        sheetWidthMm,
+        sheetHeightMm,
+        paper,
+        templateLabel?.widthMm ?? LABEL_4X6.widthMm,
+        templateLabel?.heightMm ?? LABEL_4X6.heightMm
+      ),
+    [paper, sheetHeightMm, sheetWidthMm, templateLabel]
   );
   const chosenFourBySix =
     layoutMode === "preset"
@@ -504,15 +514,13 @@ export function MultiPrintScreen() {
   const presetOn = Boolean(chosenFourBySix);
   const slotLabel = chosenFourBySix
     ? { widthMm: chosenFourBySix.labelWidthMm, heightMm: chosenFourBySix.labelHeightMm }
-    : layoutMode === "preset"
-      ? { widthMm: LABEL_4X6.widthMm, heightMm: LABEL_4X6.heightMm }
-      : templateLabel;
+    : templateLabel;
   const activeMargins = chosenFourBySix?.margins ?? margins;
   const activeGapX = chosenFourBySix ? String(chosenFourBySix.gaps.horizontalMm) : gapX;
   const activeGapY = chosenFourBySix ? String(chosenFourBySix.gaps.verticalMm) : gapY;
   const layout = useMemo(() => {
     if (layoutMode === "preset" && !chosenFourBySix) {
-      return { ok: false as const, message: "No valid 4×6 layout for this paper size." };
+      return { ok: false as const, message: "No valid label layout for this paper size." };
     }
     if (!slotLabel || !(sheetWidthMm > 0) || !(sheetHeightMm > 0)) return null;
     return calculateMultiUpLayout({
@@ -590,7 +598,10 @@ export function MultiPrintScreen() {
   useEffect(() => {
     if (layoutMode !== "preset" || !fourBySixPresets.length) return;
     if (fourBySixPresets.some((item) => item.quantity === presetQuantity)) return;
-    setPresetQuantity(fourBySixPresets[fourBySixPresets.length - 1]!.quantity);
+    const timer = window.setTimeout(() => {
+      setPresetQuantity(fourBySixPresets[fourBySixPresets.length - 1]!.quantity);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [fourBySixPresets, layoutMode, presetQuantity]);
 
   const displayLayout = useMemo(() => {
@@ -849,6 +860,7 @@ export function MultiPrintScreen() {
     try {
       const result = await postSheet({ ...requestBody(), disposition: "inline" });
       if (!(result instanceof Blob)) return;
+      previewBlob.current = result;
       const href = URL.createObjectURL(result);
       setPreviewUrl((current) => {
         if (current) URL.revokeObjectURL(current);
@@ -863,18 +875,13 @@ export function MultiPrintScreen() {
     }
   }
 
-  function saveSheetPdf(href: string) {
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = "shipping-labels.pdf";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+  async function saveSheetPdf(source: Blob) {
+    downloadPdfFile(source, "shipping-labels.pdf");
   }
 
   function downloadPreview() {
-    if (previewUrl) {
-      saveSheetPdf(previewUrl);
+    if (previewBlob.current) {
+      void saveSheetPdf(previewBlob.current);
       return;
     }
     void download();
@@ -885,9 +892,7 @@ export function MultiPrintScreen() {
     try {
       const result = await postSheet({ ...requestBody(), disposition: "attachment" });
       if (!(result instanceof Blob)) return;
-      const href = URL.createObjectURL(result);
-      saveSheetPdf(href);
-      URL.revokeObjectURL(href);
+      await saveSheetPdf(result);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not download the sheet.");
     } finally {
@@ -1218,7 +1223,7 @@ export function MultiPrintScreen() {
         {[
           { label: "Selected", value: `${labelCount} labels`, icon: FileText },
           { label: "Sheets", value: layout?.ok ? String(pages) : "—", icon: Layers3 },
-          { label: "Layout", value: presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual"), icon: Grid2X2 },
+          { label: "Layout", value: presetCaption(chosenFourBySix, layoutMode === "preset" ? "No label fit" : "Manual"), icon: Grid2X2 },
           {
             label: "Printer",
             value: canPrint ? "Ready" : station.data?.connected ? "Check paper" : "Offline",
@@ -1279,7 +1284,7 @@ export function MultiPrintScreen() {
                     <h2 className="text-sm font-semibold text-ink">1. Choose labels</h2>
                     <Badge variant="brand">{labelCount} selected</Badge>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-muted">Only orders with a generated label appear here. Selecting a chip fills one sheet using the current 4×6 quantity.</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">Only orders with a generated label appear here. Selecting a chip fills one sheet using the current quantity preset.</p>
                 </div>
 
                 <div className="flex gap-2">
@@ -1414,11 +1419,11 @@ export function MultiPrintScreen() {
                   <div className="flex items-center justify-between gap-2">
                     <h2 className="text-sm font-semibold text-ink">2. Arrange sheet</h2>
                     <Badge variant={presetOn ? "brand" : "outline"}>
-                      {presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual")}
+                      {presetCaption(chosenFourBySix, layoutMode === "preset" ? "No label fit" : "Manual")}
                     </Badge>
                   </div>
                   <p className="mt-1 text-xs leading-5 text-muted">
-                    Paper size is independent of the 4×6 label ({Math.round(LABEL_4X6.widthMm)} × {Math.round(LABEL_4X6.heightMm)} mm). The A4 2×2 preset scales that template uniformly to fit; other presets stay at 100%.
+                    Paper size is independent of the label template ({Math.round(slotLabel?.widthMm ?? LABEL_4X6.widthMm)} × {Math.round(slotLabel?.heightMm ?? LABEL_4X6.heightMm)} mm). Quantity presets use that size at 100%. The A4 2×2 option only scales a 4×6 template down to fit.
                   </p>
                 </div>
 
@@ -1478,9 +1483,9 @@ export function MultiPrintScreen() {
 
                 <div className="space-y-3 rounded-xl border border-border bg-surface-soft p-3">
                   <div>
-                    <p className="text-sm font-semibold text-ink">4×6 Multi-Print</p>
+                    <p className="text-sm font-semibold text-ink">Multi-Print</p>
                     <p className="mt-0.5 text-xs leading-5 text-muted">
-                      Choose paper, then a quantity that physically fits. Positions initialize once; you can still move and align labels after that.
+                      Choose paper, then a quantity that physically fits the selected template. Positions initialize once; you can still move and align labels after that.
                     </p>
                   </div>
                   <label className="block space-y-1.5 text-xs font-medium text-muted">
@@ -1553,7 +1558,7 @@ export function MultiPrintScreen() {
                         })}
                       </div>
                     ) : (
-                      <p className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted">No valid 4×6 layout for this paper size.</p>
+                      <p className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted">No valid label layout for this paper size.</p>
                     )}
                   </div>
                 </div>
@@ -1610,7 +1615,7 @@ export function MultiPrintScreen() {
                   <div className="flex items-center justify-between text-sm"><span className="text-muted">Labels</span><strong>{labelCount}</strong></div>
                   <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Sheets</span><strong>{layout?.ok ? pages : "—"}</strong></div>
                   <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Paper</span><strong>{multiPrintPaperName(paper)}</strong></div>
-                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Layout</span><strong>{presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual")}</strong></div>
+                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Layout</span><strong>{presetCaption(chosenFourBySix, layoutMode === "preset" ? "No label fit" : "Manual")}</strong></div>
                 </div>
 
                 {layout?.ok ? (
@@ -1832,7 +1837,12 @@ export function MultiPrintScreen() {
                           onPointerMove={manual ? (event) => onSlotPointerMove(placement.index, event) : undefined}
                           onPointerUp={manual ? endDrag : undefined}
                         >
-                          <SheetSlotLabel orderId={placement.orderId} templateId={selectedId} rotation={placement.rotation} />
+                          <SheetSlotLabel
+                            orderId={placement.orderId}
+                            templateId={selectedId}
+                            rotation={placement.rotation}
+                            cssWidthPx={placement.widthPt * canvasScale}
+                          />
                           {selected ? (
                             <span className="pointer-events-none absolute left-1 top-1 z-10 rounded-md bg-brand px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm">
                               {placement.orderId}
@@ -1918,10 +1928,12 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
   orderId,
   templateId,
   rotation,
+  cssWidthPx,
 }: {
   orderId: string;
   templateId: string;
   rotation: 0 | 90;
+  cssWidthPx: number;
 }) {
   const label = useQuery({
     queryKey: ["multi-print-label-raster", templateId, orderId],
@@ -1942,7 +1954,7 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
       return response.arrayBuffer();
     },
   });
-  const { url, error } = usePdfFirstPageUrl(label.data);
+  const { url, error } = usePdfFirstPageUrl(label.data, { cssWidthPx: Math.max(1, Math.round(cssWidthPx)) });
 
   if (!url) {
     return (
@@ -1957,6 +1969,7 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
       <img
         alt=""
         src={url}
+        decoding="async"
         className="pointer-events-none absolute left-1/2 top-1/2 max-w-none bg-white object-contain"
         style={{
           width: "100cqh",
@@ -1968,6 +1981,6 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
   }
 
   return (
-    <img alt="" src={url} className="pointer-events-none absolute inset-0 h-full w-full bg-white object-contain" />
+    <img alt="" src={url} decoding="async" className="pointer-events-none absolute inset-0 h-full w-full bg-white object-contain" />
   );
 });

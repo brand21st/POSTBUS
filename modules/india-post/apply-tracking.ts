@@ -2,8 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logInfo } from "@/lib/logger";
 import { mapIndiaPostEventToShipmentUpdate, planTrackingUpdate, type TrackingWhatsAppEvent } from "@/modules/india-post/event-mapper";
 import {
-  bulkArticleNumber,
   civilIndiaPostDate,
+  classifyRequestedArticles,
   normalizeTrackingDetail,
 } from "@/modules/india-post/tracking-response";
 
@@ -67,7 +67,7 @@ export type BulkTrackingArticle = {
   del_status?: { del_status?: string };
 };
 
-export type TrackingIngestSource = "bulk" | "webhook" | "public";
+export type TrackingIngestSource = "bulk" | "webhook" | "public" | "event_download";
 
 type TrackingEventInput = {
   eventCode: string;
@@ -146,14 +146,11 @@ export function isTrackingPollStatus(status: string) {
 }
 
 export function matchingBulkTrackingArticle(articles: BulkTrackingArticle[] | undefined, barcode: string) {
-  const wanted = String(barcode ?? "").trim().toUpperCase();
+  const wanted = String(barcode ?? "").trim();
   if (!wanted || !articles?.length) return null;
-  const matched =
-    articles.find((item) => bulkArticleNumber(item).toUpperCase() === wanted) ?? null;
-  if (matched) return matched;
-  if (articles.length !== 1) return null;
-  const only = articles[0];
-  return (only?.tracking_details?.length ?? 0) > 0 ? only ?? null : null;
+  const row = classifyRequestedArticles(articles, [wanted]).rows[0];
+  if (!row || row.classification === "UNMATCHED" || row.classification === "AMBIGUOUS") return null;
+  return row.article ?? null;
 }
 
 function bulkEventDescription(event: { event?: string; event_description?: string; remarks?: string }) {
@@ -185,6 +182,9 @@ export async function applyIndiaPostTracking(
   snapshot: ShipmentTrackingSnapshot,
   event: TrackingEventInput
 ): Promise<ApplyTrackingResult> {
+  if (!snapshot.organizationId || !snapshot.id) {
+    throw Object.assign(new Error("Tracking event is missing tenant ownership."), { code: "VALIDATION_ERROR" });
+  }
   const mapped = mapIndiaPostEventToShipmentUpdate({
     eventCode: event.eventCode,
     eventDescription: event.mapText ?? event.eventDescription,
@@ -285,7 +285,7 @@ export async function applyIndiaPostTracking(
         : snapshot.rtoInitiatedAt,
   };
 
-  return {
+  const result: ApplyTrackingResult = {
     inserted: !duplicate,
     duplicate,
     statusUpdated: Boolean(plan.applyStatus),
@@ -295,6 +295,33 @@ export async function applyIndiaPostTracking(
     snapshot: next,
     whatsappEvents: duplicate ? [] : plan.whatsappEvents,
   };
+  await publishAppliedTracking(supabase, snapshot, result, event);
+  return result;
+}
+
+async function publishAppliedTracking(
+  supabase: SupabaseClient,
+  snapshot: ShipmentTrackingSnapshot,
+  result: ApplyTrackingResult,
+  event: TrackingEventInput
+) {
+  try {
+    const { publishTrackingResult } = await import("@/modules/webhooks/publish");
+    await publishTrackingResult(supabase, {
+      organizationId: snapshot.organizationId,
+      shipmentId: snapshot.id,
+      orderId: snapshot.orderId,
+      inserted: result.inserted,
+      previousStatus: snapshot.status,
+      nextStatus: result.shipmentStatus ?? snapshot.status,
+      previousOperational: snapshot.operationalStatus,
+      nextOperational: result.operationalStatus,
+      eventCode: event.eventCode,
+      occurredAt: event.occurredAt,
+    });
+  } catch {
+    // Webhook fan-out must not break tracking ingestion.
+  }
 }
 
 export async function ingestBulkTrackingArticle(
@@ -319,15 +346,14 @@ export async function ingestBulkTrackingArticle(
   let orderStatus: "IN_TRANSIT" | "DELIVERED" | null = null;
   const whatsappEvents: TrackingWhatsAppEvent[] = [];
   const notices: TrackingNotifyNotice[] = [];
+  let eventsInserted = 0;
+  let eventsDuplicate = 0;
+  let eventsSkippedUntimed = 0;
 
   for (const event of details) {
     const occurredAt = bulkEventOccurredAt(event);
     if (!occurredAt) {
-      logInfo("india_post.tracking.missing_event_time", {
-        organizationId: input.organizationId,
-        shipmentId: snapshot.id,
-        event: event.event ?? event.event_code ?? null,
-      });
+      eventsSkippedUntimed += 1;
       continue;
     }
     const result = await applyIndiaPostTracking(supabase, snapshot, {
@@ -342,11 +368,20 @@ export async function ingestBulkTrackingArticle(
       mapText: event.event ?? event.event_code ?? null,
     });
     snapshot = result.snapshot;
+    if (result.inserted) eventsInserted += 1;
+    if (result.duplicate) eventsDuplicate += 1;
     if (result.orderStatus) orderStatus = result.orderStatus;
     for (const notify of result.whatsappEvents) {
       if (!whatsappEvents.includes(notify)) whatsappEvents.push(notify);
       notices.push({ event: notify, eventCode: event.event_code || event.event || "EVENT", occurredAt });
     }
+  }
+  if (eventsSkippedUntimed > 0) {
+    logInfo("india_post.tracking.missing_event_time", {
+      organizationId: input.organizationId,
+      shipmentId: snapshot.id,
+      skipped: eventsSkippedUntimed,
+    });
   }
 
   const deliveredFlag = input.article.del_status?.del_status?.toLowerCase() === "delivered";
@@ -369,12 +404,18 @@ export async function ingestBulkTrackingArticle(
       nonDeliveryReason: null,
     });
     snapshot = result.snapshot;
+    if (result.inserted) eventsInserted += 1;
+    if (result.duplicate) eventsDuplicate += 1;
     if (result.orderStatus) orderStatus = result.orderStatus;
     for (const notify of result.whatsappEvents) {
       if (!whatsappEvents.includes(notify)) whatsappEvents.push(notify);
       notices.push({ event: notify, eventCode: "ITEM_DELIVERED", occurredAt: deliveredAt });
     }
-  } else if (!details.length) {
+  }
+
+  const persisted = eventsInserted + eventsDuplicate > 0;
+  if (!persisted) {
+    // Attempt clock only. This is not evidence that India Post returned scans.
     await supabase
       .from("shipments")
       .update({ last_tracked_at: new Date().toISOString() })
@@ -382,5 +423,14 @@ export async function ingestBulkTrackingArticle(
       .eq("organization_id", input.organizationId);
   }
 
-  return { snapshot, orderStatus, whatsappEvents, notices };
+  return {
+    snapshot,
+    orderStatus,
+    whatsappEvents,
+    notices,
+    eventsInserted,
+    eventsDuplicate,
+    eventsSkippedUntimed,
+    historyEmpty: details.length === 0,
+  };
 }

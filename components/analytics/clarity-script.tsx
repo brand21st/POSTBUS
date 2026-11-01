@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import Script from "next/script";
 
 const CLARITY_PROJECT_ID = "ymlhqkp345";
@@ -14,14 +14,16 @@ function isConstrainedConnection() {
   return connection?.effectiveType === "slow-2g" || connection?.effectiveType === "2g";
 }
 
-export function ClarityScript() {
-  const [enabled, setEnabled] = useState(false);
+function subscribeNever() {
+  return () => {};
+}
 
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return;
-    if (isConstrainedConnection()) return;
-    setEnabled(true);
-  }, []);
+function clarityEnabledClient() {
+  return process.env.NODE_ENV === "production" && !isConstrainedConnection();
+}
+
+export function ClarityScript() {
+  const enabled = useSyncExternalStore(subscribeNever, clarityEnabledClient, () => false);
 
   if (!enabled) return null;
 

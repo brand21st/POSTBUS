@@ -1,0 +1,107 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "synthetic-users-present",
+      "pass": true,
+      "detail": "host=postbus.invalid"
+    },
+    {
+      "name": "relogin-a",
+      "pass": true,
+      "detail": "session"
+    },
+    {
+      "name": "relogin-b",
+      "pass": true,
+      "detail": "session"
+    },
+    {
+      "name": "org-ids-from-auth-e2e",
+      "pass": true,
+      "detail": "required"
+    },
+    {
+      "name": "legacy-valid-ready",
+      "pass": true,
+      "detail": "READY"
+    },
+    {
+      "name": "legacy-valid-street-unchanged",
+      "pass": true,
+      "detail": "12 MG Road"
+    },
+    {
+      "name": "legacy-valid-booking-gate-open",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "legacy-invalid-phone-blocked",
+      "pass": true,
+      "detail": "INVALID"
+    },
+    {
+      "name": "legacy-invalid-phone-no-book",
+      "pass": true,
+      "detail": "Invalid Shipping Details: Mobile number is not a 10-digit Indian number starting with 6, 7, 8, or 9."
+    },
+    {
+      "name": "legacy-invalid-pin-blocked",
+      "pass": true,
+      "detail": "INVALID"
+    },
+    {
+      "name": "legacy-missing-recipient-blocked",
+      "pass": true,
+      "detail": "INVALID"
+    },
+    {
+      "name": "legacy-missing-street-does-not-fabricate",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "legacy-city-present-classified",
+      "pass": true,
+      "detail": "READY"
+    },
+    {
+      "name": "legacy-long-address-classified",
+      "pass": true,
+      "detail": "READY"
+    },
+    {
+      "name": "merchant-override-preserved",
+      "pass": true,
+      "detail": "true"
+    },
+    {
+      "name": "merchant-edited-legacy-classified",
+      "pass": true,
+      "detail": "READY"
+    },
+    {
+      "name": "concurrent-classify-stable",
+      "pass": true,
+      "detail": "READY/READY"
+    },
+    {
+      "name": "cross-tenant-classify-no-access",
+      "pass": true,
+      "detail": "stolen=0 err=true"
+    },
+    {
+      "name": "no-barcode-allocation",
+      "pass": true,
+      "detail": "synthetic classify only"
+    },
+    {
+      "name": "no-live-cept",
+      "pass": true,
+      "detail": "isolated"
+    }
+  ],
+  "barcodeAllocated": false,
+  "ceptCalled": false
+}

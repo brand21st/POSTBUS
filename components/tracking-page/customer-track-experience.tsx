@@ -102,7 +102,10 @@ export function CustomerTrackExperience({
     const id = initialQuery.trim();
     if (id.length < 6 || !lookupEnabled || preview) return;
     if (merchant && !page?.subdomain) return;
-    void lookup(id);
+    const timer = window.setTimeout(() => {
+      void lookup(id);
+    }, 0);
+    return () => window.clearTimeout(timer);
     // Deep links from notifications should look up once on open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery, lookupEnabled, preview, page?.subdomain, merchant]);
@@ -202,7 +205,7 @@ export function CustomerTrackExperience({
             <ShipmentSummaryCard view={view} />
             <DeliveryProgress steps={view.progress} pulse={pulse} />
             <OriginDestination origin={view.origin} destination={view.destination} />
-            <ShipmentJourney events={view.events} />
+            <ShipmentJourney events={view.events} notice={view.journeyNotice} />
             <ShipmentDetailsCard details={view.details} />
             <DeliveryEta expectedDeliveryAt={view.expectedDeliveryAt} />
             <TrackSupport helpHref={helpHref} onTrackAnother={onTrackAnother} onShare={onShare} />

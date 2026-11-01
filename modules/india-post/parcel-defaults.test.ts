@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import { validateIndiaPostArticle } from "@/modules/india-post/article-validator";
 import {
-  FALLBACK_PARCEL_HEIGHT_CM,
-  FALLBACK_PARCEL_LENGTH_CM,
   FALLBACK_PARCEL_WEIGHT_G,
-  FALLBACK_PARCEL_WIDTH_CM,
   applyWorkspaceParcelDefaults,
   parcelDefaultsFromConnection,
   parcelDefaultsValidationError,
@@ -96,18 +93,18 @@ describe("workspace parcel defaults", () => {
     expect(validateIndiaPostArticle(filled)).toEqual([]);
   });
 
-  it("falls back to India Post minima when settings are empty", () => {
+  it("does not invent parcel dimensions when settings are empty", () => {
     const filled = applyWorkspaceParcelDefaults(baseDraft(), {
       lengthCm: null,
       widthCm: null,
       heightCm: null,
       weightGrams: null,
     });
-    expect(filled.lengthCm).toBe(FALLBACK_PARCEL_LENGTH_CM);
-    expect(filled.widthCm).toBe(FALLBACK_PARCEL_WIDTH_CM);
-    expect(filled.heightCm).toBe(FALLBACK_PARCEL_HEIGHT_CM);
+    expect(filled.lengthCm).toBe(0);
+    expect(filled.widthCm).toBe(0);
+    expect(filled.heightCm).toBe(0);
     expect(filled.weightGrams).toBe(FALLBACK_PARCEL_WEIGHT_G);
-    expect(validateIndiaPostArticle(filled)).toEqual([]);
+    expect(validateIndiaPostArticle(filled).some((issue) => issue.field === "length")).toBe(true);
   });
 
   it("does not overwrite merchant-entered size or weight", () => {

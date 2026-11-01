@@ -41,6 +41,7 @@ import {
   shopifyPincode,
   shopifyReadyToSync,
   upsertShopifyOrder,
+  mergeShopifyRemoteOrder,
   ORDER_WEBHOOK_TOPICS,
 } from "@/modules/shopify/orders";
 
@@ -94,7 +95,18 @@ const remoteOrder = {
   fulfillment_status: null,
   cancelled_at: null,
   shipping_address: { first_name: "Asha", last_name: "Rao", phone: "9876543210", zip: "560001" },
-  line_items: [{ title: "Mug", quantity: 1, price: "10", grams: 200 }],
+  line_items: [
+    {
+      id: "111",
+      title: "Mug",
+      quantity: 1,
+      fulfillable_quantity: 1,
+      unfulfilled_quantity: 1,
+      requires_shipping: true,
+      price: "10",
+      grams: 200,
+    },
+  ],
 };
 
 describe("shopify order mapping", () => {
@@ -104,12 +116,42 @@ describe("shopify order mapping", () => {
     expect(ORDER_WEBHOOK_TOPICS).toContain("orders/updated");
   });
 
+  it("skips new imports of fulfilled Shopify orders and keeps existing history updates", async () => {
+    const skipped = await upsertShopifyOrder(newOrderClient() as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: { ...remoteOrder, fulfillment_status: "fulfilled" },
+    });
+    expect(skipped).toEqual({ imported: false, updated: false, skipped: true, orderId: null });
+
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const updates: Array<{ table: string; payload: unknown }> = [];
+    const updated = await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "BOOKED",
+        inserts,
+        deletes: [],
+        updates,
+        shipments: [{ id: "shp-1", status: "BOOKED", booked_at: "2026-10-01", barcode: "EM1" }],
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: { ...remoteOrder, fulfillment_status: "fulfilled" },
+      }
+    );
+    expect(updated.updated).toBe(true);
+    expect(inserts.some((row) => row.table === "orders")).toBe(false);
+  });
+
   it("treats open unfulfilled and partial orders as importable", () => {
-    expect(isUnfulfilledShopifyOrder({ fulfillment_status: null, cancelled_at: null })).toBe(true);
-    expect(isUnfulfilledShopifyOrder({ fulfillment_status: "unfulfilled", cancelled_at: null })).toBe(true);
-    expect(isUnfulfilledShopifyOrder({ fulfillment_status: "partial", cancelled_at: null })).toBe(true);
-    expect(isUnfulfilledShopifyOrder({ fulfillment_status: "fulfilled", cancelled_at: null })).toBe(false);
-    expect(isUnfulfilledShopifyOrder({ fulfillment_status: "unfulfilled", cancelled_at: "2026-01-01" })).toBe(false);
+    const remaining = remoteOrder.line_items;
+    expect(isUnfulfilledShopifyOrder({ fulfillment_status: null, cancelled_at: null, line_items: remaining })).toBe(true);
+    expect(isUnfulfilledShopifyOrder({ fulfillment_status: "unfulfilled", cancelled_at: null, line_items: remaining })).toBe(true);
+    expect(isUnfulfilledShopifyOrder({ fulfillment_status: "partial", cancelled_at: null, line_items: remaining })).toBe(true);
+    expect(isUnfulfilledShopifyOrder({ fulfillment_status: "fulfilled", cancelled_at: null, line_items: remaining })).toBe(false);
+    expect(isUnfulfilledShopifyOrder({ fulfillment_status: "unfulfilled", cancelled_at: "2026-01-01", line_items: remaining })).toBe(false);
   });
 
   it("maps Shopify payment and fulfillment statuses", () => {
@@ -125,7 +167,7 @@ describe("shopify order mapping", () => {
     expect(mapShopifyFulfillmentStatus("unfulfilled", "2026-01-01")).toBe("CANCELLED");
   });
 
-  it("stores Shopify payment evidence on import", async () => {
+  it("stores Shopify payment evidence on import", { timeout: 15_000 }, async () => {
     const inserts: Array<{ table: string; payload: unknown }> = [];
     await upsertShopifyOrder(trackedOrderClient({ inserts, deletes: [] }) as never, {
       organizationId: "org-1",
@@ -190,6 +232,7 @@ describe("shopify order mapping", () => {
     );
     const orderUpdate = updates.find((row) => row.table === "orders")?.payload as { payment_status?: string };
     expect(orderUpdate?.payment_status).toBeUndefined();
+    expect(updates.filter((row) => row.table === "orders")).toEqual([]);
   });
 
   it("records a booked AWB collect conflict without rewriting the shipment", async () => {
@@ -219,10 +262,20 @@ describe("shopify order mapping", () => {
     );
     const orderUpdate = updates.find((row) => row.table === "orders")?.payload as {
       payment_status?: string;
-      metadata?: { shopifyPayment?: { bookingConflict?: { bookedPaymentMode?: string } } };
+      total_amount?: number;
+      amount_paid?: number;
+      cod_amount?: number;
+      metadata?: {
+        shopifyPayment?: { bookingConflict?: { bookedPaymentMode?: string } };
+        shopifyLockedReconciliation?: { reason?: string };
+      };
     };
     expect(orderUpdate?.payment_status).toBe("PAID");
+    expect(orderUpdate?.total_amount).toBeUndefined();
+    expect(orderUpdate?.amount_paid).toBeUndefined();
+    expect(orderUpdate?.cod_amount).toBeUndefined();
     expect(orderUpdate?.metadata?.shopifyPayment?.bookingConflict?.bookedPaymentMode).toBe("COD");
+    expect(orderUpdate?.metadata?.shopifyLockedReconciliation?.reason).toBe("booking_snapshot_locked");
     expect(updates.filter((row) => row.table === "shipments")).toEqual([]);
     expect(inserts.find((row) => row.table === "audit_logs")).toEqual(
       expect.objectContaining({
@@ -266,6 +319,141 @@ describe("shopify order mapping", () => {
     });
   });
 
+  it("imports only currentQuantity > 0 lines after a partial-COD order edit", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const result = await upsertShopifyOrder(trackedOrderClient({ inserts, deletes: [] }) as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        financial_status: "partially_paid",
+        edited: true,
+        tags: ["order-edited"],
+        total_price: "5554.80",
+        current_total_price: "4296.00",
+        current_subtotal_price: "4196.00",
+        total_outstanding: "3037.20",
+        payment_gateway_names: ["01 Cards, UPI, NB, Wallets by Razorpay"],
+        line_items: [
+          {
+            id: 17109345435840,
+            title: "SAND DARK WIDE",
+            sku: "SAND-DARK-WIDE-34",
+            quantity: 1,
+            current_quantity: 0,
+            fulfillable_quantity: 0,
+            unfulfilled_quantity: 0,
+            requires_shipping: true,
+            price: "314.70",
+            grams: 800,
+          },
+          {
+            id: 17109345763520,
+            title: "SAND DARK WIDE",
+            sku: "SAND-DARK-WIDE-34",
+            quantity: 1,
+            current_quantity: 1,
+            fulfillable_quantity: 0,
+            unfulfilled_quantity: 0,
+            requires_shipping: true,
+            price: "1049.00",
+            grams: 800,
+          },
+          {
+            id: 88,
+            title: "TIP BROWN WIDE",
+            sku: "TIP-BROWN-WIDE-34",
+            quantity: 1,
+            current_quantity: 1,
+            fulfillable_quantity: 1,
+            unfulfilled_quantity: 1,
+            requires_shipping: true,
+            price: "1049.00",
+            grams: 800,
+          },
+        ],
+      },
+    });
+    expect(result.imported).toBe(true);
+    const items = inserts.find((row) => row.table === "order_line_items");
+    expect(items?.payload).toEqual([
+      expect.objectContaining({
+        title: "SAND DARK WIDE",
+        sku: "SAND-DARK-WIDE-34",
+        quantity: 1,
+        unit_price: 1049,
+        source_line_item_id: "gid://shopify/LineItem/17109345763520",
+      }),
+      expect.objectContaining({
+        title: "TIP BROWN WIDE",
+        quantity: 1,
+        unit_price: 1049,
+        source_line_item_id: "gid://shopify/LineItem/88",
+      }),
+    ]);
+    const order = inserts.find((row) => row.table === "orders");
+    expect(order?.payload).toEqual(
+      expect.objectContaining({
+        payment_status: "PARTIAL",
+        total_amount: 4296,
+        subtotal: 4196,
+        amount_paid: 1258.8,
+        cod_amount: 3037.2,
+      })
+    );
+  });
+
+  it("does not import an edited order when current quantity is missing", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const result = await upsertShopifyOrder(trackedOrderClient({ inserts, deletes: [] }) as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        edited: true,
+        financial_status: "partially_paid",
+        total_price: "5554.80",
+        line_items: [
+          { id: 1, title: "Deposit", quantity: 1, price: "314.70" },
+          { id: 2, title: "Product", quantity: 1, price: "1049.00" },
+        ],
+      },
+    });
+    expect(result.skipped).toBe(true);
+    expect(inserts.find((row) => row.table === "order_line_items")).toBeUndefined();
+  });
+
+  it("leaves existing lines unchanged when an edited update is missing current quantity", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    const deletes: string[] = [];
+    const updates: Array<{ table: string; payload: unknown }> = [];
+    const result = await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        inserts,
+        deletes,
+        updates,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: {
+          ...remoteOrder,
+          edited: true,
+          financial_status: "partially_paid",
+          total_price: "5554.80",
+          line_items: [{ id: 1, title: "Deposit", quantity: 1, price: "314.70" }],
+        },
+      }
+    );
+    expect(result.updated).toBe(true);
+    expect(deletes).not.toContain("order_line_items");
+    const orderUpdate = updates.find((row) => row.table === "orders")?.payload as Record<string, unknown>;
+    expect(orderUpdate?.total_amount).toBeUndefined();
+    expect(orderUpdate?.amount_paid).toBeUndefined();
+  });
+
   it("builds a stable order number and customer name", () => {
     expect(shopifyOrderNumber({ name: "#1042", order_number: 1042 }, "1")).toBe("#1042");
     expect(shopifyOrderNumber({ order_number: 88 }, "99")).toBe("#88");
@@ -301,10 +489,11 @@ describe("shopify order mapping", () => {
   });
 
   it("normalizes Indian phone and pincode values", () => {
-    expect(shopifyPhone("+91 98765 43210")).toBe("919876543210");
-    expect(shopifyPhone("")).toBe("0000000000");
+    expect(shopifyPhone("+91 98765 43210")).toBe("9876543210");
+    expect(shopifyPhone("")).toBeNull();
+    expect(shopifyPhone("98765")).toBeNull();
     expect(shopifyPincode("560001")).toBe("560001");
-    expect(shopifyPincode("12")).toBe("120000");
+    expect(shopifyPincode("12")).toBeNull();
   });
 
   it("keeps processing and later statuses when Shopify is still unfulfilled", () => {
@@ -361,18 +550,31 @@ describe("shopify order mapping", () => {
     expect(parseShopifyProgressReported({ order_id: 88, status: "open" }).inProgress).toBe(false);
   });
 
-  it("builds a Shopify fulfillment payload from open fulfillment orders", () => {
+  it("builds a Shopify fulfillment payload from exact FO line allocations", () => {
     const payload = shopifyFulfillmentPayload({
-      fulfillmentOrders: [
-        { id: 11, status: "open" },
-        { id: 12, status: "closed" },
-        { id: 13, status: "in_progress" },
+      allocations: [
+        {
+          fulfillmentOrderId: "11",
+          fulfillmentOrderLineItemId: "gid://shopify/FulfillmentOrderLineItem/101",
+          quantity: 2,
+        },
+        {
+          fulfillmentOrderId: "13",
+          fulfillmentOrderLineItemId: "gid://shopify/FulfillmentOrderLineItem/103",
+          quantity: 1,
+        },
       ],
       trackingNumber: "CL556974704IN",
     });
     expect(payload.fulfillment.lineItemsByFulfillmentOrder).toEqual([
-      { fulfillmentOrderId: "gid://shopify/FulfillmentOrder/11" },
-      { fulfillmentOrderId: "gid://shopify/FulfillmentOrder/13" },
+      {
+        fulfillmentOrderId: "gid://shopify/FulfillmentOrder/11",
+        fulfillmentOrderLineItems: [{ id: "gid://shopify/FulfillmentOrderLineItem/101", quantity: 2 }],
+      },
+      {
+        fulfillmentOrderId: "gid://shopify/FulfillmentOrder/13",
+        fulfillmentOrderLineItems: [{ id: "gid://shopify/FulfillmentOrderLineItem/103", quantity: 1 }],
+      },
     ]);
     expect(payload.fulfillment.trackingInfo).toEqual({
       company: "PostBus",
@@ -384,7 +586,13 @@ describe("shopify order mapping", () => {
 
   it("always sends the public PostBus tracking page with the article id", () => {
     const payload = shopifyFulfillmentPayload({
-      fulfillmentOrders: [{ id: 11, status: "open" }],
+      allocations: [
+        {
+          fulfillmentOrderId: "11",
+          fulfillmentOrderLineItemId: "gid://shopify/FulfillmentOrderLineItem/101",
+          quantity: 1,
+        },
+      ],
       trackingNumber: "CL556974704IN",
     });
     expect(payload.fulfillment.trackingInfo?.company).toBe("PostBus");
@@ -401,7 +609,13 @@ describe("shopify order mapping", () => {
     expect(shopifyTrackingInfo("   ")).toBeNull();
     expect(
       shopifyFulfillmentPayload({
-        fulfillmentOrders: [{ id: 11, status: "open" }],
+        allocations: [
+          {
+            fulfillmentOrderId: "11",
+            fulfillmentOrderLineItemId: "gid://shopify/FulfillmentOrderLineItem/101",
+            quantity: 1,
+          },
+        ],
         trackingNumber: "",
       }).fulfillment.trackingInfo
     ).toBeNull();
@@ -667,6 +881,15 @@ function trackedOrderClient(options: {
   updates?: Array<{ table: string; payload: unknown }>;
 }) {
   return {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      if (name !== "replace_shopify_order_line_items") {
+        return { data: null, error: { message: `unknown rpc ${name}` } };
+      }
+      options.deletes.push("order_line_items");
+      options.inserts.push({ table: "order_line_items", payload: args.p_lines });
+      const lines = Array.isArray(args.p_lines) ? args.p_lines : [];
+      return { data: { ok: true, action: "replaced", count: lines.length }, error: null };
+    },
     from: vi.fn((table: string) => {
       let data: unknown = {};
       if (table === "external_order_references") {
@@ -751,6 +974,9 @@ describe("shopify line item images", () => {
           {
             title: "Kurta",
             quantity: 1,
+            fulfillable_quantity: 1,
+            unfulfilled_quantity: 1,
+            requires_shipping: true,
             price: "499",
             grams: 200,
             image: { src: "https://cdn.shopify.com/kurta.jpg" },
@@ -857,7 +1083,17 @@ describe("shopify line item weight persistence", () => {
       shopDomain: "demo.myshopify.com",
       remote: {
         ...remoteOrder,
-        line_items: [{ title: "Kurta", quantity: 2, price: "499", grams: 0.5 }],
+        line_items: [
+          {
+            title: "Kurta",
+            quantity: 2,
+            fulfillable_quantity: 2,
+            unfulfilled_quantity: 2,
+            requires_shipping: true,
+            price: "499",
+            grams: 0.5,
+          },
+        ],
       },
     });
     expect(result.imported).toBe(true);
@@ -881,7 +1117,17 @@ describe("shopify line item weight persistence", () => {
       shopDomain: "demo.myshopify.com",
       remote: {
         ...remoteOrder,
-        line_items: [{ title: "Kurta", quantity: 1, price: "499", weight: { value: 0.5, unit: "KILOGRAMS" } }],
+        line_items: [
+          {
+            title: "Kurta",
+            quantity: 1,
+            fulfillable_quantity: 1,
+            unfulfilled_quantity: 1,
+            requires_shipping: true,
+            price: "499",
+            weight: { value: 0.5, unit: "KILOGRAMS" },
+          },
+        ],
       },
     });
     expect(result.updated).toBe(true);
@@ -968,31 +1214,65 @@ describe("shopify product shipping hydrate", () => {
     expect(shopifyLineItemWeightGrams(item)).toBe(500);
   });
 
-  it("clamps Shopify box size to India Post parcel limits", () => {
+  it("keeps a measured Shopify box instead of raising it to India Post minima", () => {
     expect(
       shopifyParcelFromLineItems([
-        { title: "Kurta", quantity: 1, grams: 400, length_cm: 10, width_cm: 8, height_cm: 5 },
+        {
+          title: "Kurta",
+          quantity: 1,
+          unfulfilled_quantity: 1,
+          grams: 400,
+          length_cm: 10,
+          width_cm: 8,
+          height_cm: 5,
+        },
       ])
-    ).toEqual({ weightGrams: 400, lengthCm: 14, widthCm: 9, heightCm: 5 });
+    ).toEqual({ weightGrams: 400, lengthCm: 10, widthCm: 8, heightCm: 5 });
   });
 
-  it("takes the max box across line items and sums weight", () => {
+  it("does not combine different product boxes into one invented size", () => {
     expect(
       shopifyParcelFromLineItems([
-        { title: "A", quantity: 2, grams: 200, length_cm: 20, width_cm: 10, height_cm: 8 },
-        { title: "B", quantity: 1, grams: 300, length_cm: 30, width_cm: 12, height_cm: 4 },
+        {
+          title: "A",
+          quantity: 2,
+          unfulfilled_quantity: 2,
+          grams: 200,
+          length_cm: 20,
+          width_cm: 10,
+          height_cm: 8,
+        },
+        {
+          title: "B",
+          quantity: 1,
+          unfulfilled_quantity: 1,
+          grams: 300,
+          length_cm: 30,
+          width_cm: 12,
+          height_cm: 4,
+        },
       ])
-    ).toEqual({ weightGrams: 700, lengthCm: 30, widthCm: 12, heightCm: 8 });
+    ).toEqual({ weightGrams: 700, lengthCm: null, widthCm: null, heightCm: null });
+    expect(
+      shopifyResolvedShipmentDims([
+        { title: "A", quantity: 1, unfulfilled_quantity: 1, grams: 200, length_cm: 20, width_cm: 10, height_cm: 8 },
+        { title: "B", quantity: 1, unfulfilled_quantity: 1, grams: 300, length_cm: 30, width_cm: 12, height_cm: 4 },
+      ])
+    ).toEqual({});
   });
 
   it("keeps size empty when Shopify has weight but no dimensions", () => {
-    expect(shopifyParcelFromLineItems([{ title: "Kurta", quantity: 1, grams: 500 }])).toEqual({
+    expect(
+      shopifyParcelFromLineItems([{ title: "Kurta", quantity: 1, unfulfilled_quantity: 1, grams: 500 }])
+    ).toEqual({
       weightGrams: 500,
       lengthCm: null,
       widthCm: null,
       heightCm: null,
     });
-    expect(shopifyShipmentParcelExtras([{ title: "Kurta", quantity: 1, grams: 500 }])).toEqual({});
+    expect(
+      shopifyShipmentParcelExtras([{ title: "Kurta", quantity: 1, unfulfilled_quantity: 1, grams: 500 }])
+    ).toEqual({});
   });
 
   it("reads aliased GraphQL metafields and prefers them over workspace defaults", () => {
@@ -1015,7 +1295,12 @@ describe("shopify product shipping hydrate", () => {
       [{ title: "Kurta", quantity: 1, grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
       { lengthCm: 30, widthCm: 20, heightCm: 12, weightGrams: 800 }
     );
-    expect(metafieldDims).toEqual({ lengthCm: 20, widthCm: 15, heightCm: 10 });
+    expect(metafieldDims).toEqual({
+      lengthCm: 20,
+      widthCm: 15,
+      heightCm: 10,
+      dimensionSource: "shopify",
+    });
     expect(
       shopifyResolvedShipmentDims([{ title: "Kurta", quantity: 1, grams: 500 }], {
         lengthCm: 30,
@@ -1023,7 +1308,7 @@ describe("shopify product shipping hydrate", () => {
         heightCm: 12,
         weightGrams: 800,
       })
-    ).toEqual({ lengthCm: 30, widthCm: 20, heightCm: 12 });
+    ).toEqual({ lengthCm: 30, widthCm: 20, heightCm: 12, dimensionSource: "postbus_default" });
   });
 
   it("does not invent Shopify saved-package dimensions when none were fetched", () => {
@@ -1041,6 +1326,9 @@ describe("shopify product shipping hydrate", () => {
           {
             title: "Kurta",
             quantity: 2,
+            fulfillable_quantity: 2,
+            unfulfilled_quantity: 2,
+            requires_shipping: true,
             price: "499",
             grams: 0,
             variant: { weight: 0.5, weight_unit: "kg" },
@@ -1055,7 +1343,7 @@ describe("shopify product shipping hydrate", () => {
     ]);
   });
 
-  it("passes clamped Shopify dimensions into shipment create", async () => {
+  it("passes measured Shopify dimensions into shipment create", async () => {
     createShipmentsForOrders.mockClear();
     const result = await upsertShopifyOrder(newOrderClient() as never, {
       organizationId: "org-1",
@@ -1066,6 +1354,9 @@ describe("shopify product shipping hydrate", () => {
           {
             title: "Kurta",
             quantity: 1,
+            fulfillable_quantity: 1,
+            unfulfilled_quantity: 1,
+            requires_shipping: true,
             price: "499",
             grams: 450,
             length_cm: 10,
@@ -1082,7 +1373,7 @@ describe("shopify product shipping hydrate", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 14, widthCm: 9, heightCm: 5 }
+      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 10, widthCm: 8, heightCm: 5, dimensionSource: "shopify" }
     );
   });
 
@@ -1108,6 +1399,9 @@ describe("shopify product shipping hydrate", () => {
               quantity: 1,
               price: "499",
               grams: 500,
+              fulfillable_quantity: 1,
+              unfulfilled_quantity: 1,
+              requires_shipping: true,
               length_cm: 20,
               width_cm: 15,
               height_cm: 10,
@@ -1121,7 +1415,12 @@ describe("shopify product shipping hydrate", () => {
       expect.arrayContaining([
         {
           table: "shipments",
-          payload: { length_cm: 20, width_cm: 15, height_cm: 10, weight_grams: 500 },
+          payload: expect.objectContaining({
+            length_cm: 20,
+            width_cm: 15,
+            height_cm: 10,
+            weight_grams: 500,
+          }),
         },
       ])
     );
@@ -1143,7 +1442,20 @@ describe("shopify product shipping hydrate", () => {
         shopDomain: "demo.myshopify.com",
         remote: {
           ...remoteOrder,
-          line_items: [{ title: "Kurta", quantity: 1, price: "499", grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
+          line_items: [
+            {
+              title: "Kurta",
+              quantity: 1,
+              fulfillable_quantity: 1,
+              unfulfilled_quantity: 1,
+              requires_shipping: true,
+              price: "499",
+              grams: 500,
+              length_cm: 20,
+              width_cm: 15,
+              height_cm: 10,
+            },
+          ],
         },
       }
     );
@@ -1239,6 +1551,9 @@ describe("shopify product shipping hydrate", () => {
             {
               title: "Kurta",
               quantity: 1,
+              fulfillable_quantity: 1,
+              unfulfilled_quantity: 1,
+              requires_shipping: true,
               price: "499",
               grams: 0,
               product_id: 9,
@@ -1254,7 +1569,7 @@ describe("shopify product shipping hydrate", () => {
         expect.anything(),
         expect.objectContaining({ organizationId: "org-1" }),
         ["ord-1"],
-        { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
+        { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 20, widthCm: 15, heightCm: 10, dimensionSource: "shopify" }
       );
     } finally {
       fetchSpy.mockRestore();
@@ -1313,7 +1628,19 @@ describe("shopify product shipping hydrate", () => {
         topic: "orders/create",
         remote: {
           ...remoteOrder,
-          line_items: [{ title: "Kurta", quantity: 1, price: "499", grams: 0, product_id: 9, variant_id: 22 }],
+          line_items: [
+            {
+              title: "Kurta",
+              quantity: 1,
+              fulfillable_quantity: 1,
+              unfulfilled_quantity: 1,
+              requires_shipping: true,
+              price: "499",
+              grams: 0,
+              product_id: 9,
+              variant_id: 22,
+            },
+          ],
         },
       });
       expect(result.imported).toBe(true);
@@ -1323,7 +1650,7 @@ describe("shopify product shipping hydrate", () => {
         expect.anything(),
         expect.objectContaining({ organizationId: "org-1" }),
         ["ord-1"],
-        { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 22, widthCm: 16, heightCm: 11 }
+        { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 22, widthCm: 16, heightCm: 11, dimensionSource: "postbus_default" }
       );
     } finally {
       fetchSpy.mockRestore();
@@ -1358,7 +1685,7 @@ describe("shopify product shipping hydrate", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 25, widthCm: 18, heightCm: 12 }
+      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 25, widthCm: 18, heightCm: 12, dimensionSource: "postbus_default" }
     );
   });
 
@@ -1373,6 +1700,9 @@ describe("shopify product shipping hydrate", () => {
           {
             title: "Kurta",
             quantity: 1,
+            fulfillable_quantity: 1,
+            unfulfilled_quantity: 1,
+            requires_shipping: true,
             price: "499",
             grams: 500,
             length_cm: 20,
@@ -1388,7 +1718,7 @@ describe("shopify product shipping hydrate", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 20, widthCm: 15, heightCm: 10 }
+      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 20, widthCm: 15, heightCm: 10, dimensionSource: "shopify" }
     );
   });
 });
@@ -1399,6 +1729,17 @@ describe("fulfillShopifyShipment tracking", () => {
   function shipmentClient(tracking: { barcode?: string | null; tracking_number?: string | null }) {
     return {
       from: vi.fn((table: string) => {
+        if (table === "shopify_shipment_allocations") {
+          return query([
+            {
+              shopify_fulfillment_order_id: "gid://shopify/FulfillmentOrder/11",
+              shopify_fulfillment_order_line_item_id: "gid://shopify/FulfillmentOrderLineItem/101",
+              quantity: 1,
+              status: "BOOKED",
+              article_id: "EM123456789IN",
+            },
+          ]);
+        }
         if (table === "shipments") {
           return query({
             id: "shp-1",
@@ -1577,5 +1918,64 @@ describe("fulfillShopifyShipment tracking", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe("mergeShopifyRemoteOrder protected customer data", () => {
+  const populated = {
+    ...remoteOrder,
+    shipping_address: {
+      first_name: "Asha",
+      last_name: "Rao",
+      name: "Asha Rao",
+      phone: "9876543210",
+      address1: "12 MG Road",
+      city: "Kozhikode",
+      province: "Kerala",
+      zip: "673001",
+      country_code: "IN",
+    },
+    phone: "9876543210",
+  };
+
+  it("keeps webhook shipping when GraphQL returns an empty mailing address", () => {
+    const merged = mergeShopifyRemoteOrder(populated, {
+      ...populated,
+      shipping_address: {
+        name: null,
+        first_name: null,
+        last_name: null,
+        address1: null,
+        address2: null,
+        city: null,
+        zip: null,
+        phone: null,
+      },
+      phone: null,
+    });
+    expect(merged.shipping_address?.address1).toBe("12 MG Road");
+    expect(merged.shipping_address?.zip).toBe("673001");
+    expect(merged.shipping_address?.phone).toBe("9876543210");
+    expect(merged.phone).toBe("9876543210");
+  });
+
+  it("fills blank GraphQL fields from the previous payload without blocking a newer street", () => {
+    const merged = mergeShopifyRemoteOrder(populated, {
+      ...populated,
+      updated_at: "2026-10-30T12:00:00Z",
+      shipping_address: {
+        first_name: "Asha",
+        last_name: "Rao",
+        name: "Asha Rao",
+        address1: "88 Beach Road",
+        city: "Kozhikode",
+        province: "Kerala",
+        zip: null,
+        phone: null,
+      },
+    });
+    expect(merged.shipping_address?.address1).toBe("88 Beach Road");
+    expect(merged.shipping_address?.zip).toBe("673001");
+    expect(merged.shipping_address?.phone).toBe("9876543210");
   });
 });

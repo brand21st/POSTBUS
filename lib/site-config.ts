@@ -46,6 +46,7 @@ export const footerLinks = {
     { label: "India Post shipping", href: "/india-post-shipping" },
     { label: "Shopify integration", href: "/shopify-india-post" },
     { label: "WooCommerce workflow", href: "/woocommerce-india-post" },
+    { label: "Developers", href: "/developers" },
   ],
   company: [
     { label: "About", href: "/about" },

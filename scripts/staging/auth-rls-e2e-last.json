@@ -1,0 +1,137 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "auth-health",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "signup-a",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "signup-b",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "email-confirm-local-only",
+      "pass": true,
+      "detail": "updated"
+    },
+    {
+      "name": "password-login-a",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "password-login-b",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "access-token-a",
+      "pass": true,
+      "detail": "len=968"
+    },
+    {
+      "name": "jwt-ref-not-production",
+      "pass": true,
+      "detail": "ok"
+    },
+    {
+      "name": "unauthenticated-orders-rejected",
+      "pass": true,
+      "detail": "status=401"
+    },
+    {
+      "name": "create-org-a",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "create-org-b",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "org-a-sees-self",
+      "pass": true,
+      "detail": "count=1"
+    },
+    {
+      "name": "org-b-sees-self",
+      "pass": true,
+      "detail": "count=1"
+    },
+    {
+      "name": "org-a-cannot-see-b",
+      "pass": true,
+      "detail": "isolated"
+    },
+    {
+      "name": "org-b-cannot-see-a",
+      "pass": true,
+      "detail": "isolated"
+    },
+    {
+      "name": "insert-address-a",
+      "pass": true,
+      "detail": "status=201"
+    },
+    {
+      "name": "insert-address-b",
+      "pass": true,
+      "detail": "status=201"
+    },
+    {
+      "name": "insert-isolation-b-into-a",
+      "pass": true,
+      "detail": "status=403"
+    },
+    {
+      "name": "select-isolation-a-cannot-read-b",
+      "pass": true,
+      "detail": "count=0"
+    },
+    {
+      "name": "update-isolation-a-cannot-write-b",
+      "pass": true,
+      "detail": "city=Kochi status=200"
+    },
+    {
+      "name": "delete-isolation-a-cannot-delete-b",
+      "pass": true,
+      "detail": "status=200 remaining=1"
+    },
+    {
+      "name": "rpc-one-workspace-or-authorized",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "expired-or-invalid-token-rejected",
+      "pass": true,
+      "detail": "status=401"
+    },
+    {
+      "name": "session-refresh",
+      "pass": true,
+      "detail": "status=200"
+    },
+    {
+      "name": "logout",
+      "pass": true,
+      "detail": "status=204"
+    }
+  ],
+  "orgAId": "cf10e014-6c54-4784-b3a1-522f25699307",
+  "orgBId": "7f3069ad-ba89-46e8-bd69-bcc6d8a37e35",
+  "addrAId": "1230bd0e-b16e-4bd7-a8cf-d70ca7f603b1",
+  "addrBId": "e2df7b0a-f27b-4989-830d-e7c2e79e603d",
+  "emailA": "staging-org-a-1793414434244@postbus.invalid",
+  "emailB": "staging-org-b-1793414434244@postbus.invalid",
+  "emailAHost": "postbus.invalid"
+}

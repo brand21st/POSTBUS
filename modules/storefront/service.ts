@@ -10,7 +10,7 @@ import type { z } from "zod";
 import { assembleStoreFooter, normalizeStorefrontFooterConfig } from "@/modules/storefront/footer";
 import { loadStoreFooterContext } from "@/modules/storefront/footer-context";
 import { mapCover, selectOrgCovers } from "@/modules/storefront/covers";
-import type { storefrontSettingsSchema, storefrontSlideSchema } from "@/modules/storefront/schema";
+import { storeAddressSchema, type storefrontSettingsSchema, type storefrontSlideSchema } from "@/modules/storefront/schema";
 
 type SettingsInput = z.infer<typeof storefrontSettingsSchema>;
 type SlideInput = z.infer<typeof storefrontSlideSchema>;
@@ -131,6 +131,8 @@ export async function getStorefrontSettings(supabase: SupabaseClient, ctx: Tenan
     footerPreview,
     footerSources,
     coverAutoplay: settings?.cover_autoplay === true,
+    // Lets the dashboard preview render the same layout the public store uses.
+    marketplace: env.storefrontMarketplaceEnabled,
     brandKit: (settings?.brand_kit && typeof settings.brand_kit === "object" ? settings.brand_kit : {}) as Record<string, unknown>,
     upiId: (settings?.upi_id as string | null) ?? null,
     gpayNumber: (settings?.gpay_number as string | null) ?? null,
@@ -180,6 +182,62 @@ export async function updateStorefrontSettings(
   }
   const { error } = await supabase.from("storefront_settings").upsert(patch, { onConflict: "organization_id" });
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return getStorefrontSettings(supabase, ctx);
+}
+
+function assertCanChangeStoreAddress(ctx: TenantContext) {
+  if (ctx.role !== "OWNER" && ctx.role !== "ADMIN") {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "Only owners and admins can change the store address.");
+  }
+}
+
+/** Store addresses share one namespace with the active customer order links (unique index on lower(public_workspace)). */
+export async function checkStoreAddress(supabase: SupabaseClient, ctx: TenantContext, raw: unknown) {
+  const parsed = storeAddressSchema.safeParse({ slug: raw });
+  if (!parsed.success) {
+    return { slug: String(raw ?? "").trim().toLowerCase(), available: false, reason: parsed.error.issues[0].message };
+  }
+  const slug = parsed.data.slug;
+  const { data, error } = await supabase
+    .from("customer_order_links")
+    .select("organization_id")
+    .eq("status", "ACTIVE")
+    .eq("public_workspace", slug)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (data && data.organization_id !== ctx.organizationId) {
+    return { slug, available: false, reason: "That address is already taken." };
+  }
+  return { slug, available: true, reason: null };
+}
+
+export async function updateStoreAddress(supabase: SupabaseClient, ctx: TenantContext, raw: unknown) {
+  assertCanChangeStoreAddress(ctx);
+  const { slug } = storeAddressSchema.parse({ slug: raw });
+  const link = await getMerchantCollectionLink(supabase, ctx);
+  if (link.slug === slug) return getStorefrontSettings(supabase, ctx);
+  const availability = await checkStoreAddress(supabase, ctx, slug);
+  if (!availability.available) throw new AppError(ERROR_CODES.CONFLICT, availability.reason ?? "That address is already taken.");
+  const { error } = await supabase
+    .from("customer_order_links")
+    .update({ public_workspace: slug })
+    .eq("id", link.id)
+    .eq("organization_id", ctx.organizationId);
+  if (error) {
+    // Another merchant claimed it between the check and the update.
+    if (error.code === "23505") throw new AppError(ERROR_CODES.CONFLICT, "That address is already taken.");
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId,
+    action: "storefront.address_changed",
+    entity_type: "customer_order_link",
+    entity_id: link.id,
+    before: { storeAddress: link.slug },
+    after: { storeAddress: slug },
+  });
   return getStorefrontSettings(supabase, ctx);
 }
 

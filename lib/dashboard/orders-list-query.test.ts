@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   committedSearchChanged,
+  nextOrdersNumberSort,
   ordersListHref,
+  ordersNumberSortState,
   parseOrdersPageParam,
+  parseOrdersSortParam,
   patchOrdersListSearchParams,
   selectionAfterFilterChange,
   selectionAfterPageChange,
@@ -38,6 +41,26 @@ describe("patchOrdersListSearchParams", () => {
   it("omits page=1 from the URL", () => {
     expect(patchOrdersListSearchParams("page=2&q=phone", { page: 1 })).toBe("q=phone");
     expect(ordersListHref("")).toBe("/dashboard/orders");
+  });
+
+  it("writes and clears order-number sort", () => {
+    expect(patchOrdersListSearchParams("q=phone", { sort: "-order_number", page: 1 })).toBe(
+      "q=phone&sort=-order_number"
+    );
+    expect(patchOrdersListSearchParams("q=phone&sort=-order_number", { sort: null })).toBe("q=phone");
+  });
+});
+
+describe("order number sort cycle", () => {
+  it("goes high-to-low, then low-to-high, then newest first", () => {
+    expect(nextOrdersNumberSort(undefined)).toBe("-order_number");
+    expect(nextOrdersNumberSort("-order_number")).toBe("order_number");
+    expect(nextOrdersNumberSort("order_number")).toBeUndefined();
+    expect(ordersNumberSortState("-order_number")).toBe("desc");
+    expect(ordersNumberSortState("order_number")).toBe("asc");
+    expect(ordersNumberSortState(undefined)).toBe("none");
+    expect(parseOrdersSortParam("amount")).toBeUndefined();
+    expect(parseOrdersSortParam("-order_number")).toBe("-order_number");
   });
 });
 

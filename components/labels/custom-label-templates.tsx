@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Star, Trash2 } from "lucide-react";
+import { Copy, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/hooks/use-api";
 import {
   indiaPostLabelTemplate,
+  listedNamedTemplates,
   withDefaultNamedTemplate,
+  withDuplicatedNamedTemplate,
   type LabelTemplate,
   type NamedLabelTemplate,
 } from "@/modules/labels/template-schema";
@@ -17,16 +19,7 @@ import {
 type TemplateResponse = { template: LabelTemplate };
 
 function listedTemplates(template: LabelTemplate): NamedLabelTemplate[] {
-  if (template.library?.length) return template.library;
-  return [
-    {
-      id: "active",
-      name: "Current template",
-      isDefault: true,
-      page: template.page,
-      elements: template.elements,
-    },
-  ];
+  return listedNamedTemplates(template);
 }
 
 function pageLabel(page: LabelTemplate["page"]) {
@@ -89,6 +82,13 @@ export function CustomLabelTemplates() {
     save.mutate(withDefaultNamedTemplate(template, id), { onSuccess: () => toast.success("Default template updated.") });
   };
 
+  const duplicate = (id: string) => {
+    if (!template) return;
+    save.mutate(withDuplicatedNamedTemplate(template, id, crypto.randomUUID()), {
+      onSuccess: () => toast.success("Template duplicated."),
+    });
+  };
+
   const remove = (id: string) => {
     if (!template?.library?.length) return;
     const library = template.library.filter((item) => item.id !== id);
@@ -123,33 +123,65 @@ export function CustomLabelTemplates() {
       />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {cards.map((item) => (
-          <article key={item.id} className="rounded-2xl border border-border bg-card p-4">
+          <article key={item.id} className="rounded-2xl border border-border bg-card p-3.5">
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-semibold">{item.name}</h2>
-                <p className="text-sm text-muted">{pageLabel(item.page)}</p>
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="truncate font-semibold text-ink">{item.name}</h2>
+                  {item.isDefault ? (
+                    <span className="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">
+                      Active
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-0.5 text-sm text-muted">{pageLabel(item.page)}</p>
               </div>
-              {item.isDefault ? <span className="text-xs font-medium text-brand">Default</span> : null}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Link href={`/dashboard/labels/templates/${item.id}`}>
-                <Button type="button" variant="secondary" size="sm">
-                  <Pencil className="size-4" />
-                  Edit
+              <div className="flex shrink-0 items-center gap-0.5">
+                <Link href={`/dashboard/labels/templates/${item.id}`}>
+                  <Button type="button" variant="secondary" size="xs">
+                    <Pencil className="size-3.5" />
+                    Edit
+                  </Button>
+                </Link>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={!template || save.isPending}
+                  onClick={() => duplicate(item.id)}
+                  aria-label="Duplicate"
+                  title="Duplicate"
+                >
+                  <Copy className="size-3.5" />
                 </Button>
-              </Link>
-              {template?.library?.length && !item.isDefault ? (
-                <Button type="button" variant="secondary" size="sm" onClick={() => setDefault(item.id)}>
-                  <Star className="size-4" />
-                  Set as default
-                </Button>
-              ) : null}
-              {template?.library?.length ? (
-                <Button type="button" variant="secondary" size="sm" onClick={() => remove(item.id)}>
-                  <Trash2 className="size-4" />
-                  Delete
-                </Button>
-              ) : null}
+                {template?.library?.length && !item.isDefault ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    disabled={save.isPending}
+                    onClick={() => setDefault(item.id)}
+                    aria-label="Set as default"
+                    title="Set as default"
+                  >
+                    <Star className="size-3.5" />
+                  </Button>
+                ) : null}
+                {template?.library?.length ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    disabled={save.isPending}
+                    onClick={() => remove(item.id)}
+                    aria-label="Delete"
+                    title="Delete"
+                    className="text-muted hover:text-error"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                ) : null}
+              </div>
             </div>
           </article>
         ))}

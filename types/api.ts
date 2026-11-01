@@ -16,6 +16,7 @@ export type MeUser = {
   fullName: string | null;
   avatarUrl: string | null;
   whatsappNumber?: string | null;
+  indiaPostOnboardingDismissedAt?: string | null;
 };
 
 export type MeOrganization = {
@@ -38,6 +39,10 @@ export type MeSubscription = {
   planName?: string | null;
   status?: string | null;
   features?: string[];
+  trial?: boolean;
+  trialEnd?: string | null;
+  trialCohort?: string | null;
+  coverageEnded?: boolean;
 };
 
 export type MeResponse = {
@@ -47,6 +52,8 @@ export type MeResponse = {
   organizations?: MeMembership[];
   memberships?: MeMembership[];
   subscription?: MeSubscription | null;
+  merchantApi?: { enabled: boolean };
+  addons?: Array<{ slug: string; accessMode: "FULL" | "READ_ONLY" | "NONE"; status: string }>;
 };
 
 export type OrderListCounts = {
@@ -159,10 +166,24 @@ export type AddressSummary = {
   phone?: string | null;
   line1?: string | null;
   line2?: string | null;
+  line3?: string | null;
   city?: string | null;
   state?: string | null;
   pincode?: string | null;
   country?: string | null;
+  address_validation_status?: string | null;
+  address_review_required?: boolean | null;
+  address_validation_errors?: Array<{ message?: string } | string> | null;
+  address_normalization_source?: string | null;
+  original_shipping?: {
+    name?: string;
+    phone?: string;
+    address1?: string;
+    address2?: string;
+    city?: string;
+    province?: string;
+    zip?: string;
+  } | null;
 };
 
 export type ProductRecord = {
@@ -375,6 +396,7 @@ export type ShipmentRecord = {
   width_cm?: number | null;
   heightCm?: number | null;
   height_cm?: number | null;
+  metadata?: Record<string, unknown> | null;
   shape?: string | null;
   tariffAmount?: number | string | null;
   tariff_amount?: number | string | null;
@@ -592,6 +614,12 @@ export type TrackingRecord = {
   operational_status?: string | null;
   orderNumber?: string | null;
   order_number?: string | null;
+  lastEventAt?: string | null;
+  last_event_at?: string | null;
+  lastTrackedAt?: string | null;
+  last_tracked_at?: string | null;
+  lastScanOffice?: string | null;
+  last_scan_office?: string | null;
   events?: TrackingEvent[];
   latestEvent?: TrackingEvent | null;
 };
@@ -614,6 +642,10 @@ export type AutomationSettings = {
   auto_shopify_fulfillment?: boolean;
   autoShopifyProcessing?: boolean;
   auto_shopify_processing?: boolean;
+  autoWooCommerceSync?: boolean;
+  auto_woocommerce_sync?: boolean;
+  autoWooCommerceTracking?: boolean;
+  auto_woocommerce_tracking?: boolean;
   autoWatiOrderConfirmation?: boolean;
   auto_wati_order_confirmation?: boolean;
   autoWatiProcessing?: boolean;

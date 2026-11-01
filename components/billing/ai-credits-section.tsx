@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AiCreditsCheckoutButton } from "@/components/billing/ai-credits-checkout-button";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -71,11 +71,10 @@ export function AiCreditsSection({ credits }: { credits?: AiCreditsPayload }) {
   const [selectedId, setSelectedId] = useState<string | "custom" | null>(null);
   const [creditInput, setCreditInput] = useState("");
 
-  useEffect(() => {
-    if (selectedId || !recommended) return;
+  if (!selectedId && recommended) {
     setSelectedId(recommended.id);
     setCreditInput(String(recommended.credits));
-  }, [recommended, selectedId]);
+  }
 
   const matchedPackage = packages.find((item) => item.credits === Number(creditInput)) ?? null;
   const activePackageId = selectedId === "custom" ? matchedPackage?.id ?? null : selectedId;

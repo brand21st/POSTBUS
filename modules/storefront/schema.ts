@@ -66,6 +66,23 @@ export const publicStoreQuoteSchema = z
     message: "This store link is not valid.",
   });
 
+/** Path segments and words that would collide with app routes or read as PostBus-owned stores. */
+export const RESERVED_STORE_ADDRESSES = [
+  "admin", "api", "app", "dashboard", "help", "login", "new", "postbus", "preview", "register", "settings", "shop",
+  "shopify", "store", "support", "track", "www",
+] as const;
+
+export const storeAddressSchema = z.object({
+  slug: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(3, "Use at least 3 characters.")
+    .max(48, "Use 48 characters or fewer.")
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers and single hyphens, like my-shop.")
+    .refine((slug) => !(RESERVED_STORE_ADDRESSES as readonly string[]).includes(slug), "That address is reserved. Try another."),
+});
+
 export const storefrontSettingsSchema = z.object({
   theme: storeThemeSchema.optional(),
   tracking: storeTrackingSchema.optional(),

@@ -15,7 +15,7 @@ import {
 } from "@/modules/india-post/spec";
 import { INDIA_POST_WEIGHT_MAX_G, INDIA_POST_WEIGHT_MIN_G, toIndiaPostPhysicalWeightGrams } from "@/modules/india-post/weight";
 
-const PIN = /^\d{6}$/;
+const PIN = /^[1-9][0-9]{5}$/;
 const OFFICE = /^\d{8}$/;
 const CUSTOMER = /^\d{10}$/;
 const CONTRACT = /^\d{8}$/;

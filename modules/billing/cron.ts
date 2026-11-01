@@ -9,12 +9,16 @@ export async function runBillingSweep(supabase: SupabaseClient) {
   const now = new Date();
   const { data: expiring } = await supabase
     .from("subscriptions")
-    .select("id, organization_id, status, cancel_at_period_end, current_period_end, razorpay_subscription_id")
+    .select("id, organization_id, status, cancel_at_period_end, current_period_end, trial_end, trial_manual_override, razorpay_subscription_id")
     .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAYMENT_FAILED"])
     .lte("current_period_end", now.toISOString());
 
   let expired = 0;
   for (const row of expiring ?? []) {
+    const trialEnd = row.trial_end ? new Date(row.trial_end).getTime() : NaN;
+    if (row.trial_manual_override && Number.isFinite(trialEnd) && trialEnd > now.getTime()) {
+      continue;
+    }
     // One-time checkout buys a single period; only Razorpay recurring subscriptions renew themselves.
     const oneTimePeriod = !row.razorpay_subscription_id;
     const shouldExpire =

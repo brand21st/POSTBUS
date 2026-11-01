@@ -6,6 +6,14 @@ import { processJob } from "@/workers/processor";
 import { delayForAttempt } from "@/lib/jobs/retry";
 import { logError, logInfo } from "@/lib/logger";
 
+if ((process.env.POSTBUS_SHOPIFY_DEV || "").trim().toLowerCase() === "true") {
+  throw new Error("STOP: Shopify cloud-dev forbids npm run workers.");
+}
+const jobRunner = (process.env.JOB_RUNNER || "").trim().toLowerCase();
+if (jobRunner === "none" || jobRunner === "off" || jobRunner === "disabled") {
+  throw new Error("STOP: JOB_RUNNER=none forbids BullMQ workers.");
+}
+
 const names = Object.values(QUEUE_NAMES);
 
 for (const name of names) {

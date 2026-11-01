@@ -44,9 +44,11 @@ import {
 } from "@/modules/products/service";
 import { storefrontSettingsSchema, storefrontSlideSchema } from "@/modules/storefront/schema";
 import {
+  checkStoreAddress,
   deleteStorefrontSlide,
   duplicateStorefrontSlide,
   getStorefrontSettings,
+  updateStoreAddress,
   updateStorefrontSettings,
   updateStorefrontSlide,
   uploadStorefrontAsset,
@@ -341,6 +343,15 @@ export async function handleInventoryRoutes(
 
   if (key === "PATCH inventory/storefront") {
     return updateStorefrontSettings(supabase, ctx, storefrontSettingsSchema.parse(await request.json()));
+  }
+
+  if (key === "GET inventory/storefront/address") {
+    return checkStoreAddress(supabase, ctx, request.nextUrl.searchParams.get("slug") ?? "");
+  }
+
+  if (key === "PATCH inventory/storefront/address") {
+    const body = (await request.json().catch(() => ({}))) as { slug?: unknown };
+    return updateStoreAddress(supabase, ctx, body.slug);
   }
 
   if (key === "POST inventory/storefront/logo") {

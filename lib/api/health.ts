@@ -7,7 +7,7 @@ export type SystemHealth = {
   api: "Healthy";
   database: "Healthy" | "Error";
   redis: "Healthy" | "Warning" | "Disabled";
-  jobRunner: "database" | "redis";
+  jobRunner: "database" | "redis" | "none";
   jobs: "Healthy" | "Warning" | "Unknown";
   shopify: "Healthy" | "Warning";
   indiaPost: "Healthy" | "Warning" | "Error";

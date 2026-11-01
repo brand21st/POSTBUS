@@ -16,6 +16,7 @@ export type PackingPartyInput = {
   name?: string | null;
   line1?: string | null;
   line2?: string | null;
+  line3?: string | null;
   city?: string | null;
   district?: string | null;
   state?: string | null;
@@ -85,11 +86,12 @@ export function packingParty(input: PackingPartyInput, role: "receiver" | "sende
     lines: officialAddressLines({
       line1,
       line2: input.line2,
+      line3: input.line3,
       city,
       state,
       pin,
     }),
-    street: [line1, (input.line2 ?? "").trim()].filter(Boolean).join(", "),
+    street: [line1, (input.line2 ?? "").trim(), (input.line3 ?? "").trim()].filter(Boolean).join(", "),
     city,
     state,
     pincode: pin,
@@ -116,11 +118,12 @@ export function packingPartyForSlip(input: PackingPartyInput, role: "receiver" |
     lines: officialAddressLines({
       line1: cleanText(input.line1),
       line2: cleanText(input.line2),
+      line3: cleanText(input.line3),
       city: cleanText(input.city),
       state: cleanText(input.state),
       pin: /^\d{6}$/.test(pin) ? pin : "",
     }),
-    street: [cleanText(input.line1), cleanText(input.line2)].filter(Boolean).join(", "),
+    street: [cleanText(input.line1), cleanText(input.line2), cleanText(input.line3)].filter(Boolean).join(", "),
     city: cleanText(input.city),
     district: cleanText(input.district),
     state: cleanText(input.state),
@@ -181,6 +184,7 @@ export function packingCustomerFromShopifyAddress(
     name: String(shopifyAddress?.name || customer?.name || "").trim() || null,
     line1: text(shopifyAddress?.line1) ?? text(shopifyAddress?.address1),
     line2: text(shopifyAddress?.line2) ?? text(shopifyAddress?.address2),
+    line3: text(shopifyAddress?.line3),
     city: text(shopifyAddress?.city),
     state: text(shopifyAddress?.state) ?? text(shopifyAddress?.province),
     pincode: text(shopifyAddress?.pincode) ?? text(shopifyAddress?.zip),

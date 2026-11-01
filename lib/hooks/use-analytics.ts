@@ -22,7 +22,7 @@ export function useAnalytics() {
     refetchOnWindowFocus: true,
     staleTime: 0,
     enabled:
-      me.data?.subscription?.status === "TRIAL" ||
+      Boolean(me.data?.subscription?.trial) ||
       (me.data?.subscription?.features ?? []).includes(FEATURE.analytics),
   });
 

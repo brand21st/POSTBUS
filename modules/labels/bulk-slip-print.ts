@@ -59,11 +59,10 @@ export async function mergeSameSizePdfs(pdfs: Uint8Array[]) {
   };
 }
 
-export async function printBulkShippingSlips(
+export async function prepareBulkShippingSlips(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  ids: string[],
-  options?: { idempotencyKey?: string | null }
+  ids: string[]
 ) {
   if (!ids.length) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Select shipping slips to print.");
@@ -130,6 +129,16 @@ export async function printBulkShippingSlips(
   if (!first) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Select shipping slips to print.");
   }
+  return { merged, rendered, shipmentIds, first };
+}
+
+export async function printBulkShippingSlips(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  ids: string[],
+  options?: { idempotencyKey?: string | null }
+) {
+  const { merged, rendered, shipmentIds, first } = await prepareBulkShippingSlips(supabase, ctx, ids);
   const members: LabelSheetMember[] = rendered.map((row) => ({
     orderId: row.orderId || row.shipmentId,
     shipmentId: row.shipmentId,

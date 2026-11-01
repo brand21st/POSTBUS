@@ -35,8 +35,18 @@ describe("drain lanes", () => {
 
   it("includes support-ingest in the other drain lane", () => {
     expect(OTHER_JOB_TYPES).toContain("support-ingest");
+    expect(OTHER_JOB_TYPES).toContain("woocommerce-sync");
+    expect(OTHER_JOB_TYPES).toContain("woocommerce-tracking");
+    expect(OTHER_JOB_TYPES).toContain("bulk-excel-import");
     expect(parseJobTypes("support-ingest")).toEqual(["support-ingest"]);
     expect(drainLaneName(["support-ingest"])).toBe("other");
+    expect(drainLaneName(["bulk-excel-import"])).toBe("other");
+  });
+
+  it("keeps accounting jobs off the booking lane", () => {
+    expect(OTHER_JOB_TYPES).toContain("cod-report-extract");
+    expect(OTHER_JOB_TYPES).toContain("gst-draft");
+    expect(drainLaneName(["cod-report-extract"])).toBe("other");
   });
 
   it("uses concurrency 4 when no bookings are in the batch", () => {

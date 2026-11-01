@@ -20,6 +20,7 @@ import {
 import { vachatAddressParam, vachatAmountParam, vachatMerchantTemplateFields, vachatSingleLine } from "@/modules/vachat/notice-fields";
 import { readVachatTemplateCatalog } from "@/modules/vachat/templates";
 import { otpTemplateDecision } from "@/lib/auth/otp/template-policy";
+import { platformTemplateDecision } from "@/modules/vachat/platform-template-policy";
 
 export const VACHAT_DEFAULT_TEST_PHONE = "918618456029";
 export const VACHAT_PLATFORM_WEBHOOK_EVENTS = ["message.status_updated", "message.received"] as const;
@@ -451,6 +452,53 @@ export async function sendVachatAuthenticationTemplate(input: {
   if (!res.ok) {
     logError("vachat.auth_template.failed", { status: res.status });
     throw new Error("vachat_auth_send_failed");
+  }
+  const json = (await res.json().catch(() => null)) as { data?: { message_id?: string } } | null;
+  return { sent: true as const, messageId: json?.data?.message_id ?? null };
+}
+
+/**
+ * Platform VaChat UTILITY/MARKETING template. Do not use AUTHENTICATION (OTP) templates.
+ */
+export async function sendVachatPlatformTemplate(input: {
+  to: string;
+  templateName: string;
+  language?: string;
+  bodyParams: string[];
+}) {
+  const platform = await getPlatformVachatConfig();
+  const templateName = input.templateName.trim();
+  if (!isPlatformVachatActive(platform) || !templateName) {
+    logError("vachat.platform_template.unavailable", {
+      reason: isPlatformVachatActive(platform) ? "template_missing" : "platform_inactive",
+    });
+    throw new Error("vachat_platform_unavailable");
+  }
+  const catalog = await loadVachatTemplateCatalog(platform.apiBaseUrl, platform.apiKey);
+  const decision = platformTemplateDecision(templateName, catalog);
+  if (!decision.allow) {
+    logError("vachat.platform_template.rejected", { reason: decision.reason });
+    throw new Error(`vachat_platform_${decision.reason}`);
+  }
+  const recipient = vachatRecipientE164(input.to);
+  const language = (decision.language || input.language || "en").trim() || "en";
+  const res = await fetch(`${platform.apiBaseUrl.replace(/\/$/, "")}/api/v1/messages`, {
+    method: "POST",
+    headers: vachatHeaders(platform.apiKey),
+    body: JSON.stringify({
+      to: recipient,
+      type: "template",
+      template: {
+        name: templateName,
+        language,
+        params: { body: input.bodyParams },
+      },
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    logError("vachat.platform_template.failed", { status: res.status });
+    throw new Error("vachat_platform_send_failed");
   }
   const json = (await res.json().catch(() => null)) as { data?: { message_id?: string } } | null;
   return { sent: true as const, messageId: json?.data?.message_id ?? null };

@@ -228,13 +228,14 @@ export function indiaPostLabelPaymentFields(paymentMode?: string | null, codAmou
 export function indiaPostLabelPartyLines(input: {
   line1?: string | null;
   line2?: string | null;
+  line3?: string | null;
   city?: string | null;
   state?: string | null;
   pin?: string | null;
   mobile?: string | null;
   paymentLabel?: string | null;
 }) {
-  const street = [input.line1, input.line2]
+  const street = [input.line1, input.line2, input.line3]
     .map((value) => (value ?? "").trim())
     .filter((value) => value.length > 0 && !/^registered\s*pickup$/i.test(value));
   const phone = input.mobile ? `Ph:${input.mobile}` : "";
@@ -318,6 +319,7 @@ export function indiaPostDomesticLabelPayload(input: {
   recipientMobile?: string | null;
   recipientLine1: string;
   recipientLine2?: string | null;
+  recipientLine3?: string | null;
   recipientCity: string;
   recipientState: string;
   recipientPin: string;
@@ -343,6 +345,7 @@ export function indiaPostDomesticLabelPayload(input: {
   const receiverLines = indiaPostLabelPartyLines({
     line1: input.recipientLine1,
     line2: input.recipientLine2,
+    line3: input.recipientLine3,
     city: input.recipientCity,
     state: input.recipientState,
     pin: input.recipientPin,

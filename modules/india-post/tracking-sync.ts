@@ -1,7 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { env } from "@/lib/env";
+import { logError, logInfo } from "@/lib/logger";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { TRACKING_POLL_STATUSES } from "@/modules/india-post/apply-tracking";
+import { isIndiaPostEventDownloadOpenForOrg } from "@/modules/india-post/event-download-flags";
+import { evaluateTrackingAuthHold } from "@/modules/india-post/tracking-auth-hold";
 
 const OPEN_JOB_STATUSES = ["QUEUED", "PENDING", "RUNNING", "RETRYING"];
 
@@ -35,11 +38,19 @@ export function trackingSyncUnscannedCutoffIso(now = Date.now()) {
   return new Date(now - trackingSyncUnscannedIntervalMs()).toISOString();
 }
 
+/**
+ * Polling due-clock. `last_tracked_at` records the last tracking attempt that
+ * should pause another CEPT call, including accepted empty lookups and
+ * non-retryable rejections. It is not proof that scans were synchronized.
+ * `last_event_at` remains the occurrence time of the latest ingested event.
+ */
 export function trackingSyncDueFilter(now = Date.now()) {
   const cutoff = trackingSyncCutoffIso(now);
   const unscannedCutoff = trackingSyncUnscannedCutoffIso(now);
   return `last_tracked_at.is.null,last_tracked_at.lt.${cutoff},and(last_event_at.is.null,last_tracked_at.lt.${unscannedCutoff})`;
 }
+
+const DUPLICATE_ENQUEUE_STATUSES = ["QUEUED", "PENDING"];
 
 export async function organizationHasOpenTrackingSync(
   supabase: SupabaseClient,
@@ -55,12 +66,73 @@ export async function organizationHasOpenTrackingSync(
   return Boolean(data?.length);
 }
 
-export async function enqueueOrgTrackingSyncIfIdle(
+/** Best-effort collapse of check-then-insert races. Does not cancel RUNNING continuation jobs. */
+export async function cancelNewerDuplicateQueuedTrackingSync(
   supabase: SupabaseClient,
   organizationId: string
 ) {
+  const { data } = await supabase
+    .from("background_jobs")
+    .select("id, created_at, status")
+    .eq("organization_id", organizationId)
+    .eq("job_type", "tracking-sync")
+    .in("status", DUPLICATE_ENQUEUE_STATUSES)
+    .order("created_at", { ascending: true })
+    .limit(10);
+  const rows = (data ?? []) as { id: string; created_at?: string | null }[];
+  if (rows.length < 2) {
+    return { kept: rows[0]?.id ?? null, cancelled: 0 };
+  }
+  let cancelled = 0;
+  for (const row of rows.slice(1)) {
+    const { error } = await supabase
+      .from("background_jobs")
+      .update({
+        status: "CANCELLED",
+        last_error_code: "DUPLICATE_TRACKING_SYNC",
+        last_error: "Duplicate tracking-sync enqueue lost the race.",
+      })
+      .eq("id", row.id)
+      .eq("organization_id", organizationId)
+      .in("status", DUPLICATE_ENQUEUE_STATUSES);
+    if (!error) cancelled += 1;
+  }
+  return { kept: rows[0].id, cancelled };
+}
+
+export async function enqueueOrgTrackingSyncIfIdle(
+  supabase: SupabaseClient,
+  organizationId: string,
+  connection?: {
+    last_verified_at?: string | null;
+    last_refreshed_at?: string | null;
+  }
+) {
   if (await organizationHasOpenTrackingSync(supabase, organizationId)) {
     return { enqueued: false, reason: "open-job" as const };
+  }
+  let hold;
+  try {
+    hold = await evaluateTrackingAuthHold(supabase, {
+      organizationId,
+      lastVerifiedAt: connection?.last_verified_at,
+      lastRefreshedAt: connection?.last_refreshed_at,
+    });
+  } catch (error) {
+    logError("india_post.tracking.auth_hold_unavailable", {
+      organizationId,
+      message: error instanceof Error ? error.message : "hold check failed",
+    });
+    return { enqueued: false, reason: "hold-check-failed" as const };
+  }
+  if (hold.blocked) {
+    logInfo("india_post.tracking.auth_hold", {
+      organizationId,
+      reason: hold.reason,
+      strikeCount: hold.strikeCount,
+      cooldownUntil: hold.cooldownUntil,
+    });
+    return { enqueued: false, reason: "auth-hold" as const, cooldownUntil: hold.cooldownUntil };
   }
   await createBackgroundJob(supabase, {
     organizationId,
@@ -68,7 +140,8 @@ export async function enqueueOrgTrackingSyncIfIdle(
     entityType: "organization",
     entityId: organizationId,
   });
-  return { enqueued: true, reason: "queued" as const };
+  await cancelNewerDuplicateQueuedTrackingSync(supabase, organizationId);
+  return { enqueued: true, reason: hold.reason === "probe" ? ("probe" as const) : ("queued" as const) };
 }
 
 export async function enqueueDueTrackingSyncJobs(supabase: SupabaseClient) {
@@ -84,13 +157,14 @@ export async function enqueueDueTrackingSyncJobs(supabase: SupabaseClient) {
     if (enqueued >= limit) break;
     const { data: connection } = await supabase
       .from("india_post_connections")
-      .select("id, status, encrypted_username")
+      .select("id, status, encrypted_username, last_verified_at, last_refreshed_at")
       .eq("organization_id", organizationId)
       .maybeSingle();
     if (!connection || (connection.status !== "CONNECTED" && !connection.encrypted_username)) {
       continue;
     }
-    const result = await enqueueOrgTrackingSyncIfIdle(supabase, organizationId);
+    if (!isIndiaPostEventDownloadOpenForOrg(organizationId)) continue;
+    const result = await enqueueOrgTrackingSyncIfIdle(supabase, organizationId, connection);
     if (result.enqueued) enqueued += 1;
   }
   return { enqueued, considered: orgIds.length };

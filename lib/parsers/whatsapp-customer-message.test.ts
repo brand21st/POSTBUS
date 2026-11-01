@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   applyWhatsAppCustomerFields,
+  countAppliedWhatsAppFields,
   fieldsFromUnknown,
   parseWhatsAppCustomerMessage,
+  unsetIfDefault,
 } from "@/lib/parsers/whatsapp-customer-message";
 
 const SAMPLE = `Name: Rahul
@@ -65,6 +67,17 @@ describe("parseWhatsAppCustomerMessage", () => {
     expect(parsed.fields.pincode).toBe("680001");
   });
 
+  it("lets extract fill state when the form still has the untouched default", () => {
+    expect(unsetIfDefault("Kerala", false, "Kerala")).toBe("");
+    expect(unsetIfDefault("Kerala", true, "Kerala")).toBe("Kerala");
+    expect(unsetIfDefault("Maharashtra", false, "Kerala")).toBe("Maharashtra");
+    const current = { state: unsetIfDefault("Kerala", false, "Kerala") };
+    const applied = applyWhatsAppCustomerFields(current, { state: "Maharashtra" });
+    expect(applied.state).toBe("Maharashtra");
+    expect(countAppliedWhatsAppFields(current, applied)).toBe(1);
+    expect(countAppliedWhatsAppFields({ name: "Rahul" }, { name: "Rahul" })).toBe(0);
+  });
+
   it("does not overwrite filled fields", () => {
     const parsed = parseWhatsAppCustomerMessage(SAMPLE);
     const applied = applyWhatsAppCustomerFields(
@@ -74,6 +87,28 @@ describe("parseWhatsAppCustomerMessage", () => {
     expect(applied.name).toBe("Existing");
     expect(applied.phone).toBe("9876543210");
     expect(applied.city).toBe("Kozhikode");
+  });
+
+  it("replaces filled customer fields when overwrite is on", () => {
+    const current = {
+      name: "goutham",
+      phone: "8129760955",
+      line1: "madapally house",
+      line2: "mall house",
+      pincode: "673592",
+      city: "Wayanad",
+    };
+    const parsed = parseWhatsAppCustomerMessage(`Name: rahul
+Phone: 8848772371
+Address: kollathil house, township waynad
+PIN: 673593`);
+    const next = applyWhatsAppCustomerFields({}, parsed.fields, { overwrite: true });
+    expect(next.name).toBe("rahul");
+    expect(next.phone).toBe("8848772371");
+    expect(next.line1).toMatch(/kollathil/i);
+    expect(next.pincode).toBe("673593");
+    expect(next.line2).toBeUndefined();
+    expect(countAppliedWhatsAppFields(current, { ...current, ...next })).toBeGreaterThan(0);
   });
 
   it("returns empty fields for unstructured text", () => {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { WhatsappIcon } from "@/components/layout/whatsapp-support-button";
 import { buttonVariants } from "@/components/ui/button";
 import {
   BILLING_ANNOUNCEMENT_COPY,
@@ -8,6 +9,7 @@ import {
   type BillingAnnouncementPhase,
   formatAnnouncementPlans,
 } from "@/lib/dashboard/billing-announcement";
+import { siteConfig } from "@/lib/site-config";
 import { cn } from "@/lib/utils";
 
 export function BillingAnnouncementBar({
@@ -44,6 +46,17 @@ export function BillingAnnouncementBar({
         >
           {BILLING_ANNOUNCEMENT_CTA_LABEL}
         </Link>
+      </div>
+      <div className="mt-2 flex justify-center">
+        <a
+          href={`https://wa.me/${siteConfig.supportWhatsapp}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#25D366] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1ebe5d] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#25D366]"
+        >
+          <WhatsappIcon className="size-4" />
+          WhatsApp Support
+        </a>
       </div>
       {catalog.length > 0 ? (
         <ul className="mt-2 flex flex-wrap justify-center gap-1.5" aria-label="PostBus plans">

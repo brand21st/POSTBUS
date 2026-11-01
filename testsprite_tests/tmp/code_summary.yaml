@@ -1,0 +1,82 @@
+version: 1
+project: PostBus
+product_url: https://www.postbus.in
+local_dev: http://localhost:3000
+type: fullstack
+tech_stack:
+  languages: [TypeScript]
+  frontend: [Next.js 16 App Router, React 19, Tailwind CSS 4, TanStack Query, TanStack Table]
+  backend: [Next.js Route Handlers, Zod]
+  data: [Supabase Auth, Postgres, Storage, RLS]
+  jobs: [Postgres-backed background_jobs default, optional Redis + BullMQ]
+  payments: [Razorpay Orders + webhooks]
+  observability: [Sentry, PostHog]
+  pdf: [pdf-lib, pdfjs-dist, "@napi-rs/canvas"]
+  print: [print-agent Node process on packing PC]
+features:
+  - name: Marketing site
+    description: Public marketing, pricing, SEO landing pages for India Post shipping, Shopify, WooCommerce, tracking, legal.
+    routes: ["/", "/features", "/pricing", "/contact", "/about", "/privacy", "/terms", "/india-post-shipping", "/shopify-india-post", "/woocommerce-india-post", "/india-post-tracking", "/india-post-shipping-label", "/india-post-customer-id"]
+  - name: Authentication
+    description: Email/password via Supabase Auth; register, login, forgot/reset password; cookie sessions via proxy.ts. WhatsApp OTP planned behind flag, not production default.
+    routes: ["/login", "/register", "/forgot-password", "/reset-password"]
+  - name: Onboarding
+    description: Workspace onboarding after signup; GET /api/v1/me auto-provisions organization.
+    routes: ["/onboarding"]
+  - name: Merchant dashboard
+    description: Tenant-scoped shipping operations workspace with role permissions.
+    routes: ["/dashboard"]
+  - name: Orders
+    description: List, detail, create manual orders, bulk status, CSV export, edit address/weights/service. Sources Shopify, Manual, API, WooCommerce, WhatsApp.
+    routes: ["/dashboard/orders", "/dashboard/orders/new", "/dashboard/orders/[id]", "/dashboard/orders/customer-links"]
+  - name: Inventory and products
+    description: Product catalog, stock movements (reserve/commit/release/RTO return), storefront products.
+    routes: ["/dashboard/inventory"]
+  - name: Shipments and India Post booking
+    description: Create shipments, CEPT booking (Speed Post Parcel Domestic, Business Parcel), bulk Excel booking, retry, dimensions. Quota consumed only on successful booking.
+    routes: ["/dashboard/shipments", "/dashboard/shipments/[id]"]
+  - name: NDR and RTO
+    description: Operational view of failed delivery and return-to-origin from CEPT tracking. Read-only vs carrier (no reattempt/address-change APIs).
+    routes: ["/dashboard/ndr-rto"]
+  - name: Labels
+    description: Official India Post labels, custom packing labels, templates, multi-print, packing slips, Unicode address layout.
+    routes: ["/dashboard/labels", "/dashboard/labels/customize", "/dashboard/labels/templates", "/dashboard/labels/multi-print"]
+  - name: Invoices
+    description: Generate, retry, regenerate, customize invoice PDFs.
+    routes: ["/dashboard/invoices", "/dashboard/invoices/customize"]
+  - name: Manifests
+    description: Create and manage India Post manifests.
+    routes: ["/dashboard/manifests"]
+  - name: Tracking pages
+    description: Public track UI, branded subdomain tracking pages, banners, publish/unpublish.
+    routes: ["/dashboard/tracking", "/track", "{subdomain}.postbus.in"]
+  - name: Automation
+    description: Toggles for Shopify sync, shipment creation, booking, labels, manifests, tracking sync, Shopify fulfillment, Wati notifications, auto label printing.
+    routes: ["/dashboard/automation"]
+  - name: Support Center
+    description: Merchant customer-support inbox/tickets with WhatsApp ingest, identity, templates, notes.
+    routes: ["/dashboard/support"]
+  - name: Integrations
+    description: Shopify OAuth, India Post Customer ID/CEPT, Wati, VaChat/PostBus WhatsApp.
+    routes: ["/dashboard/integrations", "/dashboard/integrations/shopify", "/dashboard/integrations/india-post", "/dashboard/integrations/wati", "/dashboard/integrations/vachat", "/dashboard/integrations/postbus-whatsapp"]
+  - name: Billing
+    description: Razorpay one-time period payments, plans, usage/order quota, invoices, trial. Super Admin catalog and account ops.
+    routes: ["/dashboard/billing", "/admin"]
+  - name: Storefront
+    description: Public WhatsApp store pages for workspace products, quote, checkout-adjacent order flow.
+    routes: ["/store/[workspace]", "/order/[...parts]"]
+  - name: Super Admin
+    description: Platform accounts, subscriptions, payments, plans, revenue, usage, audit, Razorpay settings, trial, tutorials, AI credits.
+    routes: ["/admin"]
+  - name: Print agent
+    description: Local Windows packing-PC agent claims print jobs and silently prints label PDFs.
+    files: ["print-agent/"]
+  - name: Background jobs
+    description: shopify-sync, shipment-booking, label-generation, tracking-sync, webhooks, invoices, notifications, support-ingest.
+    routes: ["/api/cron/jobs", "/api/cron/billing", "/api/health"]
+known_constraints:
+  - PostBus does not include India Post postage; merchants use their own Customer ID.
+  - India Post CEPT has no NDR action endpoints (no reattempt/request RTO).
+  - Platform Razorpay is Domain A billing only; not merchant store checkout.
+  - Order quota consumed on successful India Post booking only.
+  - Multi-tenant RLS via is_org_member; Super Admin via platform_admins.

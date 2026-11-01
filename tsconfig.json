@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -19,17 +23,50 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": [
+        "./*"
+      ]
     }
   },
   "include": [
     "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "modules/**/*.ts",
+    "modules/**/*.tsx",
+    "lib/**/*.ts",
+    "lib/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "types/**/*.ts",
+    "workers/**/*.ts",
+    "proxy.ts",
+    "instrumentation.ts",
+    "instrumentation-client.ts",
+    "sentry.server.config.ts",
+    "sentry.edge.config.ts",
+    "next.config.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts",
-    "modules/labels/bwip-js.d.ts"
+    ".next-verify/types/**/*.ts"
   ],
-  "exclude": ["node_modules", ".next/standalone", ".next/server", ".next/dev", ".next/cache", "**/*.test.ts", "scripts/**/*.mts", "print-agent-desktop"]
+  "exclude": [
+    "node_modules",
+    ".next/standalone",
+    ".next/server",
+    ".next/static",
+    ".next/cache",
+    ".next-verify/standalone",
+    ".next-verify/server",
+    ".next-verify/static",
+    ".next-verify/cache",
+    ".worktrees",
+    "print-agent-desktop",
+    "print-agent",
+    "scripts",
+    "tests",
+    "testsprite_tests",
+    "**/*.test.ts",
+    "**/*.pg.test.ts"
+  ]
 }

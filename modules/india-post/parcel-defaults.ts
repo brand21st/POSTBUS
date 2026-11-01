@@ -112,10 +112,11 @@ function fillMeasure(current: number, setting: number | null, fallback: number) 
   return fallback;
 }
 
-/** Fill empty parcel size/weight from workspace Settings, then India Post minima. */
+/** Fill empty parcel size from merchant Settings. Synthetic India Post minima are opt-in and are not used for booking. */
 export function applyWorkspaceParcelDefaults(
   draft: DraftArticle,
-  defaults: WorkspaceParcelDefaults = EMPTY_DEFAULTS
+  defaults: WorkspaceParcelDefaults = EMPTY_DEFAULTS,
+  options?: { syntheticDimensions?: boolean }
 ): DraftArticle {
   const next: DraftArticle = { ...draft };
   if (!(Number(next.weightGrams) > 0)) {
@@ -126,9 +127,10 @@ export function applyWorkspaceParcelDefaults(
   if (!isParcelArticle(next.serviceCode, next.weightGrams)) {
     return next;
   }
-  next.lengthCm = fillMeasure(next.lengthCm, defaults.lengthCm, FALLBACK_PARCEL_LENGTH_CM);
-  next.widthCm = fillMeasure(next.widthCm, defaults.widthCm, FALLBACK_PARCEL_WIDTH_CM);
-  next.heightCm = fillMeasure(next.heightCm, defaults.heightCm, FALLBACK_PARCEL_HEIGHT_CM);
+  const synthetic = options?.syntheticDimensions === true;
+  next.lengthCm = fillMeasure(next.lengthCm, defaults.lengthCm, synthetic ? FALLBACK_PARCEL_LENGTH_CM : 0);
+  next.widthCm = fillMeasure(next.widthCm, defaults.widthCm, synthetic ? FALLBACK_PARCEL_WIDTH_CM : 0);
+  next.heightCm = fillMeasure(next.heightCm, defaults.heightCm, synthetic ? FALLBACK_PARCEL_HEIGHT_CM : 0);
   return next;
 }
 

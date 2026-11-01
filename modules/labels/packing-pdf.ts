@@ -3,7 +3,13 @@ import { drawPaintedText, measurePaintText, wrapPaintText } from "@/modules/labe
 import { isCodPayment } from "@/modules/labels/custom-blocks";
 import { paintMerchantLabel } from "@/modules/labels/layout/pdf-paint";
 import { pagePreset } from "@/modules/labels/page-presets";
-import { labelPageSize, parseLabelTemplate, type LabelTemplate } from "@/modules/labels/template-schema";
+import {
+  fitTemplateToCustomPage,
+  labelPageSize,
+  needsCustomPageFit,
+  parseLabelTemplate,
+  type LabelTemplate,
+} from "@/modules/labels/template-schema";
 
 export type PackingLineItem = {
   title: string;
@@ -133,7 +139,10 @@ export async function drawMerchantFields(
 
 
 export async function renderMerchantLabelPdf(templateInput: unknown, data: PackingLabelData) {
-  const template = parseLabelTemplate(templateInput);
+  const parsed = parseLabelTemplate(templateInput);
+  const template = needsCustomPageFit(parsed.page)
+    ? { ...parsed, elements: fitTemplateToCustomPage(parsed.elements, parsed.page) }
+    : parsed;
   const pageSize = labelPageSize(template.page);
   const width = pageSize.widthPt > 0 ? pageSize.widthPt : pagePreset(template.page.paperSize).widthPt;
   const height = pageSize.heightPt > 0 ? pageSize.heightPt : pagePreset(template.page.paperSize).heightPt;

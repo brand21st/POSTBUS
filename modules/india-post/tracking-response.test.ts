@@ -69,7 +69,7 @@ describe("articlesForRequestedBarcodes", () => {
     expect(kept).toHaveLength(1);
   });
 
-  it("keeps a lone article with scans when CEPT labels it differently", () => {
+  it("does not attach a lone article whose article number is different", () => {
     const kept = articlesForRequestedBarcodes(
       [
         {
@@ -79,8 +79,7 @@ describe("articlesForRequestedBarcodes", () => {
       ],
       ["CX075364450IN"]
     );
-    expect(kept).toHaveLength(1);
-    expect(kept[0]?.tracking_details?.[0]?.event).toBe("Item Booked");
+    expect(kept).toHaveLength(0);
   });
 });
 

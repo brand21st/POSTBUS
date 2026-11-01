@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { matchesLabelKindFilter, normalizeLabelKindFilter } from "@/modules/labels/list";
+import { matchesLabelKindFilter, normalizeLabelKindFilter, resolveLabelListSort } from "@/modules/labels/list";
+
+describe("label list sort", () => {
+  it("accepts numeric order-id sorts and ignores junk", () => {
+    expect(resolveLabelListSort("-order_number")).toBe("-order_number");
+    expect(resolveLabelListSort("order_number")).toBe("order_number");
+    expect(resolveLabelListSort("created_at")).toBe("created_at");
+    expect(resolveLabelListSort("amount")).toBeNull();
+    expect(resolveLabelListSort(undefined)).toBeNull();
+  });
+});
 
 describe("label kind filters", () => {
   it("normalizes unknown kinds to ALL", () => {

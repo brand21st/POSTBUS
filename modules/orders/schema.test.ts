@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { orderListQuery } from "@/modules/orders/schema";
 
+describe("orderListQuery sort", () => {
+  it("accepts created_at and order_number directions", () => {
+    expect(orderListQuery.parse({ sort: "order_number" }).sort).toBe("order_number");
+    expect(orderListQuery.parse({ sort: "-order_number" }).sort).toBe("-order_number");
+    expect(orderListQuery.parse({ sort: "created_at" }).sort).toBe("created_at");
+    expect(orderListQuery.parse({ sort: "-created_at" }).sort).toBe("-created_at");
+    expect(orderListQuery.parse({}).sort).toBeUndefined();
+  });
+
+  it("rejects unknown sort values", () => {
+    expect(() => orderListQuery.parse({ sort: "amount" })).toThrow();
+  });
+});
+
 describe("orderListQuery counts", () => {
   it("accepts includeCounts without breaking existing list params", () => {
     const parsed = orderListQuery.parse({

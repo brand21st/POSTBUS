@@ -231,3 +231,18 @@ export function applyWhatsAppCustomerFields<T extends WhatsAppCustomerFields>(
   });
   return next;
 }
+
+export function countAppliedWhatsAppFields(current: WhatsAppCustomerFields, next: WhatsAppCustomerFields) {
+  return FIELD_KEYS.filter((key) => {
+    const after = String(next[key] ?? "").trim();
+    if (!after) return false;
+    return after !== String(current[key] ?? "").trim();
+  }).length;
+}
+
+/** Form defaults like Kerala should not block an extracted state until the merchant picks one. */
+export function unsetIfDefault(value: string | undefined, isDirty: boolean, fallback: string) {
+  const text = String(value ?? "").trim();
+  if (!isDirty && text === fallback) return "";
+  return text;
+}

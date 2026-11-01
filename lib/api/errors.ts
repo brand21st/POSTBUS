@@ -40,12 +40,19 @@ export class AppError extends Error {
   code: ErrorCode;
   status: number;
   details?: unknown;
+  headers?: Record<string, string>;
 
-  constructor(code: ErrorCode, message: string, details?: unknown) {
+  constructor(
+    code: ErrorCode,
+    message: string,
+    details?: unknown,
+    headers?: Record<string, string>
+  ) {
     super(message);
     this.name = "AppError";
     this.code = code;
     this.status = STATUS_BY_CODE[code];
     this.details = details;
+    this.headers = headers;
   }
 }

@@ -230,9 +230,9 @@ function ProductAiStudioPanel({
     return () => clearInterval(timer);
   }, [job?.id, job?.status]);
 
-  useEffect(() => {
-    if (job?.status === "SUCCEEDED" || job?.status === "FAILED") setGenerating(false);
-  }, [job?.status]);
+  if ((job?.status === "SUCCEEDED" || job?.status === "FAILED") && generating) {
+    setGenerating(false);
+  }
 
   const cost = (quote?.creditCost ?? 10) * variations;
   const remaining = credits.data?.remaining ?? 0;

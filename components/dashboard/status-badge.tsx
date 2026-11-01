@@ -1,5 +1,6 @@
 import { ShopifyLogo } from "@/components/brand/shopify-logo";
 import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
+import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
 import { Badge } from "@/components/ui/badge";
 import { titleCase } from "@/lib/format";
 
@@ -42,6 +43,9 @@ const WARNING = new Set([
   "OPENED",
   "UNFULFILLED",
   "PARTIAL",
+  "PAYMENT_PENDING",
+  "NOT_INSTALLED",
+  "READ_ONLY",
 ]);
 
 const ERROR = new Set([
@@ -60,7 +64,7 @@ const ERROR = new Set([
   "EXPIRED",
 ]);
 
-const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY", "WHATSAPP", "CLOSED"]);
+const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY", "WHATSAPP", "WOOCOMMERCE", "CLOSED"]);
 
 /** Order status READY is shown as Unfulfilled until packing/booking starts. */
 export function orderStatusBadgeValue(status?: string | null) {
@@ -100,6 +104,9 @@ export function StatusBadge({ value }: { value?: string | null }) {
 
   if (key === "SHOPIFY") {
     return <ShopifyLogo />;
+  }
+  if (key === "WOOCOMMERCE") {
+    return <WooCommerceLogo className="h-[21px]" />;
   }
   if (key === "WHATSAPP") {
     return <WhatsAppLogo />;

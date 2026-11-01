@@ -32,6 +32,8 @@ const saveSchema = z.object({
       delivered: z.boolean().optional(),
     })
     .optional(),
+  signupWelcomeEnabled: z.boolean().optional(),
+  abandonedSignupEnabled: z.boolean().optional(),
   templates: z
     .object({
       order_confirmation_template_name: z.string().nullable().optional(),
@@ -40,6 +42,8 @@ const saveSchema = z.object({
       in_transit_template_name: z.string().nullable().optional(),
       shipment_delayed_template_name: z.string().nullable().optional(),
       delivered_template_name: z.string().nullable().optional(),
+      signup_welcome_template_name: z.string().nullable().optional(),
+      abandoned_signup_template_name: z.string().nullable().optional(),
       notification_settings: z.record(z.string(), z.boolean()).optional(),
       template_language: z.string().optional(),
     })
@@ -86,24 +90,30 @@ async function vachatApi(
 function templateSyncPayload(body: z.infer<typeof saveSchema>, settings: ReturnType<typeof parseVachatEventSettings>) {
   const templates = body.templates;
   if (!templates) return null;
+  const {
+    signup_welcome_template_name: _signupWelcome,
+    abandoned_signup_template_name: _abandonedSignup,
+    ...orderTemplates
+  } = templates;
   const names = [
-    templates.order_confirmation_template_name,
-    templates.processing_template_name,
-    templates.booked_template_name,
-    templates.in_transit_template_name,
-    templates.shipment_delayed_template_name,
-    templates.delivered_template_name,
+    orderTemplates.order_confirmation_template_name,
+    orderTemplates.processing_template_name,
+    orderTemplates.booked_template_name,
+    orderTemplates.in_transit_template_name,
+    orderTemplates.shipment_delayed_template_name,
+    orderTemplates.delivered_template_name,
   ];
   const hasNamedTemplate = names.some((name) => typeof name === "string" && name.trim());
   if (!hasNamedTemplate) return null;
   return {
-    ...templates,
+    ...orderTemplates,
     notification_settings: settings,
   };
 }
 
 export async function loadPlatformVachatSettings() {
-  const status = publicPlatformVachatStatus(await getPlatformVachatConfig());
+  const config = await getPlatformVachatConfig();
+  const status = publicPlatformVachatStatus(config);
   let identity: {
     display_phone: string | null;
     verified_name: string | null;
@@ -135,7 +145,16 @@ export async function loadPlatformVachatSettings() {
       templates = { approved_templates: [] };
     }
   }
-  return { ...status, identity, templates, templatesLoadError };
+  return {
+    ...status,
+    identity,
+    templates: {
+      ...(templates ?? {}),
+      signup_welcome_template_name: config.signupWelcomeTemplateName || null,
+      abandoned_signup_template_name: config.abandonedSignupTemplateName || null,
+    },
+    templatesLoadError,
+  };
 }
 
 export async function savePlatformVachatSettings(
@@ -152,6 +171,8 @@ export async function savePlatformVachatSettings(
     !body.clearKey &&
     body.enabled === undefined &&
     !body.eventSettings &&
+    body.signupWelcomeEnabled === undefined &&
+    body.abandonedSignupEnabled === undefined &&
     !body.templates &&
     body.apiBaseUrl == null &&
     body.lastTestPhone == null;
@@ -177,6 +198,20 @@ export async function savePlatformVachatSettings(
   }
   if (typeof body.lastTestPhone === "string") {
     patch.vachat_last_test_phone = body.lastTestPhone.trim() || null;
+  }
+  if (typeof body.signupWelcomeEnabled === "boolean") {
+    patch.vachat_signup_welcome_enabled = body.signupWelcomeEnabled;
+  }
+  const signupTemplateName = body.templates?.signup_welcome_template_name;
+  if (signupTemplateName !== undefined) {
+    patch.vachat_signup_welcome_template_name = signupTemplateName?.trim() || null;
+  }
+  if (typeof body.abandonedSignupEnabled === "boolean") {
+    patch.vachat_abandoned_signup_enabled = body.abandonedSignupEnabled;
+  }
+  const abandonedTemplateName = body.templates?.abandoned_signup_template_name;
+  if (abandonedTemplateName !== undefined) {
+    patch.vachat_abandoned_signup_template_name = abandonedTemplateName?.trim() || null;
   }
   const { error } = await supabase.from("platform_settings").update(patch).eq("id", 1);
   if (error) {

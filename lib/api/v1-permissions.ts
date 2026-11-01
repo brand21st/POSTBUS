@@ -54,6 +54,10 @@ export function permissionForTenantRoute(
     return method === "GET" ? "orders.read" : "orders.write";
   }
 
+  if (root === "sales-invoices" || root === "sales-invoice-settings") {
+    return method === "GET" ? "orders.read" : "orders.write";
+  }
+
   if (root === "invoices") {
     if (method === "POST" && (slugs[2] === "retry" || slugs[2] === "regenerate")) return "orders.write";
     return "orders.read";
@@ -113,6 +117,8 @@ export function permissionForTenantRoute(
     const readable =
       key === "GET integrations" ||
       key === "GET integrations/shopify" ||
+      key === "GET integrations/woocommerce" ||
+      key === "GET integrations/woocommerce/deliveries" ||
       key === "GET integrations/india-post" ||
       key === "GET integrations/india-post/offices" ||
       key === "GET integrations/wati" ||
@@ -151,15 +157,19 @@ export function permissionForTenantRoute(
   if (key === "PATCH settings/policies") return "settings.manage";
   if (root === "settings") return "settings.manage";
 
-  if (root === "api-keys") return "api_keys.manage";
+  if (root === "api-keys" || root === "merchant-api") return "api_keys.manage";
 
-  if (path === "webhooks") return "webhooks.manage";
+  if (root === "webhooks") return "webhooks.manage";
 
   if (path === "audit-logs") return "audit.read";
 
   if (path === "search") return "orders.read";
 
   if (root === "shipment-presets") {
+    return method === "GET" ? "orders.read" : "orders.write";
+  }
+
+  if (root === "order-defaults") {
     return method === "GET" ? "orders.read" : "orders.write";
   }
 

@@ -54,6 +54,18 @@ describe("India Post article validation", () => {
     expect(payload.receiver_add_line_2).toBe("");
   });
 
+  it("wraps a long receiver line 2 onto line 3 instead of failing the 80-character cap", () => {
+    const longLine2 =
+      "Near the old bus stand opposite State Bank of India, Ward 4, behind the municipal office complex";
+    const draft = baseDraft({ receiverLine2: longLine2 });
+    expect(validateIndiaPostArticle(draft).some((issue) => issue.field === "receiver_add_line_2")).toBe(false);
+    const payload = serializeIndiaPostBookingArticle(assertValidatedArticle(draft));
+    expect(String(payload.receiver_add_line_2).length).toBeGreaterThanOrEqual(3);
+    expect(String(payload.receiver_add_line_2).length).toBeLessThanOrEqual(80);
+    expect(String(payload.receiver_add_line_3).length).toBeGreaterThanOrEqual(3);
+    expect(String(payload.receiver_add_line_3).length).toBeLessThanOrEqual(80);
+  });
+
   it("maps sender_mobile_no from the organization phone, not the customer phone", () => {
     const issues = validateIndiaPostArticle(baseDraft({ senderMobile: "" }));
     expect(issues.some((issue) => issue.field === "sender_mobile_no")).toBe(true);
@@ -67,6 +79,11 @@ describe("India Post article validation", () => {
     expect(issues.filter((issue) => /mobile/.test(issue.field))).toEqual([]);
     const payload = serializeIndiaPostBookingArticle(assertValidatedArticle(baseDraft({ senderMobile: "+91 98765 43210" })));
     expect(payload.sender_mobile_no).toBe("9876543210");
+  });
+
+  it("rejects a zero-padded receiver pincode", () => {
+    const issues = validateIndiaPostArticle(baseDraft({ receiverPin: "000000" }));
+    expect(issues.some((issue) => issue.field === "receiver_pincode")).toBe(true);
   });
 
   it("rejects a non-digit receiver pincode before queueing", () => {

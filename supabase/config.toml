@@ -2,7 +2,9 @@
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
-project_id = "POST_BUS_APP"
+# Alphanumeric local compose project. POST_BUS_APP produced Kong DNS failures
+# (supabase_auth_post_bus_app) and a crash-loop after unclean WSL stops.
+project_id = "postbuslocal"
 
 [api]
 enabled = true
@@ -32,7 +34,9 @@ enabled = false
 
 [db]
 # Port to use for the local database URL.
-port = 54322
+# 54322 is already taken on this Windows host by an unrelated postgres.exe.
+# Isolated docker Postgres is bound here instead. API remains 54321.
+port = 54332
 # Port used by db diff command to initialize the shadow database.
 shadow_port = 54320
 # Maximum amount of time to wait for health check when starting the local database.

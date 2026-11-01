@@ -101,12 +101,14 @@ export function CoverStudio({
   const [variants, setVariants] = useState<Array<"desktop" | "mobile">>(["desktop", "mobile"]);
   const [variationCount, setVariationCount] = useState(1);
 
-  useEffect(() => {
-    if (coverQuery.data) {
-      setCover(coverQuery.data);
-      if (coverQuery.data.imageUrl) setOriginalUrl((current) => current ?? coverQuery.data.imageUrl);
+  const [appliedCover, setAppliedCover] = useState(coverQuery.data);
+  if (coverQuery.data && coverQuery.data !== appliedCover) {
+    setAppliedCover(coverQuery.data);
+    setCover(coverQuery.data);
+    if (coverQuery.data.imageUrl) {
+      setOriginalUrl((current) => current ?? coverQuery.data.imageUrl);
     }
-  }, [coverQuery.data]);
+  }
 
   useEffect(() => {
     if (!job || (job.status !== "QUEUED" && job.status !== "RUNNING")) return;
@@ -116,9 +118,9 @@ export function CoverStudio({
     return () => clearInterval(timer);
   }, [job?.id, job?.status]);
 
-  useEffect(() => {
-    if (job?.status === "SUCCEEDED" || job?.status === "FAILED") setGenerating(false);
-  }, [job?.status]);
+  if ((job?.status === "SUCCEEDED" || job?.status === "FAILED") && generating) {
+    setGenerating(false);
+  }
 
   function pushHistory(next: Partial<CoverRecord>) {
     setHistory((current) => [...current.slice(-19), cover]);

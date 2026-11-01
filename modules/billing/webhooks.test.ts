@@ -12,6 +12,7 @@ type PaymentRow = {
   razorpay_payment_id?: string;
   razorpay_order_id?: string;
   billing_cycle?: string;
+  payment_purpose?: string;
   status: string;
 };
 
@@ -71,6 +72,7 @@ function fakeSupabase(state: {
                 ? {
                     id: found.razorpay_payment_id ?? found.razorpay_order_id,
                     billing_cycle: found.billing_cycle ?? null,
+                    payment_purpose: found.payment_purpose ?? null,
                     razorpay_payment_id: found.razorpay_payment_id ?? null,
                     razorpay_order_id: found.razorpay_order_id ?? null,
                   }
@@ -252,6 +254,7 @@ describe("razorpay webhook idempotency", () => {
       subscription: liveSubscription({ razorpay_order_id: "order_sub" }),
       payments: [
         { razorpay_order_id: "order_ai", billing_cycle: "ai_credits", status: "PENDING" },
+        { razorpay_order_id: "order_addon", billing_cycle: "monthly", payment_purpose: "addon", status: "PENDING" },
       ] as PaymentRow[],
       activations: 0,
     };
@@ -260,11 +263,41 @@ describe("razorpay webhook idempotency", () => {
       await classifyPlatformRazorpayPayment(db, { razorpayOrderId: "order_ai", subscriptionMatched: false })
     ).toBe("AI_CREDITS");
     expect(
+      await classifyPlatformRazorpayPayment(db, { razorpayOrderId: "order_addon", subscriptionMatched: true })
+    ).toBe("ADDON");
+    expect(
       await classifyPlatformRazorpayPayment(db, { razorpayOrderId: "order_sub", subscriptionMatched: true })
     ).toBe("SUBSCRIPTION");
     expect(
       await classifyPlatformRazorpayPayment(db, { razorpayOrderId: "order_unknown", subscriptionMatched: false })
     ).toBe("UNMATCHED_PLATFORM");
+  });
+
+  it("does not activate a shipping subscription when an add-on payment is captured", async () => {
+    const state = {
+      subscription: liveSubscription({
+        status: "TRIAL",
+        razorpay_subscription_id: null,
+        razorpay_order_id: "order_ship",
+      }),
+      payments: [
+        { razorpay_order_id: "order_addon", payment_purpose: "addon", billing_cycle: "monthly", status: "PENDING" },
+      ] as PaymentRow[],
+      activations: 0,
+    };
+    const result = await processRazorpayEvent(
+      fakeSupabase(state),
+      {
+        event: "payment.captured",
+        payload: {
+          payment: { entity: { id: "pay_addon", amount: 99900, order_id: "order_addon" } },
+        },
+      },
+      "evt_addon"
+    );
+    expect(result).toEqual({ processed: true });
+    expect(state.subscription?.status).toBe("TRIAL");
+    expect(state.activations).toBe(0);
   });
 
   it("ignores payment.captured when the paid amount does not match the subscription", async () => {

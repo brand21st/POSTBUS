@@ -1,3 +1,4 @@
+import { wrapIndiaPostAddressLines } from "@/modules/india-post/address-lines";
 import { CEPT_BOOKING_FIELD_NAMES } from "@/modules/india-post/article-fields";
 import type { ValidatedArticle } from "@/modules/india-post/article-types";
 import {
@@ -28,10 +29,21 @@ function optionalText(value?: string | null) {
   return text.slice(0, INDIA_POST_ADDRESS_LINE_MAX);
 }
 
+function streetFields(party: { line1: string; line2?: string; line3?: string }) {
+  const street = wrapIndiaPostAddressLines(party.line1, party.line2, party.line3);
+  return {
+    line1: street.line1.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
+    line2: optionalText(street.line2),
+    line3: optionalText(street.line3),
+  };
+}
+
 /** Serializes a validated article into the documented CEPT process-articles object. */
 export function serializeIndiaPostBookingArticle(article: ValidatedArticle) {
   const pickup = article.pickupOrDropoff === "PICKUP";
   const alt = article.altAddressEnabled;
+  const senderStreet = streetFields(article.sender);
+  const receiverStreet = streetFields(article.receiver);
   const payload: Record<string, string | number> = {
     bulk_customer_id: article.customerId,
     contract_id: article.contractId,
@@ -50,9 +62,9 @@ export function serializeIndiaPostBookingArticle(article: ValidatedArticle) {
     instruction_rts: article.instructionRts || "",
     sender_name: article.sender.name.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     sender_company: article.sender.company.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
-    sender_add_line_1: article.sender.line1.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
-    sender_add_line_2: optionalText(article.sender.line2),
-    sender_add_line_3: optionalText(article.sender.line3),
+    sender_add_line_1: senderStreet.line1,
+    sender_add_line_2: senderStreet.line2,
+    sender_add_line_3: senderStreet.line3,
     sender_city: article.sender.city.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     sender_state: optionalText(article.sender.state),
     sender_pincode: article.sender.pincode,
@@ -62,9 +74,9 @@ export function serializeIndiaPostBookingArticle(article: ValidatedArticle) {
     sender_tax_reference: article.sender.taxReference || "",
     receiver_name: article.receiver.name.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     receiver_company: article.receiver.company.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
-    receiver_add_line_1: article.receiver.line1.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
-    receiver_add_line_2: optionalText(article.receiver.line2),
-    receiver_add_line_3: optionalText(article.receiver.line3),
+    receiver_add_line_1: receiverStreet.line1,
+    receiver_add_line_2: receiverStreet.line2,
+    receiver_add_line_3: receiverStreet.line3,
     receiver_city: article.receiver.city.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     receiver_state: optionalText(article.receiver.state),
     receiver_pincode: article.receiver.pincode,

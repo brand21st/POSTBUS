@@ -10,7 +10,7 @@ import {
 export function usePlanEntitlements() {
   const me = useMe();
   const features = me.data?.subscription?.features ?? [];
-  const trial = me.data?.subscription?.status === "TRIAL";
+  const trial = Boolean(me.data?.subscription?.trial);
   const planSlug = me.data?.subscription?.planCode ?? null;
   return {
     loading: me.isLoading,

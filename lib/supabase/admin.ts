@@ -1,10 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 import { env } from "@/lib/env";
+import { assertShopifyDevAdminTarget } from "@/lib/env/shopify-dev-isolation";
 
 export function createAdminClient() {
   if (!env.supabaseUrl || !env.supabaseServiceRoleKey) {
     throw new Error("Supabase service role is not configured.");
   }
+
+  assertShopifyDevAdminTarget({ supabaseUrl: env.supabaseUrl });
 
   return createClient(env.supabaseUrl, env.supabaseServiceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },

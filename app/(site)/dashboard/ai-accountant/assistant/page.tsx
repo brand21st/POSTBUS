@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, Send, Sparkles, Wrench } from "lucide-react";
@@ -34,10 +34,25 @@ const TOOL_LABELS: Record<string, string> = {
   get_order_profit: "Order profit",
 };
 
+const noopSubscribe = () => () => {};
+
+/** ?q= from the overview's quick questions; "" on the server so hydration matches. */
+function useQuickQuestion() {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => (new URLSearchParams(window.location.search).get("q") ?? "").slice(0, 1000),
+    () => ""
+  );
+}
+
 export default function AssistantPage() {
   const client = useQueryClient();
+  const quick = useQuickQuestion();
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [question, setQuestion] = useState("");
+  // The quick question pre-fills the box until the user types; it is never auto-sent.
+  const [draft, setDraft] = useState<string | null>(null);
+  const question = draft ?? quick;
+  const setQuestion = (value: string) => setDraft(value);
   const [pending, setPending] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const threads = useQuery({

@@ -2,6 +2,7 @@ import { PricingPlanGrid } from "@/components/landing/pricing-plan-grid";
 import { Container } from "@/components/ui/container";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { mapPlan, type PlanRow } from "@/modules/billing/subscriptions";
+import { gstInclusiveLabelEnabled } from "@/modules/billing/inclusive-tax";
 
 export async function PricingPreview() {
   const supabase = await createServerSupabase();
@@ -23,13 +24,13 @@ export async function PricingPreview() {
             Choose a plan after a full-feature trial
           </h2>
           <p className="mt-3 text-base text-muted sm:text-lg">
-            New accounts get 3 days with every PostBus feature unlocked. Then pick a plan by
+            New accounts get 7 days with every PostBus feature unlocked. Then pick a plan by
             monthly India Post booking volume. Postage is billed by India Post, not PostBus.
           </p>
         </div>
 
         {plans.length ? (
-          <PricingPlanGrid plans={plans} />
+          <PricingPlanGrid plans={plans} inclusiveLabel={gstInclusiveLabelEnabled()} />
         ) : (
           <p className="mt-10 text-center text-sm text-muted">
             Plans are loading from billing. Check{" "}

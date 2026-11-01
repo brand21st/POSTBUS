@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -93,37 +93,38 @@ export function PoliciesSettings() {
     privacy: { body: "", keywords: "", enabled: true },
   });
 
-  useEffect(() => {
-    const data = query.data;
-    if (!data) return;
+  const policyData = query.data;
+  const [appliedPolicies, setAppliedPolicies] = useState(policyData);
+  if (policyData && policyData !== appliedPolicies) {
+    setAppliedPolicies(policyData);
     setDrafts({
       shipping_policy: {
-        body: data.shippingPolicyBody ?? "",
-        keywords: keywordsToInput(data.shippingPolicyKeywords),
-        enabled: data.shippingPolicyEnabled !== false,
+        body: policyData.shippingPolicyBody ?? "",
+        keywords: keywordsToInput(policyData.shippingPolicyKeywords),
+        enabled: policyData.shippingPolicyEnabled !== false,
       },
       contact: {
-        body: data.contactBody ?? "",
-        keywords: keywordsToInput(data.contactKeywords),
-        enabled: data.contactEnabled !== false,
+        body: policyData.contactBody ?? "",
+        keywords: keywordsToInput(policyData.contactKeywords),
+        enabled: policyData.contactEnabled !== false,
       },
       returns: {
-        body: data.returnsBody ?? "",
-        keywords: keywordsToInput(data.returnsKeywords),
-        enabled: data.returnsEnabled !== false,
+        body: policyData.returnsBody ?? "",
+        keywords: keywordsToInput(policyData.returnsKeywords),
+        enabled: policyData.returnsEnabled !== false,
       },
       terms: {
-        body: data.termsBody ?? "",
-        keywords: keywordsToInput(data.termsKeywords),
-        enabled: data.termsEnabled !== false,
+        body: policyData.termsBody ?? "",
+        keywords: keywordsToInput(policyData.termsKeywords),
+        enabled: policyData.termsEnabled !== false,
       },
       privacy: {
-        body: data.privacyPolicyBody ?? "",
-        keywords: keywordsToInput(data.privacyPolicyKeywords),
-        enabled: data.privacyPolicyEnabled !== false,
+        body: policyData.privacyPolicyBody ?? "",
+        keywords: keywordsToInput(policyData.privacyPolicyKeywords),
+        enabled: policyData.privacyPolicyEnabled !== false,
       },
     });
-  }, [query.data]);
+  }
 
   const mutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>

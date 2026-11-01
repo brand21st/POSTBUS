@@ -15,6 +15,14 @@ import {
 
 const bookShipmentMock = vi.fn();
 
+vi.mock("@/modules/shopify/booking-guard", () => ({
+  revalidateShopifyBooking: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+vi.mock("@/modules/shopify/allocations", () => ({
+  markShopifyAllocationsBooked: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/modules/india-post/provider", () => ({
   indiaPostFromRow: vi.fn(() => ({
     ensureSession: vi.fn().mockResolvedValue({ reused: true, tokens: null }),
@@ -24,6 +32,10 @@ vi.mock("@/modules/india-post/provider", () => ({
       { office_id: "22660454", delivery_office_flag: true, pincode: "682311" },
     ]),
   })),
+}));
+
+vi.mock("@/modules/india-post/allocate-barcode", () => ({
+  allocateNextBarcode: vi.fn(async () => "ET214330016IN"),
 }));
 
 vi.mock("@/modules/india-post/origin", () => ({
@@ -119,6 +131,7 @@ function bookingDb(input: {
   const supabase = {
     rpc: async (name: string) => {
       if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+      if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
       return { data: null, error: null };
     },
     from: (table: string) => {
@@ -149,7 +162,7 @@ function bookingDb(input: {
                     id: "ship-1",
                     order_id: "ord-1",
                     status: "QUEUED",
-                    barcode: "ET214330016IN",
+                    barcode: null,
                     service_code: input.serviceCode,
                     weight_grams: input.weightGrams,
                     length_cm: 14,
@@ -166,6 +179,10 @@ function bookingDb(input: {
                       state: "Delhi",
                       pincode: "110001",
                       phone: "9944388249",
+                      original_phone: "9944388249",
+                      phone_source: "shipping",
+                      country: "IN",
+                      address_validation_status: "READY",
                     },
                   },
                 ],

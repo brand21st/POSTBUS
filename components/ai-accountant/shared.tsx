@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState, type ReactNode, type SelectHTMLAttributes } from "react";
+import { useId, useMemo, useState, type ReactNode, type SelectHTMLAttributes } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Download } from "lucide-react";
+import { Download, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -203,3 +203,49 @@ export const PAYMENT_LABELS: Record<string, string> = {
 
 /** Current GST 2.0 slabs plus legacy 12% and 28% for older invoices. */
 export const GST_RATES = [0, 300, 500, 1200, 1800, 2800, 4000];
+
+/** Small "what does this mean" hint; tap or hover on the (i) to read it. */
+export function HelpHint({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <span className="relative inline-flex align-middle" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        aria-label={`About ${label}`}
+        aria-expanded={open}
+        aria-describedby={open ? id : undefined}
+        onClick={() => setOpen((v) => !v)}
+        onBlur={() => setOpen(false)}
+        className="inline-flex size-5 items-center justify-center rounded-full text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+      >
+        <Info className="size-3.5" />
+      </button>
+      {open ? (
+        <span
+          id={id}
+          role="tooltip"
+          className="absolute left-1/2 top-6 z-30 w-64 -translate-x-1/2 rounded-xl border border-border bg-card p-3 text-left text-xs font-normal leading-relaxed text-ink shadow-lg"
+        >
+          {children}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** One-line page header: title + hint on the left, controls on the right; wraps on mobile. */
+export function Toolbar({ title, hint, children, sub }: { title: ReactNode; hint?: ReactNode; children?: ReactNode; sub?: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-1 text-base font-semibold text-ink">
+          {title}
+          {hint}
+        </h2>
+        {children ? <div className="flex flex-wrap items-center gap-2">{children}</div> : null}
+      </div>
+      {sub}
+    </div>
+  );
+}

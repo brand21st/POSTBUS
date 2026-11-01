@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateAnalytics,
   asAmount,
+  emptyPeriod,
   isActiveOrder,
   isCodOrder,
+  isIndiaPostBooked,
+  isCodShipment,
   istParts,
+  shipmentOrderAmount,
   startOfIstYearIso,
   type AnalyticsOrderRow,
   type AnalyticsShipmentRow,
@@ -32,9 +36,12 @@ function shipment(
 ): AnalyticsShipmentRow {
   return {
     created_at: createdAt,
+    booked_at: null,
     payment_mode: "PREPAID",
     cod_amount: 0,
     status: "BOOKED",
+    provider: "INDIA_POST",
+    orders: { total_amount: 0 },
     ...overrides,
   };
 }
@@ -47,6 +54,16 @@ describe("analytics helpers", () => {
     expect(isActiveOrder({ status: "READY" })).toBe(true);
     expect(isCodOrder({ payment_status: "COD" })).toBe(true);
     expect(isCodOrder({ payment_status: "PAID" })).toBe(false);
+    expect(isCodShipment({ payment_mode: "COD" })).toBe(true);
+    expect(isIndiaPostBooked({ provider: "INDIA_POST", booked_at: "2026-09-20T02:00:00+05:30", status: "BOOKED" })).toBe(
+      true
+    );
+    expect(isIndiaPostBooked({ provider: "INDIA_POST", booked_at: null, status: "BOOKED" })).toBe(false);
+    expect(isIndiaPostBooked({ provider: "INDIA_POST", booked_at: "2026-09-20T02:00:00+05:30", status: "CANCELLED" })).toBe(
+      false
+    );
+    expect(shipmentOrderAmount({ orders: { total_amount: "450.25" } })).toBe(450.25);
+    expect(shipmentOrderAmount({ orders: [{ total_amount: 1200 }] })).toBe(1200);
   });
 
   it("reads calendar parts in Asia/Kolkata", () => {
@@ -60,13 +77,7 @@ describe("analytics helpers", () => {
 describe("aggregateAnalytics", () => {
   it("returns zeroed buckets when there is no activity", () => {
     const result = aggregateAnalytics([], [], NOW);
-    expect(result.today).toEqual({
-      shipments: 0,
-      revenue: 0,
-      orders: 0,
-      codOrders: 0,
-      codAmount: 0,
-    });
+    expect(result.today).toEqual(emptyPeriod());
     expect(result.series.today).toHaveLength(24);
     expect(result.series.month).toHaveLength(20);
     expect(result.series.year).toHaveLength(9);
@@ -98,7 +109,10 @@ describe("aggregateAnalytics", () => {
     expect(result.month.shipments).toBe(2);
     expect(result.year.orders).toBe(3);
     expect(result.year.revenue).toBe(800);
+    expect(result.year.prepaidOrders).toBe(3);
+    expect(result.year.prepaidAmount).toBe(800);
     expect(result.year.shipments).toBe(2);
+    expect(result.today.indiaPostBooked).toBe(0);
     expect(result.series.today[1]?.orders).toBe(1);
     expect(result.series.today[1]?.revenue).toBe(500);
     expect(result.topSource?.source).toBe("SHOPIFY");
@@ -130,10 +144,65 @@ describe("aggregateAnalytics", () => {
 
     expect(result.today.codOrders).toBe(2);
     expect(result.today.codAmount).toBe(900);
+    expect(result.today.prepaidOrders).toBe(1);
+    expect(result.today.prepaidAmount).toBe(200);
     expect(result.series.today[11]?.cod).toBe(1);
     expect(result.series.today[11]?.prepaid).toBe(1);
     expect(result.sources.today[0]?.source).toBe("SHOPIFY");
     expect(result.sources.today[0]?.share).toBeCloseTo(66.666, 2);
     expect(result.sources.today[1]?.source).toBe("MANUAL");
+  });
+
+  it("counts India Post booked COD and prepaid amounts by booked_at", () => {
+    const result = aggregateAnalytics(
+      [],
+      [
+        shipment("2026-09-20T01:00:00+05:30", {
+          booked_at: "2026-09-20T02:00:00+05:30",
+          payment_mode: "COD",
+          cod_amount: 800,
+        }),
+        shipment("2026-09-20T01:30:00+05:30", {
+          booked_at: "2026-09-20T03:00:00+05:30",
+          payment_mode: "PREPAID",
+          orders: { total_amount: 450 },
+        }),
+        shipment("2026-09-08T10:00:00+05:30", {
+          booked_at: "2026-09-08T11:00:00+05:30",
+          payment_mode: "PREPAID",
+          orders: { total_amount: 200 },
+        }),
+        shipment("2026-09-20T04:00:00+05:30", {
+          booked_at: null,
+          payment_mode: "PREPAID",
+          orders: { total_amount: 999 },
+        }),
+        shipment("2026-09-20T05:00:00+05:30", {
+          booked_at: "2026-09-20T05:30:00+05:30",
+          status: "CANCELLED",
+          payment_mode: "COD",
+          cod_amount: 50,
+        }),
+        shipment("2025-12-31T23:00:00+05:30", {
+          booked_at: "2025-12-31T23:30:00+05:30",
+          payment_mode: "COD",
+          cod_amount: 75,
+        }),
+      ],
+      NOW
+    );
+
+    expect(result.today.indiaPostBooked).toBe(2);
+    expect(result.today.indiaPostCodBooked).toBe(1);
+    expect(result.today.indiaPostCodAmount).toBe(800);
+    expect(result.today.indiaPostPrepaidBooked).toBe(1);
+    expect(result.today.indiaPostPrepaidAmount).toBe(450);
+    expect(result.today.indiaPostBookedAmount).toBe(1250);
+    expect(result.month.indiaPostBooked).toBe(3);
+    expect(result.month.indiaPostPrepaidAmount).toBe(650);
+    expect(result.year.indiaPostBooked).toBe(3);
+    expect(result.series.today[2]?.indiaPostBooked).toBe(1);
+    expect(result.series.today[2]?.indiaPostCodAmount).toBe(800);
+    expect(result.series.today[3]?.indiaPostPrepaidAmount).toBe(450);
   });
 });

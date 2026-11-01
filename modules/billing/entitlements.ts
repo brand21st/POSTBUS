@@ -5,10 +5,14 @@ import {
   getLiveSubscription,
   mapPlan,
   type PlanRow,
+  type SubscriptionRow,
 } from "@/modules/billing/subscriptions";
+import { trialIsLive } from "@/modules/billing/trial-policy";
+import { subscriptionCoverageEnded } from "@/modules/billing/usage";
 
 export const FEATURE = {
   shopify: "Shopify order sync",
+  woocommerce: "WooCommerce order sync",
   shipments: "Shipment workspace",
   labels: "Label and barcode workflows",
   starterBundle: "Everything in Starter",
@@ -29,6 +33,7 @@ export type PlanFeatureName = (typeof PLAN_FEATURE_OPTIONS)[number];
 
 export const STARTER_FEATURES: PlanFeatureName[] = [
   FEATURE.shopify,
+  FEATURE.woocommerce,
   FEATURE.shipments,
   FEATURE.labels,
   FEATURE.indiaPost,
@@ -61,9 +66,11 @@ const NAV_FEATURES: Array<{ href: string; feature: string }> = [
   { href: "/dashboard/labels/customize", feature: FEATURE.packing },
   { href: "/dashboard/labels/templates", feature: FEATURE.packing },
   { href: "/dashboard/labels/multi-print", feature: FEATURE.packing },
+  { href: "/dashboard/orders/bulk-excel", feature: FEATURE.bulk },
   { href: "/dashboard/integrations/wati", feature: FEATURE.wati },
   { href: "/dashboard/integrations/india-post", feature: FEATURE.indiaPost },
   { href: "/dashboard/integrations/shopify", feature: FEATURE.shopify },
+  { href: "/dashboard/integrations/woocommerce", feature: FEATURE.woocommerce },
 ];
 
 function asPlan(value: PlanRow | PlanRow[] | null | undefined): PlanRow | null {
@@ -115,6 +122,12 @@ export function automationToggleLock(camel: string, allows: (feature: string) =>
     return FEATURE.shopify;
   }
   if (
+    (camel === "autoWooCommerceSync" || camel === "autoWooCommerceTracking") &&
+    !allows(FEATURE.woocommerce)
+  ) {
+    return FEATURE.woocommerce;
+  }
+  if (
     (camel === "autoBooking" || camel === "autoTrackingSync" || camel === "autoLabelGeneration") &&
     !allows(FEATURE.indiaPost)
   ) {
@@ -135,7 +148,7 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
   if (path === "dashboard/analytics" || (slugs[0] === "dashboard" && slugs[1] === "analytics")) {
     return FEATURE.analytics;
   }
-  if (slugs[0] === "invoices" || slugs[0] === "invoice-template") return FEATURE.invoices;
+  if (slugs[0] === "invoices" || slugs[0] === "invoice-template" || slugs[0] === "sales-invoices" || slugs[0] === "sales-invoice-settings") return FEATURE.invoices;
   if (slugs[0] === "tracking" || slugs[0] === "tracking-pages") return FEATURE.trackingPage;
   if (slugs[0] === "automation" && method !== "GET") return FEATURE.automation;
   if (slugs[0] === "manifests" && method !== "GET") return FEATURE.manifests;
@@ -151,6 +164,7 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
   if (slugs[0] === "bookings") return FEATURE.bulk;
   if (slugs[0] === "integrations") {
     if (slugs[1] === "shopify" && method !== "GET") return FEATURE.shopify;
+    if (slugs[1] === "woocommerce" && method !== "GET") return FEATURE.woocommerce;
     if (slugs[1] === "wati" && method !== "GET") return FEATURE.wati;
     if (slugs[1] === "india-post" && method !== "GET") return FEATURE.indiaPost;
   }
@@ -163,25 +177,46 @@ export type PlanEntitlements = {
   planName: string | null;
   planSlug: string | null;
   status: string | null;
+  trialEnd: string | null;
+  trialCohort: string | null;
+  coverageEnded: boolean;
 };
+
+async function loadEntitlementSubscription(supabase: SupabaseClient, organizationId: string) {
+  const live = await getLiveSubscription(supabase, organizationId);
+  if (live) return live;
+  const { data } = await supabase
+    .from("subscriptions")
+    .select("*, plans!plan_id(*)")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as SubscriptionRow | null) ?? null;
+}
 
 export async function getOrganizationEntitlements(
   supabase: SupabaseClient,
   organizationId: string
 ): Promise<PlanEntitlements> {
-  const live = await getLiveSubscription(supabase, organizationId);
+  const live = await loadEntitlementSubscription(supabase, organizationId);
   const plan = asPlan(live?.plans);
   const mapped = plan ? mapPlan(plan) : null;
-  const trial = live?.status === "TRIAL";
+  const trial = live ? trialIsLive(live) : false;
+  const coverageEnded = live ? subscriptionCoverageEnded(live) || live.status === "EXPIRED" : true;
+  const features = expandPlanFeatures(mapped?.features ?? [], {
+    trial,
+    slug: mapped?.slug,
+  });
   return {
-    features: expandPlanFeatures(mapped?.features ?? [], {
-      trial,
-      slug: mapped?.slug,
-    }),
+    features,
     trial,
     planName: mapped?.name ?? null,
     planSlug: mapped?.slug ?? null,
     status: live?.status ?? null,
+    trialEnd: live?.trial_end ?? live?.current_period_end ?? null,
+    trialCohort: live?.trial_cohort ?? null,
+    coverageEnded,
   };
 }
 

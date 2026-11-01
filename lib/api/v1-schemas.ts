@@ -50,6 +50,21 @@ export const memberInviteSchema = z.object({
 
 export const createApiKeySchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
+  scopes: z
+    .array(
+      z.enum([
+        "orders:read",
+        "orders:write",
+        "shipments:read",
+        "shipments:book",
+        "tracking:read",
+        "labels:read",
+        "webhooks:read",
+        "webhooks:manage",
+      ])
+    )
+    .min(1),
+  expiresAt: z.string().optional().nullable(),
 });
 
 export const createWebhookEndpointSchema = z.object({

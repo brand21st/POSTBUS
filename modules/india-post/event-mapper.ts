@@ -1,16 +1,110 @@
 import type { OperationalStatus, ShipmentStatus } from "@/types/domain";
 
+export type ArticleFlowCategory =
+  | "PICKUP_REQUESTED"
+  | "PICKUP_ASSIGNED"
+  | "PICKUP_CANCELLED"
+  | "PICKED_UP"
+  | "INDUCTED"
+  | "BOOKED"
+  | "BAGGED"
+  | "DISPATCHED"
+  | "BAG_RECEIVED"
+  | "ITEM_RECEIVED"
+  | "DESTINATION_REACHED"
+  | "OUT_FOR_DELIVERY"
+  | "ON_HOLD"
+  | "REDIRECTED"
+  | "DELIVERED";
+
 export type IndiaPostShipmentUpdate = {
   eventCode: string;
   eventDescription: string | null;
   shipmentStatus: ShipmentStatus | null;
   operationalStatus: OperationalStatus | null;
   classification: OperationalStatus | null;
+  articleFlow: ArticleFlowCategory | null;
+  displayLabel: string | null;
   shouldUpdateStatus: boolean;
   ndrReason: string | null;
   rtoReason: string | null;
   delayScan: boolean;
 };
+
+/**
+ * Official article-flow phrases, longest first.
+ * Operational values stay inside the existing shipment enum.
+ * Pickup, booked, on hold, and redirected do not change that enum.
+ */
+const ARTICLE_FLOW: Array<{
+  phrase: string;
+  category: ArticleFlowCategory;
+  operational: OperationalStatus | null;
+  display: string;
+}> = [
+  { phrase: "item received at destination", category: "DESTINATION_REACHED", operational: "IN_TRANSIT", display: "Reached Destination" },
+  { phrase: "item kept on hold", category: "ON_HOLD", operational: null, display: "On Hold" },
+  { phrase: "item pickup cancelled", category: "PICKUP_CANCELLED", operational: null, display: "Pickup Cancelled" },
+  { phrase: "pickup request raised", category: "PICKUP_REQUESTED", operational: null, display: "Pickup Requested" },
+  { phrase: "pickup assigned", category: "PICKUP_ASSIGNED", operational: null, display: "Pickup Assigned" },
+  { phrase: "item pickedup", category: "PICKED_UP", operational: null, display: "Picked Up" },
+  { phrase: "item inducted", category: "INDUCTED", operational: null, display: "Inducted" },
+  { phrase: "item delivered addressee", category: "DELIVERED", operational: "DELIVERED", display: "Delivered" },
+  { phrase: "item redirected", category: "REDIRECTED", operational: null, display: "Redirected" },
+  { phrase: "taken out for delivery", category: "OUT_FOR_DELIVERY", operational: "OUT_FOR_DELIVERY", display: "Out for Delivery" },
+  { phrase: "item dispatched", category: "DISPATCHED", operational: "DISPATCHED", display: "In Transit" },
+  { phrase: "item bagged", category: "BAGGED", operational: "DISPATCHED", display: "Processing" },
+  { phrase: "bag received", category: "BAG_RECEIVED", operational: "IN_TRANSIT", display: "In Transit" },
+  { phrase: "item received", category: "ITEM_RECEIVED", operational: "IN_TRANSIT", display: "In Transit" },
+  { phrase: "item booked", category: "BOOKED", operational: null, display: "Booked" },
+];
+
+export function normalizeArticleFlowText(value: string | null | undefined) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[()]/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+export function matchOfficialArticleFlow(event: { eventCode?: string | null; eventDescription?: string | null }) {
+  const candidates = [event.eventDescription, event.eventCode].map((value) => normalizeArticleFlowText(value)).filter(Boolean);
+  for (const text of candidates) {
+    for (const row of ARTICLE_FLOW) {
+      if (text === row.phrase || text.startsWith(`${row.phrase} `)) return row;
+    }
+  }
+  return null;
+}
+
+/** Current database identity. Office is intentionally absent until a reviewed migration. */
+export function currentTrackingEventIdentity(input: {
+  organizationId: string;
+  shipmentId: string;
+  eventCode: string;
+  occurredAt: string;
+}) {
+  return [input.organizationId, input.shipmentId, input.eventCode, input.occurredAt].join("|");
+}
+
+/** Proposed identity. Not used for inserts. */
+export function proposedTrackingEventIdentity(input: {
+  organizationId: string;
+  shipmentId: string;
+  eventCode: string;
+  occurredAt: string;
+  officeId?: string | null;
+  officeName?: string | null;
+}) {
+  return [
+    input.organizationId,
+    input.shipmentId,
+    normalizeArticleFlowText(input.eventCode),
+    input.occurredAt,
+    normalizeArticleFlowText(input.officeId || input.officeName || ""),
+  ].join("|");
+}
 
 const STATUS_RANK: Record<ShipmentStatus, number> = {
   DRAFT: 10,
@@ -184,7 +278,11 @@ export function mapIndiaPostEventToShipmentUpdate(event: {
   const eventCode = event.eventCode || "EVENT";
   const eventDescription = event.eventDescription ?? null;
   const ndrReason = event.nonDeliveryReason?.trim() || null;
-  const classification = classifyEvent(eventKey(event), ndrReason, event.rts === true);
+  const generic = classifyEvent(eventKey(event), ndrReason, event.rts === true);
+  const flow = matchOfficialArticleFlow(event);
+  const returnOrNdr = generic === "RTO" || generic === "RTO_IN_TRANSIT" || generic === "RTO_DELIVERED" || generic === "NDR";
+  const useFlow = Boolean(flow) && !returnOrNdr;
+  const classification = useFlow ? flow!.operational : generic;
   const key = eventKey(event);
   const delayScan = isIndiaPostDelayScan(key, classification);
   const shipmentStatus = classification ? shipmentStatusForOperational(classification) : null;
@@ -199,6 +297,8 @@ export function mapIndiaPostEventToShipmentUpdate(event: {
     shipmentStatus,
     operationalStatus: classification,
     classification,
+    articleFlow: useFlow ? flow!.category : null,
+    displayLabel: useFlow ? flow!.display : null,
     shouldUpdateStatus: Boolean(classification),
     ndrReason: classification === "NDR" ? ndrReason || eventDescription || eventCode : null,
     rtoReason,
@@ -218,6 +318,11 @@ function eventIsOlder(eventAt: string, lastEventAt: string | null) {
   const previous = Date.parse(lastEventAt);
   if (Number.isNaN(next) || Number.isNaN(previous)) return false;
   return next < previous;
+}
+
+function noticesForScan(mapped: IndiaPostShipmentUpdate, operational: OperationalStatus | null) {
+  if (mapped.articleFlow && !mapped.operationalStatus) return [];
+  return whatsappEventsForScan(mapped, operational);
 }
 
 export function whatsappEventsForScan(
@@ -251,7 +356,7 @@ export function planTrackingUpdate(input: {
   if (older) {
     return {
       ...none,
-      whatsappEvents: whatsappEventsForScan(input.mapped, input.mapped.operationalStatus),
+      whatsappEvents: noticesForScan(input.mapped, input.mapped.operationalStatus),
     };
   }
 
@@ -263,7 +368,7 @@ export function planTrackingUpdate(input: {
     return {
       ...none,
       updateLastScan: true,
-      whatsappEvents: whatsappEventsForScan(input.mapped, null),
+      whatsappEvents: noticesForScan(input.mapped, null),
     };
   }
 

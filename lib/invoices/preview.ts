@@ -1,5 +1,6 @@
-export async function fetchInvoicePdfBlob(invoiceId: string) {
-  const response = await fetch(`/api/v1/invoices/${invoiceId}/download`, { credentials: "same-origin" });
+export async function fetchInvoicePdfBlob(invoiceId: string, kind: "shipping" | "sales" = "shipping") {
+  const path = kind === "sales" ? `/api/v1/sales-invoices/${invoiceId}/download` : `/api/v1/invoices/${invoiceId}/download`;
+  const response = await fetch(path, { credentials: "same-origin" });
   const type = response.headers.get("Content-Type") ?? "";
   if (!response.ok || !type.includes("application/pdf")) {
     let message = "Could not open the invoice.";
@@ -14,13 +15,14 @@ export async function fetchInvoicePdfBlob(invoiceId: string) {
   return response.blob();
 }
 
-export async function openInvoicePdf(invoiceId: string) {
-  await fetchInvoicePdfBlob(invoiceId);
-  window.open(`/api/v1/invoices/${invoiceId}/download`, "_blank", "noopener,noreferrer");
+export async function openInvoicePdf(invoiceId: string, kind: "shipping" | "sales" = "shipping") {
+  await fetchInvoicePdfBlob(invoiceId, kind);
+  const path = kind === "sales" ? `/api/v1/sales-invoices/${invoiceId}/download` : `/api/v1/invoices/${invoiceId}/download`;
+  window.open(path, "_blank", "noopener,noreferrer");
 }
 
-export async function downloadInvoicePdf(invoiceId: string, filename: string) {
-  const blob = await fetchInvoicePdfBlob(invoiceId);
+export async function downloadInvoicePdf(invoiceId: string, filename: string, kind: "shipping" | "sales" = "shipping") {
+  const blob = await fetchInvoicePdfBlob(invoiceId, kind);
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = href;
@@ -31,8 +33,8 @@ export async function downloadInvoicePdf(invoiceId: string, filename: string) {
   URL.revokeObjectURL(href);
 }
 
-export async function printInvoicePdf(invoiceId: string) {
-  const blob = await fetchInvoicePdfBlob(invoiceId);
+export async function printInvoicePdf(invoiceId: string, kind: "shipping" | "sales" = "shipping") {
+  const blob = await fetchInvoicePdfBlob(invoiceId, kind);
   const href = URL.createObjectURL(blob);
   const frame = document.createElement("iframe");
   frame.style.position = "fixed";

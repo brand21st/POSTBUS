@@ -17,6 +17,8 @@
 
 # next.js
 /.next/
+/.next-verify/
+/.next-staging/
 /out/
 
 # production
@@ -37,6 +39,11 @@ yarn-error.log*
 .env*
 !.env.example
 !.env.staging.example
+!.env.shopify-local.example
+!scripts/india-post-tracking-test/.env.example
+scripts/india-post-tracking-test/india-post-tracking-diagnostic-report.json
+scripts/india-post-tracking-test/india-post-tnt01-diagnostic-report.json
+scripts/india-post-tracking-test/india-post-tracking-authorization-report.json
 
 # Isolated local staging Postgres (never production)
 /.staging/

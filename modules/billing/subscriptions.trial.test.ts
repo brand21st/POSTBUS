@@ -34,10 +34,10 @@ describe("applyFullTrialAccess", () => {
         features: ["Up to 10,000 orders per billing period", "Priority support"],
       })
     );
-    const trial = applyFullTrialAccess(starter, [starter, business], 3);
+    const trial = applyFullTrialAccess(starter, [starter, business], 7);
     expect(trial.name).toBe("Business");
     expect(trial.monthlyOrderLimit).toBe(10000);
-    expect(trial.description).toContain("3-day trial");
+    expect(trial.description).toContain("7-day trial");
     expect(trial.features).toContain("Shopify order sync");
     expect(trial.features).toContain("Priority support");
   });

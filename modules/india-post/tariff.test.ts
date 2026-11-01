@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptSecret } from "@/lib/security/crypto";
-import { tariffInputSchema, tariffRequest, normalizeTariff, usableTariffDraft, type TariffInput } from "./tariff-contract";
+import { tariffEstimateKey, tariffInputSchema, tariffRequest, normalizeTariff, usableTariffDraft, type TariffInput } from "./tariff-contract";
 import { executeTariff, resolveTariffInput, saveTariffEstimate, tariffSession, tariffOrderDefaults, loadTariffOrder, type TariffConnection } from "./tariff";
 
 const input: TariffInput = { service: "BUSINESS_PARCEL", sourcePincode: "400001", destinationPincode: "110001", weightGrams: 550, lengthCm: 20, widthCm: 15, heightCm: 10 };
@@ -19,6 +19,9 @@ function database(overrides: Partial<TariffConnection> = {}, failWrite = false) 
         return { data: table === "orders" ? null : { ...connection }, error: null };
       },
     }; return chain;
+  }, rpc: async (name: string) => {
+    if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
+    return { data: null, error: null };
   } } as unknown as SupabaseClient;
   return { db, operations, connection };
 }
@@ -42,9 +45,19 @@ describe("tariff contract", () => {
     const path = tariffRequest({ ...input, service: "SP_INLAND_PARCEL", insuranceValue: 1000, proofOfDelivery: true });
     expect(path).toContain("/speed-post/tariffs?product-code=SP"); expect(path).toContain("INS=1000&POD=YES");
   });
-  it("omits optional services", () => { expect(tariffRequest(input)).not.toMatch(/ins|INS|POD|COD/); });
+  it("omits optional services", () => { expect(tariffRequest(input)).not.toMatch(/ins|INS|POD|COD/); expect(tariffRequest({ ...input, codAmount: 0 })).not.toMatch(/[?&]cod=/i); });
+  it("sends a positive COD amount with service-specific casing and a distinct estimate key", () => {
+    const bp = tariffRequest({ ...input, codAmount: 799 });
+    expect(new URL(bp, "https://example.test").searchParams.get("cod")).toBe("799");
+    expect(bp).not.toMatch(/[?&]COD=/);
+    const sp = tariffRequest({ ...input, service: "SP_INLAND_PARCEL", codAmount: 799.5 });
+    expect(new URL(sp, "https://example.test").searchParams.get("COD")).toBe("799.5");
+    expect(sp).not.toMatch(/[?&]cod=/);
+    expect(tariffEstimateKey({ ...input, codAmount: 799 })).toBe("v1|BUSINESS_PARCEL|400001|110001|550|20|15|10|||799");
+    expect(tariffEstimateKey(input)).toBe("v1|BUSINESS_PARCEL|400001|110001|550|20|15|10|||");
+  });
   it.each([0, -1, 1.5, NaN, Infinity, 35001])("rejects invalid weight %s", (weightGrams) => expect(tariffInputSchema.safeParse({ ...input, weightGrams }).success).toBe(false));
-  it.each([{}, { lengthCm: 0 }, { widthCm: 8 }, { heightCm: 151 }, { destinationPincode: "abc" }, { service: "EXPRESS" }, { proofOfDelivery: true }, { insuranceValue: -1 }])("rejects missing or invalid inputs %j", (patch) => expect(tariffInputSchema.safeParse(Object.keys(patch).length ? { ...input, ...patch } : {}).success).toBe(false));
+  it.each([{}, { lengthCm: 0 }, { widthCm: 8 }, { heightCm: 151 }, { destinationPincode: "abc" }, { service: "EXPRESS" }, { proofOfDelivery: true }, { insuranceValue: -1 }, { codAmount: -1 }])("rejects missing or invalid inputs %j", (patch) => expect(tariffInputSchema.safeParse(Object.keys(patch).length ? { ...input, ...patch } : {}).success).toBe(false));
   it("accepts Speed Post parcel estimates at 500 g and still limits documents", () => {
     expect(tariffInputSchema.safeParse({ ...input, service: "SP_INLAND_PARCEL", weightGrams: 500 }).success).toBe(true);
     expect(tariffInputSchema.safeParse({ ...input, service: "SP_INLAND_DOC", weightGrams: 500, lengthCm: 42, widthCm: 29, heightCm: 2 }).success).toBe(true);
@@ -84,18 +97,25 @@ describe("tenant and read-only input resolution", () => {
     const { db, operations } = database();
     await expect(loadTariffOrder(db, "org-1", "00000000-0000-4000-8000-000000000001")).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
     expect(operations[0].filters).toContainEqual(["organization_id", "org-1"]);
+    expect(operations[0].filters).toContainEqual(["id", "00000000-0000-4000-8000-000000000001"]);
+  });
+  it("looks up estimates by order number without casting it to uuid", async () => {
+    const { db, operations } = database();
+    await expect(loadTariffOrder(db, "org-1", "PB-10059")).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+    expect(operations[0].filters).toContainEqual(["organization_id", "org-1"]);
+    expect(operations[0].filters).toContainEqual(["order_number", "PB-10059"]);
   });
   it("stores only the estimate and timestamp on the tenant order", async () => {
     const { db, operations } = database();
-    await saveTariffEstimate(db, "org-1", "order-1", input, { estimatedTotal: 152, calculatedAt: "2026-10-16T00:00:00.000Z" });
+    await saveTariffEstimate(db, "org-1", "00000000-0000-4000-8000-000000000001", input, { estimatedTotal: 152, calculatedAt: "2026-10-16T00:00:00.000Z" });
     expect(operations[0]).toMatchObject({
       table: "orders",
       update: {
         india_post_estimate_amount: 152,
         india_post_estimated_at: "2026-10-16T00:00:00.000Z",
-        india_post_estimate_key: "v1|BUSINESS_PARCEL|400001|110001|550|20|15|10||",
+        india_post_estimate_key: "v1|BUSINESS_PARCEL|400001|110001|550|20|15|10|||",
       },
-      filters: [["organization_id", "org-1"], ["id", "order-1"]],
+      filters: [["organization_id", "org-1"], ["id", "00000000-0000-4000-8000-000000000001"]],
     });
     expect(operations[0].update).not.toHaveProperty("shipping_amount");
     expect(operations[0].update).not.toHaveProperty("tariff_amount");
@@ -103,6 +123,17 @@ describe("tenant and read-only input resolution", () => {
 });
 
 describe("mocked authenticated tariff lookup", () => {
+  it("retries a COD quote without the COD parameter when India Post rejects it", async () => {
+    const { db, connection } = database();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("bad query", { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...response, cod_charges: null, final_amount: 152 })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(executeTariff(db, "org-1", connection, { ...input, codAmount: 800 })).resolves.toMatchObject({ estimatedTotal: 152, codCharges: null });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("cod=800");
+    expect(String(fetchMock.mock.calls[1][0])).not.toMatch(/[?&]cod=/i);
+  });
   it("reuses token and makes only a tariff GET with actual weight", async () => {
     const { db, connection, operations } = database();
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(response)));
@@ -113,6 +144,24 @@ describe("mocked authenticated tariff lookup", () => {
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer cached-token");
     expect(operations.every((op) => op.table === "india_post_connections" && !op.update)).toBe(true);
   });
+  it("refreshes an expired access token with AUTH02 only", async () => {
+    const { db, connection, operations } = database({
+      expires_at: "2000-01-01",
+      encrypted_refresh_token: encryptSecret("keep-refresh"),
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes("TokenWithRtoken")) {
+        return new Response(JSON.stringify({ success: true, data: { access_token: "new-token", expires_in: 900 } }));
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await tariffSession(db, "org-1", connection.id);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/access/login"))).toBe(false);
+    const write = operations.find((op) => op.update)!;
+    expect(write.update).not.toHaveProperty("encrypted_refresh_token");
+    expect(write.update?.encrypted_access_token).not.toContain("new-token");
+  });
   it("serializes concurrent expired sessions and persists encrypted tokens", async () => {
     const { db, connection, operations } = database({ expires_at: "2000-01-01" });
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ success: true, data: { access_token: "new-token", expires_in: 900 } })));
@@ -120,7 +169,11 @@ describe("mocked authenticated tariff lookup", () => {
     await Promise.all([tariffSession(db, "org-1", connection.id), tariffSession(db, "org-1", connection.id)]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const write = operations.find((op) => op.update)!;
-    expect(write.filters).toEqual([["organization_id", "org-1"], ["id", "connection-1"]]);
+    expect(write.filters).toEqual([
+      ["id", "connection-1"],
+      ["organization_id", "org-1"],
+      ["session_lock_token", "session-lock-token"],
+    ]);
     expect(write.update?.encrypted_access_token).not.toContain("new-token");
   });
   it("fails closed on token persistence errors", async () => {

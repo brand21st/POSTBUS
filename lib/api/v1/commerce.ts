@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
@@ -7,6 +6,7 @@ import { hasPermission } from "@/lib/permissions/rbac";
 import { assertBrowserOrigin } from "@/lib/security/origin";
 import {
   parseBulkPrintIds,
+  prepareBulkShippingSlips,
   printBulkShippingSlips,
 } from "@/modules/labels/bulk-slip-print";
 import {
@@ -41,7 +41,7 @@ import {
   indiaPostLabelRequestError,
 } from "@/modules/labels/official-fetch";
 import { fetchReceiptPdf } from "@/modules/labels/receipt";
-import { listGroupedLabels } from "@/modules/labels/list";
+import { getLabelDashboardCounts, listGroupedLabels } from "@/modules/labels/list";
 import { getLabelTemplate } from "@/modules/labels/template-service";
 import { defaultLabelTemplateId } from "@/modules/labels/template-schema";
 import {
@@ -62,6 +62,7 @@ import {
   validateExcelBuffer,
   validateOrdersForBooking,
 } from "@/modules/india-post/bulk-booking";
+import { handleBulkExcelRoutes } from "@/modules/india-post/bulk-excel-routes";
 import { logError } from "@/lib/logger";
 import { backfillMissingShopifyLineItemImages } from "@/modules/shopify/orders";
 
@@ -193,6 +194,21 @@ export async function handleCommerceRoutes(
     return updateOrderShippingAddress(supabase, ctx, slugs[1], body);
   }
 
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address" && slugs[3] === "restore") {
+    const { restoreOrderShippingAddress } = await import("@/modules/orders/service");
+    return restoreOrderShippingAddress(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address" && slugs[3] === "accept") {
+    const { acceptOrderShippingAddress } = await import("@/modules/orders/service");
+    return acceptOrderShippingAddress(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address" && slugs[3] === "revalidate") {
+    const { revalidateOrderShippingAddress } = await import("@/modules/orders/service");
+    return revalidateOrderShippingAddress(supabase, ctx, slugs[1]);
+  }
+
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "dimensions") {
     const body = updateShipmentDimensionsSchema.parse(await request.json());
     return setOrderShipmentDimensions(supabase, ctx, slugs[1], body);
@@ -281,6 +297,11 @@ export async function handleCommerceRoutes(
     return summarizeBulkBookings(supabase, ctx, orderIds);
   }
 
+  if (slugs[0] === "bookings" && (slugs[1] === "excel-imports" || slugs[1] === "excel-template" || slugs[1] === "excel-import-profiles")) {
+    const bulkExcel = await handleBulkExcelRoutes(request, supabase, ctx, method, slugs);
+    if (bulkExcel !== null) return bulkExcel;
+  }
+
   if (key === "POST bookings/excel") {
     const form = await request.formData();
     const file = form.get("file");
@@ -331,9 +352,25 @@ export async function handleCommerceRoutes(
     return getShipment(supabase, ctx, slugs[1]);
   }
 
+  if (method === "GET" && slugs[0] === "shipments" && slugs[1] && slugs[2] === "booking-retry") {
+    const { evaluateOwnedBookingRetry } = await import("@/modules/india-post/booking-force-retry");
+    return evaluateOwnedBookingRetry(supabase, ctx.organizationId, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "shipments" && slugs[1] === "retry-booking") {
+    const body = (await request.json().catch(() => ({}))) as { shipmentIds?: string[] };
+    const { forceRetryBookingBatch } = await import("@/modules/india-post/booking-force-retry");
+    return forceRetryBookingBatch(supabase, ctx, body.shipmentIds ?? []);
+  }
+
   if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "retry") {
     const body = await request.json().catch(() => ({}));
     return retryShipment(supabase, ctx, slugs[1], body);
+  }
+
+  if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "reconcile-booking") {
+    const { reconcileUncertainBooking } = await import("@/modules/india-post/booking-reconcile");
+    return reconcileUncertainBooking(supabase, ctx, slugs[1]);
   }
 
   if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "india-post-label") {
@@ -352,12 +389,27 @@ export async function handleCommerceRoutes(
     return updateShipmentDimensions(supabase, ctx, slugs[1], body);
   }
 
+  if (key === "GET labels/summary") {
+    return getLabelDashboardCounts(supabase, ctx);
+  }
+
   if (key === "GET labels") {
-    const page = Number(request.nextUrl.searchParams.get("page") || 1);
-    const pageSize = Number(request.nextUrl.searchParams.get("pageSize") || 20);
-    const kind = request.nextUrl.searchParams.get("kind");
-    const q = request.nextUrl.searchParams.get("q");
-    return listGroupedLabels(supabase, ctx, { page, pageSize, kind, q });
+    const params = request.nextUrl.searchParams;
+    const page = Number(params.get("page") || 1);
+    const pageSize = Number(params.get("pageSize") || 20);
+    const kind = params.get("kind");
+    const q = params.get("q");
+    return listGroupedLabels(supabase, ctx, {
+      page,
+      pageSize,
+      kind,
+      q,
+      sort: params.get("sort"),
+      date: params.get("date"),
+      on: params.get("on"),
+      from: params.get("from"),
+      to: params.get("to"),
+    });
   }
 
   if (method === "GET" && slugs[0] === "labels" && slugs[2] === "download") {
@@ -467,49 +519,10 @@ export async function handleCommerceRoutes(
   }
 
   if (key === "POST labels/bulk-download") {
-    const body = await request.json();
-    const ids: string[] = body.ids ?? [];
-    const { data: selected } = await supabase
-      .from("labels")
-      .select("id, shipment_id")
-      .eq("organization_id", ctx.organizationId)
-      .in("id", ids);
-    const shipmentIds = [
-      ...new Set((selected ?? []).map((row) => String(row.shipment_id || "")).filter(Boolean)),
-    ];
-    const { data } = shipmentIds.length
-      ? await supabase
-          .from("labels")
-          .select("*")
-          .eq("organization_id", ctx.organizationId)
-          .eq("status", "READY")
-          .in("shipment_id", shipmentIds)
-          .in("kind", ["INDIA_POST", "MERCHANT"])
-      : { data: [] as Record<string, unknown>[] };
-    const zip = new JSZip();
-    for (const label of data ?? []) {
-      if (!label.file_path && !label.file_url) continue;
-      try {
-        const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, {
-          id: String(label.id),
-          file_path: label.file_path || "",
-          file_url: label.file_url,
-          shipment_id: label.shipment_id,
-        });
-        const kind = String(label.kind || "INDIA_POST").toUpperCase();
-        const prefix = kind === "MERCHANT" ? "packing-slip" : "barcode";
-        zip.file(`${prefix}-${label.shipment_id || label.id}.pdf`, bytes);
-      } catch {
-        continue;
-      }
-    }
-    const bytes = await zip.generateAsync({ type: "uint8array" });
-    return new NextResponse(Buffer.from(bytes), {
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": "attachment; filename=labels.zip",
-      },
-    });
+    const body = await request.json().catch(() => ({}));
+    const ids = parseBulkPrintIds((body as { ids?: unknown }).ids);
+    const prepared = await prepareBulkShippingSlips(supabase, ctx, ids);
+    return labelPdfFileResponse(prepared.merged.pdf, "shipping-slips.pdf", "attachment");
   }
 
   if (key === "POST labels/bulk-print") {
@@ -562,6 +575,9 @@ export async function handleCommerceRoutes(
         ...row,
         status: indiaPostDisplayShipmentStatus(row),
         orderNumber: (row.orders as { order_number?: string } | null)?.order_number,
+        lastEventAt: row.last_event_at,
+        lastTrackedAt: row.last_tracked_at,
+        lastScanOffice: row.last_scan_office,
         events: row.tracking_events ?? [],
       })),
     };

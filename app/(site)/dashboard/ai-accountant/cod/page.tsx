@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Upload } from "lucide-react";
 import { useReadOnly } from "@/components/ai-accountant/shell";
-import { ExportButtons, Kpi, Money, NativeSelect, Notes, TableShell, presetPeriods, td, th } from "@/components/ai-accountant/shared";
+import { ExportButtons, HelpHint, Kpi, Money, NativeSelect, Notes, TableShell, presetPeriods, td, th } from "@/components/ai-accountant/shared";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -148,7 +148,10 @@ export default function CodPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Import India Post COD remittance report</CardTitle>
+          <CardTitle className="flex items-center gap-1">
+            Import India Post COD remittance report
+            <HelpHint label="COD import">Rows are matched to your shipments by article number. Exact amounts are reconciled and posted automatically; short, excess, duplicate or unknown rows go to the review queue below.</HelpHint>
+          </CardTitle>
           <CardDescription>Excel, CSV or PDF from India Post. Rows match your shipments by article number; exact amounts post to the ledger automatically.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

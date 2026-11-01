@@ -1,0 +1,35 @@
+# Placeholder Partner app config. Do not `shopify app deploy` without explicit approval.
+# client_id is public; never put the client secret in this file.
+
+name = "PostBus"
+client_id = "REPLACE_WITH_PARTNER_APP_CLIENT_ID"
+application_url = "http://localhost:3000/shopify"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+
+[access_scopes]
+scopes = "read_orders,write_orders,read_products,read_fulfillments,write_fulfillments,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_locations"
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "http://localhost:3000/api/shopify/auth/callback",
+]
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled", "app/scopes_update"]
+  uri = "/api/shopify/webhooks"
+
+  # Orders import inline (GraphQL re-read + upsert); failures return non-2xx so Shopify retries.
+  [[webhooks.subscriptions]]
+  topics = ["orders/create", "orders/updated", "orders/cancelled"]
+  uri = "/api/shopify/webhooks"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "/api/shopify/webhooks"

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createHash } from "node:crypto";
 import { logError, logInfo } from "@/lib/logger";
 import { BILLING_NOTICE, insertBillingNotification } from "@/lib/notifications/billing";
 import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/audit";
@@ -10,34 +11,15 @@ import {
   unixToDateOrNull,
   type SubscriptionRow,
 } from "@/modules/billing/subscriptions";
-import { AI_CREDITS_BILLING_CYCLE } from "@/modules/ai-credits/constants";
+import { classifyPlatformRazorpayPayment, type PlatformPaymentDomain } from "@/modules/addons/classify";
+import { isAddonPaymentRow } from "@/modules/addons/constants";
 import { fetchRazorpaySubscription } from "@/modules/razorpay/client";
 
-export type PlatformPaymentDomain = "AI_CREDITS" | "SUBSCRIPTION" | "UNMATCHED_PLATFORM";
-
-export async function classifyPlatformRazorpayPayment(
-  supabase: SupabaseClient,
-  input: {
-    razorpayOrderId?: string | null;
-    subscriptionMatched?: boolean;
-  }
-): Promise<PlatformPaymentDomain> {
-  if (input.razorpayOrderId) {
-    const { data } = await supabase
-      .from("payments")
-      .select("billing_cycle")
-      .eq("razorpay_order_id", input.razorpayOrderId)
-      .maybeSingle();
-    if (String(data?.billing_cycle ?? "") === AI_CREDITS_BILLING_CYCLE) {
-      return "AI_CREDITS";
-    }
-  }
-  if (input.subscriptionMatched) return "SUBSCRIPTION";
-  return "UNMATCHED_PLATFORM";
-}
+export { classifyPlatformRazorpayPayment };
+export type { PlatformPaymentDomain };
 
 export function razorpayWebhookEventId(headerId: string, event: string | undefined, rawBody: string) {
-  return headerId || `${event ?? "event"}:${Buffer.from(rawBody).toString("base64").slice(0, 40)}`;
+  return headerId || `${event ?? "event"}:${createHash("sha256").update(rawBody).digest("hex")}`;
 }
 
 export function isUniqueViolation(error: { code?: string } | null | undefined) {
@@ -78,11 +60,11 @@ async function loadSubscriptionByOrderId(supabase: SupabaseClient, razorpayOrder
   if (data) return data as SubscriptionRow;
   const { data: payment } = await supabase
     .from("payments")
-    .select("subscription_id")
+    .select("subscription_id, payment_purpose, billing_cycle")
     .eq("razorpay_order_id", razorpayOrderId)
     .not("subscription_id", "is", null)
     .maybeSingle();
-  if (!payment?.subscription_id) return null;
+  if (!payment?.subscription_id || isAddonPaymentRow(payment)) return null;
   const { data: byPayment } = await supabase
     .from("subscriptions")
     .select("*, plans!plan_id(*)")
@@ -357,7 +339,19 @@ export async function processRazorpayEvent(
     });
   }
 
-  if (event === "payment.failed" && subscription) {
+  if (event === "payment.failed") {
+    const failedDomain = await classifyPlatformRazorpayPayment(supabase, {
+      razorpayOrderId: razorpayOrderId || null,
+      subscriptionMatched: Boolean(subscription),
+    });
+    if (failedDomain === "ADDON") {
+      const { markAddonPaymentFailed } = await import("@/modules/addons/activate");
+      await markAddonPaymentFailed(supabase, {
+        razorpayOrderId: razorpayOrderId || null,
+        razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
+        failureReason: String(paymentEntity.error_description ?? paymentEntity.error_reason ?? "Payment failed"),
+      });
+    } else if (subscription) {
     if (subscription.status !== "TRIAL") {
       await supabase.from("subscriptions").update({ status: "PAYMENT_FAILED" }).eq("id", subscription.id);
       await writeSubscriptionHistory(supabase, {
@@ -386,6 +380,7 @@ export async function processRazorpayEvent(
       ...BILLING_NOTICE.paymentFailed,
       entityId: subscription.id,
     });
+    }
   }
 
   if (event === "subscription.halted" && subscription) {
@@ -476,7 +471,17 @@ export async function processRazorpayEvent(
         paymentEntity.amount != null ? Number(paymentEntity.amount) : null
       );
     }
-    if (domain === "AI_CREDITS") {
+    if (domain === "ADDON") {
+      if (!orderId) return { ignored: true };
+      const { activateAddonFromPayment } = await import("@/modules/addons/activate");
+      await activateAddonFromPayment(supabase, {
+        razorpayOrderId: orderId,
+        razorpayPaymentId: paymentEntity.id ? String(paymentEntity.id) : null,
+        amountPaise: paymentEntity.amount != null ? Number(paymentEntity.amount) : null,
+        method: paymentEntity.method ? String(paymentEntity.method) : null,
+        actor: "WEBHOOK",
+      });
+    } else if (domain === "AI_CREDITS") {
       if (!orderId) return { ignored: true };
       const { fulfillCapturedAiCreditPayment } = await import("@/modules/ai-credits/service");
       await fulfillCapturedAiCreditPayment(supabase, {
@@ -537,7 +542,7 @@ export async function processRazorpayEvent(
     if (!paymentId) return { ignored: true };
     const { data: existing } = await supabase
       .from("payments")
-      .select("id")
+      .select("id, payment_purpose, billing_cycle")
       .eq("razorpay_payment_id", paymentId)
       .maybeSingle();
     if (!existing) {
@@ -548,6 +553,10 @@ export async function processRazorpayEvent(
       .from("payments")
       .update({ status: "REFUNDED", refunded_at: new Date().toISOString() })
       .eq("razorpay_payment_id", paymentId);
+    if (isAddonPaymentRow(existing)) {
+      const { revokeAddonOnRefund } = await import("@/modules/addons/activate");
+      await revokeAddonOnRefund(supabase, paymentId);
+    }
   }
 
   await writeBillingAudit(supabase, {

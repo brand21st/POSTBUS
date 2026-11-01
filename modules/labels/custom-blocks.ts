@@ -6,6 +6,8 @@ import { addressLineTexts, SAMPLE_SHIP_PARTS, type AddressParts } from "@/module
 
 export const LABEL_GENERATED_FROM = "Label Generated From www.postbus.in";
 export const LABEL_GENERATED_FROM_SIZE = 6;
+export const LABEL_WATERMARK_ROTATION_DEG = -32;
+export const LABEL_WATERMARK_OPACITY = 0.18;
 
 export type CustomLabelBlock = {
   id: string;

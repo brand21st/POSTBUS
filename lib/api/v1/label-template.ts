@@ -17,6 +17,7 @@ import {
 } from "@/modules/labels/custom-label-service";
 import { generateAndStoreOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
+import { getLabelDashboardCounts } from "@/modules/labels/list";
 import { retryIncompleteLabelById, retryIncompleteLabelsByIds } from "@/modules/labels/retry";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
@@ -42,6 +43,10 @@ export async function handleLabelTemplateRoutes(
   method: string,
   slugs: string[]
 ) {
+  if (method === "GET" && slugs[0] === "labels" && slugs[1] === "summary" && !slugs[2]) {
+    return getLabelDashboardCounts(supabase, ctx);
+  }
+
   if (key === "GET label-template") {
     const template = await getLabelTemplate(supabase, ctx.organizationId);
     const { data: org } = await supabase

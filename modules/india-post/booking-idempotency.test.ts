@@ -9,6 +9,10 @@ import {
 import { isIndiaPostDuplicateArticleMessage } from "@/modules/india-post/error-text";
 import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
 import { markShipmentBookingFailed } from "@/modules/india-post/booking-run";
+import { metadataWithFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
+import { formatBarcode } from "@/modules/india-post/barcode";
+import { bookingFailureShipmentUpdate } from "@/modules/india-post/booking-failure-state";
+import { classifyProviderError } from "@/lib/jobs/retry";
 
 const bookShipmentMock = vi.fn();
 const trackShipmentMock = vi.fn();
@@ -35,7 +39,37 @@ vi.mock("@/modules/india-post/origin", () => ({
   }),
 }));
 
+vi.mock("@/modules/shopify/booking-guard", () => ({
+  revalidateShopifyBooking: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+vi.mock("@/modules/shopify/allocations", () => ({
+  markShopifyAllocationsBooked: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/modules/india-post/allocate-barcode", () => ({
+  allocateNextBarcode: vi.fn(async () => "ET214330016IN"),
+}));
+
 const BARCODE = "ET214330016IN";
+const BARCODE_2 = formatBarcode("ET", 21433002, "IN");
+const ISSUED = "2026-10-31T06:00:00.000Z";
+
+function withProof(barcode: string, id = "ship-1", orderId = "ord-1") {
+  return baseShipment({
+    id,
+    order_id: orderId,
+    barcode,
+    created_at: ISSUED,
+    orders: { id: orderId, order_number: "#1001", source: "EXCEL" },
+    metadata: metadataWithFirstBarcodeProof(null, {
+      shipmentId: id,
+      organizationId: "org-1",
+      barcode,
+      issuedAt: ISSUED,
+    }),
+  });
+}
 
 function baseShipment(overrides: Record<string, unknown> = {}) {
   return {
@@ -43,7 +77,7 @@ function baseShipment(overrides: Record<string, unknown> = {}) {
     organization_id: "org-1",
     order_id: "ord-1",
     status: "QUEUED",
-    barcode: BARCODE,
+    barcode: null,
     booked_at: null,
     tracking_number: null,
     service_code: "SP_INLAND_PARCEL",
@@ -62,6 +96,7 @@ function baseShipment(overrides: Record<string, unknown> = {}) {
       state: "Delhi",
       pincode: "110001",
       phone: "9876543210",
+      address_validation_status: "READY",
     },
     ...overrides,
   };
@@ -83,6 +118,11 @@ function memoryDb(rows: Record<string, unknown>[]) {
       if (filter.op === "eq") return row[filter.key] === filter.value;
       if (filter.op === "in") return (filter.value as unknown[]).includes(row[filter.key]);
       if (filter.op === "is") return row[filter.key] == null && filter.value == null;
+      if (filter.op === "filter" && filter.key === "metadata->>ceptSubmitIntentAt") {
+        const metadata = row.metadata as Record<string, unknown> | null | undefined;
+        const intent = metadata && typeof metadata === "object" ? metadata.ceptSubmitIntentAt : null;
+        return (intent == null || intent === "") && filter.value == null;
+      }
       return true;
     });
 
@@ -102,6 +142,10 @@ function memoryDb(rows: Record<string, unknown>[]) {
       filters.push({ op: "is", key, value });
       return chain;
     };
+    chain.filter = (key: string, op: string, value: unknown) => {
+      filters.push({ op: "filter", key, value: op === "is" ? value : { op, value } });
+      return chain;
+    };
     const apply = () => {
       const row = store.find((item) => matches(item, filters));
       if (!row) return { data: null, error: null };
@@ -118,6 +162,7 @@ function memoryDb(rows: Record<string, unknown>[]) {
   const supabase = {
     rpc: async (name: string) => {
       if (name === "acquire_india_post_booking_lock") return { data: "token-test", error: null };
+      if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
       return { data: null, error: null };
     },
     from: (table: string) => {
@@ -206,6 +251,27 @@ function memoryDb(rows: Record<string, unknown>[]) {
           }),
         };
       }
+      if (table === "addresses") {
+        const chain: Record<string, unknown> = {};
+        const next = () => chain;
+        chain.eq = next;
+        chain.is = next;
+        chain.select = next;
+        chain.update = (patch: Record<string, unknown>) => {
+          for (const row of store) {
+            const address = row.addresses as Record<string, unknown> | undefined;
+            if (address) Object.assign(address, patch);
+          }
+          return chain;
+        };
+        chain.maybeSingle = async () => {
+          const address = (store[0]?.addresses as Record<string, unknown> | undefined) ?? null;
+          return { data: address, error: null };
+        };
+        chain.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+          Promise.resolve({ data: store[0]?.addresses ?? null, error: null }).then(resolve, reject);
+        return chain;
+      }
       return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
     },
   };
@@ -277,7 +343,7 @@ describe("runIndiaPostBooking idempotency", () => {
   it("TEST 2 already BOOKED makes zero CEPT calls", async () => {
     bookShipmentMock.mockReset();
     const { supabase } = memoryDb([
-      baseShipment({ status: "BOOKED", booked_at: "2026-10-06T06:00:00.000Z" }),
+      baseShipment({ status: "BOOKED", booked_at: "2026-10-06T06:00:00.000Z", barcode: BARCODE }),
     ]);
     const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
     expect(bookShipmentMock).not.toHaveBeenCalled();
@@ -335,7 +401,7 @@ describe("runIndiaPostBooking idempotency", () => {
 
   it("TEST 7 late failure cannot overwrite BOOKED", async () => {
     const { supabase, store } = memoryDb([
-      baseShipment({ status: "BOOKED", booked_at: "2026-10-06T06:00:00.000Z" }),
+      baseShipment({ status: "BOOKED", booked_at: "2026-10-06T06:00:00.000Z", barcode: BARCODE }),
     ]);
     await markShipmentBookingFailed(supabase as never, "ship-1", "stale", "VALIDATION_ERROR", "org-1");
     expect(store[0]?.status).toBe("BOOKED");
@@ -349,7 +415,7 @@ describe("runIndiaPostBooking idempotency", () => {
     const { supabase, store } = memoryDb([baseShipment()]);
     await expect(
       runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN", bookingPhase: "POST_SUBMIT" });
     expect(store[0]?.status).toBe("BOOKING");
     expect(store[0]?.booked_at).toBeNull();
     store[0]!.status = "RECOVERY_REQUIRED";
@@ -375,9 +441,11 @@ describe("runIndiaPostBooking idempotency", () => {
         },
       }),
     ]);
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toThrow();
+    const blocked = await runIndiaPostBooking(supabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1"],
+    });
+    expect(blocked.failedIds).toEqual(["ship-1"]);
     expect(bookShipmentMock).not.toHaveBeenCalled();
     store[0] = baseShipment({ status: "FAILED", booked_at: null });
     const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
@@ -432,14 +500,16 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(store[0]?.status).toBe("BOOKED");
   });
 
-  it("allows one controlled POST after temporary 409 when tracking confirms not booked", async () => {
+  it("does not POST when tracking says the article was not booked", async () => {
     const { supabase, store } = await firstTemporary409();
     bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
     trackShipmentMock.mockReset().mockResolvedValue({ message: "Article not booked" });
-    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
-    expect(outcome.bookedIds).toEqual(["ship-1"]);
-    expect(store[0]?.status).toBe("BOOKED");
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    expect(store[0]?.status).not.toBe("QUEUED");
   });
 
   it("does not POST on auto or manual retry after temporary 409 + empty tracking", async () => {
@@ -471,7 +541,7 @@ describe("runIndiaPostBooking idempotency", () => {
       data: [{ booking_details: { article_number: BARCODE } }],
     });
     const { supabase, store } = memoryDb([
-      baseShipment({ status: "RECOVERY_REQUIRED", booked_at: null, last_error_code: "ETIMEDOUT" }),
+      baseShipment({ status: "RECOVERY_REQUIRED", booked_at: null, last_error_code: "ETIMEDOUT", barcode: BARCODE }),
     ]);
     const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
     expect(bookShipmentMock).not.toHaveBeenCalled();
@@ -479,16 +549,17 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(store[0]?.status).toBe("BOOKED");
   });
 
-  it("allows exactly one controlled CEPT POST after tracking confirms not booked", async () => {
-    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
-    trackShipmentMock.mockReset().mockResolvedValue({ message: "Article not booked" });
+  it("does not POST when tracking says Article not found", async () => {
+    bookShipmentMock.mockReset();
+    trackShipmentMock.mockReset().mockResolvedValue({ message: "Article not found" });
     const { supabase, store } = memoryDb([
-      baseShipment({ status: "RECOVERY_REQUIRED", booked_at: null, last_error_code: "ETIMEDOUT" }),
+      baseShipment({ status: "RECOVERY_REQUIRED", booked_at: null, last_error_code: "ETIMEDOUT", barcode: BARCODE }),
     ]);
-    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(outcome.bookedIds).toEqual(["ship-1"]);
-    expect(store[0]?.status).toBe("BOOKED");
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
   });
 
   it("treats duplicate 409 evidence as booked without retrying CEPT", async () => {
@@ -543,7 +614,7 @@ describe("runIndiaPostBooking idempotency", () => {
   it("TEST 10 tenant isolation keeps the same barcode on another org bookable", async () => {
     bookShipmentMock.mockReset().mockResolvedValue(ceptSuccess());
     const { supabase } = memoryDb([
-      baseShipment({ organization_id: "org-a", status: "BOOKED", booked_at: "2026-10-06T06:00:00.000Z" }),
+      baseShipment({ organization_id: "org-a", status: "BOOKED", booked_at: "2026-10-06T06:00:00.000Z", barcode: BARCODE }),
       baseShipment({ id: "ship-2", organization_id: "org-b", status: "QUEUED" }),
     ]);
     const outcome = await runIndiaPostBooking(supabase as never, {
@@ -552,5 +623,258 @@ describe("runIndiaPostBooking idempotency", () => {
     });
     expect(bookShipmentMock).toHaveBeenCalledTimes(1);
     expect(outcome.bookedIds).toEqual(["ship-2"]);
+  });
+
+  it("classifies a valid legacy NULL address on demand then books", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    const { supabase, store } = memoryDb([
+      baseShipment({
+        addresses: {
+          id: "addr-1",
+          name: "Test",
+          line1: "123 St",
+          city: "Delhi",
+          state: "Delhi",
+          pincode: "110001",
+          phone: "9876543210",
+          address_validation_status: null,
+        },
+      }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1"],
+    });
+    expect((store[0]?.addresses as { address_validation_status?: string }).address_validation_status).toBe("READY");
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+  });
+
+  it("does not allocate CEPT for a legacy NULL address with an invalid PIN", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase } = memoryDb([
+      baseShipment({
+        addresses: {
+          id: "addr-1",
+          name: "Test",
+          line1: "123 St",
+          city: "Delhi",
+          state: "Delhi",
+          pincode: "12",
+          phone: "9876543210",
+          address_validation_status: null,
+        },
+      }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1"],
+    });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(outcome.failedIds).toEqual(["ship-1"]);
+  });
+
+  it("does not POST a historical barcode that has no submit marker and no error", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([baseShipment({ barcode: BARCODE, last_error_code: null })]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "BOOKING_REVIEW_REQUIRED" });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    expect(store[0]?.barcode).toBe(BARCODE);
+  });
+
+  it("posts once for a barcode signed when the shipment was created", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    const { supabase, store } = memoryDb([withProof(BARCODE)]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.barcode).toBe(BARCODE);
+  });
+
+  it("does not POST an Excel-sourced shipment whose barcode has no server proof", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([
+      baseShipment({
+        barcode: BARCODE,
+        metadata: {},
+        orders: { id: "ord-1", order_number: "#1001", source: "EXCEL" },
+      }),
+    ]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "BOOKING_REVIEW_REQUIRED" });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    expect(store[0]?.last_error_code).toBe("BOOKING_REVIEW_REQUIRED");
+    expect(store[0]?.barcode).toBe(BARCODE);
+  });
+
+  it("posts once for two newly proved bulk articles", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce({
+      batch_id: "batch-1",
+      correlation_id: "corr-1",
+      valid_articles: [
+        { barcode_no: BARCODE, article_number: BARCODE, calculated_tariff: 45 },
+        { barcode_no: BARCODE_2, article_number: BARCODE_2, calculated_tariff: 45 },
+      ],
+      error_articles: [],
+    });
+    const { supabase } = memoryDb([withProof(BARCODE, "ship-1", "ord-1"), withProof(BARCODE_2, "ship-2", "ord-2")]);
+    const outcome = await runIndiaPostBooking(supabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1", "ship-2"],
+    });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    const articles = (bookShipmentMock.mock.calls[0]?.[0] as { articles?: Array<{ barcode_no?: string }> }).articles ?? [];
+    expect(articles.map((article) => article.barcode_no).sort()).toEqual([BARCODE, BARCODE_2].sort());
+    expect(outcome.bookedIds.sort()).toEqual(["ship-1", "ship-2"]);
+  });
+
+  it("keeps a valid bulk article booked when another article is rejected", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce({
+      batch_id: "batch-1",
+      correlation_id: "corr-1",
+      valid_articles: [{ barcode_no: BARCODE, article_number: BARCODE, calculated_tariff: 45 }],
+      error_articles: [{ barcode_no: BARCODE_2, message: "Invalid article" }],
+    });
+    const { supabase } = memoryDb([withProof(BARCODE, "ship-1", "ord-1"), withProof(BARCODE_2, "ship-2", "ord-2")]);
+    const outcome = await runIndiaPostBooking(supabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1", "ship-2"],
+    });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(outcome.failedIds).toContain("ship-2");
+  });
+
+  it("lets two workers post a proved shipment only once", async () => {
+    bookShipmentMock.mockReset().mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(ceptSuccess()), 30))
+    );
+    const { supabase } = memoryDb([withProof(BARCODE)]);
+    await Promise.allSettled([
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] }),
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] }),
+    ]);
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts once after a crash that left provenance and no submit intent", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    const { supabase, store } = memoryDb([withProof(BARCODE)]);
+    expect(store[0]?.metadata).toBeTruthy();
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not POST again after submit intent is saved", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    trackShipmentMock.mockReset().mockResolvedValue({ data: [] });
+    const { supabase, store } = memoryDb([withProof(BARCODE)]);
+    await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    store[0]!.status = "BOOKING";
+    store[0]!.booked_at = null;
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+  });
+
+  it("marks an HTTP 500 after the booking POST as recovery and does not POST again", async () => {
+    const failure = Object.assign(new Error("unavailable"), { status: 500 });
+    bookShipmentMock.mockReset().mockRejectedValueOnce(failure);
+    trackShipmentMock.mockReset().mockResolvedValue({ message: "Article not found" });
+    const { supabase, store } = memoryDb([withProof(BARCODE)]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN", bookingPhase: "POST_SUBMIT" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(
+      bookingFailureShipmentUpdate(
+        classifyProviderError(
+          Object.assign(new Error("unavailable"), { code: "CEPT_UNKNOWN", bookingPhase: "POST_SUBMIT", status: 500 })
+        ),
+        false
+      ).status
+    ).toBe("RECOVERY_REQUIRED");
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+  });
+
+  it("still books a manual shipment that has no barcode yet", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    const { supabase } = memoryDb([
+      baseShipment({ orders: { id: "ord-1", order_number: "#1001", source: "MANUAL" } }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+  });
+
+  it("still books a Shopify shipment that has no barcode yet", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    const { supabase } = memoryDb([baseShipment()]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+  });
+
+  it("does not POST a proved shipment that is already booked", async () => {
+    bookShipmentMock.mockReset();
+    const row = withProof(BARCODE);
+    row.booked_at = ISSUED;
+    row.status = "BOOKED";
+    const { supabase } = memoryDb([row]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+  });
+
+  it("does not POST when a merchant forges barcode proof metadata", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([
+      baseShipment({
+        barcode: BARCODE,
+        created_at: ISSUED,
+        metadata: {
+          bookingBarcodeProof: { barcode: BARCODE, issuedAt: ISSUED, signature: "merchant-forged" },
+        },
+      }),
+    ]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "BOOKING_REVIEW_REQUIRED" });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(store[0]?.barcode).toBe(BARCODE);
+  });
+
+  it("does not POST a shipment that belongs to another organization", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase } = memoryDb([withProof(BARCODE)]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-2", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+  });
+
+  it("reuses a barcode when the stored failure is conclusively pre-POST", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    const { supabase, store } = memoryDb([
+      baseShipment({ barcode: BARCODE, last_error_code: "PRE_POST_TRANSIENT" }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.barcode).toBe(BARCODE);
   });
 });

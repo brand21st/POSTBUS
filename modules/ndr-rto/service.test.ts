@@ -4,6 +4,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { ensurePersistedIndiaPostTrackingSession } from "@/modules/india-post/session";
 import { ndrListQuery } from "@/modules/ndr-rto/schema";
 import { getNdrSummary, istDayBounds, listNdrShipments, syncNdrShipment, syncNdrVisibleShipments } from "@/modules/ndr-rto/service";
+import { TRACKING_REFRESH_MESSAGES } from "@/modules/india-post/tracking-refresh-messages";
 
 vi.mock("@/modules/india-post/session", () => ({
   ensurePersistedIndiaPostTrackingSession: vi.fn(async () => ({
@@ -278,6 +279,42 @@ describe("NDR APIs", () => {
     await expect(syncNdrShipment(connected as never, ctx, "ship-a")).rejects.toMatchObject({
       code: ERROR_CODES.PROVIDER_ERROR,
     });
+  });
+
+  it("does not call India Post when a manual refresh is inside cooldown", async () => {
+    vi.mocked(ensurePersistedIndiaPostTrackingSession).mockClear();
+    const supabase = {
+      from() {
+        const api = {
+          select() {
+            return api;
+          },
+          eq() {
+            return api;
+          },
+          maybeSingle: async () => ({
+            data: {
+              id: "ship-a",
+              barcode: "AW784699994IN",
+              status: "IN_TRANSIT",
+              last_tracked_at: new Date().toISOString(),
+              last_event_at: "2026-10-10T00:00:00.000Z",
+              organization_id: "org-a",
+            },
+            error: null,
+          }),
+        };
+        return api;
+      },
+    };
+    const result = await syncNdrShipment(supabase as never, ctx, "ship-a");
+    expect(result).toMatchObject({
+      skippedFetch: true,
+      updated: false,
+      eventsInserted: 0,
+      message: TRACKING_REFRESH_MESSAGES.cached,
+    });
+    expect(ensurePersistedIndiaPostTrackingSession).not.toHaveBeenCalled();
   });
 
   it("tracks visible page AWBs in one India Post bulk request", async () => {

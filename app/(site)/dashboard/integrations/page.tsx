@@ -1,0 +1,230 @@
+"use client";
+
+import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { Plug } from "lucide-react";
+import { GoogleSheetsLogo } from "@/components/brand/google-sheets-logo";
+import { IndiaPostLogo } from "@/components/brand/india-post-logo";
+import { ShopifyLogo } from "@/components/brand/shopify-logo";
+import { WatiLogo } from "@/components/brand/wati-logo";
+import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
+import { IndiaPostWatchTutorialLink } from "@/components/integrations/india-post-watch-tutorial-link";
+import { ShopifyWatchTutorialLink } from "@/components/integrations/shopify-watch-tutorial-link";
+import { VachatSignupLink } from "@/components/integrations/vachat-signup-link";
+import { WooCommerceWatchTutorialLink } from "@/components/integrations/woocommerce-watch-tutorial-link";
+import { AiAccountantCard } from "@/components/addons/ai-accountant-card";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { StatusBadge } from "@/components/dashboard/status-badge";
+import { buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
+import { formatDate } from "@/lib/format";
+import { api } from "@/lib/hooks/use-api";
+import { PlanLock } from "@/components/billing/plan-lock";
+import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
+import { FEATURE } from "@/modules/billing/entitlements";
+import type { IntegrationCard, IntegrationsResponse } from "@/types/api";
+
+const FALLBACK: IntegrationCard[] = [
+  { provider: "SHOPIFY", name: "Shopify", status: "NOT_CONNECTED" },
+  { provider: "INDIA_POST", name: "India Post", status: "NOT_CONNECTED" },
+  { provider: "WATI", name: "Wati", status: "NOT_CONNECTED" },
+  { provider: "WOOCOMMERCE", name: "WooCommerce", status: "NOT_CONNECTED" },
+  { provider: "POSTBUS_WHATSAPP", name: "Postbus-Whatsapp Notifications", status: "NOT_CONNECTED" },
+  { provider: "VACHAT", name: "Vachat", status: "NOT_CONNECTED" },
+];
+
+function cardsFromPayload(payload?: IntegrationsResponse | null): IntegrationCard[] {
+  if (!payload) return FALLBACK;
+  const incoming = payload.items ?? payload.integrations ?? [];
+  const byProvider = new Map(incoming.map((item) => [item.provider.toUpperCase(), item]));
+  if (payload.shopify) byProvider.set("SHOPIFY", { ...payload.shopify, provider: "SHOPIFY", name: "Shopify" });
+  if (payload.indiaPost || payload.india_post) {
+    const india = payload.indiaPost ?? payload.india_post;
+    byProvider.set("INDIA_POST", { ...india, provider: "INDIA_POST", name: "India Post" });
+  }
+  if (payload.wati) byProvider.set("WATI", { ...payload.wati, provider: "WATI", name: "Wati" });
+  if (payload.postbusWhatsapp) {
+    byProvider.set("POSTBUS_WHATSAPP", {
+      ...payload.postbusWhatsapp,
+      provider: "POSTBUS_WHATSAPP",
+      name: payload.postbusWhatsapp.name ?? "Postbus-Whatsapp Notifications",
+    });
+  }
+  if (payload.vachat) byProvider.set("VACHAT", { ...payload.vachat, provider: "VACHAT", name: "Vachat" });
+  const merchantVachatActive = (byProvider.get("VACHAT")?.status ?? "").toUpperCase() === "CONNECTED";
+  return FALLBACK.filter((item) => !(merchantVachatActive && item.provider === "POSTBUS_WHATSAPP")).map((item) => ({
+    ...item,
+    ...byProvider.get(item.provider),
+  }));
+}
+
+export default function IntegrationsPage() {
+  const entitlements = usePlanEntitlements();
+  const query = useQuery({
+    queryKey: ["integrations"],
+    queryFn: () => api<IntegrationsResponse>("/api/v1/integrations"),
+  });
+
+  const cards = cardsFromPayload(query.data);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Integrations"
+        description="Shopify, WooCommerce, India Post, Google Sheets, Wati, PostBus WhatsApp, merchant Vachat, Developer API, and paid add-ons."
+      />
+
+      <AiAccountantCard />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Developer API</CardTitle>
+          <CardDescription>
+            Create scoped API keys, read the Merchant API v1 contract, and generate Google Apps Script with AI.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link href="/dashboard/integrations/developer" className={buttonVariants({ size: "sm" })}>
+            Open Developer Portal
+          </Link>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <GoogleSheetsLogo />
+          </CardTitle>
+          <CardDescription className="mt-1">
+            Import orders from a Google Sheet with Apps Script. Book India Post in a separate menu action.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-between">
+          <p className="text-xs text-muted">Runs in your Google account. PostBus does not store the sheet.</p>
+          <Link href="/dashboard/integrations/google-sheets" className={buttonVariants({ size: "sm" })}>
+            Set up Apps Script
+          </Link>
+        </CardContent>
+      </Card>
+
+      {query.isLoading ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Skeleton className="h-40" />
+          <Skeleton className="h-40" />
+        </div>
+      ) : query.isError ? (
+        <EmptyState
+          icon={Plug}
+          title="Could not load integrations"
+          description={query.error instanceof Error ? query.error.message : "Try again shortly."}
+        />
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {cards.map((card) => {
+            const comingLater = Boolean(card.comingLater || card.coming_later);
+            const connected = (card.status ?? "").toUpperCase() === "CONNECTED";
+            const provider = (card.provider ?? "").toUpperCase();
+            const href =
+              provider === "INDIA_POST"
+                ? "/dashboard/integrations/india-post"
+                : provider === "SHOPIFY"
+                  ? "/dashboard/integrations/shopify"
+                  : provider === "WOOCOMMERCE"
+                    ? "/dashboard/integrations/woocommerce"
+                  : provider === "WATI"
+                    ? "/dashboard/integrations/wati"
+                    : provider === "POSTBUS_WHATSAPP"
+                      ? "/dashboard/integrations/postbus-whatsapp"
+                    : provider === "VACHAT"
+                      ? "/dashboard/integrations/vachat"
+                    : undefined;
+
+            const feature =
+              provider === "INDIA_POST"
+                ? FEATURE.indiaPost
+                : provider === "SHOPIFY"
+                  ? FEATURE.shopify
+                  : provider === "WOOCOMMERCE"
+                    ? FEATURE.woocommerce
+                  : provider === "WATI"
+                    ? FEATURE.wati
+                    : null;
+            const locked = Boolean(feature && !entitlements.allows(feature));
+            const description = comingLater
+              ? null
+              : card.lastError || card.last_error
+                ? card.lastError ?? card.last_error
+                : provider === "POSTBUS_WHATSAPP"
+                  ? connected
+                    ? "Shipment WhatsApp updates from the PostBus number."
+                    : "PostBus WhatsApp is not available for this workspace yet."
+                  : provider === "VACHAT"
+                    ? connected
+                      ? "Your VaChat account. PostBus WhatsApp Notifications are paused."
+                      : "Connect your own VaChat account for this workspace."
+                : connected
+                  ? "Connected and ready for background jobs."
+                  : "Not connected.";
+
+            return (
+              <PlanLock key={card.provider} locked={locked} feature={feature} compact>
+                <Card>
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <CardTitle>
+                        {provider === "SHOPIFY" ? (
+                          <ShopifyLogo className="h-6" />
+                        ) : provider === "INDIA_POST" ? (
+                          <IndiaPostLogo className="h-6" />
+                        ) : provider === "WATI" ? (
+                          <WatiLogo className="h-6" />
+                        ) : provider === "WOOCOMMERCE" ? (
+                          <WooCommerceLogo className="h-6" />
+                        ) : (
+                          card.name ?? card.provider
+                        )}
+                      </CardTitle>
+                      {description ? (
+                        <CardDescription className="mt-1">{description}</CardDescription>
+                      ) : null}
+                      {provider === "SHOPIFY" ? (
+                        <ShopifyWatchTutorialLink className="mt-2" />
+                      ) : provider === "INDIA_POST" ? (
+                        <IndiaPostWatchTutorialLink className="mt-2" />
+                      ) : provider === "WOOCOMMERCE" ? (
+                        <WooCommerceWatchTutorialLink className="mt-2" />
+                      ) : provider === "VACHAT" ? (
+                        <VachatSignupLink className="mt-2" />
+                      ) : null}
+                    </div>
+                    <StatusBadge value={comingLater ? "COMING_LATER" : card.status ?? "NOT_CONNECTED"} />
+                  </div>
+                </CardHeader>
+                <CardContent className="flex items-center justify-between">
+                  <p className="text-xs text-muted">
+                    Last sync {formatDate(card.lastSyncAt ?? card.last_sync_at, true)}
+                  </p>
+                  {comingLater ? (
+                    <span className="text-sm text-muted">Coming later</span>
+                  ) : href?.startsWith("/api") ? (
+                    <a href={href} className={buttonVariants({ size: "sm" })}>
+                      {connected ? "Manage" : "Connect"}
+                    </a>
+                  ) : href ? (
+                    <Link href={href} className={buttonVariants({ size: "sm" })}>
+                      {connected || card.appConfigured === false ? "Configure" : "Connect"}
+                    </Link>
+                  ) : null}
+                </CardContent>
+                </Card>
+              </PlanLock>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}

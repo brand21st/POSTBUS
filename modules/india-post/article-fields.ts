@@ -250,7 +250,7 @@ export const CEPT_BOOKING_FIELDS: CeptBookingField[] = [
     name: "receiver_add_line_2",
     required: "optional",
     source: "Shopify Order",
-    transformation: "Shipping line2 if length ≥ 3",
+    transformation: "Shipping line2, wrapped across line 2/3 to stay within 80 characters",
     validation: "3–80 characters when present; combined address lines ≤ 240",
   },
   {

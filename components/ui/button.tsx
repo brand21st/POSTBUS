@@ -36,8 +36,9 @@ const buttonVariants = cva(
   }
 );
 
+// App Bridge types add a global `variant` to every button; ours comes from cva.
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "variant">,
     VariantProps<typeof buttonVariants> {}
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(

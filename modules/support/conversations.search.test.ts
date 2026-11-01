@@ -70,6 +70,26 @@ describe("listConversations search", () => {
     expect(seen.includes("support_tickets")).toBe(true);
   });
 
+  it("matches a +91 customer phone on stored phone_digits", async () => {
+    let orExpr = "";
+    const supabase = {
+      from(table: string) {
+        if (table === "support_conversations") {
+          const self = chain({ data: [] });
+          const originalOr = self.or as (expr: string) => unknown;
+          self.or = (expr: string) => {
+            orExpr = expr;
+            return originalOr(expr);
+          };
+          return self;
+        }
+        return chain({ data: [] });
+      },
+    };
+    await listConversations(supabase as never, "org-a", { q: "+91 98765 43210" });
+    expect(orExpr).toContain("phone_digits.ilike.%9876543210%");
+  });
+
   it("returns an empty list when nothing matches", async () => {
     const supabase = {
       from() {

@@ -1,29 +1,18 @@
 import type { NextRequest } from "next/server";
 import { requireTenant } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { handleCommerceRoutes } from "@/lib/api/v1/commerce";
-import { handleTariffRoutes } from "@/lib/api/v1/tariff";
-import { handleInventoryRoutes } from "@/lib/api/v1/inventory";
+import { dispatchTenantRoutes } from "@/lib/api/v1/dispatch";
 import { handleInboundWebhook, isInboundWebhookPath } from "@/lib/api/v1/inbound-webhooks";
-import { handleIntegrationRoutes } from "@/lib/api/v1/integrations";
-import { handleInvoiceRoutes } from "@/lib/api/v1/invoices";
-import { handleLabelTemplateRoutes } from "@/lib/api/v1/label-template";
-import { handleManifestRoutes } from "@/lib/api/v1/manifests";
-import { handlePrintAgentRoutes, handlePrintStationRoutes, isPrintAgentApiPath } from "@/lib/api/v1/print";
-import { handlePrintDevicePublicRoutes, handlePrintDeviceTenantRoutes, isPrintDevicePublicPath } from "@/lib/api/v1/print-devices";
+import { handlePrintAgentRoutes, isPrintAgentApiPath } from "@/lib/api/v1/print";
+import { handlePrintDevicePublicRoutes, isPrintDevicePublicPath } from "@/lib/api/v1/print-devices";
 import { handleSessionRoutes } from "@/lib/api/v1/session";
 import { handleBillingRoutes } from "@/lib/api/v1/billing";
-import { handleMerchantTutorials } from "@/lib/api/v1/tutorials";
-import { handleShipmentPresetRoutes } from "@/lib/api/v1/shipment-presets";
-import { handleUiRoutes } from "@/lib/api/v1/ui";
-import { handleWorkspaceRoutes } from "@/lib/api/v1/workspace";
-import { handleSupportRoutes } from "@/lib/api/v1/support";
 import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { assertPlanFeature, lockedFeatureForApi } from "@/modules/billing/entitlements";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
+import { parseWooWebhookPath } from "@/modules/woocommerce/webhooks";
 
 export async function handleV1(request: NextRequest, slugs: string[]) {
   const path = slugs.join("/");
@@ -31,11 +20,12 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   const key = `${method} ${path}`;
   const indiaPostWebhook = parseIndiaPostWebhookPath(path);
   const watiWebhook = parseWatiWebhookPath(path);
+  const wooWebhook = parseWooWebhookPath(path);
   const printAgentPath = isPrintAgentApiPath(path);
   const printDevicePath = isPrintDevicePublicPath(path);
   const limited = rateLimit(
     `${request.headers.get("x-forwarded-for") ?? "local"}:${path}`,
-    indiaPostWebhook || watiWebhook || printAgentPath || printDevicePath ? 180 : 60
+    indiaPostWebhook || watiWebhook || wooWebhook || printAgentPath || printDevicePath ? 180 : 60
   );
   if (!limited.ok) {
     throw new AppError(ERROR_CODES.RATE_LIMITED, "Too many requests. Try again shortly.");
@@ -70,26 +60,6 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   if (session !== null) return session;
 
   const ctx = await requireTenant(permissionForTenantRoute(method, path, slugs));
-  const planFeature = lockedFeatureForApi(method, path, slugs);
-  if (planFeature) await assertPlanFeature(supabase, ctx.organizationId, planFeature);
-  return (
-    (await handleTariffRoutes(request, supabase, ctx, path)) ??
-    (await handleBillingRoutes(request, supabase, ctx, key)) ??
-    (await handleWorkspaceRoutes(request, supabase, ctx, key, method, slugs)) ??
-    (await handleSupportRoutes(request, supabase, ctx, method, slugs)) ??
-    (await handleUiRoutes(request, supabase, ctx, method, slugs)) ??
-    (await handleShipmentPresetRoutes(request, supabase, ctx, method, slugs)) ??
-    (await handlePrintStationRoutes(request, supabase, ctx, key, method, slugs)) ??
-    (await handlePrintDeviceTenantRoutes(request, supabase, ctx, method, slugs)) ??
-    (await handleLabelTemplateRoutes(request, supabase, ctx, key, method, slugs)) ??
-    (await handleInvoiceRoutes(request, supabase, ctx, key, method, slugs)) ??
-    (await handleInventoryRoutes(request, supabase, ctx, key, method, slugs)) ??
-    (await handleManifestRoutes(request, supabase, ctx, method, slugs)) ??
-    (await handleCommerceRoutes(request, supabase, ctx, key, method, slugs)) ??
-    (await handleIntegrationRoutes(request, supabase, ctx, key)) ??
-    (await handleMerchantTutorials(request, supabase, slugs, method)) ??
-    (() => {
-      throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Not found.");
-    })()
-  );
+  return dispatchTenantRoutes(request, supabase, ctx, { key, path, method, slugs });
 }
+

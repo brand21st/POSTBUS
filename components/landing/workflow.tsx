@@ -16,7 +16,7 @@ const promises = [
   {
     title: "Start with a full-feature trial",
     description:
-      "New workspaces get a 3-day trial with every PostBus feature unlocked, then continue on the plan that matches monthly volume.",
+      "New workspaces get a 7-day trial with every PostBus feature unlocked, then continue on the plan that matches monthly volume.",
   },
 ] as const;
 

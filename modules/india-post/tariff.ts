@@ -1,9 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { z } from "zod";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { encryptSecret, decryptSecret } from "@/lib/security/crypto";
-import { withProcessSessionLock } from "@/modules/india-post/session";
+import { decryptSecret } from "@/lib/security/crypto";
+import { persistIndiaPostTokens, withProcessSessionLock } from "@/modules/india-post/session";
 import { IndiaPostProvider } from "@/modules/india-post/provider";
+import { withIndiaPostSessionLock } from "@/modules/india-post/session-lock";
+import { orderLookup } from "@/modules/orders/order-number";
 import { manualTariffSchema, orderTariffSchema, tariffEstimateKey, tariffInputSchema, normalizeTariff, type TariffInput, type TariffQuote } from "@/modules/india-post/tariff-contract";
 
 export function tariffError(category: string, message: string, code: ConstructorParameters<typeof AppError>[0] = ERROR_CODES.PROVIDER_ERROR) {
@@ -45,14 +46,16 @@ export function tariffSourcePincode(connection: TariffConnection, office?: "pick
 }
 
 export type TariffOrder = {
+  id?: string;
   india_post_service?: string | null; parcel_weight_mode?: string | null; parcel_weight_grams?: number | null;
   shipping_address: { pincode?: string | null } | null;
   order_line_items: Array<{ weight_grams: number | null; quantity: number }>;
   shipments: Array<{ weight_grams?: number | null; length_cm?: number | null; width_cm?: number | null; height_cm?: number | null; service_code?: string | null; created_at?: string }>;
 };
 export async function loadTariffOrder(db: SupabaseClient, organizationId: string, id: string): Promise<TariffOrder> {
-  if (!z.uuid().safeParse(id).success) throw tariffError("ORDER_NOT_FOUND", "Order not found.", ERROR_CODES.RESOURCE_NOT_FOUND);
-  const { data, error } = await db.from("orders").select("india_post_service,parcel_weight_mode,parcel_weight_grams,shipping_address:addresses!shipping_address_id(pincode),order_line_items(weight_grams,quantity),shipments(weight_grams,length_cm,width_cm,height_cm,service_code,created_at)").eq("organization_id", organizationId).eq("id", id).maybeSingle();
+  const lookup = orderLookup(id);
+  if (!lookup) throw tariffError("ORDER_NOT_FOUND", "Order not found.", ERROR_CODES.RESOURCE_NOT_FOUND);
+  const { data, error } = await db.from("orders").select("id,india_post_service,parcel_weight_mode,parcel_weight_grams,shipping_address:addresses!shipping_address_id(pincode),order_line_items(weight_grams,quantity),shipments(weight_grams,length_cm,width_cm,height_cm,service_code,created_at)").eq("organization_id", organizationId).eq(lookup.column, lookup.value).maybeSingle();
   if (error) throw tariffError("INTERNAL_ERROR", "Unable to load order details.");
   if (!data) throw tariffError("ORDER_NOT_FOUND", "Order not found.", ERROR_CODES.RESOURCE_NOT_FOUND);
   return data as unknown as TariffOrder;
@@ -73,7 +76,7 @@ export function tariffOrderDefaults(order: TariffOrder, connection: TariffConnec
 }
 export function resolveTariffInput(body: unknown, connection: TariffConnection, order?: TariffOrder): TariffInput {
   const parsed = (order ? orderTariffSchema : manualTariffSchema).safeParse(body);
-  const categories: Record<string, string> = { service: "INVALID_SERVICE", weightGrams: "INVALID_WEIGHT", lengthCm: "INVALID_DIMENSIONS", widthCm: "INVALID_DIMENSIONS", heightCm: "INVALID_DIMENSIONS", destinationPincode: "INVALID_PINCODE" };
+  const categories: Record<string, string> = { service: "INVALID_SERVICE", weightGrams: "INVALID_WEIGHT", lengthCm: "INVALID_DIMENSIONS", widthCm: "INVALID_DIMENSIONS", heightCm: "INVALID_DIMENSIONS", destinationPincode: "INVALID_PINCODE", codAmount: "VALIDATION_ERROR" };
   if (!parsed.success) throw tariffError(categories[String(parsed.error.issues[0]?.path[0])] ?? "VALIDATION_ERROR", "Check the quote fields; only supported tariff inputs are accepted.", ERROR_CODES.VALIDATION_ERROR);
   const input = tariffInputSchema.safeParse({ ...(order ? tariffOrderDefaults(order, connection) : {}), ...parsed.data, sourcePincode: tariffSourcePincode(connection, parsed.data.senderOffice) });
   if (!input.success) throw tariffError(categories[String(input.error.issues[0]?.path[0])] ?? "VALIDATION_ERROR", input.error.issues[0]?.message ?? "Enter valid parcel details.", ERROR_CODES.VALIDATION_ERROR);
@@ -83,7 +86,8 @@ export function resolveTariffInput(body: unknown, connection: TariffConnection, 
 // Only the trusted tenant route supplies this server-side client and organization.
 // Do not use the booking session helper: quotes must never acquire its booking lock.
 export async function tariffSession(db: SupabaseClient, organizationId: string, connectionId: string, rejectedToken?: string) {
-  return withProcessSessionLock(connectionId, async () => {
+  return withProcessSessionLock(connectionId, () =>
+    withIndiaPostSessionLock(db, { connectionId, organizationId }, async (lockToken) => {
     const connection = await loadTariffConnection(db, organizationId);
     if (connection.id !== connectionId) throw tariffError("INDIA_POST_AUTH_FAILED", "India Post connection changed. Please retry.");
     if (rejectedToken && connection.encrypted_access_token && decryptSecret(connection.encrypted_access_token) === rejectedToken) {
@@ -96,29 +100,40 @@ export async function tariffSession(db: SupabaseClient, organizationId: string, 
     catch { throw tariffError("INDIA_POST_AUTH_FAILED", "India Post authentication failed. Check your connection settings."); }
     if (!session.access_token || (session.tokens && (!Number.isFinite(session.tokens.expires_in) || session.tokens.expires_in <= 60))) throw tariffError("INDIA_POST_AUTH_FAILED", "India Post returned an invalid authentication session.");
     if (session.tokens) {
-      const tokens = session.tokens;
-      const { data, error } = await db.from("india_post_connections").update({
-        encrypted_access_token: encryptSecret(tokens.access_token),
-        encrypted_refresh_token: tokens.refresh_token ? encryptSecret(tokens.refresh_token) : null,
-        encrypted_id_token: tokens.id_token ? encryptSecret(tokens.id_token) : null,
-        expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-        refresh_expires_at: tokens.refresh_expires_in ? new Date(Date.now() + tokens.refresh_expires_in * 1000).toISOString() : null,
-        last_refreshed_at: new Date().toISOString(),
-      }).eq("organization_id", organizationId).eq("id", connectionId).select("id").maybeSingle();
-      if (error || !data) throw tariffError("INTERNAL_ERROR", "Unable to save the India Post session. Please retry.");
+      try {
+        await persistIndiaPostTokens(
+          db,
+          { id: connectionId, organization_id: organizationId, sessionLockToken: lockToken },
+          session.tokens
+        );
+      } catch {
+        throw tariffError("INTERNAL_ERROR", "Unable to save the India Post session. Please retry.");
+      }
     }
     return { provider, accessToken: session.access_token };
-  });
+    })
+  );
 }
+async function readTariff(session: { provider: { getTariff(input: TariffInput): Promise<unknown> }; accessToken: string }, db: SupabaseClient, organizationId: string, connectionId: string, input: TariffInput) {
+  try { return { session, raw: await session.provider.getTariff(input) }; }
+  catch (error) {
+    if ((error as { status?: number })?.status !== 401) throw error;
+    const refreshed = await tariffSession(db, organizationId, connectionId, session.accessToken);
+    return { session: refreshed, raw: await refreshed.provider.getTariff(input) };
+  }
+}
+
 export async function executeTariff(db: SupabaseClient, organizationId: string, connection: TariffConnection, input: TariffInput) {
   try {
-    let session = await tariffSession(db, organizationId, connection.id);
+    const session = await tariffSession(db, organizationId, connection.id);
     let raw: unknown;
-    try { raw = await session.provider.getTariff(input); }
-    catch (error) {
-      if ((error as { status?: number })?.status !== 401) throw error;
-      session = await tariffSession(db, organizationId, connection.id, session.accessToken);
-      raw = await session.provider.getTariff(input);
+    try {
+      raw = (await readTariff(session, db, organizationId, connection.id, input)).raw;
+    } catch (error) {
+      const status = (error as { status?: number })?.status;
+      if (status !== 400 || !(input.codAmount != null && input.codAmount > 0)) throw error;
+      const withoutCod = { ...input, codAmount: undefined };
+      raw = (await readTariff(session, db, organizationId, connection.id, withoutCod)).raw;
     }
     try { return normalizeTariff(raw, input); }
     catch { throw tariffError("INDIA_POST_INVALID_RESPONSE", "India Post returned an invalid estimate. Please try again."); }
@@ -135,6 +150,8 @@ export async function saveTariffEstimate(
   input: TariffInput,
   quote: Pick<TariffQuote, "estimatedTotal" | "calculatedAt">
 ) {
+  const lookup = orderLookup(orderId);
+  if (lookup?.column !== "id") throw tariffError("INTERNAL_ERROR", "Unable to save the shipping estimate.");
   const { data, error } = await db
     .from("orders")
     .update({
@@ -143,7 +160,7 @@ export async function saveTariffEstimate(
       india_post_estimate_key: tariffEstimateKey(input),
     })
     .eq("organization_id", organizationId)
-    .eq("id", orderId)
+    .eq("id", lookup.value)
     .select("id")
     .maybeSingle();
   if (error || !data) throw tariffError("INTERNAL_ERROR", "Unable to save the shipping estimate.");

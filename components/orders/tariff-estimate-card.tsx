@@ -7,9 +7,9 @@ import { useMe } from "@/lib/hooks/use-me";
 import { formatCurrency } from "@/lib/format";
 import { tariffInputSchema, usableTariffDraft, type TariffQuote } from "@/modules/india-post/tariff-contract";
 
-type Draft = { service?: string | null; destinationPincode?: string | null; weightGrams?: number; lengthCm?: number; widthCm?: number; heightCm?: number };
+type Draft = { service?: string | null; destinationPincode?: string | null; weightGrams?: number; lengthCm?: number; widthCm?: number; heightCm?: number; codAmount?: number };
 type Capabilities = { enabled: boolean; organizationId: string; senderChoices: Array<{ id: string; label: string; pincode: string }>; defaults?: Draft | null };
-export type TariffEstimateStatus = { visible: boolean; text: string };
+export type TariffEstimateStatus = { visible: boolean; text: string; codCharges: number | null; estimatedTotal: number | null };
 type Props = { orderId?: string; draft?: Draft; revision?: string; draftRevision?: string; onEstimate?: (status: TariffEstimateStatus) => void };
 
 /** Inline estimate using the containing order form; no duplicate parcel controls. */
@@ -23,7 +23,7 @@ export function TariffEstimateCard({ onEstimate, ...props }: Props) {
   });
   const visible = Boolean(capabilities.data?.enabled && capabilities.data.organizationId === organizationId && !capabilities.isError);
   useEffect(() => {
-    if (!visible) onEstimate?.({ visible: false, text: "—" });
+    if (!visible) onEstimate?.({ visible: false, text: "—", codCharges: null, estimatedTotal: null });
   }, [onEstimate, visible]);
   if (!visible || !capabilities.data) return null;
   return <InlineEstimate {...props} onEstimate={onEstimate} capabilities={capabilities.data} />;
@@ -41,6 +41,7 @@ function InlineEstimate({ orderId, draft, revision, draftRevision, onEstimate, c
   const body = parsed.success ? {
     service: parsed.data.service, senderOffice: office?.id,
     weightGrams: parsed.data.weightGrams, lengthCm: parsed.data.lengthCm, widthCm: parsed.data.widthCm, heightCm: parsed.data.heightCm,
+    ...(parsed.data.codAmount != null && parsed.data.codAmount > 0 ? { codAmount: parsed.data.codAmount } : {}),
     ...(!orderId ? { destinationPincode: parsed.data.destinationPincode } : {}),
   } : null;
   const payload = body ? JSON.stringify(body) : null;
@@ -75,9 +76,11 @@ function InlineEstimate({ orderId, draft, revision, draftRevision, onEstimate, c
   const current = result?.key === key ? result : null;
   const quote = current?.quote;
   const estimateText = quote ? formatCurrency(quote.estimatedTotal, "INR") : loadingKey === key ? "Calculating…" : payload && !current?.error ? "Updating…" : "—";
+  const codCharges = quote ? quote.codCharges : null;
+  const estimatedTotal = quote ? quote.estimatedTotal : null;
   useEffect(() => {
-    onEstimate?.({ visible: true, text: estimateText });
-  }, [estimateText, onEstimate]);
+    onEstimate?.({ visible: true, text: estimateText, codCharges, estimatedTotal });
+  }, [codCharges, estimateText, estimatedTotal, onEstimate]);
   return <div className="space-y-1.5 border-t border-border pt-3 text-sm" aria-label="Shipping tariff">
     {capabilities.senderChoices.length > 1 ? <label className="flex items-center justify-between gap-2 text-xs text-muted">Sender office
       <select aria-label="Tariff sender office" className="h-8 rounded border border-border bg-card px-2 text-ink" value={sender} onChange={(event) => setSender(event.target.value)}>

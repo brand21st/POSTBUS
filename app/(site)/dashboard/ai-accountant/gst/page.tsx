@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useReadOnly } from "@/components/ai-accountant/shell";
-import { ExportButtons, GST_RATES, Money, NativeSelect, Notes, TableShell, istToday, rupeesToPaiseInput, td, th } from "@/components/ai-accountant/shared";
+import { ExportButtons, GST_RATES, HelpHint, Money, NativeSelect, Notes, TableShell, istToday, rupeesToPaiseInput, td, th } from "@/components/ai-accountant/shared";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -146,7 +146,10 @@ export default function GstPage() {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>GST return drafts</CardTitle>
+          <CardTitle className="flex items-center gap-1">
+            GST return drafts
+            <HelpHint label="GST returns">GSTR-1 lists your sales invoices; GSTR-3B summarises tax collected, input credit and tax payable. These are drafts for you or your CA to file on the GST portal.</HelpHint>
+          </CardTitle>
           <CardDescription>Prepared from booked shipments, RTOs, purchases and expenses. PostBus never files on the GST portal.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -222,7 +225,7 @@ export default function GstPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="products" className="scroll-mt-32">
         <CardHeader>
           <CardTitle>Products: HSN, GST rate and unit cost</CardTitle>
           <CardDescription>

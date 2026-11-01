@@ -126,7 +126,7 @@ export async function registerRazorpayWebhook(
   supabase: ReturnType<typeof createAdminClient>,
   ctx: AdminContext
 ) {
-  let config = await getRazorpayConfig();
+  const config = await getRazorpayConfig();
   if (!config.keyId || !config.keySecret) {
     throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "Save Razorpay API keys before registering the webhook.");
   }

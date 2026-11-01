@@ -22,17 +22,36 @@ export function indiaPostWebhookOrigin(appUrl = env.appUrl) {
   return PRODUCTION_APP_ORIGIN;
 }
 
-export function indiaPostWebhookUrls(connectionId: string, appUrl = env.appUrl) {
+const CONNECTION_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** India Post customer ID when present; otherwise the connection UUID. */
+export function indiaPostWebhookPublicId(connectionId: string, customerId?: string | null) {
+  const customer = String(customerId ?? "").replace(/\D/g, "");
+  if (customer.length >= 6 && customer.length <= 20) return customer;
+  return connectionId;
+}
+
+export function isIndiaPostWebhookConnectionUuid(value: string) {
+  return CONNECTION_UUID.test(value);
+}
+
+export function indiaPostWebhookUrls(
+  connectionId: string,
+  appUrl = env.appUrl,
+  customerId?: string | null
+) {
   const base = indiaPostWebhookOrigin(appUrl);
+  const publicId = indiaPostWebhookPublicId(connectionId, customerId);
   return {
-    bookingWebhookUrl: `${base}/api/v1/webhooks/india-post/${connectionId}/booking`,
-    eventsWebhookUrl: `${base}/api/v1/webhooks/india-post/${connectionId}/events`,
+    bookingWebhookUrl: `${base}/api/v1/webhooks/india-post/${publicId}/booking`,
+    eventsWebhookUrl: `${base}/api/v1/webhooks/india-post/${publicId}/events`,
   };
 }
 
 export function parseIndiaPostWebhookPath(path: string) {
   const match = path.match(
-    /^webhooks\/india-post\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(booking|events)$/i
+    /^webhooks\/india-post\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{6,20})\/(booking|events)$/i
   );
   if (!match) return null;
   return {

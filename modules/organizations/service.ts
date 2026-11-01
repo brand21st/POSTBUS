@@ -77,7 +77,7 @@ export async function createOrganization(
     return org;
   }
 
-  const { data: rpcOrg, error: rpcError } = await supabase.rpc("create_organization_for_user", {
+  const { data: rpcOrg, error: rpcError } = await supabase.rpc(process.env.POSTBUS_AFFILIATES_ENABLED === "true" ? "affiliate_create_organization" : "create_organization_for_user", {
     p_name: name,
   });
 
@@ -126,12 +126,23 @@ export async function ensureActiveWorkspace(
   let memberships = await listMemberships(supabase, userId);
   if (memberships.length === 0) {
     const named = options?.workspaceName?.trim();
-    await createOrganization(
+    const created = await createOrganization(
       supabase,
       userId,
       named && named.length >= 2 ? named : defaultWorkspaceName(options?.fullName, options?.email)
     );
     memberships = await listMemberships(supabase, userId);
+    if (created?.id) {
+      void import("@/modules/vachat/signup-welcome")
+        .then(({ enqueueSignupWelcome }) => enqueueSignupWelcome(userId, created.id))
+        .catch((error) => {
+          logError("vachat.signup_welcome.schedule_failed", {
+            userId,
+            organizationId: created.id,
+            message: error instanceof Error ? error.message : "schedule",
+          });
+        });
+    }
   }
 
   const canonical =

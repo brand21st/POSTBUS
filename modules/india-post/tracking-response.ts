@@ -97,6 +97,8 @@ function articleList(value: unknown): unknown[] | undefined {
   }
   if (typeof parsed === "object") {
     const row = parsed as Record<string, unknown>;
+    // TNT01 may return one article object; keep booking_details with its tracking_details.
+    if (row.booking_details || row.article_number) return [row];
     const nested = row.articles ?? row.article ?? row.tracking ?? row.result ?? row.tracking_details;
     if (nested != null && nested !== parsed) return articleList(nested) ?? asArray(parsed);
   }
@@ -212,18 +214,101 @@ export function bulkArticleNumber(article: {
   );
 }
 
+/** Comparison key only. Display keeps the original article number. */
+export function normalizeArticleNumber(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, "").toUpperCase();
+}
+
+export type RequestedArticleClassification = "WITH_EVENTS" | "EMPTY_HISTORY" | "UNMATCHED" | "AMBIGUOUS";
+
+export type ClassifiedArticleRow<T> = {
+  barcode: string;
+  classification: RequestedArticleClassification;
+  article?: T;
+};
+
+function articleHasEvents(article: { tracking_details?: unknown[] | null }) {
+  return Array.isArray(article.tracking_details) && article.tracking_details.length > 0;
+}
+
+/**
+ * Match returned articles to requested barcodes by normalized article number.
+ * Never uses response position. A single unlabeled article may attach only when
+ * the request and response each contain exactly one article and that article has
+ * no article number. A different article number is not a match.
+ * Duplicate article numbers for one requested barcode are ambiguous and are not attached.
+ */
+function asMatchableArticle(article: object) {
+  return article as {
+    article_number?: unknown;
+    barcode?: unknown;
+    consignment_number?: unknown;
+    booking_details?: Record<string, unknown> | null;
+    tracking_details?: unknown[] | null;
+  };
+}
+
+export function classifyRequestedArticles<T extends { tracking_details?: unknown[] | null }>(
+  articles: T[] | undefined,
+  requested: string[]
+): { articles: T[]; rows: ClassifiedArticleRow<T>[] } {
+  const wanted = requested
+    .map((code) => ({ raw: String(code ?? "").trim(), key: normalizeArticleNumber(code) }))
+    .filter((row) => row.key);
+  const list = articles ?? [];
+  const grouped = new Map<string, T[]>();
+  const unlabeled: T[] = [];
+  for (const article of list) {
+    const key = normalizeArticleNumber(bulkArticleNumber(asMatchableArticle(article)));
+    if (!key) {
+      unlabeled.push(article);
+      continue;
+    }
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(article);
+    grouped.set(key, bucket);
+  }
+
+  const rows: ClassifiedArticleRow<T>[] = [];
+  const safe: T[] = [];
+  for (const item of wanted) {
+    const bucket = grouped.get(item.key) ?? [];
+    if (bucket.length > 1) {
+      rows.push({ barcode: item.raw, classification: "AMBIGUOUS" });
+      continue;
+    }
+    if (bucket.length === 1) {
+      const article = bucket[0];
+      const classification = articleHasEvents(article) ? "WITH_EVENTS" : "EMPTY_HISTORY";
+      rows.push({ barcode: item.raw, classification, article });
+      safe.push(article);
+      continue;
+    }
+    rows.push({ barcode: item.raw, classification: "UNMATCHED" });
+  }
+
+  const canUseUnlabeledFallback =
+    wanted.length === 1 &&
+    list.length === 1 &&
+    unlabeled.length === 1 &&
+    grouped.size === 0 &&
+    rows.length === 1 &&
+    rows[0]?.classification === "UNMATCHED" &&
+    articleHasEvents(asMatchableArticle(unlabeled[0]));
+  if (canUseUnlabeledFallback) {
+    const only = unlabeled[0];
+    return {
+      articles: [only],
+      rows: [{ barcode: wanted[0].raw, classification: "WITH_EVENTS", article: only }],
+    };
+  }
+
+  return { articles: safe, rows };
+}
+
 export function articlesForRequestedBarcodes(
   articles: ParsedBulkTrackingResponse["data"],
   requested: string[]
 ) {
-  const wanted = requested.map((code) => code.trim()).filter(Boolean);
-  const wantedSet = new Set(wanted.map((code) => code.toUpperCase()));
-  const list = articles ?? [];
-  const matched = list.filter((article) => wantedSet.has(bulkArticleNumber(article).toUpperCase()));
-  if (matched.length) return matched;
-  if (wanted.length === 1 && list.length === 1) {
-    const details = list[0]?.tracking_details;
-    if (Array.isArray(details) && details.length) return list;
-  }
-  return [];
+  return classifyRequestedArticles(articles, requested).articles;
 }

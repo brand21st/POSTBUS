@@ -3,6 +3,7 @@ import { authorizeCron } from "@/lib/jobs/cron-auth";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { runBillingSweep } from "@/modules/billing/cron";
+import { runAffiliateSweep } from "@/modules/affiliates/reconcile";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,12 @@ export async function POST(request: NextRequest) {
   }
   try {
     const result = await runBillingSweep(createAdminClient());
-    return NextResponse.json({ success: true, data: result });
+    const { runAddonBillingSweep } = await import("@/modules/addons/cron");
+    const addons = await runAddonBillingSweep(createAdminClient());
+    // Affiliate work is independent: failure never changes the billing sweep outcome.
+    try { await runAffiliateSweep(createAdminClient()); }
+    catch { logError("affiliate.sweep_failed", { category: "retry_required" }); }
+    return NextResponse.json({ success: true, data: { ...result, addons } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Billing sweep failed.";
     logError("billing.cron_failed", { message });

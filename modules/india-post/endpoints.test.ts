@@ -57,6 +57,12 @@ describe("production login and booking URLs", () => {
     );
   });
 
+  it("builds Event Download without duplicating /beextcustomer", () => {
+    const url = indiaPostSessionUrl("PRODUCTION", "/event/download");
+    expect(url).toBe("https://app.indiapost.gov.in/beextcustomer/v1/event/download");
+    expect(url.match(/\/beextcustomer/g)).toHaveLength(1);
+  });
+
   it("uses process-articles without /v1 for production booking", () => {
     const booking = indiaPostBookingUrl("PRODUCTION", "1788590988");
     expect(booking).toBe(

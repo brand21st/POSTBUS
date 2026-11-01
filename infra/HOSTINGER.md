@@ -54,7 +54,7 @@ Then add **three** scheduled tasks on the **same** PostBus web container (do not
 | --- | --- |
 | Booking | `JOB_TYPES=shipment-booking node scripts/drain-jobs.mjs` |
 | Labels | `JOB_TYPES=label-generation node scripts/drain-jobs.mjs` |
-| Other | `JOB_TYPES=invoice-generation,tracking-sync,shopify-fulfillment,wati-notify,vachat-notify,manifest-generation,webhook-processing,shopify-sync,india-post-events,notifications,cleanup,reports node scripts/drain-jobs.mjs` |
+| Other | `JOB_TYPES=invoice-generation,tracking-sync,shopify-fulfillment,wati-notify,vachat-notify,manifest-generation,webhook-processing,shopify-sync,woocommerce-sync,woocommerce-tracking,india-post-events,notifications,cleanup,reports node scripts/drain-jobs.mjs` |
 
 `scripts/drain-jobs.mjs` appends `JOB_TYPES` as `?types=` on `POST /api/cron/jobs`. Unknown types are rejected. An untyped drain (`node scripts/drain-jobs.mjs` with no `JOB_TYPES`) still claims every due job.
 

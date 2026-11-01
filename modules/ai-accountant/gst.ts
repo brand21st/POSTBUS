@@ -55,6 +55,13 @@ const ABBREVIATIONS: Record<string, string> = {
   UK: "05", UT: "05", WB: "19", JK: "01", LA: "38", CH: "04", PY: "34", DN: "26", DD: "26", LD: "31", AN: "35",
 };
 
+const CODE_TO_STATE_NAME: Record<string, string> = {};
+for (const [name, code] of Object.entries(STATE_CODES)) {
+  if (!CODE_TO_STATE_NAME[code]) {
+    CODE_TO_STATE_NAME[code] = name.replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+}
+
 export function stateCodeFromName(state?: string | null) {
   if (!state) return null;
   const raw = state.trim();
@@ -62,6 +69,13 @@ export function stateCodeFromName(state?: string | null) {
   const abbr = raw.toUpperCase().replace(/^IN-/, "");
   if (ABBREVIATIONS[abbr]) return ABBREVIATIONS[abbr];
   return STATE_CODES[raw.toLowerCase().replace(/\s+/g, " ")] ?? null;
+}
+
+/** Canonical state or union-territory name for a Shopify province, code, or GST state code. */
+export function canonicalStateName(state?: string | null) {
+  const code = stateCodeFromName(state);
+  if (!code) return null;
+  return CODE_TO_STATE_NAME[code] ?? null;
 }
 
 export function gstinStateCode(gstin?: string | null) {

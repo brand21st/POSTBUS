@@ -9,6 +9,7 @@ import {
   CATEGORY_LABELS,
   ExportButtons,
   GST_RATES,
+  HelpHint,
   Kpi,
   Money,
   NativeSelect,
@@ -113,6 +114,7 @@ function ExpenseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
           <label className="flex items-center gap-2 text-sm sm:col-span-2">
             <input type="checkbox" checked={form.itcClaimable} disabled={form.rateBps === 0} onChange={(e) => setForm({ ...form, itcClaimable: e.target.checked })} />
             I have a GST tax invoice for this and will claim input tax credit
+            <HelpHint label="input tax credit">GST you paid on business purchases can be subtracted from GST you collect. Only claim it with a valid tax invoice and if you are GST registered.</HelpHint>
           </label>
         </div>
         <DialogFooter>

@@ -4,14 +4,13 @@ import { orExact } from "@/lib/api/filters";
 import { titleCase } from "@/lib/format";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
+import { runOrganizationEventDownloadSync } from "@/modules/india-post/event-download-sync";
 import {
   bulkEventOccurredAt,
-  ingestBulkTrackingArticle,
-  matchingBulkTrackingArticle,
-  snapshotFromShipmentRow,
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
-import type { PublicTrackResult, PublicTrackingEvent } from "@/types/api";
+import { logInfo } from "@/lib/logger";
+import type { PublicTrackResult, PublicTrackingEvent, TrackingAvailability } from "@/types/api";
 import { indiaPostServiceLabel } from "@/types/domain";
 import { parseTrackingSubdomain } from "./host";
 import { getPublishedTrackingPage } from "./service";
@@ -23,6 +22,8 @@ type CachedLive = {
   fetchedAt: number;
   events: PublicTrackingEvent[];
   status?: string | null;
+  liveTracking: LiveState;
+  trackingAvailability: TrackingAvailability;
 };
 
 const liveCache = new Map<string, CachedLive>();
@@ -275,28 +276,38 @@ function liveEventsFromArticle(article: BulkTrackingArticle | null) {
     .filter((event) => event.eventDescription || event.eventCode !== "EVENT" || event.occurredAt);
 }
 
+function availabilityForLiveFailure(status: number | undefined, hasStoredEvents: boolean): TrackingAvailability {
+  if (hasStoredEvents) return "TRACKING_DATA_STALE";
+  if (status === 401 || status === 403) return "TRACKING_PROVIDER_UNAUTHORIZED";
+  return "TRACKING_TEMPORARILY_UNAVAILABLE";
+}
+
 async function refreshLiveTracking(
   organizationId: string,
   shipment: NonNullable<PublicTrackResult["shipment"]>
 ): Promise<{
   liveTracking: LiveState;
   liveMessage: string | null;
+  trackingAvailability: TrackingAvailability;
   status?: string | null;
   events?: PublicTrackingEvent[];
 }> {
   const barcode = shipment.barcode || shipment.trackingNumber;
+  const hasStoredEvents = (shipment.events?.length ?? 0) > 0;
   if (!barcode) {
     return {
       liveTracking: "unavailable",
-      liveMessage: "Live tracking unavailable.",
+      liveMessage: null,
+      trackingAvailability: hasStoredEvents ? "TRACKING_DATA_STALE" : "TRACKING_SYNC_PENDING",
     };
   }
 
   const cached = liveCache.get(cacheKey(organizationId, barcode));
   if (cached && cached.expiresAt > Date.now()) {
     return {
-      liveTracking: "cached",
-      liveMessage: `Last updated at ${new Date(cached.fetchedAt).toISOString()}`,
+      liveTracking: cached.liveTracking === "ok" ? "cached" : cached.liveTracking,
+      liveMessage: cached.liveTracking === "ok" ? `Last updated at ${new Date(cached.fetchedAt).toISOString()}` : null,
+      trackingAvailability: cached.trackingAvailability,
       status: cached.status,
       events: cached.events,
     };
@@ -305,7 +316,8 @@ async function refreshLiveTracking(
   if (!hasAdminClient()) {
     return {
       liveTracking: "unavailable",
-      liveMessage: "Live tracking unavailable.",
+      liveMessage: null,
+      trackingAvailability: hasStoredEvents ? "TRACKING_DATA_STALE" : "TRACKING_TEMPORARILY_UNAVAILABLE",
     };
   }
 
@@ -319,50 +331,73 @@ async function refreshLiveTracking(
   if (!connection || (connection.status !== "CONNECTED" && !connection.encrypted_username)) {
     return {
       liveTracking: "not_connected",
-      liveMessage: "India Post is not connected.",
+      liveMessage: null,
+      trackingAvailability: hasStoredEvents ? "TRACKING_DATA_STALE" : "TRACKING_TEMPORARILY_UNAVAILABLE",
     };
   }
 
   try {
     const provider = await ensurePersistedIndiaPostSession(admin, connection);
-    const result = (await provider.trackShipment([barcode])) as { data?: BulkTrackingArticle[] };
-    const article = matchingBulkTrackingArticle(result.data, barcode);
-    const { data: row } = await admin
-      .from("shipments")
-      .select(
-        "id, organization_id, order_id, status, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
-      )
-      .eq("organization_id", organizationId)
-      .eq("id", shipment.id)
-      .maybeSingle();
-    const ingested =
-      article && row
-        ? await ingestBulkTrackingArticle(admin, {
-            organizationId,
-            shipment: snapshotFromShipmentRow(row, organizationId),
-            article,
-            source: "public",
-          })
-        : null;
-    const incoming = liveEventsFromArticle(article);
-
+    const result = await runOrganizationEventDownloadSync(admin, {
+      organizationId,
+      provider,
+      bulkCustomerId: connection.bulk_customer_id,
+      mode: "overlap",
+      requestedBarcodes: [barcode],
+      source: "public",
+      hasStoredEvents,
+    });
+    const incoming = liveEventsFromArticle(result.matchingArticle);
+    const trackingAvailability: TrackingAvailability =
+      incoming.length || hasStoredEvents ? "TRACKING_AVAILABLE" : result.availability;
+    const liveTracking = result.skippedFetch
+      ? "cached"
+      : result.liveTracking === "ok"
+        ? "ok"
+        : result.liveTracking;
     liveCache.set(cacheKey(organizationId, barcode), {
       expiresAt: Date.now() + LIVE_TTL_MS,
       fetchedAt: Date.now(),
       events: incoming,
-      status: ingested?.snapshot.status ?? shipment.status,
+      status: shipment.status,
+      liveTracking: liveTracking === "cached" ? "ok" : liveTracking,
+      trackingAvailability,
     });
-
+    logInfo("public_track.live_refresh", {
+      organizationId,
+      skippedFetch: result.skippedFetch,
+      eventsInserted: result.eventsInserted,
+      availability: trackingAvailability,
+    });
     return {
-      liveTracking: "ok",
-      liveMessage: null,
-      status: ingested?.snapshot.status ?? shipment.status,
+      liveTracking,
+      liveMessage: result.liveMessage,
+      trackingAvailability,
+      status: shipment.status,
       events: incoming,
     };
-  } catch {
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    const trackingAvailability = availabilityForLiveFailure(status, hasStoredEvents);
+    logInfo("public_track.live_refresh_failed", {
+      organizationId,
+      httpStatus: status ?? null,
+    });
+    liveCache.set(cacheKey(organizationId, barcode), {
+      expiresAt: Date.now() + LIVE_TTL_MS,
+      fetchedAt: Date.now(),
+      events: [],
+      status: shipment.status,
+      liveTracking: "unavailable",
+      trackingAvailability,
+    });
     return {
       liveTracking: "unavailable",
-      liveMessage: "Live tracking unavailable.",
+      liveMessage:
+        trackingAvailability === "TRACKING_PROVIDER_UNAUTHORIZED"
+          ? "Live tracking updates are temporarily unavailable. Please try again later or contact support."
+          : "Unable to refresh tracking. Showing saved information.",
+      trackingAvailability,
     };
   }
 }
@@ -379,11 +414,16 @@ async function buildTrackResult(
       ? (await loadStoredShipment(supabase, organizationId, query)) ?? stored
       : stored;
   const events = refreshed.events?.length ? refreshed.events : live.events ?? refreshed.events;
+  const trackingAvailability =
+    (events?.length ?? 0) > 0 && live.trackingAvailability === "TRACKING_NO_SCANS_YET"
+      ? "TRACKING_AVAILABLE"
+      : live.trackingAvailability;
 
   return {
     found: true,
     liveTracking: live.liveTracking,
     liveMessage: live.liveMessage,
+    trackingAvailability,
     shipment: {
       ...refreshed,
       status: live.status ?? refreshed.status,
@@ -402,6 +442,7 @@ export async function publicApexTrackLookup(
       found: false,
       liveTracking: "unavailable",
       liveMessage: null,
+      trackingAvailability: null,
       shipment: null,
     };
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -29,14 +29,15 @@ export function IndiaPostParcelDefaultsSettings() {
   const [heightCm, setHeightCm] = useState("");
   const [weightGrams, setWeightGrams] = useState("");
 
-  useEffect(() => {
-    const data = indiaPost.data;
-    if (!data) return;
-    setLengthCm(asInput(data.defaultLengthCm ?? data.default_length_cm));
-    setWidthCm(asInput(data.defaultWidthCm ?? data.default_width_cm));
-    setHeightCm(asInput(data.defaultHeightCm ?? data.default_height_cm));
-    setWeightGrams(asInput(data.defaultWeightGrams ?? data.default_weight_grams));
-  }, [indiaPost.data]);
+  const parcelData = indiaPost.data;
+  const [appliedParcel, setAppliedParcel] = useState(parcelData);
+  if (parcelData && parcelData !== appliedParcel) {
+    setAppliedParcel(parcelData);
+    setLengthCm(asInput(parcelData.defaultLengthCm ?? parcelData.default_length_cm));
+    setWidthCm(asInput(parcelData.defaultWidthCm ?? parcelData.default_width_cm));
+    setHeightCm(asInput(parcelData.defaultHeightCm ?? parcelData.default_height_cm));
+    setWeightGrams(asInput(parcelData.defaultWeightGrams ?? parcelData.default_weight_grams));
+  }
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -61,8 +62,8 @@ export function IndiaPostParcelDefaultsSettings() {
       <CardHeader>
         <CardTitle>India Post defaults</CardTitle>
         <CardDescription>
-          Used when an order has no parcel size or weight. You can still ship; India Post booking fills
-          empty fields from these values (or 14 × 9 × 1 cm and 100 g if you leave them blank).
+          Used when an order has no parcel size or weight. Parcel length, width, and height are required
+          for booking if this default size is empty. Empty weight still uses 100 g.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

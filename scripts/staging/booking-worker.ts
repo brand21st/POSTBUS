@@ -6,7 +6,6 @@ import { classifyProviderError } from "../../lib/jobs/retry";
 import { bookingFailureShipmentUpdate } from "../../modules/india-post/booking-failure-state";
 import {
   isIndiaPostDuplicateArticleMessage,
-  trackingConfirmedNotBooked,
   trackingHasArticle,
 } from "../../modules/india-post/booking-idempotency";
 
@@ -103,15 +102,11 @@ async function processJob(job: { jobId: string; shipmentId: string }) {
         event({ event: "recovered_booked", shipmentId: job.shipmentId });
         return;
       }
-      const allow = trackingConfirmedNotBooked(tracked, barcode);
-      if (!allow) {
-        const unknownCode = shipment.last_error_code === "ETIMEDOUT" ? "ETIMEDOUT" : "CEPT_UNKNOWN";
-        await setShipment(job.shipmentId, { status: "RECOVERY_REQUIRED", last_error_code: unknownCode });
-        await runPsql(`update background_jobs set status='FAILED', last_error_code='${unknownCode}' where id='${job.jobId}'::uuid`);
-        event({ event: "recovery_no_post", shipmentId: job.shipmentId, tracking_result: "EMPTY", reason: unknownCode });
-        return;
-      }
-      await setShipment(job.shipmentId, { status: "QUEUED", last_error_code: "CEPT_NOT_BOOKED" });
+      const unknownCode = shipment.last_error_code === "ETIMEDOUT" ? "ETIMEDOUT" : "CEPT_UNKNOWN";
+      await setShipment(job.shipmentId, { status: "RECOVERY_REQUIRED", last_error_code: unknownCode });
+      await runPsql(`update background_jobs set status='FAILED', last_error_code='${unknownCode}' where id='${job.jobId}'::uuid`);
+      event({ event: "recovery_no_post", shipmentId: job.shipmentId, tracking_result: "INCONCLUSIVE", reason: unknownCode });
+      return;
     } catch {
       await setShipment(job.shipmentId, { status: "RECOVERY_REQUIRED", last_error_code: "ETIMEDOUT" });
       event({ event: "recovery_track_unavailable", shipmentId: job.shipmentId });

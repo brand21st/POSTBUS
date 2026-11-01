@@ -1,0 +1,87 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "login-a",
+      "pass": true,
+      "detail": "session"
+    },
+    {
+      "name": "login-b",
+      "pass": true,
+      "detail": "session"
+    },
+    {
+      "name": "legacy-valid-ready",
+      "pass": true,
+      "detail": "READY"
+    },
+    {
+      "name": "legacy-line3-kept",
+      "pass": true,
+      "detail": "Ward 4 ആശ"
+    },
+    {
+      "name": "legacy-bad-pin-blocked",
+      "pass": true,
+      "detail": "INVALID"
+    },
+    {
+      "name": "label-line3-present",
+      "pass": true,
+      "detail": "wrapped"
+    },
+    {
+      "name": "pickup-insert",
+      "pass": true,
+      "detail": "ok"
+    },
+    {
+      "name": "connection-upsert",
+      "pass": true,
+      "detail": "ok"
+    },
+    {
+      "name": "contract-upsert",
+      "pass": true,
+      "detail": "ok"
+    },
+    {
+      "name": "synthetic-range",
+      "pass": true,
+      "detail": "ok"
+    },
+    {
+      "name": "invalid-no-barcode",
+      "pass": true,
+      "detail": "status=FAILED barcode=none"
+    },
+    {
+      "name": "valid-booked-or-explained",
+      "pass": true,
+      "detail": "barcode=EY880000026IN status=BOOKED"
+    },
+    {
+      "name": "valid-booked-with-barcode",
+      "pass": true,
+      "detail": "barcode=EY880000026IN booked=true"
+    },
+    {
+      "name": "cept-stub-called-for-valid-only",
+      "pass": true,
+      "detail": "hits=1"
+    },
+    {
+      "name": "cross-tenant-booking-rejected",
+      "pass": true,
+      "detail": "India Post is not connected."
+    },
+    {
+      "name": "retry-keeps-same-barcode",
+      "pass": true,
+      "detail": "EY880000026IN -> EY880000026IN"
+    }
+  ],
+  "goodBarcode": "EY880000026IN",
+  "badStatus": "FAILED"
+}

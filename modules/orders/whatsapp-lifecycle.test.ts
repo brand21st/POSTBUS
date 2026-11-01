@@ -58,7 +58,7 @@ function clientFor(
   const idempotency = new Set<string>();
   let current = order ? { ...order, metadata: structuredClone(order.metadata) } : null;
   const extra = opts?.extraOrders ?? [];
-  let claims: Array<Record<string, unknown>> = [];
+  const claims: Array<Record<string, unknown>> = [];
   const orgs = [{ id: "org-1", phone: merchantPhone }, ...(opts?.extraOrgs ?? [])];
   const api = {
     updates,

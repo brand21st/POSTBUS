@@ -254,7 +254,7 @@ describe("matchingBulkTrackingArticle", () => {
     expect(match?.tracking_details?.[0]?.event).toBe("Item Booked");
   });
 
-  it("uses the only article with scans even if CEPT omits a matching article number", () => {
+  it("does not attach a differently numbered article from a single-article response", () => {
     const match = matchingBulkTrackingArticle(
       [
         {
@@ -264,7 +264,7 @@ describe("matchingBulkTrackingArticle", () => {
       ],
       "CX075364450IN"
     );
-    expect(match?.tracking_details?.[0]?.event).toBe("Item Dispatched");
+    expect(match).toBeNull();
   });
 });
 
@@ -373,7 +373,7 @@ describe("applyIndiaPostTracking", () => {
       event_description: "Item Kept on Hold — Intimation Delivered",
     });
     expect((events[0].raw as { _meta?: { source?: string } })._meta?.source).toBe("bulk");
-    expect(ingested.notices.map((notice) => notice.eventCode)).toEqual(["Item Kept on Hold", "Item Dispatched"]);
+    expect(ingested.notices.map((notice) => notice.eventCode)).toEqual(["Item Dispatched"]);
     expect(ingested.snapshot.status).toBe("RTO");
     const delivery = updates.find((update) => update.patch.status === "DELIVERED");
     expect(delivery).toBeUndefined();

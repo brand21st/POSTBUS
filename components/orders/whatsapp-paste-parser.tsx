@@ -10,17 +10,12 @@ import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
 import {
   applyWhatsAppCustomerFields,
+  countAppliedWhatsAppFields,
   type WhatsAppCustomerFields,
 } from "@/lib/parsers/whatsapp-customer-message";
 
 const MAX_CHARS = 2000;
-const CLEAR_CONFIRM_CHARS = 20;
-const PLACEHOLDER = `Name: Rahul
-Phone: 9876543210
-Address: 12 ABC House, Main Road
-City: Kozhikode
-State: Kerala
-PIN: 673001`;
+const PLACEHOLDER = "Paste the WhatsApp message here";
 
 type ParseResponse = {
   fields: WhatsAppCustomerFields;
@@ -38,7 +33,7 @@ type CreditsResponse = {
 };
 
 const FREE_CREDITS = 500;
-const LOW_CREDITS = 25;
+const LOW_CREDITS = 20;
 
 export function WhatsAppPasteParser({
   getCurrent,
@@ -93,13 +88,21 @@ export function WhatsAppPasteParser({
               }
         );
       }
-      onApply(applyWhatsAppCustomerFields(getCurrent(), parsed.fields, { overwrite }));
+      const current = overwrite ? {} : getCurrent();
+      const next = applyWhatsAppCustomerFields(current, parsed.fields, { overwrite: true });
+      const previous = getCurrent();
+      const applied = countAppliedWhatsAppFields(previous, { ...previous, ...next });
+      onApply(next);
       const via = parsed.source === "ai" ? " with AI" : "";
-      setHint(
-        overwrite
-          ? `Updated ${filled} field${filled === 1 ? "" : "s"}${via}. Review before saving.`
-          : `Filled ${filled} field${filled === 1 ? "" : "s"}${via}. Empty fields only — review before saving.`
-      );
+      if (!overwrite && applied === 0) {
+        setHint("Those details are already in the form. Empty fields only — review before saving.");
+      } else {
+        setHint(
+          overwrite
+            ? `Replaced customer details${via}. Review before saving.`
+            : `Filled ${applied} field${applied === 1 ? "" : "s"}${via}. Empty fields only — review before saving.`
+        );
+      }
     } catch (error) {
       setHint(error instanceof Error ? error.message : "Could not parse that message.");
     } finally {
@@ -109,10 +112,6 @@ export function WhatsAppPasteParser({
   }
 
   function clear() {
-    if (text.trim().length > CLEAR_CONFIRM_CHARS) {
-      const ok = window.confirm("Clear the pasted customer details?");
-      if (!ok) return;
-    }
     setText("");
     setHint(null);
   }
@@ -139,9 +138,9 @@ export function WhatsAppPasteParser({
               Paste customer details
             </h3>
             <p className="mt-0.5 text-xs leading-snug text-muted sm:text-sm">
-              <span className="sm:hidden">Paste a WhatsApp message — AI fills the form.</span>
+              <span className="sm:hidden">Paste a WhatsApp message, then extract.</span>
               <span className="hidden sm:inline">
-                Paste a WhatsApp message or customer address — AI will extract the details automatically.
+                Paste a WhatsApp message or customer address, then extract into the form.
               </span>
             </p>
           </div>
@@ -186,7 +185,7 @@ export function WhatsAppPasteParser({
             setHint(null);
           }}
           placeholder={PLACEHOLDER}
-          className="min-h-36 resize-y bg-surface-soft pb-10 text-base leading-relaxed shadow-none placeholder:text-zinc-500 sm:min-h-44 sm:pb-12 sm:text-sm md:min-h-52 dark:placeholder:text-zinc-400"
+          className="min-h-36 resize-y bg-surface-soft pb-10 text-base leading-relaxed shadow-none placeholder:text-zinc-400 sm:min-h-44 sm:pb-12 sm:text-sm md:min-h-52 dark:placeholder:text-zinc-500"
           aria-describedby="whatsapp-paste-help whatsapp-paste-count"
         />
         <div className="pointer-events-none absolute inset-x-2.5 bottom-1.5 flex items-end justify-between gap-2 text-[10px] text-muted sm:inset-x-3 sm:bottom-2 sm:text-[11px]">
@@ -207,7 +206,8 @@ export function WhatsAppPasteParser({
           size="xs"
           className={cn(
             "group min-w-0 flex-1 text-white shadow-sm transition-all duration-300 ease-out sm:flex-none sm:px-3 [&_svg]:size-3.5",
-            "!bg-[#25D366] hover:!bg-[#20bd5a] hover:shadow-md active:scale-[0.98]",
+            "bg-[#25D366] hover:bg-[#20bd5a] hover:shadow-md active:scale-[0.98]",
+            "disabled:bg-[#25D366]/35 disabled:text-white/80 disabled:opacity-100 disabled:shadow-none",
             parsing && "shadow-md"
           )}
           disabled={!text.trim() || parsing || outOfCredits}
@@ -226,9 +226,9 @@ export function WhatsAppPasteParser({
           variant="secondary"
           size="xs"
           className="shrink-0 px-2.5 transition-all duration-200 ease-out active:scale-[0.96] [&_svg]:size-3.5 sm:px-3"
-          disabled={parsing || !text}
+          disabled={parsing || !text.trim()}
           aria-label="Clear pasted details"
-          title="Clear"
+          title="Clear pasted text"
           onClick={clear}
         >
           <Trash2 aria-hidden />
@@ -255,7 +255,7 @@ export function WhatsAppPasteParser({
         ) : (
           hint ??
           (overwrite
-            ? "1 credit per successful extract. Extract updates name, phone, and address."
+            ? "1 credit per successful extract. Extract replaces the customer and address below."
             : "1 credit per successful extract. Extract fills empty fields below.")
         )}
       </p>

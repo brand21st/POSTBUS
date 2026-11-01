@@ -106,6 +106,9 @@ export async function runClaimedJobs(
 }
 
 export async function drainDueJobs(limit = DEFAULT_DRAIN_LIMIT, jobTypes?: string[]): Promise<DrainResult> {
+  if (!usesDatabaseJobRunner()) {
+    throw new Error("JOB_RUNNER is not database, so this process cannot drain background_jobs.");
+  }
   if (!hasAdminClient()) {
     throw new Error(
       "SUPABASE_SERVICE_ROLE_KEY is not set, so background jobs cannot run. Jobs bypass RLS and need the service role."

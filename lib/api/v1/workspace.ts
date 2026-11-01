@@ -3,24 +3,29 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
+import { searchPhoneNeedles } from "@/lib/phone/india-whatsapp";
+import { hasPermission } from "@/lib/permissions/rbac";
 import { getSystemHealth } from "@/lib/api/health";
 import { canAssignMemberRole } from "@/lib/api/v1-permissions";
 import {
   createApiKeySchema,
-  createWebhookEndpointSchema,
   memberInviteSchema,
   updateOrganizationPoliciesSchema,
   updateOrganizationSchema,
 } from "@/lib/api/v1-schemas";
 import { isBillingConfiguredAsync } from "@/modules/razorpay/config";
-import { encryptSecret, hashSecret, randomToken } from "@/lib/security/crypto";
+import { hashSecret, randomToken } from "@/lib/security/crypto";
+import { isMerchantApiOpenForOrg } from "@/modules/merchant-api/flags";
+import { mintMerchantApiKey } from "@/modules/merchant-api/keys";
+import { merchantApiUsage } from "@/modules/merchant-api/logs";
+import { merchantPublicSchema } from "@/modules/merchant-api/public-contract";
 import { getAutomationSettings, updateAutomationSettings } from "@/modules/automation/service";
 import {
   mapOrganizationSettings,
+  removeOrganizationLogo,
   uploadOrganizationLogo,
   type OrganizationIdentityRow,
 } from "@/modules/organizations/branding";
-import { WEBHOOK_EVENTS } from "@/types/domain";
 import {
   mapOrganizationPolicies,
   normalizePolicyKeywords,
@@ -58,10 +63,12 @@ export async function handleWorkspaceRoutes(
     const contentType = request.headers.get("content-type") ?? "";
     let body: ReturnType<typeof updateOrganizationSchema.parse>;
     let logo: File | null = null;
+    let removeLogo = false;
     if (contentType.includes("multipart/form-data")) {
       const form = await request.formData();
       const file = form.get("logo");
       logo = file instanceof File && file.size > 0 ? file : null;
+      removeLogo = form.get("removeLogo") === "true";
       body = updateOrganizationSchema.parse({
         name: form.get("name") || undefined,
         phone: form.get("phone") ?? undefined,
@@ -85,6 +92,14 @@ export async function handleWorkspaceRoutes(
     if (body.pincode !== undefined) updates.pincode = body.pincode ?? null;
     if (logo) {
       updates.logo_path = await uploadOrganizationLogo(supabase, ctx, logo);
+    } else if (removeLogo) {
+      const { data: current } = await supabase
+        .from("organizations")
+        .select("logo_path")
+        .eq("id", ctx.organizationId)
+        .maybeSingle();
+      await removeOrganizationLogo(supabase, ctx.organizationId, current?.logo_path);
+      updates.logo_path = null;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -312,29 +327,72 @@ export async function handleWorkspaceRoutes(
     return mapOrganizationPolicies(data);
   }
 
+  if (
+    key === "GET api-keys" ||
+    key === "POST api-keys" ||
+    key.startsWith("GET merchant-api") ||
+    slugs[0] === "api-keys"
+  ) {
+    if (!isMerchantApiOpenForOrg(ctx.organizationId)) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Merchant API is not enabled for this workspace.");
+    }
+  }
+
   if (key === "GET api-keys") {
     const { data } = await supabase
       .from("api_keys")
-      .select("id, name, key_prefix, status, last_used_at, created_at")
+      .select("id, name, key_prefix, status, scopes, last_used_at, created_at, expires_at, revoked_at, hash_version")
       .eq("organization_id", ctx.organizationId)
       .order("created_at", { ascending: false });
     return { items: data ?? [] };
   }
 
+  if (key === "GET merchant-api/usage") {
+    return merchantApiUsage(supabase, ctx.organizationId);
+  }
+
+  if (key === "GET merchant-api/schema") {
+    return merchantPublicSchema();
+  }
+
+  if (key === "GET merchant-api/ai-prompt") {
+    const kind = request.nextUrl.searchParams.get("kind") ?? "sheets";
+    const { merchantAiIntegrationPrompt } = await import("@/modules/merchant-api/ai-prompt");
+    const prompts = merchantAiIntegrationPrompt("all") as {
+      sheets: string;
+      crm: string;
+      erp: string;
+      custom: string;
+    };
+    const selected = kind === "all" ? prompts.sheets : merchantAiIntegrationPrompt(kind);
+    return { prompt: selected, prompts };
+  }
+
+  if (key === "GET merchant-api/docs") {
+    const name = request.nextUrl.searchParams.get("name") ?? "POSTBUS_API_REFERENCE.md";
+    const { readMerchantDoc, merchantDocNames } = await import("@/modules/merchant-api/docs-files");
+    const content = await readMerchantDoc(name);
+    if (!content) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Document not found.");
+    return { name, content, files: merchantDocNames() };
+  }
+
   if (key === "POST api-keys") {
     const body = createApiKeySchema.parse(await request.json().catch(() => ({})));
-    const secret = `pb_live_${randomToken(24)}`;
-    const prefix = secret.slice(0, 12);
+    const minted = mintMerchantApiKey();
     const { data, error } = await supabase
       .from("api_keys")
       .insert({
         organization_id: ctx.organizationId,
         name: body.name || "Default",
-        key_prefix: prefix,
-        secret_hash: hashSecret(secret),
+        key_prefix: minted.keyPrefix,
+        lookup_id: minted.lookupId,
+        secret_hash: minted.secretHash,
+        hash_version: minted.hashVersion,
+        scopes: body.scopes,
+        expires_at: body.expiresAt ?? null,
         created_by: ctx.userId,
       })
-      .select("id, name, key_prefix, status, created_at")
+      .select("id, name, key_prefix, status, scopes, created_at, expires_at")
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
     await supabase.from("audit_logs").insert({
@@ -344,13 +402,40 @@ export async function handleWorkspaceRoutes(
       entity_type: "api_key",
       entity_id: data.id,
     });
-    return { ...data, secret };
+    return { ...data, secret: minted.fullKey };
+  }
+
+  if (method === "POST" && slugs[0] === "api-keys" && slugs[1] && slugs[2] === "rotate") {
+    const minted = mintMerchantApiKey();
+    const { data, error } = await supabase
+      .from("api_keys")
+      .update({
+        key_prefix: minted.keyPrefix,
+        lookup_id: minted.lookupId,
+        secret_hash: minted.secretHash,
+        hash_version: minted.hashVersion,
+        status: "ACTIVE",
+        revoked_at: null,
+      })
+      .eq("organization_id", ctx.organizationId)
+      .eq("id", slugs[1])
+      .select("id, name, key_prefix, status, scopes, created_at, expires_at")
+      .single();
+    if (error || !data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "API key not found.");
+    await supabase.from("audit_logs").insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "api_key.rotated",
+      entity_type: "api_key",
+      entity_id: data.id,
+    });
+    return { ...data, secret: minted.fullKey };
   }
 
   if (method === "DELETE" && slugs[0] === "api-keys" && slugs[1]) {
     await supabase
       .from("api_keys")
-      .update({ status: "REVOKED" })
+      .update({ status: "REVOKED", revoked_at: new Date().toISOString() })
       .eq("organization_id", ctx.organizationId)
       .eq("id", slugs[1]);
     await supabase.from("audit_logs").insert({
@@ -363,40 +448,64 @@ export async function handleWorkspaceRoutes(
     return { revoked: true };
   }
 
-  if (key === "GET webhooks") {
-    const { data } = await supabase
-      .from("webhook_endpoints")
-      .select("id, url, events, is_active, created_at, updated_at, encrypted_secret")
-      .eq("organization_id", ctx.organizationId);
-    return {
-      items: (data ?? []).map((item) => ({
-        id: item.id,
-        url: item.url,
-        events: item.events,
-        is_active: item.is_active,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-        needsSecretRotation: !item.encrypted_secret,
-      })),
-    };
-  }
-
-  if (key === "POST webhooks") {
-    const body = createWebhookEndpointSchema.parse(await request.json());
-    const secret = randomToken(16);
-    const { data, error } = await supabase
-      .from("webhook_endpoints")
-      .insert({
-        organization_id: ctx.organizationId,
+  if (slugs[0] === "webhooks") {
+    const {
+      createWebhookSubscription,
+      disableWebhookSubscription,
+      getWebhookSubscription,
+      listRecentWebhookDeliveries,
+      listWebhookDeliveries,
+      listWebhookSubscriptions,
+      retryWebhookDelivery,
+      rotateWebhookSecret,
+      sendWebhookTest,
+      updateWebhookSubscription,
+    } = await import("@/modules/webhooks/subscriptions");
+    const id = slugs[1];
+    const action = slugs[2];
+    const deliveryId = slugs[3];
+    if (method === "GET" && !id) return listWebhookSubscriptions(supabase, ctx.organizationId);
+    if (method === "POST" && !id) {
+      const body = (await request.json().catch(() => ({}))) as {
+        url?: string;
+        events?: string[];
+        description?: string | null;
+      };
+      if (!body.url) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "url is required.");
+      return createWebhookSubscription(supabase, ctx.organizationId, {
         url: body.url,
-        secret_hash: hashSecret(secret),
-        encrypted_secret: encryptSecret(secret),
-        events: body.events ?? [...WEBHOOK_EVENTS],
-      })
-      .select("id, url, events, is_active, created_at, updated_at")
-      .single();
-    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
-    return { ...data, secret, needsSecretRotation: false };
+        events: body.events,
+        description: body.description,
+      });
+    }
+    if (method === "GET" && id === "deliveries") return listRecentWebhookDeliveries(supabase, ctx.organizationId);
+    if (!id) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Webhook subscription was not found.");
+    if (method === "GET" && !action) return getWebhookSubscription(supabase, ctx.organizationId, id);
+    if (method === "PATCH" && !action) {
+      const body = (await request.json().catch(() => ({}))) as {
+        url?: string;
+        events?: string[];
+        description?: string | null;
+        enabled?: boolean;
+      };
+      return updateWebhookSubscription(supabase, ctx.organizationId, id, body);
+    }
+    if (method === "DELETE" && !action) return disableWebhookSubscription(supabase, ctx.organizationId, id);
+    if (method === "GET" && action === "deliveries") {
+      return listWebhookDeliveries(
+        supabase,
+        ctx.organizationId,
+        id,
+        request.nextUrl.searchParams.get("cursor"),
+        Number(request.nextUrl.searchParams.get("limit") ?? "20")
+      );
+    }
+    if (method === "POST" && action === "test") return sendWebhookTest(supabase, ctx.organizationId, id);
+    if (method === "POST" && action === "rotate-secret") return rotateWebhookSecret(supabase, ctx.organizationId, id);
+    if (method === "POST" && action === "deliveries" && deliveryId && slugs[4] === "retry") {
+      return retryWebhookDelivery(supabase, ctx.organizationId, id, deliveryId);
+    }
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Unknown webhook route.");
   }
 
   if (key === "GET audit-logs") {
@@ -412,12 +521,26 @@ export async function handleWorkspaceRoutes(
   if (key === "GET search") {
     const q = (request.nextUrl.searchParams.get("q") || "").trim();
     if (q.length < 2) return { items: [] };
+    const phoneNeedles = searchPhoneNeedles(q);
     const orderFilter = orIlike(["order_number", "source_order_id"], q);
     const shipmentFilter = orIlike(["barcode", "tracking_number"], q);
-    const customerFilter = orIlike(["name", "phone", "email"], q);
-    if (!orderFilter && !shipmentFilter && !customerFilter) return { items: [] };
+    const customerFilter = [
+      orIlike(["name", "phone", "email"], q),
+      ...phoneNeedles.map((needle) => orIlike(["phone"], needle)),
+    ]
+      .filter(Boolean)
+      .join(",") || null;
+    const supportFilter = [
+      orIlike(["customer_name"], q),
+      orIlike(["phone_digits"], q),
+      ...phoneNeedles.map((needle) => orIlike(["phone_digits"], needle)),
+    ]
+      .filter(Boolean)
+      .join(",") || null;
+    const canReadSupport = hasPermission(ctx.role, "support.read");
+    if (!orderFilter && !shipmentFilter && !customerFilter && !(canReadSupport && supportFilter)) return { items: [] };
 
-    const [orderResult, shipmentResult, customerResult] = await Promise.all([
+    const [orderResult, shipmentResult, customerResult, supportResult] = await Promise.all([
       orderFilter
         ? supabase
             .from("orders")
@@ -442,8 +565,17 @@ export async function handleWorkspaceRoutes(
             .or(customerFilter)
             .limit(8)
         : Promise.resolve({ data: [], error: null }),
+      canReadSupport && supportFilter
+        ? supabase
+            .from("support_conversations")
+            .select("id, customer_name, phone_digits")
+            .eq("organization_id", ctx.organizationId)
+            .or(supportFilter)
+            .order("last_message_at", { ascending: false, nullsFirst: false })
+            .limit(8)
+        : Promise.resolve({ data: [], error: null }),
     ]);
-    const queryError = orderResult.error || shipmentResult.error || customerResult.error;
+    const queryError = orderResult.error || shipmentResult.error || customerResult.error || supportResult.error;
     if (queryError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, queryError.message);
 
     const customers = customerResult.data ?? [];
@@ -506,6 +638,18 @@ export async function handleWorkspaceRoutes(
           subtitle: [item.phone, item.email].filter(Boolean).join(" · "),
           href: `/dashboard/orders?q=${encodeURIComponent(item.phone || item.name)}`,
         })),
+        ...(supportResult.data ?? []).map((item) => {
+          const phone = item.phone_digits || "";
+          return {
+            id: item.id,
+            type: "support",
+            title: item.customer_name || (phone ? `+91 ${phone}` : "Support chat"),
+            subtitle: [phone, "Support"].filter(Boolean).join(" · "),
+            href: `/dashboard/support?conversation=${encodeURIComponent(item.id)}${
+              phone ? `&q=${encodeURIComponent(phone)}` : ""
+            }`,
+          };
+        }),
       ],
     };
   }

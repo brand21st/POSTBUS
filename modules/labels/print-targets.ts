@@ -2,7 +2,8 @@ export type ShipmentPrintTarget = "both" | "barcode" | "packing";
 
 export function paperSizeForLabelKind(kind?: string | null) {
   const value = String(kind || "INDIA_POST").toUpperCase();
-  return value === "MERCHANT" || value === "CUSTOM_SHIPPING" ? "A4" : "A6";
+  if (value === "MERCHANT") return "A4";
+  return "A6";
 }
 
 export function shipmentPrintJobs(

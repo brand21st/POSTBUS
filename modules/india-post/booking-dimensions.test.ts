@@ -16,6 +16,18 @@ vi.mock("@/modules/india-post/provider", () => ({
   })),
 }));
 
+vi.mock("@/modules/shopify/booking-guard", () => ({
+  revalidateShopifyBooking: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+vi.mock("@/modules/shopify/allocations", () => ({
+  markShopifyAllocationsBooked: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/modules/india-post/allocate-barcode", () => ({
+  allocateNextBarcode: vi.fn(async () => "ET214330016IN"),
+}));
+
 vi.mock("@/modules/india-post/origin", () => ({
   cachedOfficeLookup: vi.fn(),
   resolveIndiaPostOrigin: vi.fn().mockResolvedValue({
@@ -27,13 +39,14 @@ vi.mock("@/modules/india-post/origin", () => ({
 }));
 
 function chainableWrite(
-  data: unknown = { id: "ship-1", barcode: "ET214330016IN", status: "BOOKING", booked_at: null }
+  data: unknown = { id: "ship-1", barcode: null, status: "BOOKING", booked_at: null }
 ) {
   const self: Record<string, unknown> = {};
   const next = () => self;
   self.eq = next;
   self.in = next;
   self.is = next;
+  self.filter = next;
   self.select = next;
   self.maybeSingle = async () => ({ data, error: null });
   self.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
@@ -223,6 +236,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     const mockSupabase = {
       rpc: async (name: string) => {
         if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
         return { data: null, error: null };
       },
       from: (table: string) => {
@@ -257,7 +271,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       id: "ship-1",
                       order_id: "ord-1",
                       status: "QUEUED",
-                      barcode: "ET214330016IN",
+                      barcode: null,
                       service_code: "SP_INLAND_PARCEL",
                       weight_grams: 500,
                       length_cm: null,
@@ -274,6 +288,10 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                         state: "Delhi",
                         pincode: "110001",
                         phone: "9876543210",
+                        original_phone: "9876543210",
+                        phone_source: "shipping",
+                        country: "IN",
+                        address_validation_status: "READY",
                       },
                     },
                   ],
@@ -373,7 +391,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     );
   });
 
-  it("runIndiaPostBooking falls back to 14×9×1 cm when Settings defaults are empty", async () => {
+  it("runIndiaPostBooking blocks parcel booking when dimensions and Settings defaults are empty", async () => {
     bookShipmentMock.mockClear();
     bookShipmentMock.mockResolvedValueOnce({
       batch_id: "batch-fallback",
@@ -387,6 +405,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     const mockSupabase = {
       rpc: async (name: string) => {
         if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
         return { data: null, error: null };
       },
       from: (table: string) => {
@@ -417,7 +436,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       id: "ship-1",
                       order_id: "ord-1",
                       status: "QUEUED",
-                      barcode: "ET214330016IN",
+                      barcode: null,
                       service_code: "SP_INLAND_PARCEL",
                       weight_grams: 0,
                       length_cm: null,
@@ -434,6 +453,10 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                         state: "Delhi",
                         pincode: "110001",
                         phone: "9876543210",
+                        original_phone: "9876543210",
+                        phone_source: "shipping",
+                        country: "IN",
+                        address_validation_status: "READY",
                       },
                     },
                   ],
@@ -510,17 +533,13 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
       },
     };
 
-    await runIndiaPostBooking(mockSupabase as never, {
-      organizationId: "org-1",
-      shipmentIds: ["ship-1"],
-    });
-
-    expect(bookShipmentMock.mock.calls[0][0].articles[0]).toMatchObject({
-      length: 14,
-      breadth_diameter: 9,
-      height: 1,
-      physical_weight: 100,
-    });
+    await expect(
+      runIndiaPostBooking(mockSupabase as never, {
+        organizationId: "org-1",
+        shipmentIds: ["ship-1"],
+      })
+    ).rejects.toThrow(/length, breadth and height are required/i);
+    expect(bookShipmentMock).not.toHaveBeenCalled();
   });
 
   it("runIndiaPostBooking still fails when entered dimensions are outside India Post limits", async () => {
@@ -530,6 +549,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     const mockSupabase = {
       rpc: async (name: string) => {
         if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
         return { data: null, error: null };
       },
       from: (table: string) => {
@@ -563,7 +583,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       id: "ship-1",
                       order_id: "ord-1",
                       status: "QUEUED",
-                      barcode: "ET214330016IN",
+                      barcode: null,
                       service_code: "SP_INLAND_PARCEL",
                       weight_grams: 500,
                       length_cm: 5,
@@ -580,6 +600,10 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                         state: "Delhi",
                         pincode: "110001",
                         phone: "9876543210",
+                        original_phone: "9876543210",
+                        phone_source: "shipping",
+                        country: "IN",
+                        address_validation_status: "READY",
                       },
                     },
                   ],
@@ -676,6 +700,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
     const mockSupabase = {
       rpc: async (name: string) => {
         if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
         return { data: null, error: null };
       },
       from: (table: string) => {
@@ -706,7 +731,7 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                       id: "ship-2",
                       order_id: "ord-2",
                       status: "QUEUED",
-                      barcode: "ET214330016IN",
+                      barcode: null,
                       service_code: "SP_INLAND_PARCEL",
                       weight_grams: 800,
                       length_cm: 20, // VALID DIMENSIONS
@@ -723,6 +748,10 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
                         state: "Delhi",
                         pincode: "110001",
                         phone: "9876543210",
+                        original_phone: "9876543210",
+                        phone_source: "shipping",
+                        country: "IN",
+                        address_validation_status: "READY",
                       },
                     },
                   ],
@@ -815,6 +844,168 @@ describe("India Post Booking Dimensions Audit & Verification", () => {
       height: 10,
       physical_weight: 800,
       shape_of_article: "NROL",
+    });
+  });
+
+  it("continues a valid queued shipment when another shipment in the batch has no dimensions", async () => {
+    bookShipmentMock.mockClear();
+    bookShipmentMock.mockResolvedValueOnce({
+      batch_id: "batch-mixed",
+      correlation_id: "corr-mixed",
+      valid_articles: [{ barcode_no: "ET214330016IN", calculated_tariff: 45 }],
+      error_articles: [],
+    });
+    const address = {
+      name: "Manual Customer",
+      line1: "456 Market St",
+      city: "Delhi",
+      state: "Delhi",
+      pincode: "110001",
+      phone: "9876543210",
+      original_phone: "9876543210",
+      phone_source: "shipping",
+      country: "IN",
+      address_validation_status: "READY",
+    };
+    const rows = [
+      {
+        id: "ship-missing",
+        order_id: "ord-missing",
+        status: "QUEUED",
+        barcode: null,
+        service_code: "SP_INLAND_PARCEL",
+        weight_grams: 800,
+        length_cm: null,
+        width_cm: null,
+        height_cm: null,
+        payment_mode: "PREPAID",
+        cod_amount: 0,
+        orders: { id: "ord-missing", order_number: "#1003", source: "MANUAL" },
+        customers: { name: "Manual Customer", phone: "9876543210" },
+        addresses: address,
+      },
+      {
+        id: "ship-ready",
+        order_id: "ord-ready",
+        status: "QUEUED",
+        barcode: null,
+        service_code: "SP_INLAND_PARCEL",
+        weight_grams: 500,
+        length_cm: 30,
+        width_cm: 20,
+        height_cm: 10,
+        payment_mode: "PREPAID",
+        cod_amount: 0,
+        orders: { id: "ord-ready", order_number: "#1004", source: "MANUAL" },
+        customers: { name: "Manual Customer", phone: "9876543210" },
+        addresses: address,
+      },
+    ];
+    const mockSupabase = {
+      rpc: async (name: string) => {
+        if (name === "acquire_india_post_booking_lock") return { data: "test-lock-token", error: null };
+        if (name === "acquire_india_post_session_lock") return { data: "session-lock-token", error: null };
+        return { data: null, error: null };
+      },
+      from: (table: string) => {
+        if (table === "india_post_connections") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    id: "conn-1",
+                    status: "CONNECTED",
+                    environment: "TEST",
+                    bulk_customer_id: "1788590988",
+                    contract_id: "41793509",
+                  },
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "shipments") {
+          return {
+            select: () => ({
+              eq: () => ({
+                in: async () => ({ data: rows }),
+              }),
+            }),
+            update: () => chainableWrite(),
+          };
+        }
+        if (table === "orders") return { update: () => ({ eq: vi.fn().mockResolvedValue({}) }) };
+        if (table === "pickup_locations") {
+          return {
+            select: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: () => ({
+                    maybeSingle: async () => ({
+                      data: {
+                        name: "Main Warehouse",
+                        pincode: "682311",
+                        city: "Ernakulam",
+                        state: "Kerala",
+                        line1: "Pickup Point 1",
+                        phone: "9876543210",
+                      },
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "organizations") {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: {
+                    name: "Merchant Org",
+                    phone: "9876543210",
+                    line1: "Pickup Point 1",
+                    city: "Ernakulam",
+                    state: "Kerala",
+                    pincode: "682311",
+                  },
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === "shopify_stores") {
+          return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { shop_name: "Test Shop" } }) }) }) };
+        }
+        if (table === "india_post_contracts") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: async () => ({ data: [{ service_code: "SP_INLAND_PARCEL", contract_id: "41793509" }] }),
+              }),
+            }),
+          };
+        }
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) };
+      },
+    };
+
+    const outcome = await runIndiaPostBooking(mockSupabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-missing", "ship-ready"],
+    });
+
+    expect(outcome.failedIds).toContain("ship-missing");
+    expect(outcome.bookedIds).toEqual(["ship-ready"]);
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(bookShipmentMock.mock.calls[0][0].articles).toHaveLength(1);
+    expect(bookShipmentMock.mock.calls[0][0].articles[0]).toMatchObject({
+      length: 30,
+      breadth_diameter: 20,
+      height: 10,
+      physical_weight: 500,
     });
   });
 });

@@ -1,0 +1,184 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "port-3000-untouched-listener",
+      "pass": true,
+      "detail": "pid=49940"
+    },
+    {
+      "name": "port-3001-staging-app",
+      "pass": true,
+      "detail": "pid=824"
+    },
+    {
+      "name": "port-55432-staging-pg",
+      "pass": true,
+      "detail": "pid=65260"
+    },
+    {
+      "name": "port-4099-cept-stub",
+      "pass": true,
+      "detail": "pid=60052"
+    },
+    {
+      "name": "port-54321-supabase-api-down",
+      "pass": true,
+      "detail": "GoTrue/PostgREST not running (expected blocker)"
+    },
+    {
+      "name": "health-http-3001",
+      "pass": true,
+      "detail": "{\"status\":200,\"body\":{\"success\":true,\"data\":{\"api\":\"Healthy\",\"database\":\"Error\",\"redis\":\"Disabled\",\"jobRunner\":\"database\",\"jobs\":\"Unknown\",\"shopify\":\"Warning\",\"indiaPost\":\"Warning\"}}}"
+    },
+    {
+      "name": "runtime-identity-staging",
+      "pass": true,
+      "detail": "{\"status\":200,\"body\":{\"success\":true,\"data\":{\"postbusEnv\":\"staging\",\"appHost\":\"127.0.0.1:3001\",\"supabaseHost\":\"127.0.0.1:54321\",\"indiaPostUatHost\":\"127.0.0.1:4099\",\"indiaPostProdHost\":\"127.0.0.1:4099\",\"shopifyConfigured\":false,\"razorpayConfigured\":false,\"jobRunner\":\"database\",\"productionSupabaseDetected\":false,\"supabaseAnonKeyPresent\":true,\"supabaseServiceRolePresent\":true}}}"
+    },
+    {
+      "name": "runtime-not-production-supabase",
+      "pass": true,
+      "detail": "supabaseHost=127.0.0.1:54321"
+    },
+    {
+      "name": "runtime-supabase-loopback",
+      "pass": true,
+      "detail": "supabaseHost=127.0.0.1:54321"
+    },
+    {
+      "name": "runtime-india-post-stub-host",
+      "pass": true,
+      "detail": "uat=127.0.0.1:4099"
+    },
+    {
+      "name": "runtime-razorpay-disabled",
+      "pass": true,
+      "detail": "razorpayConfigured=false"
+    },
+    {
+      "name": "runtime-shopify-keys-empty",
+      "pass": true,
+      "detail": "shopifyConfigured=false"
+    },
+    {
+      "name": "runtime-no-gotrue",
+      "pass": true,
+      "detail": "Auth health cannot be Healthy without isolated GoTrue"
+    },
+    {
+      "name": "cept-stub-responds",
+      "pass": true,
+      "detail": "{\"status\":200,\"body\":\"{\\\"ok\\\":true,\\\"provider_mode\\\":\\\"STUB\\\",\\\"login\\\":true,\\\"bulk\\\":true}\"}"
+    },
+    {
+      "name": "pg-is-postbus-staging",
+      "pass": true,
+      "detail": "postbus_staging"
+    },
+    {
+      "name": "pg-not-production-ref",
+      "pass": true,
+      "detail": "local cluster"
+    },
+    {
+      "name": "address-override-column",
+      "pass": true,
+      "detail": "count=1"
+    },
+    {
+      "name": "address-validation-column",
+      "pass": true,
+      "detail": "count=1"
+    },
+    {
+      "name": "synthetic-fixture-counts",
+      "pass": true,
+      "detail": "{\"orgs\":\"3\",\"orders\":\"2\",\"addresses\":\"3\"}"
+    },
+    {
+      "name": "booked-street-immutable",
+      "pass": true,
+      "detail": "Booked House"
+    },
+    {
+      "name": "booked-barcode-isolated",
+      "pass": true,
+      "detail": "ET214330016IN"
+    },
+    {
+      "name": "no-obvious-production-ref-on-3001-sockets",
+      "pass": true,
+      "detail": "established_rows=4"
+    }
+  ],
+  "health": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "data": {
+        "api": "Healthy",
+        "database": "Error",
+        "redis": "Disabled",
+        "jobRunner": "database",
+        "jobs": "Unknown",
+        "shopify": "Warning",
+        "indiaPost": "Warning"
+      }
+    }
+  },
+  "runtime": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "data": {
+        "postbusEnv": "staging",
+        "appHost": "127.0.0.1:3001",
+        "supabaseHost": "127.0.0.1:54321",
+        "indiaPostUatHost": "127.0.0.1:4099",
+        "indiaPostProdHost": "127.0.0.1:4099",
+        "shopifyConfigured": false,
+        "razorpayConfigured": false,
+        "jobRunner": "database",
+        "productionSupabaseDetected": false,
+        "supabaseAnonKeyPresent": true,
+        "supabaseServiceRolePresent": true
+      }
+    }
+  },
+  "sql": {
+    "db": "postbus_staging",
+    "overrideCol": "1",
+    "validationCol": "1",
+    "orgs": "3",
+    "orders": "2",
+    "addresses": "3",
+    "bookedStreet": "Booked House",
+    "bookedBarcode": "ET214330016IN",
+    "overrideNull": "2",
+    "overrideTrue": "1",
+    "overrideFalse": "0"
+  },
+  "ports": {
+    "p3000": {
+      "listening": true,
+      "pid": "49940"
+    },
+    "p3001": {
+      "listening": true,
+      "pid": "824"
+    },
+    "p55432": {
+      "listening": true,
+      "pid": "65260"
+    },
+    "p4099": {
+      "listening": true,
+      "pid": "60052"
+    },
+    "p54321": {
+      "listening": false,
+      "pid": null
+    }
+  }
+}

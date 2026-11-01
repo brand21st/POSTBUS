@@ -8,7 +8,12 @@ import {
   snapshotFromShipmentRow,
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
-import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
+import { INDIA_POST_EVENT_DOWNLOAD_REFRESH_COOLDOWN_MS } from "@/modules/india-post/spec";
+import { trackingRefreshMessage } from "@/modules/india-post/tracking-refresh-messages";
+import {
+  enqueueTrackingStageSideEffects,
+  shouldEnqueueTrackingStageSideEffects,
+} from "@/modules/india-post/tracking-effects";
 import type { NdrListQuery } from "@/modules/ndr-rto/schema";
 import { NDR_VISIBLE_SYNC_MAX } from "@/modules/ndr-rto/schema";
 import type { NdrSummary } from "@/types/api";
@@ -319,6 +324,7 @@ type NdrSyncShipment = {
   order_id: string | null;
   operational_status: string | null;
   last_event_at: string | null;
+  last_tracked_at?: string | null;
   ndr_attempt_count: number | null;
   rto_initiated_at: string | null;
   organization_id: string;
@@ -344,10 +350,20 @@ async function trackArticles(supabase: SupabaseClient, connection: Record<string
     connection as Parameters<typeof ensurePersistedIndiaPostTrackingSession>[1]
   );
   try {
-    return (await provider.trackShipment(barcodes)) as { data?: BulkTrackingArticle[] };
+    return (await provider.trackShipment(barcodes)) as {
+      data?: BulkTrackingArticle[];
+      hardFailure?: { status?: number } | null;
+    };
   } catch (caught) {
     if (caught instanceof AppError) throw caught;
-    const message = caught instanceof Error ? caught.message : "Tracking lookup failed.";
+    const status = (caught as { status?: number }).status;
+    if (status === 403) {
+      throw new AppError(ERROR_CODES.PROVIDER_ERROR, trackingRefreshMessage({ unauthorized: true }));
+    }
+    if (status === 401 || (status != null && status >= 500)) {
+      throw new AppError(ERROR_CODES.PROVIDER_ERROR, trackingRefreshMessage({ unavailable: true }));
+    }
+    const message = caught instanceof Error ? caught.message : trackingRefreshMessage({ unavailable: true });
     throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
   }
 }
@@ -369,7 +385,11 @@ async function applyTrackedShipment(
       shipmentId: data.id,
       barcode: data.barcode,
       lastTrackedAt: trackedAt,
+      lastEventAt: data.last_event_at,
       matched: false,
+      updated: false,
+      eventsInserted: 0,
+      message: trackingRefreshMessage({ eventsInserted: 0 }),
       status: data.status,
       operationalStatus: data.operational_status,
     };
@@ -379,9 +399,15 @@ async function applyTrackedShipment(
     organizationId: ctx.organizationId,
     shipment: snapshotFromShipmentRow(data, ctx.organizationId),
     article,
-    source: "bulk",
+    source: "event_download",
   });
-  if (ingested.whatsappEvents.length || ingested.orderStatus) {
+  if (
+    shouldEnqueueTrackingStageSideEffects({
+      eventsInserted: ingested.eventsInserted,
+      whatsappEvents: ingested.whatsappEvents,
+      orderStatus: ingested.orderStatus,
+    })
+  ) {
     await enqueueTrackingStageSideEffects(supabase, {
       organizationId: ctx.organizationId,
       shipmentId: data.id,
@@ -395,7 +421,11 @@ async function applyTrackedShipment(
     shipmentId: data.id,
     barcode: data.barcode,
     lastTrackedAt: trackedAt,
+    lastEventAt: ingested.snapshot.lastEventAt,
     matched: true,
+    updated: ingested.eventsInserted > 0,
+    eventsInserted: ingested.eventsInserted,
+    message: trackingRefreshMessage({ eventsInserted: ingested.eventsInserted }),
     status: ingested.snapshot.status,
     operationalStatus: ingested.snapshot.operationalStatus,
   };
@@ -405,7 +435,7 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
   const { data, error } = await supabase
     .from("shipments")
     .select(
-      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at, organization_id"
+      "id, barcode, status, order_id, operational_status, last_event_at, last_tracked_at, ndr_attempt_count, rto_initiated_at, organization_id"
     )
     .eq("organization_id", ctx.organizationId)
     .eq("id", shipmentId)
@@ -416,10 +446,29 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This shipment has no India Post tracking ID.");
   }
 
+  const lastTracked = data.last_tracked_at ? Date.parse(data.last_tracked_at) : 0;
+  if (lastTracked && Date.now() - lastTracked < INDIA_POST_EVENT_DOWNLOAD_REFRESH_COOLDOWN_MS) {
+    return {
+      shipmentId: data.id,
+      barcode: data.barcode,
+      lastTrackedAt: data.last_tracked_at,
+      lastEventAt: data.last_event_at,
+      matched: Boolean(data.last_event_at),
+      updated: false,
+      eventsInserted: 0,
+      skippedFetch: true,
+      message: trackingRefreshMessage({ skippedFetch: true, eventsInserted: 0 }),
+      status: data.status,
+      operationalStatus: data.operational_status,
+    };
+  }
+
   const connection = await indiaPostConnection(supabase, ctx.organizationId);
   const payload = await trackArticles(supabase, connection, [data.barcode]);
   const article = matchingBulkTrackingArticle(payload.data, data.barcode);
-  return applyTrackedShipment(supabase, ctx, data as NdrSyncShipment, article, new Date().toISOString());
+  const applied = await applyTrackedShipment(supabase, ctx, data as NdrSyncShipment, article, new Date().toISOString());
+  assertTrackingHardFailure(payload);
+  return applied;
 }
 
 export async function syncNdrVisibleShipments(
@@ -431,7 +480,7 @@ export async function syncNdrVisibleShipments(
   const { data, error } = await supabase
     .from("shipments")
     .select(
-      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at, organization_id"
+      "id, barcode, status, order_id, operational_status, last_event_at, last_tracked_at, ndr_attempt_count, rto_initiated_at, organization_id"
     )
     .eq("organization_id", ctx.organizationId)
     .in("id", ids)
@@ -452,9 +501,21 @@ export async function syncNdrVisibleShipments(
     const article = matchingBulkTrackingArticle(payload.data, String(shipment.barcode));
     results.push(await applyTrackedShipment(supabase, ctx, shipment, article, trackedAt));
   }
+  assertTrackingHardFailure(payload);
   return {
     tracked: results.length,
     matched: results.filter((row) => row.matched).length,
     results,
   };
+}
+
+function assertTrackingHardFailure(payload: { hardFailure?: { status?: number } | null }) {
+  if (!payload.hardFailure) return;
+  const status = payload.hardFailure.status;
+  throw new AppError(
+    ERROR_CODES.PROVIDER_ERROR,
+    status
+      ? `India Post tracking request failed (HTTP ${status}). Saved updates were kept.`
+      : "India Post tracking request failed. Saved updates were kept."
+  );
 }

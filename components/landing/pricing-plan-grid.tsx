@@ -34,7 +34,7 @@ function getPreviewFeatures(plan: PublicPlan) {
   return preview;
 }
 
-export function PricingPlanGrid({ plans }: { plans: PublicPlan[] }) {
+export function PricingPlanGrid({ plans, inclusiveLabel = false }: { plans: PublicPlan[]; inclusiveLabel?: boolean }) {
   const [cycle, setCycle] = useState<"monthly" | "yearly">("monthly");
 
   return (
@@ -111,6 +111,7 @@ export function PricingPlanGrid({ plans }: { plans: PublicPlan[] }) {
                       /{cycle === "yearly" ? "year" : "month"}
                     </span>
                   </div>
+                  {inclusiveLabel ? <p className="mt-1 text-xs text-muted">Inclusive of applicable GST</p> : null}
 
                   {cycle === "yearly" ? (
                     <p className="mt-1 text-xs font-semibold text-brand">

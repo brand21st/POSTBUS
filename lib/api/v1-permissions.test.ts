@@ -13,6 +13,8 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "ai-credits/quote", ["ai-credits", "quote"])).toBe("orders.read");
     expect(permissionForTenantRoute("GET", "shipment-presets", ["shipment-presets"])).toBe("orders.read");
     expect(permissionForTenantRoute("POST", "shipment-presets", ["shipment-presets"])).toBe("orders.write");
+    expect(permissionForTenantRoute("GET", "order-defaults", ["order-defaults"])).toBe("orders.read");
+    expect(permissionForTenantRoute("PUT", "order-defaults", ["order-defaults"])).toBe("orders.write");
     expect(
       permissionForTenantRoute("DELETE", "shipment-presets/abc", ["shipment-presets", "abc"])
     ).toBe("orders.write");
@@ -62,6 +64,12 @@ describe("permissionForTenantRoute", () => {
     );
     expect(permissionForTenantRoute("POST", "bookings/validate", ["bookings", "validate"])).toBe("shipments.write");
     expect(permissionForTenantRoute("GET", "bookings/summary", ["bookings", "summary"])).toBe("shipments.read");
+    expect(permissionForTenantRoute("POST", "bookings/excel-imports", ["bookings", "excel-imports"])).toBe(
+      "shipments.write"
+    );
+    expect(permissionForTenantRoute("GET", "bookings/excel-template", ["bookings", "excel-template"])).toBe(
+      "shipments.read"
+    );
     expect(permissionForTenantRoute("PATCH", "orders/abc/service", ["orders", "abc", "service"])).toBe(
       "orders.write"
     );
@@ -190,7 +198,11 @@ describe("permissionForTenantRoute", () => {
       "members.manage"
     );
     expect(permissionForTenantRoute("POST", "api-keys", ["api-keys"])).toBe("api_keys.manage");
+    expect(permissionForTenantRoute("GET", "merchant-api/usage", ["merchant-api", "usage"])).toBe(
+      "api_keys.manage"
+    );
     expect(permissionForTenantRoute("GET", "webhooks", ["webhooks"])).toBe("webhooks.manage");
+    expect(permissionForTenantRoute("POST", "webhooks/abc/test", ["webhooks", "abc", "test"])).toBe("webhooks.manage");
     expect(permissionForTenantRoute("GET", "audit-logs", ["audit-logs"])).toBe("audit.read");
     expect(permissionForTenantRoute("PATCH", "automation", ["automation"])).toBe("automation.manage");
     expect(permissionForTenantRoute("GET", "automation", ["automation"])).toBeUndefined();
@@ -234,6 +246,7 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "labels/bulk-download", ["labels", "bulk-download"])).toBe(
       "labels.read"
     );
+    expect(permissionForTenantRoute("GET", "labels/summary", ["labels", "summary"])).toBe("labels.read");
     expect(
       permissionForTenantRoute("POST", "labels/abc/packing-slip", ["labels", "abc", "packing-slip"])
     ).toBe("labels.write");
@@ -242,6 +255,8 @@ describe("permissionForTenantRoute", () => {
     ).toBe("shipments.write");
     expect(permissionForTenantRoute("GET", "label-template", ["label-template"])).toBe("labels.read");
     expect(permissionForTenantRoute("PUT", "label-template", ["label-template"])).toBe("labels.write");
+    expect(permissionForTenantRoute("GET", "sales-invoices", ["sales-invoices"])).toBe("orders.read");
+    expect(permissionForTenantRoute("POST", "sales-invoices/abc/issue", ["sales-invoices", "abc", "issue"])).toBe("orders.write");
     expect(permissionForTenantRoute("GET", "invoices", ["invoices"])).toBe("orders.read");
     expect(permissionForTenantRoute("GET", "invoices/abc/download", ["invoices", "abc", "download"])).toBe(
       "orders.read"

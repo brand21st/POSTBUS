@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { bindSignupReferral } from "@/modules/affiliates/service";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import { createWhatsappAuthUser, linkPhoneIdentity, resolvePhoneIdentity } from "@/lib/auth/identity/phone";
@@ -47,6 +48,7 @@ function deps(): OtpDeps {
     },
     ensureWorkspace: async (input) => {
       try {
+        await bindSignupReferral(input.userId);
         await ensureActiveWorkspace(input.session as SupabaseClient, input.userId, {
           workspaceName: input.workspaceName,
           fullName: input.fullName,

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  currentTrackingEventIdentity,
   mapIndiaPostEventToShipmentUpdate,
   planTrackingUpdate,
   projectShipmentFromEvents,
+  proposedTrackingEventIdentity,
   type ShipmentProjection,
 } from "@/modules/india-post/event-mapper";
+import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 
 function map(event: Parameters<typeof mapIndiaPostEventToShipmentUpdate>[0]) {
   return mapIndiaPostEventToShipmentUpdate(event);
@@ -53,6 +56,111 @@ describe("CEPT event mapping matrix", () => {
   it("maps unknown ambiguous events without inventing a terminal state", () => {
     expect(map({ eventCode: "CEPT_NEW_SCAN", eventDescription: "Customs hold" }).classification).toBeNull();
     expect(map({ eventCode: "EVENT", eventDescription: "Item Redirected" }).classification).toBeNull();
+  });
+
+  it("classifies the 15 official article-flow events without leaving the operational enum", () => {
+    const cases: Array<[string, string, string | null, string]> = [
+      ["Pickup Request Raised", "PICKUP_REQUESTED", null, "Pickup Requested"],
+      ["Pickup Assigned", "PICKUP_ASSIGNED", null, "Pickup Assigned"],
+      ["Item Pickup Cancelled", "PICKUP_CANCELLED", null, "Pickup Cancelled"],
+      ["Item Pickedup", "PICKED_UP", null, "Picked Up"],
+      ["Item inducted", "INDUCTED", null, "Inducted"],
+      ["Item Booked", "BOOKED", null, "Booked"],
+      ["Item bagged", "BAGGED", "DISPATCHED", "Processing"],
+      ["Item Dispatched", "DISPATCHED", "DISPATCHED", "In Transit"],
+      ["Bag Received", "BAG_RECEIVED", "IN_TRANSIT", "In Transit"],
+      ["Item Received", "ITEM_RECEIVED", "IN_TRANSIT", "In Transit"],
+      ["Item received at Destination", "DESTINATION_REACHED", "IN_TRANSIT", "Reached Destination"],
+      ["Taken out for delivery", "OUT_FOR_DELIVERY", "OUT_FOR_DELIVERY", "Out for Delivery"],
+      ["Item Kept on Hold", "ON_HOLD", null, "On Hold"],
+      ["Item Delivered(Addressee)", "DELIVERED", "DELIVERED", "Delivered"],
+      ["Item Redirected", "REDIRECTED", null, "Redirected"],
+    ];
+    for (const [description, flow, operational, label] of cases) {
+      const mapped = map({ eventCode: "EVENT", eventDescription: description });
+      expect(mapped.articleFlow).toBe(flow);
+      expect(mapped.operationalStatus).toBe(operational);
+      expect(mapped.displayLabel).toBe(label);
+      expect(mapped.eventDescription).toBe(description);
+    }
+  });
+
+  it("does not cancel an order for pickup cancellation, NDR an on-hold scan, or RTO a redirect", () => {
+    const pickup = planTrackingUpdate({
+      currentStatus: "MANIFEST_READY",
+      currentOperational: null,
+      returnStarted: false,
+      lastEventAt: null,
+      eventAt: "2026-10-16T05:00:00.000Z",
+      mapped: map({ eventCode: "EVENT", eventDescription: "Item Pickup Cancelled" }),
+    });
+    expect(pickup.applyStatus).toBe(false);
+    expect(pickup.orderStatus).toBeNull();
+
+    const hold = planTrackingUpdate({
+      currentStatus: "OUT_FOR_DELIVERY",
+      currentOperational: "OUT_FOR_DELIVERY",
+      returnStarted: false,
+      lastEventAt: "2026-10-16T05:00:00.000Z",
+      eventAt: "2026-10-16T06:00:00.000Z",
+      mapped: map({ eventCode: "EVENT", eventDescription: "Item Kept on Hold" }),
+    });
+    expect(hold.applyStatus).toBe(false);
+    expect(hold.operationalStatus).toBeNull();
+    expect(hold.orderStatus).toBeNull();
+    expect(hold.whatsappEvents).toEqual([]);
+
+    const redirected = planTrackingUpdate({
+      currentStatus: "OUT_FOR_DELIVERY",
+      currentOperational: "OUT_FOR_DELIVERY",
+      returnStarted: false,
+      lastEventAt: "2026-10-16T06:00:00.000Z",
+      eventAt: "2026-10-16T07:00:00.000Z",
+      mapped: map({ eventCode: "EVENT", eventDescription: "Item Redirected" }),
+    });
+    expect(redirected.applyStatus).toBe(false);
+    expect(redirected.orderStatus).toBeNull();
+    expect(redirected.whatsappEvents).toEqual([]);
+
+    const after = planTrackingUpdate({
+      currentStatus: "OUT_FOR_DELIVERY",
+      currentOperational: "OUT_FOR_DELIVERY",
+      returnStarted: false,
+      lastEventAt: "2026-10-16T07:00:00.000Z",
+      eventAt: "2026-10-16T08:00:00.000Z",
+      mapped: map({ eventCode: "EVENT", eventDescription: "Item Dispatched" }),
+    });
+    expect(after.applyStatus).toBe(true);
+    expect(after.shipmentStatus).toBe("IN_TRANSIT");
+    expect(after.orderStatus).toBeNull();
+  });
+
+  it("keeps the canonical tracking URL and shows the office-identity dedupe gap", () => {
+    expect(postbusTrackingLink("CX075364450IN")).toBe("https://www.postbus.in/track?tracking=CX075364450IN");
+    const shared = {
+      organizationId: "org-a",
+      shipmentId: "ship-a",
+      eventCode: "Item Received",
+      occurredAt: "2026-10-17T05:00:00.000Z",
+    };
+    expect(currentTrackingEventIdentity(shared)).toBe(currentTrackingEventIdentity(shared));
+    expect(
+      proposedTrackingEventIdentity({ ...shared, officeName: "Office A" })
+    ).not.toBe(proposedTrackingEventIdentity({ ...shared, officeName: "Office B" }));
+  });
+
+  it("keeps destination receipt and invoiced-to-BO scans out of DELIVERED", () => {
+    expect(map({ eventCode: "EVENT", eventDescription: "Item Received at Destination" }).operationalStatus).toBe(
+      "IN_TRANSIT"
+    );
+    expect(map({ eventCode: "EVENT", eventDescription: "Item Received at Destination" }).shipmentStatus).toBe(
+      "IN_TRANSIT"
+    );
+    expect(map({ eventCode: "EVENT", eventDescription: "Bag Received for Forwarding" }).operationalStatus).toBe(
+      "IN_TRANSIT"
+    );
+    expect(map({ eventCode: "EVENT", eventDescription: "Item Invoiced to BO" }).classification).toBeNull();
+    expect(map({ eventCode: "EVENT", eventDescription: "Item Booked" }).classification).toBeNull();
   });
 
   it("maps dispatch, bagged, bag received, and out for delivery as movement", () => {

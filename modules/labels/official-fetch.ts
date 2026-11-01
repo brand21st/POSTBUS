@@ -48,6 +48,7 @@ export async function fetchOfficialIndiaPostLabelPdf(
     name?: string;
     line1?: string;
     line2?: string;
+    line3?: string;
     city?: string;
     state?: string;
     pincode?: string;
@@ -123,6 +124,7 @@ export async function fetchOfficialIndiaPostLabelPdf(
         recipientMobile: receiverMobile,
         recipientLine1: address.line1,
         recipientLine2: address.line2,
+        recipientLine3: address.line3,
         recipientCity: address.city ?? "",
         recipientState: address.state ?? "",
         recipientPin: destPin,

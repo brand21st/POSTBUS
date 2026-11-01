@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { pickStoreWebsite } from "@/modules/invoices/schema";
 import { normalizeShopDomain } from "@/modules/shopify/oauth";
+import { isGraphqlOnlyShop } from "@/modules/shopify/token-source";
 import {
   loadShopifyConnection,
   resolveShopifyAdminToken,
@@ -40,13 +41,16 @@ export async function fetchShopifyPrimaryDomain(
         body: JSON.stringify({ query: SHOP_DOMAINS_QUERY }),
         signal: controller.signal,
       }).catch(() => null),
-      fetch(`https://${host}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
-        headers: {
-          "X-Shopify-Access-Token": token,
-          Accept: "application/json",
-        },
-        signal: controller.signal,
-      }).catch(() => null),
+      // App Store installs are GraphQL-only; the REST shop.json fallback is for legacy connections.
+      isGraphqlOnlyShop(host)
+        ? Promise.resolve(null)
+        : fetch(`https://${host}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
+            headers: {
+              "X-Shopify-Access-Token": token,
+              Accept: "application/json",
+            },
+            signal: controller.signal,
+          }).catch(() => null),
     ]);
     clearTimeout(timer);
 

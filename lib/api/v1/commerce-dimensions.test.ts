@@ -129,12 +129,15 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
     expect(supabase.updates).toHaveLength(1);
     expect(supabase.updates[0]).toEqual({
       table: "shipments",
-      values: {
+      values: expect.objectContaining({
         length_cm: 22,
         width_cm: 16,
         height_cm: 11,
-      },
+      }),
     });
+    expect((supabase.updates[0].values as { metadata: { parcelDimensions: { source: string } } }).metadata.parcelDimensions.source).toBe(
+      "postbus"
+    );
 
     // 2. Verify Audit Log
     expect(supabase.inserts.some((ins) => ins.table === "audit_logs")).toBe(true);
@@ -231,6 +234,54 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
     expect(supabase.updates).toHaveLength(0);
   });
 
+  it("PATCH /api/v1/shipments/:id saves dimensions on a queued shipment so booking can be retried", async () => {
+    const supabase = createMockSupabase({
+      shipmentRow: {
+        id: "ship-101",
+        organization_id: "org-1",
+        order_id: "ord-202",
+        status: "QUEUED",
+        metadata: {},
+      },
+    });
+    const req = new NextRequest("http://localhost:3000/api/v1/shipments/ship-101", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        lengthCm: 30,
+        widthCm: 20,
+        heightCm: 10,
+      }),
+    });
+
+    const result = (await handleCommerceRoutes(
+      req,
+      supabase as never,
+      ctx,
+      "PATCH shipments/ship-101",
+      "PATCH",
+      ["shipments", "ship-101"]
+    )) as Record<string, unknown>;
+
+    expect(result.status).toBe("QUEUED");
+    expect(result.length_cm).toBe(30);
+    expect(supabase.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          table: "shipments",
+          values: expect.objectContaining({
+            length_cm: 30,
+            width_cm: 20,
+            height_cm: 10,
+            metadata: expect.objectContaining({
+              parcelDimensions: expect.objectContaining({ source: "postbus" }),
+            }),
+          }),
+        }),
+      ])
+    );
+  });
+
   it("PATCH /api/v1/orders/:id/dimensions updates existing open shipment in DB", async () => {
     const supabase = createMockSupabase();
     const req = new NextRequest("http://localhost:3000/api/v1/orders/ord-202/dimensions", {
@@ -253,11 +304,13 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
     )) as Record<string, unknown>;
 
     expect(supabase.updates).toHaveLength(1);
-    expect(supabase.updates[0].values).toEqual({
-      length_cm: 25,
-      width_cm: 18,
-      height_cm: 12,
-    });
+    expect(supabase.updates[0].values).toEqual(
+      expect.objectContaining({
+        length_cm: 25,
+        width_cm: 18,
+        height_cm: 12,
+      })
+    );
     expect(result.lengthCm).toBe(25);
   });
 
@@ -370,12 +423,14 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
     // 3. Shipment updated with box weight and dimensions
     const shipmentUpdate = supabase.updates.find((u) => u.table === "shipments");
     expect(shipmentUpdate).toBeDefined();
-    expect(shipmentUpdate?.values).toEqual({
-      length_cm: 25,
-      width_cm: 15,
-      height_cm: 10,
-      weight_grams: 750,
-    });
+    expect(shipmentUpdate?.values).toEqual(
+      expect.objectContaining({
+        length_cm: 25,
+        width_cm: 15,
+        height_cm: 10,
+        weight_grams: 750,
+      })
+    );
 
     expect(result.id).toBe("ship-101");
     expect(result.lengthCm).toBe(25);

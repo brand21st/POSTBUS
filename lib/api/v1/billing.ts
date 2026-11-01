@@ -16,7 +16,10 @@ import {
   startCheckout,
   verifyCheckout,
 } from "@/modules/billing/subscriptions";
-import { getQuotaSnapshot } from "@/modules/billing/usage";
+import { getQuotaSnapshot, subscriptionCoverageEnded } from "@/modules/billing/usage";
+import { NEW_TRIAL_DAYS } from "@/modules/billing/trial-policy";
+import { gstInclusiveLabelEnabled } from "@/modules/billing/inclusive-tax";
+import { getOrganizationBillingProfile, listSubscriptionTaxInvoices, saveOrganizationBillingProfile, subscriptionInvoicePdf } from "@/modules/billing/subscription-invoice-access";
 
 const subscribeSchema = z.object({
   planId: z.string().uuid(),
@@ -54,7 +57,7 @@ export async function handleBillingRoutes(
 ) {
   if (key === "GET billing/plans") {
     const razorpay = await getRazorpayConfig();
-    return { plans: await listActivePlans(supabase), configured: Boolean(razorpay.keyId && razorpay.keySecret) };
+    return { plans: await listActivePlans(supabase), configured: Boolean(razorpay.keyId && razorpay.keySecret), gstInclusiveLabel: gstInclusiveLabelEnabled() };
   }
 
   if (!ctx) return null;
@@ -70,12 +73,10 @@ export async function handleBillingRoutes(
     const razorpay = await getRazorpayConfig();
     const catalog = await listActivePlans(supabase);
     const mapped = plan ? mapPlan(plan) : null;
-    const trialPlan =
-      mapped && subscription?.status === "TRIAL" ? applyFullTrialAccess(mapped, catalog) : mapped;
-    const trialLimit =
-      subscription?.status === "TRIAL" && trialPlan
-        ? trialPlan.monthlyOrderLimit
-        : usage.orderLimit;
+    const coverageEnded = subscription ? subscriptionCoverageEnded(subscription) : false;
+    const trialLive = mapped && subscription?.status === "TRIAL" && !coverageEnded;
+    const trialPlan = trialLive ? applyFullTrialAccess(mapped, catalog, NEW_TRIAL_DAYS) : mapped;
+    const trialLimit = trialLive && trialPlan ? trialPlan.monthlyOrderLimit : usage.orderLimit;
     const remaining =
       trialLimit == null ? usage.remaining : Math.max(0, trialLimit - usage.ordersUsed);
     return {
@@ -93,11 +94,13 @@ export async function handleBillingRoutes(
             startedAt: subscription.started_at,
             currentPeriodStart: subscription.current_period_start,
             currentPeriodEnd: subscription.current_period_end,
-            renewsAt: subscription.renews_at,
+            renewsAt: coverageEnded ? null : subscription.renews_at,
             expiresAt: subscription.expires_at,
             cancelAtPeriodEnd: subscription.cancel_at_period_end,
             trialStart: subscription.trial_start,
             trialEnd: subscription.trial_end,
+            razorpaySubscriptionId: subscription.razorpay_subscription_id,
+            coverageEnded,
           }
         : null,
       usage: {
@@ -133,6 +136,18 @@ export async function handleBillingRoutes(
       .order("created_at", { ascending: false })
       .limit(50);
     return { invoices: data ?? [] };
+  }
+
+  if (key === "GET billing/tax-invoices") return listSubscriptionTaxInvoices(writeClient(), ctx.organizationId, request.nextUrl.searchParams);
+  if (key === "GET billing/profile") return getOrganizationBillingProfile(writeClient(), ctx.organizationId);
+  if (key.startsWith("GET billing/tax-invoices/") && key.endsWith("/pdf")) {
+    const paymentId = key.slice("GET billing/tax-invoices/".length, -4);
+    if (!z.string().uuid().safeParse(paymentId).success) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Payment id is invalid.");
+    return subscriptionInvoicePdf(writeClient(), ctx.organizationId, paymentId);
+  }
+  if (key === "PATCH billing/profile") {
+    const body = z.object({ legalName: z.string().trim().min(2).max(160), address: z.string().trim().min(4).max(400), gstin: z.string().trim().max(15).default("") }).parse(await request.json());
+    return saveOrganizationBillingProfile(writeClient(), ctx.organizationId, body);
   }
 
   if (key === "POST billing/ai-credits/checkout") {

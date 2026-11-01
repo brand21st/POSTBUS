@@ -10,9 +10,13 @@ vi.mock("@/modules/webhooks/outgoing", () => ({
   emitWebhook: vi.fn(async () => undefined),
 }));
 
-vi.mock("@/modules/india-post/tracking-effects", () => ({
-  enqueueTrackingStageSideEffects: vi.fn(async () => undefined),
-}));
+vi.mock("@/modules/india-post/tracking-effects", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/modules/india-post/tracking-effects")>();
+  return {
+    ...actual,
+    enqueueTrackingStageSideEffects: vi.fn(async () => undefined),
+  };
+});
 
 const ctx = {
   userId: "user-a",

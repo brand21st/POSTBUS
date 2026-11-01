@@ -4,6 +4,8 @@ import type { JobType } from "@/types/domain";
 
 export const QUEUE_NAMES = {
   shopifySync: "shopify-sync",
+  woocommerceSync: "woocommerce-sync",
+  woocommerceTracking: "woocommerce-tracking",
   shipmentBooking: "shipment-booking",
   labelGeneration: "label-generation",
   manifestGeneration: "manifest-generation",
@@ -17,10 +19,12 @@ export const QUEUE_NAMES = {
   watiNotify: "wati-notify",
   vachatNotify: "vachat-notify",
   invoiceGeneration: "invoice-generation",
+  salesInvoiceIssue: "sales-invoice-issue",
   supportIngest: "support-ingest",
   codReportExtract: "cod-report-extract",
   gstDraft: "gst-draft",
   accountingRebuild: "accounting-rebuild",
+  bulkExcelImport: "bulk-excel-import",
 } as const;
 
 const queues = new Map<string, Queue>();

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
+import { extractIndiaMobileDigits, searchPhoneNeedles } from "@/lib/phone/india-whatsapp";
 import { mapConversation, mapMessage } from "@/modules/support/map";
 import { sanitizeSupportSearch } from "@/modules/support/search";
 import { OPEN_TICKET_STATUSES } from "@/modules/support/states";
@@ -170,7 +170,13 @@ export async function listConversations(
     .limit(limit);
   if (needle) {
     const idClause = extraIds.length ? `,id.in.(${extraIds.join(",")})` : "";
-    request = request.or(`customer_name.ilike.%${needle}%,phone_digits.ilike.%${needle}%${idClause}`);
+    const phoneClause = searchPhoneNeedles(query.q)
+      .filter((digits) => digits !== needle)
+      .map((digits) => `phone_digits.ilike.%${digits}%`)
+      .join(",");
+    request = request.or(
+      `customer_name.ilike.%${needle}%,phone_digits.ilike.%${needle}%${phoneClause ? `,${phoneClause}` : ""}${idClause}`
+    );
   }
   if (query.filter === "unread") request = request.gt("unread_count", 0);
   if (query.cursor) request = request.lt("last_message_at", query.cursor);

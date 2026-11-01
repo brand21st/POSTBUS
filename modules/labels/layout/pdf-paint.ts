@@ -88,7 +88,7 @@ export async function paintMerchantLabel(
   });
   const baselineY = (baseline: number) => pageHeight - baseline * scaleY;
 
-  const drawLine = async (line: PlacedLine, color: ReturnType<typeof rgb>) => {
+  const drawLine = async (line: PlacedLine, color: ReturnType<typeof rgb>, opacity?: number) => {
     const size = line.fontSize * fontScale;
     const y = baselineY(line.baseline);
     for (const run of line.runs) {
@@ -102,6 +102,7 @@ export async function paintMerchantLabel(
         color,
         bold: run.bold,
         italic: run.italic,
+        opacity,
       });
     }
   };
@@ -133,7 +134,7 @@ export async function paintMerchantLabel(
       return;
     }
     if (block.kind === "watermark") {
-      for (const line of block.lines) await drawLine(line, MUTED);
+      for (const line of block.lines) await drawLine(line, MUTED, block.opacity);
       return;
     }
     await withClip(block.clip, async () => {

@@ -205,6 +205,8 @@ export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 
 export const JOB_TYPES = [
   "shopify-sync",
+  "woocommerce-sync",
+  "woocommerce-tracking",
   "shipment-booking",
   "label-generation",
   "manifest-generation",
@@ -218,11 +220,13 @@ export const JOB_TYPES = [
   "wati-notify",
   "vachat-notify",
   "invoice-generation",
+  "sales-invoice-issue",
   "support-ingest",
   "ai-image",
   "cod-report-extract",
   "gst-draft",
   "accounting-rebuild",
+  "bulk-excel-import",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

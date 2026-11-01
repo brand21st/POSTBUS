@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  customerPhone,
+  labelTemplateName,
+  salesInvoiceNumber,
   canFulfillOrder,
   canFulfillOrderAction,
   canMarkDelivered,
@@ -15,6 +18,35 @@ import {
   orderStageMenu,
   shopifyPendingBookingBlocked,
 } from "@/lib/dashboard/records";
+
+describe("customerPhone", () => {
+  it("shows the 10-digit mobile even when the customer row has a 91 prefix", () => {
+    expect(customerPhone({ customer: { phone: "919496821787" } })).toBe("9496821787");
+    expect(customerPhone({ customer: { phone: "9496821787" } })).toBe("9496821787");
+  });
+});
+
+describe("labelTemplateName", () => {
+  it("uses the saved template name", () => {
+    expect(
+      labelTemplateName(
+        { library: [{ id: "a9151c2f-0207-41ee-ad36-b94377af158a", name: "India Post" }] },
+        "a9151c2f-0207-41ee-ad36-b94377af158a"
+      )
+    ).toBe("India Post");
+    expect(labelTemplateName({ library: [] }, "a9151c2f-0207-41ee-ad36-b94377af158a")).toBe("Template");
+  });
+});
+
+describe("salesInvoiceNumber", () => {
+  it("uses the invoice number, then the order number, then a short id", () => {
+    expect(salesInvoiceNumber({ invoiceNumber: "INV/26-27/00001", orderNumber: "#1001", id: "f0a76df8-e552-4f80-99b5-c69a02b5f97e" })).toBe(
+      "INV/26-27/00001"
+    );
+    expect(salesInvoiceNumber({ invoiceNumber: null, orderNumber: "#2990", id: "f0a76df8-e552-4f80-99b5-c69a02b5f97e" })).toBe("#2990");
+    expect(salesInvoiceNumber({ id: "f0a76df8-e552-4f80-99b5-c69a02b5f97e" })).toBe("f0a76df8");
+  });
+});
 
 describe("itemSummary", () => {
   it("returns an em dash when there are no line items", () => {

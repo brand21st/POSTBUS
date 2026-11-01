@@ -3,6 +3,18 @@ import type { TrackingNotifyNotice } from "@/modules/india-post/apply-tracking";
 import type { TrackingWhatsAppEvent } from "@/modules/india-post/event-mapper";
 import type { WatiNotifyEvent } from "@/modules/wati/notify";
 
+/** Side effects run only for newly inserted carrier events, not HTTP success or duplicates. */
+export function shouldEnqueueTrackingStageSideEffects(input: {
+  eventsInserted?: number;
+  inserted?: boolean;
+  whatsappEvents?: unknown[];
+  orderStatus?: string | null;
+}) {
+  const newEvents = (input.eventsInserted ?? 0) > 0 || input.inserted === true;
+  if (!newEvents) return false;
+  return Boolean((input.whatsappEvents && input.whatsappEvents.length) || input.orderStatus);
+}
+
 export async function enqueueTrackingStageSideEffects(
   supabase: SupabaseClient,
   input: {
@@ -67,6 +79,24 @@ export async function enqueueTrackingStageSideEffects(
           shipmentId: input.shipmentId,
           stage: shopifyStage,
         });
+      }
+      if (automation.autoWooCommerceTracking) {
+        const { data: order } = await supabase
+          .from("orders")
+          .select("source")
+          .eq("id", input.orderId)
+          .eq("organization_id", input.organizationId)
+          .maybeSingle();
+        if (order?.source === "WOOCOMMERCE") {
+          const { createBackgroundJob } = await import("@/modules/jobs/service");
+          await createBackgroundJob(supabase, {
+            organizationId: input.organizationId,
+            jobType: "woocommerce-tracking",
+            entityType: "order",
+            entityId: input.orderId,
+            progress: { stage: shopifyStage },
+          });
+        }
       }
     } catch {
       // Shopify fulfillment events are optional; tracking updates should still persist.

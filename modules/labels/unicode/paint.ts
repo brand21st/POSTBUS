@@ -59,6 +59,7 @@ export async function drawPaintedText(
     bold?: boolean;
     italic?: boolean;
     align?: "left" | "right";
+    opacity?: number;
   }
 ) {
   const text = sanitizeLabelText(input.text);
@@ -67,7 +68,14 @@ export async function drawPaintedText(
   if (!needsUnicodePaint(text)) {
     const width = input.font.widthOfTextAtSize(text, input.size);
     const x = input.align === "right" ? input.x - width : input.x;
-    page.drawText(text, { x, y: input.y, size: input.size, font: input.font, color: input.color });
+    page.drawText(text, {
+      x,
+      y: input.y,
+      size: input.size,
+      font: input.font,
+      color: input.color,
+      opacity: input.opacity,
+    });
     return width;
   }
   const raster = rasterizeShapedLine({
@@ -94,6 +102,7 @@ export async function drawPaintedText(
     y: input.y - (raster.heightPt - raster.baselineFromTopPt),
     width: raster.widthPt,
     height: raster.heightPt,
+    opacity: input.opacity,
   });
   return width;
 }

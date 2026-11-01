@@ -43,7 +43,13 @@ export function fail(
       requestId,
       timestamp: new Date().toISOString(),
     };
-    return NextResponse.json(body, { status: error.status });
+    const response = NextResponse.json(body, { status: error.status });
+    if (error.headers) {
+      for (const [key, value] of Object.entries(error.headers)) {
+        response.headers.set(key, value);
+      }
+    }
+    return response;
   }
 
   if (error instanceof ZodError) {

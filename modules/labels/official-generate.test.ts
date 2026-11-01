@@ -54,7 +54,7 @@ describe("official India Post label generation", () => {
     expect(fetchSource).toContain("indiaPostDomesticLabelPayload");
     expect(fetchSource).toContain("persistLabelPdf");
     expect(fetchSource).toContain("generateLabel");
-    const labelsPage = readFileSync(path.join(process.cwd(), "app/dashboard/labels/page.tsx"), "utf8");
+    const labelsPage = readFileSync(path.join(process.cwd(), "app/(site)/dashboard/labels/page.tsx"), "utf8");
     expect(labelsPage).toContain("/india-post-label");
     expect(labelsPage).toContain("method: \"POST\"");
   });

@@ -4,6 +4,59 @@ const PRODUCTION_HOSTS = new Set(["app.indiapost.gov.in"]);
 const SANDBOX_HOSTS = new Set(["test.cept.gov.in"]);
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
+export function isPostbusStagingRuntime(
+  mode = process.env.POSTBUS_ENV,
+  appUrl = process.env.NEXT_PUBLIC_APP_URL
+) {
+  const normalized = (mode ?? "").trim().toLowerCase();
+  if (normalized === "staging" || normalized === "auth-staging") return true;
+  return (appUrl ?? "").toLowerCase().includes("auth-staging.postbus.in");
+}
+
+function stagingAllowedHosts() {
+  const extra = (process.env.INDIA_POST_STAGING_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set([...LOCAL_HOSTS, ...extra]);
+}
+
+function assertStagingIndiaPostUrl(configured: string) {
+  const raw = configured.trim();
+  if (!raw) {
+    throw Object.assign(new Error("Staging India Post base URL is missing."), {
+      code: "INDIA_POST_ENV_ISOLATION",
+    });
+  }
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(withScheme);
+  } catch {
+    throw Object.assign(new Error("Staging India Post base URL is invalid."), {
+      code: "INDIA_POST_ENV_ISOLATION",
+    });
+  }
+  const protocol = parsed.protocol.toLowerCase();
+  if (protocol !== "http:" && protocol !== "https:") {
+    throw Object.assign(new Error("Staging India Post URL must use http or https."), {
+      code: "INDIA_POST_ENV_ISOLATION",
+    });
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (PRODUCTION_HOSTS.has(host) || SANDBOX_HOSTS.has(host) || host.endsWith("indiapost.gov.in") || host.endsWith("cept.gov.in")) {
+    throw Object.assign(new Error("Staging India Post URL cannot use a live CEPT host."), {
+      code: "INDIA_POST_ENV_ISOLATION",
+    });
+  }
+  if (!stagingAllowedHosts().has(host) && !host.endsWith(".localhost")) {
+    throw Object.assign(new Error("Staging India Post URL host is not on the staging allowlist."), {
+      code: "INDIA_POST_ENV_ISOLATION",
+    });
+  }
+  return host;
+}
+
 export function indiaPostHostname(configured: string) {
   const raw = configured.trim();
   if (!raw) {
@@ -27,6 +80,9 @@ function isLocalHost(host: string) {
  * Localhost is allowed only for isolated staging stubs.
  */
 export function assertIndiaPostEnvironmentUrl(environment: ProviderEnvironment, configured: string) {
+  if (isPostbusStagingRuntime()) {
+    return assertStagingIndiaPostUrl(configured);
+  }
   const host = indiaPostHostname(configured);
   const productionHost = PRODUCTION_HOSTS.has(host);
   const sandboxHost = SANDBOX_HOSTS.has(host);

@@ -11,6 +11,7 @@ import type {
   SearchResult,
 } from "@/types/api";
 import { titleCase } from "@/lib/format";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 
 export function pickString(...values: Array<string | null | undefined>) {
   for (const value of values) {
@@ -64,6 +65,30 @@ export function shipmentNumber(shipment: {
   return pickString(shipment.trackingNumber, shipment.tracking_number, shipment.barcode, shipment.id.slice(0, 8));
 }
 
+export function labelTemplateName(
+  template: { library?: Array<{ id: string; name?: string | null }> | null } | null | undefined,
+  id: string
+) {
+  const name = template?.library?.find((item) => item.id === id)?.name?.trim();
+  return name || "Template";
+}
+
+export function salesInvoiceNumber(invoice: {
+  invoiceNumber?: string | null;
+  invoice_number?: string | null;
+  orderNumber?: string | null;
+  order_number?: string | null;
+  id?: string;
+}) {
+  return pickString(
+    invoice.invoiceNumber,
+    invoice.invoice_number,
+    invoice.orderNumber,
+    invoice.order_number,
+    invoice.id?.slice(0, 8)
+  );
+}
+
 export function createdAt(record: { createdAt?: string; created_at?: string }) {
   return record.createdAt ?? record.created_at ?? null;
 }
@@ -76,13 +101,14 @@ export function customerName(order: {
 }
 
 export function customerPhone(order: { customer?: CustomerSummary | null }) {
-  return pickString(order.customer?.phone) || "";
+  const raw = pickString(order.customer?.phone);
+  return extractIndiaMobileDigits(raw) ?? raw;
 }
 
 export function addressLine(address?: AddressSummary | null) {
   if (!address) return "—";
   return (
-    [address.line1, address.line2, address.city, address.state, address.pincode]
+    [address.line1, address.line2, address.line3, address.city, address.state, address.pincode]
       .filter(Boolean)
       .join(", ") || "—"
   );
@@ -156,6 +182,24 @@ export function shopifyPendingBookingBlocked(order: {
   if ((order.source ?? "").toUpperCase() !== "SHOPIFY") return false;
   const payment = (order.payment_status ?? order.paymentStatus ?? "").toUpperCase();
   return payment === "PENDING";
+}
+
+export function woocommercePendingBookingBlocked(order: {
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  if ((order.source ?? "").toUpperCase() !== "WOOCOMMERCE") return false;
+  const payment = (order.payment_status ?? order.paymentStatus ?? "").toUpperCase();
+  return payment === "PENDING";
+}
+
+export function commercePendingBookingBlocked(order: {
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  return shopifyPendingBookingBlocked(order) || woocommercePendingBookingBlocked(order);
 }
 
 export function whatsappShipmentBlocked(order: {

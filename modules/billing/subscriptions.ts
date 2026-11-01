@@ -6,6 +6,7 @@ import { writeBillingAudit, writeSubscriptionHistory } from "@/modules/billing/a
 import { mergeFullPlanFeatures } from "@/modules/billing/plan-features";
 import { amountForCycle } from "@/modules/billing/prices";
 import { LIVE_STATUSES } from "@/modules/billing/usage";
+import { NEW_TRIAL_DAYS } from "@/modules/billing/trial-policy";
 import {
   cancelRazorpaySubscription,
   createRazorpayCustomer,
@@ -48,6 +49,8 @@ export type SubscriptionRow = {
   cancelled_at: string | null;
   trial_start: string | null;
   trial_end: string | null;
+  trial_cohort?: string | null;
+  trial_manual_override?: boolean | null;
   pending_plan_id: string | null;
   pending_billing_cycle: string | null;
   razorpay_subscription_id: string | null;
@@ -87,7 +90,7 @@ export function mapPlan(plan: PlanRow) {
 export function applyFullTrialAccess(
   plan: ReturnType<typeof mapPlan>,
   catalog: Array<ReturnType<typeof mapPlan>>,
-  trialDays = 3
+  trialDays = NEW_TRIAL_DAYS
 ) {
   const full = mergeFullPlanFeatures(catalog.length ? catalog : [plan]);
   const top = (catalog.length ? catalog : [plan]).reduce((best, item) =>
@@ -374,6 +377,34 @@ export async function verifyCheckout(
       metadata: { paymentId: input.paymentId, razorpayOrderId: orderId, remaining: credits.remaining },
     });
     return { verified: true, creditsRemaining: credits.remaining };
+  }
+  const { activateAddonFromPayment } = await import("@/modules/addons/activate");
+  const addon = await activateAddonFromPayment(supabase, {
+    razorpayOrderId: orderId,
+    razorpayPaymentId: input.paymentId,
+    amountPaise: Number(payment.amount),
+    method: payment.method ? String(payment.method) : null,
+    organizationId: input.organizationId,
+    actor: input.userId,
+  });
+  if (addon.handled) {
+    if (addon.forbidden) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "This payment does not belong to your workspace.");
+    }
+    if (addon.amountMismatch) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Paid amount does not match the add-on price.");
+    }
+    await writeBillingAudit(supabase, {
+      actorId: input.userId,
+      actorType: "USER",
+      action: "addon.payment_verified",
+      targetType: "addon_subscription",
+      targetId: addon.addonSubscriptionId,
+      organizationId: input.organizationId,
+      ip: input.ip,
+      metadata: { paymentId: input.paymentId, razorpayOrderId: orderId, slug: addon.slug },
+    });
+    return { verified: true, status: "ACTIVE", addon: addon.slug };
   }
   const { data: pendingPayment } = await supabase
     .from("payments")
