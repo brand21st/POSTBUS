@@ -40,6 +40,13 @@ const TOGGLES = [
     description: "Create a shipment when a Shopify or WooCommerce order is imported.",
   },
   {
+    camel: "autoPackageSelection",
+    snake: "auto_package_selection",
+    title: "AutoPack box selection",
+    description:
+      "Reuse a box you marked as measured when a new Shopify order has exactly the same items and quantities. Sizes you enter yourself are never replaced.",
+  },
+  {
     camel: "autoBooking",
     snake: "auto_booking",
     title: "Auto booking",

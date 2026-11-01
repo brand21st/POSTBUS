@@ -32,6 +32,8 @@ export type BoxSize = {
 export type PackApply = BoxSize & {
   weightGrams: number;
   serviceCode: string;
+  /** Saved pack size id, so the server can record the box as a saved package. */
+  presetId?: string;
 };
 
 function suggestedName(pack: PackApply) {
@@ -289,6 +291,7 @@ export function ShipmentPackPresets({
         })}
         {presets.map((preset) => {
           const pack: PackApply = {
+            presetId: preset.id,
             weightGrams: preset.weightGrams,
             lengthCm: preset.lengthCm,
             widthCm: preset.widthCm,

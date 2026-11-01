@@ -136,7 +136,7 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
       }),
     });
     expect((supabase.updates[0].values as { metadata: { parcelDimensions: { source: string } } }).metadata.parcelDimensions.source).toBe(
-      "postbus"
+      "postbus_custom"
     );
 
     // 2. Verify Audit Log
@@ -274,7 +274,7 @@ describe("API & DB Integration: Order-Level Parcel Dimensions Management", () =>
             width_cm: 20,
             height_cm: 10,
             metadata: expect.objectContaining({
-              parcelDimensions: expect.objectContaining({ source: "postbus" }),
+              parcelDimensions: expect.objectContaining({ source: "postbus_custom" }),
             }),
           }),
         }),

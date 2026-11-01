@@ -10,6 +10,7 @@ import {
 
 const row = {
   id: "preset-1",
+  user_id: "user-1",
   name: "Small box",
   weight_grams: 500,
   length_cm: 20,
@@ -23,26 +24,27 @@ const row = {
 
 function insertClient(options: {
   count?: number;
+  existingNames?: string[];
   insertError?: { code?: string; message?: string } | null;
   inserted?: typeof row;
 }) {
+  const existing = (options.existingNames ?? Array.from({ length: options.count ?? 0 }, (_, i) => `Pack ${i + 1}`)).map(
+    (name, i) => ({ id: `existing-${i}`, name })
+  );
+  const filters: Array<[string, unknown]> = [];
   return {
+    filters,
     from(table: string) {
       if (table !== "user_shipment_presets") throw new Error(table);
       return {
-        select(_cols: string, opts?: { count?: string; head?: boolean }) {
-          if (opts?.head) {
-            return {
-              eq() {
-                return {
-                  eq() {
-                    return Promise.resolve({ count: options.count ?? 0, error: null });
-                  },
-                };
-              },
-            };
-          }
-          return this;
+        // Workspace-wide existing rows: cap and name are checked per organization only.
+        select() {
+          return {
+            eq(column: string, value: unknown) {
+              filters.push([column, value]);
+              return Promise.resolve({ data: existing, error: null });
+            },
+          };
         },
         insert() {
           return {
@@ -110,7 +112,7 @@ describe("shipment presets", () => {
     });
   });
 
-  it("caps presets per user and workspace", async () => {
+  it("caps presets per workspace", async () => {
     await expect(
       createShipmentPreset(insertClient({ count: SHIPMENT_PRESET_MAX }) as never, "user-1", "org-1", {
         name: "Extra",
@@ -141,7 +143,32 @@ describe("shipment presets", () => {
     ).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
-  it("does not delete another user’s pack size", async () => {
+  it("checks the cap and names across the whole workspace, not per member", async () => {
+    const client = insertClient({ existingNames: ["small BOX"] });
+    await expect(
+      createShipmentPreset(client as never, "user-2", "org-1", {
+        name: "Small box",
+        weightGrams: 500,
+        lengthCm: 20,
+        widthCm: 15,
+        heightCm: 10,
+      })
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(client.filters).toEqual([["organization_id", "org-1"]]);
+  });
+
+  it("maps the creating member", async () => {
+    const created = await createShipmentPreset(insertClient({ count: 0 }) as never, "user-1", "org-1", {
+      name: "Small box",
+      weightGrams: 500,
+      lengthCm: 20,
+      widthCm: 15,
+      heightCm: 10,
+    });
+    expect(created.createdBy).toBe("user-1");
+  });
+
+  it("does not delete a pack size from another workspace", async () => {
     await expect(deleteShipmentPreset(deleteClient(null) as never, "user-1", "org-1", "preset-other")).rejects.toMatchObject({
       code: "RESOURCE_NOT_FOUND",
     });

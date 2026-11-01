@@ -218,6 +218,9 @@ describe("updateShipmentDimensions service", () => {
         length_cm: 20,
         width_cm: 15,
         height_cm: 10,
+        metadata: {
+          parcelDimensions: expect.objectContaining({ source: "postbus_custom", lengthCm: 20, widthCm: 15, heightCm: 10 }),
+        },
       },
     });
 
@@ -273,6 +276,7 @@ describe("setOrderShipmentDimensions service", () => {
       length_cm: 22,
       width_cm: 16,
       height_cm: 11,
+      metadata: { parcelDimensions: expect.objectContaining({ source: "postbus_custom" }) },
     });
     expect(result.lengthCm).toBe(22);
   });

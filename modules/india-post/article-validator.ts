@@ -49,6 +49,36 @@ export function indiaPostDimensionLimits(serviceCode: string, weightGrams = 0): 
   return parcelLimits();
 }
 
+/**
+ * One rule set for every box source (saved pack size, custom size, AutoPack history,
+ * Shopify measurement). Returns the first India Post limit the box breaks, or null.
+ */
+export function parcelBoxIssue(
+  serviceCode: string,
+  box: { lengthCm: number; widthCm: number; heightCm: number },
+  weightGrams = 0
+): string | null {
+  const limits = indiaPostDimensionLimits(serviceCode, weightGrams);
+  const values = [Number(box.lengthCm), Number(box.widthCm), Number(box.heightCm)];
+  if (values.some((value) => !Number.isFinite(value) || value <= 0)) {
+    return "Length, breadth and height are required.";
+  }
+  const [length, width, height] = values;
+  if (length < limits.length[0] || length > limits.length[1]) {
+    return `Length must be between ${limits.length[0]} and ${limits.length[1]} cm.`;
+  }
+  if (width < limits.width[0] || width > limits.width[1]) {
+    return `Breadth must be between ${limits.width[0]} and ${limits.width[1]} cm.`;
+  }
+  if (height < limits.height[0] || height > limits.height[1]) {
+    return `Height must be between ${limits.height[0]} and ${limits.height[1]} cm.`;
+  }
+  if (weightGrams > limits.weightMax) {
+    return `Weight must be at most ${limits.weightMax} grams for this service.`;
+  }
+  return null;
+}
+
 export function isParcelArticle(serviceCode: string, weightGrams: number) {
   const type = indiaPostBookingArticleType(serviceCode);
   if (type === "BP" || type === "BUSINESS_PARCEL" || type === "SP_INLAND_PARCEL" || type === "24_SPP_PARSPL") return true;

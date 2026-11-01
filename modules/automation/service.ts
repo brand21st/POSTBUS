@@ -19,7 +19,8 @@ type Column =
   | "auto_wati_booked"
   | "auto_wati_in_transit"
   | "auto_wati_delivered"
-  | "auto_label_printing";
+  | "auto_label_printing"
+  | "auto_package_selection";
 
 const CAMEL_TO_COLUMN: Record<string, Column> = {
   autoShopifySync: "auto_shopify_sync",
@@ -54,6 +55,8 @@ const CAMEL_TO_COLUMN: Record<string, Column> = {
   auto_wati_delivered: "auto_wati_delivered",
   autoLabelPrinting: "auto_label_printing",
   auto_label_printing: "auto_label_printing",
+  autoPackageSelection: "auto_package_selection",
+  auto_package_selection: "auto_package_selection",
 };
 
 export type AutomationRow = {
@@ -74,6 +77,8 @@ export type AutomationRow = {
   auto_wati_in_transit?: boolean;
   auto_wati_delivered?: boolean;
   auto_label_printing?: boolean;
+  /** Not in AUTOMATION_DEFAULTS: the column default (false) applies, so inserts work before the migration. */
+  auto_package_selection?: boolean;
 };
 
 export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
@@ -130,6 +135,8 @@ export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
     auto_wati_delivered: row.auto_wati_delivered ?? true,
     autoLabelPrinting: row.auto_label_printing ?? false,
     auto_label_printing: row.auto_label_printing ?? false,
+    autoPackageSelection: row.auto_package_selection ?? false,
+    auto_package_selection: row.auto_package_selection ?? false,
   };
 }
 
