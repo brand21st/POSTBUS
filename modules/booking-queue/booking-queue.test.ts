@@ -310,7 +310,7 @@ describe("mirroring outcomes from other booking paths", () => {
       ],
     });
     const result = await syncQueueWithShipments(db.client, "org-1");
-    expect(result).toEqual({ booked: 1, cancelled: 1 });
+    expect(result).toMatchObject({ booked: 1, cancelled: 1, failed: 0, recovery: 0 });
     const state = (id: string) => db.tables.booking_queue_items.find((row) => row.id === id)?.state;
     expect(state("i1")).toBe("BOOKED");
     expect(state("i2")).toBe("CANCELLED");

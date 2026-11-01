@@ -12,12 +12,14 @@ import {
 import { bookingQueueEnabledFor } from "@/modules/booking-queue/flags";
 import {
   ACTIVE_QUEUE_STATES,
+  canTransitionQueueItem,
   isBookingQueueState,
   MEMBER_SETTABLE_STATES,
   QUEUE_SUMMARY_BUCKETS,
   type BookingQueueState,
   type QueueSummaryBucket,
 } from "@/modules/booking-queue/state";
+import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { validateOrdersForBooking } from "@/modules/india-post/bulk-booking";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
 
@@ -234,58 +236,136 @@ export async function validateQueuedOrders(
   return states;
 }
 
+export type MirrorShipment = {
+  status?: string | null;
+  booked_at?: string | null;
+  last_error?: string | null;
+  last_error_code?: string | null;
+  metadata?: unknown;
+};
+
+export type MirrorTarget = { state: BookingQueueState; lastError: string | null; lastErrorCode: string | null };
+
 /**
- * Mirrors outcomes decided elsewhere into the queue: a shipment booked through the Orders page or
- * a retry becomes BOOKED here; a cancelled shipment cancels its waiting item. Uses the service role
- * because BOOKED is a system state; every query is scoped to the one workspace.
+ * What a queue item should become given its shipment, or null to leave it. The shipment is the
+ * truth: BOOKED only from booked_at, SUBMITTING only once a submit intent was recorded (the request
+ * may have reached India Post), FAILED and RECOVERY_REQUIRED only while the item is in a run.
+ */
+export function queueMirrorTarget(state: BookingQueueState, shipment: MirrorShipment): MirrorTarget | null {
+  const status = String(shipment.status ?? "").toUpperCase();
+  if (shipment.booked_at) {
+    return canTransitionQueueItem(state, "BOOKED") ? { state: "BOOKED", lastError: null, lastErrorCode: null } : null;
+  }
+  if (status === "CANCELLED" && MEMBER_SETTABLE_STATES.has(state)) {
+    return { state: "CANCELLED", lastError: "The shipment was cancelled.", lastErrorCode: "SHIPMENT_CANCELLED" };
+  }
+  const inRun = state === "BATCHED" || state === "SUBMITTING";
+  if (inRun && status === "RECOVERY_REQUIRED") {
+    return {
+      state: "RECOVERY_REQUIRED",
+      lastError: shipment.last_error || "India Post did not confirm whether this article was booked.",
+      lastErrorCode: shipment.last_error_code || "CEPT_UNKNOWN",
+    };
+  }
+  if (inRun && status === "FAILED") {
+    return {
+      state: "FAILED",
+      lastError: shipment.last_error || "India Post did not book this article.",
+      lastErrorCode: shipment.last_error_code || "BOOKING_FAILED",
+    };
+  }
+  if (state === "BATCHED" && status === "BOOKING" && readCeptSubmitIntentAt(shipment.metadata)) {
+    return { state: "SUBMITTING", lastError: null, lastErrorCode: null };
+  }
+  return null;
+}
+
+const ROLLUP_ACTIVE: ReadonlySet<string> = new Set(["BATCHED", "SUBMITTING"]);
+
+/** Run counts and status from its items. Exported for tests. */
+export function rollUpRun(states: string[]) {
+  const booked = states.filter((state) => state === "BOOKED").length;
+  const failed = states.filter((state) => state === "FAILED").length;
+  const recovery = states.filter((state) => state === "RECOVERY_REQUIRED").length;
+  const active = states.filter((state) => ROLLUP_ACTIVE.has(state)).length;
+  const status = active
+    ? "ACTIVE"
+    : recovery
+      ? "RECOVERY_REQUIRED"
+      : failed
+        ? "COMPLETED_WITH_ERRORS"
+        : "COMPLETED";
+  return { status, booked, failed, recovery, active };
+}
+
+/**
+ * Mirrors shipment outcomes into the queue and rolls up runs: booked anywhere -> BOOKED, booking
+ * job results for items in a run, cancelled shipments cancel waiting items. Service role because
+ * these are system states; every query is scoped to the one workspace.
  */
 export async function syncQueueWithShipments(admin: SupabaseClient, organizationId: string) {
   const { data: items, error } = await admin
     .from("booking_queue_items")
-    .select("id, state, shipment_id")
+    .select("id, state, shipment_id, run_id")
     .eq("organization_id", organizationId)
     .in("state", [...ACTIVE_QUEUE_STATES])
     .order("updated_at", { ascending: true })
     .limit(SYNC_BATCH);
-  if (error || !items?.length) return { booked: 0, cancelled: 0 };
+  if (error || !items?.length) return { booked: 0, cancelled: 0, failed: 0, recovery: 0, runs: 0 };
   const { data: shipments } = await admin
     .from("shipments")
-    .select("id, status, booked_at")
+    .select("id, status, booked_at, last_error, last_error_code, metadata")
     .eq("organization_id", organizationId)
     .in("id", items.map((item) => item.shipment_id));
-  const byId = new Map((shipments ?? []).map((row) => [String(row.id), row]));
-  let booked = 0;
-  let cancelled = 0;
+  const byId = new Map((shipments ?? []).map((row) => [String(row.id), row as MirrorShipment]));
+  const counts = { booked: 0, cancelled: 0, failed: 0, recovery: 0, runs: 0 };
+  const touchedRuns = new Set<string>();
   for (const item of items) {
     const shipment = byId.get(String(item.shipment_id));
     if (!shipment) continue;
     const state = item.state as BookingQueueState;
-    if (shipment.booked_at) {
-      const { data } = await admin
-        .from("booking_queue_items")
-        .update({ state: "BOOKED", last_error: null, last_error_code: null })
-        .eq("id", item.id)
-        .eq("organization_id", organizationId)
-        .eq("state", state)
-        .select("id")
-        .maybeSingle();
-      if (data) booked += 1;
-    } else if (String(shipment.status).toUpperCase() === "CANCELLED" && MEMBER_SETTABLE_STATES.has(state)) {
-      const { data } = await admin
-        .from("booking_queue_items")
-        .update({ state: "CANCELLED", last_error: "The shipment was cancelled.", last_error_code: "SHIPMENT_CANCELLED" })
-        .eq("id", item.id)
-        .eq("organization_id", organizationId)
-        .eq("state", state)
-        .select("id")
-        .maybeSingle();
-      if (data) cancelled += 1;
-    }
+    const target = queueMirrorTarget(state, shipment);
+    if (!target) continue;
+    const { data } = await admin
+      .from("booking_queue_items")
+      .update({ state: target.state, last_error: target.lastError, last_error_code: target.lastErrorCode })
+      .eq("id", item.id)
+      .eq("organization_id", organizationId)
+      .eq("state", state)
+      .select("id")
+      .maybeSingle();
+    if (!data) continue;
+    if (item.run_id) touchedRuns.add(String(item.run_id));
+    if (target.state === "BOOKED") counts.booked += 1;
+    else if (target.state === "CANCELLED") counts.cancelled += 1;
+    else if (target.state === "FAILED") counts.failed += 1;
+    else if (target.state === "RECOVERY_REQUIRED") counts.recovery += 1;
   }
-  return { booked, cancelled };
+  for (const runId of touchedRuns) {
+    const { data: members } = await admin
+      .from("booking_queue_items")
+      .select("state")
+      .eq("organization_id", organizationId)
+      .eq("run_id", runId);
+    const rolled = rollUpRun((members ?? []).map((row) => String(row.state)));
+    await admin
+      .from("booking_runs")
+      .update({
+        status: rolled.status,
+        booked_count: rolled.booked,
+        failed_count: rolled.failed,
+        recovery_count: rolled.recovery,
+        completed_at: rolled.active ? null : new Date().toISOString(),
+      })
+      .eq("id", runId)
+      .eq("organization_id", organizationId)
+      .in("status", ["DISPATCHING", "ACTIVE", "RECOVERY_REQUIRED", "COMPLETED_WITH_ERRORS"]);
+    counts.runs += 1;
+  }
+  return counts;
 }
 
-async function syncIfPossible(organizationId: string) {
+export async function syncIfPossible(organizationId: string) {
   if (!hasAdminClient()) return;
   try {
     await syncQueueWithShipments(createAdminClient(), organizationId);

@@ -1,6 +1,7 @@
 /**
  * Bulk Booking queue states. The database enforces the same matrix
- * (public.booking_queue_transition_allowed, migration 20261101180000); a test compares the two.
+ * (public.booking_queue_transition_allowed, migrations 20261101180000 and 20261101190000);
+ * a test compares the two.
  *
  * These are queue states, not shipment statuses. BOOKED mirrors shipments.booked_at, which only a
  * CEPT-confirmed persist sets. Importing, approving, reserving a barcode, batching or sending a
@@ -24,7 +25,8 @@ export type BookingQueueState = (typeof BOOKING_QUEUE_STATES)[number];
 
 const TRANSITIONS: Record<BookingQueueState, readonly BookingQueueState[]> = {
   PENDING_VALIDATION: ["INVALID", "WAITING_APPROVAL", "READY_FOR_BOOKING", "BOOKED", "EXCLUDED", "CANCELLED"],
-  INVALID: ["PENDING_VALIDATION", "EXCLUDED", "CANCELLED"],
+  // BOOKED here is a system mirror of a booking made from the Orders page (migration 20261101190000).
+  INVALID: ["PENDING_VALIDATION", "BOOKED", "EXCLUDED", "CANCELLED"],
   WAITING_APPROVAL: ["PENDING_VALIDATION", "INVALID", "READY_FOR_BOOKING", "BOOKED", "EXCLUDED", "CANCELLED"],
   READY_FOR_BOOKING: ["PENDING_VALIDATION", "INVALID", "WAITING_APPROVAL", "BATCHED", "BOOKED", "EXCLUDED", "CANCELLED"],
   BATCHED: ["READY_FOR_BOOKING", "SUBMITTING", "BOOKED", "FAILED", "RECOVERY_REQUIRED"],

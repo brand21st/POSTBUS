@@ -76,8 +76,10 @@ beforeAll(async () => {
     create table public.bulk_import_rows (id uuid primary key default gen_random_uuid());
   `);
   await db.exec(migration("20261101180000_booking_queue.sql"));
+  await db.exec(migration("20261101190000_booking_queue_dispatch.sql"));
   // Deploy retries re-run migrations.
   await db.exec(migration("20261101180000_booking_queue.sql"));
+  await db.exec(migration("20261101190000_booking_queue_dispatch.sql"));
   orgA = (await one<{ id: string }>("insert into public.organizations default values returning id")).id;
   orgB = (await one<{ id: string }>("insert into public.organizations default values returning id")).id;
 });

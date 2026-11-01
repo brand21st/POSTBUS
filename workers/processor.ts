@@ -307,8 +307,25 @@ export async function processJob(queue: string, payload: JobPayload) {
       });
     }
 
+    if (queue === "shipment-booking") await mirrorBookingQueue(supabase, payload.organizationId);
+
     if (!retryable) throw error;
     throw error;
+  }
+}
+
+/** Reflect a booking job's outcome in the Bulk Booking queue right away. Best effort. */
+async function mirrorBookingQueue(supabase: ReturnType<typeof createAdminClient>, organizationId: string) {
+  try {
+    const { bookingQueueEnabledFor } = await import("@/modules/booking-queue/flags");
+    if (!bookingQueueEnabledFor(organizationId)) return;
+    const { syncQueueWithShipments } = await import("@/modules/booking-queue/service");
+    await syncQueueWithShipments(supabase, organizationId);
+  } catch (error) {
+    logError("booking_queue.mirror_failed", {
+      organizationId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
   }
 }
 
@@ -389,6 +406,8 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   const automation = await loadAutomation(supabase, payload.organizationId);
   const { createBackgroundJob } = await import("@/modules/jobs/service");
   const { consumeQuota } = await import("@/modules/billing/usage");
+
+  await mirrorBookingQueue(supabase, payload.organizationId);
 
   if (outcome.bookedIds.length) {
     await supabase

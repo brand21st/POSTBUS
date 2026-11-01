@@ -85,12 +85,18 @@ export function BulkExcelWizard({
   embedded = false,
   initialBatchId = null,
   onBatchChange,
+  queueMode = false,
+  onOpenQueue,
 }: {
   /** Inside the Bulk Booking dashboard: no page header of its own. */
   embedded?: boolean;
   /** Resume a saved import (from ?import=). */
   initialBatchId?: string | null;
   onBatchChange?: (batchId: string | null) => void;
+  /** The Bulk Booking queue owns booking: valid rows go to the queue for approval instead. */
+  queueMode?: boolean;
+  /** Open the queue's approval list (dashboard tab switch). */
+  onOpenQueue?: () => void;
 } = {}) {
   const [step, setStep] = useState(0);
   const [batchId, setBatchId] = useState<string | null>(initialBatchId);
@@ -224,9 +230,16 @@ export function BulkExcelWizard({
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const [queuedNotice, setQueuedNotice] = useState(false);
   const confirm = useMutation({
-    mutationFn: () => api(`/api/v1/bookings/excel-imports/${batchId}/confirm`, { method: "POST" }),
-    onSuccess: () => {
+    mutationFn: () => api<{ queued?: boolean }>(`/api/v1/bookings/excel-imports/${batchId}/confirm`, { method: "POST" }),
+    onSuccess: (data) => {
+      if (data?.queued) {
+        // Rows are being added to the Bulk Booking queue; nothing is booked until approved there.
+        setQueuedNotice(true);
+        toast.success("Adding the valid orders to the Bulk Booking queue for approval.");
+        return;
+      }
       setStep(4);
       toast.success("Booking started. You can leave this page.");
     },
@@ -518,10 +531,27 @@ export function BulkExcelWizard({
             <Button type="button" variant="secondary" disabled={draft.isPending} onClick={() => draft.mutate()}>
               Save as draft
             </Button>
-            <Button type="button" disabled={confirm.isPending || current.valid < 1} onClick={() => confirm.mutate()}>
-              Book valid orders
+            <Button
+              type="button"
+              disabled={confirm.isPending || current.valid < 1 || queuedNotice}
+              onClick={() => confirm.mutate()}
+            >
+              {queueMode ? "Add valid orders to the queue" : "Book valid orders"}
             </Button>
           </div>
+          {queuedNotice ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              <p>
+                {current.valid} valid order{current.valid === 1 ? " is" : "s are"} being added to the queue. They are not booked
+                until you approve them and choose Bulk Booking.
+              </p>
+              {onOpenQueue ? (
+                <button type="button" className="mt-1 font-medium text-brand" onClick={onOpenQueue}>
+                  Open orders waiting for approval
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </section>
       ) : null}
       {step === 3 && batchId && current?.valid ? (

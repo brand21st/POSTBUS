@@ -8,6 +8,7 @@ import { FileSpreadsheet } from "lucide-react";
 import { BulkExcelWizard } from "@/components/bookings/bulk-excel-wizard";
 import { BookingDetailDialog } from "@/components/booking-queue/booking-detail-dialog";
 import { historyColumns, queueColumns } from "@/components/booking-queue/queue-columns";
+import { ApproveAllWaiting, QueueBulkActions } from "@/components/booking-queue/queue-actions";
 import { QueueKpiStrip } from "@/components/booking-queue/queue-kpi-strip";
 import {
   parseQueueUrl,
@@ -205,14 +206,22 @@ export function BookingQueueDashboard({ summary }: { summary: QueueSummary }) {
             onSelect={(bucket: QueueBucketFilter) => navigate({ bucket, page: 1 })}
           />
           {filters}
+          {counts?.waitingApproval ? (
+            <div className="flex justify-end">
+              <ApproveAllWaiting waiting={counts.waitingApproval} />
+            </div>
+          ) : null}
           {selected.length ? (
             <div className="sticky top-2 z-20 flex flex-col gap-2 rounded-xl border border-border bg-card px-3 py-2 shadow-sm sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm font-medium text-ink">
                 {selected.length === 1 ? "1 selected" : `${selected.length} selected`}
               </p>
-              <Button type="button" variant="secondary" size="sm" onClick={() => setSelected([])}>
-                Clear selection
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <QueueBulkActions selectedIds={selected} onDone={() => setSelected([])} />
+                <Button type="button" variant="ghost" size="sm" onClick={() => setSelected([])}>
+                  Clear selection
+                </Button>
+              </div>
             </div>
           ) : null}
           <DataTable
@@ -258,8 +267,10 @@ export function BookingQueueDashboard({ summary }: { summary: QueueSummary }) {
         <TabsContent value="imports" className="mt-4">
           <BulkExcelWizard
             embedded
+            queueMode
             initialBatchId={url.importId}
             onBatchChange={(importId) => navigate({ tab: "imports", importId }, { resetSelection: false })}
+            onOpenQueue={() => navigate({ tab: "queue", bucket: "waitingApproval", page: 1, importId: null })}
           />
         </TabsContent>
       </Tabs>

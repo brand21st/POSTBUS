@@ -4,6 +4,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { writeWorkbook } from "@/lib/xlsx/write";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
+import { bookingQueueEnabledFor } from "@/modules/booking-queue/flags";
 import { mapExcelRowToArticle } from "@/modules/india-post/article-mapper";
 import type { DraftArticle } from "@/modules/india-post/article-types";
 import {
@@ -670,7 +671,7 @@ export async function confirmImportBatch(supabase: SupabaseClient, ctx: TenantCo
   const batch = await loadBatch(supabase, ctx.organizationId, batchId);
   if (canResumeBulkExcelBooking(batch.status)) {
     const job = await ensureMaterializeJob(supabase, ctx, batch);
-    return { status: "booking", ...job, booked: false };
+    return { status: "booking", ...job, booked: false, queued: bookingQueueEnabledFor(ctx.organizationId) };
   }
   if (!canStartBulkExcelBooking(batch.status)) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Validate the workbook before booking.");
@@ -694,7 +695,7 @@ export async function confirmImportBatch(supabase: SupabaseClient, ctx: TenantCo
     }
   }
   const job = await ensureMaterializeJob(supabase, ctx, { ...batch, status: "booking" });
-  return { status: "booking", ...job, booked: false };
+  return { status: "booking", ...job, booked: false, queued: bookingQueueEnabledFor(ctx.organizationId) };
 }
 
 function workerActor(organizationId: string, userId: string): TenantContext {
@@ -757,7 +758,8 @@ export async function materializeRow(
   supabase: SupabaseClient,
   ctx: TenantContext,
   batch: BatchRow,
-  row: ImportRow
+  row: ImportRow,
+  options: { shipmentStatus?: "QUEUED" | "DRAFT" } = {}
 ) {
   const normalized = row.normalized;
   const serviceCode = batch.service_code || DEFAULT_INDIA_POST_SERVICE;
@@ -888,7 +890,8 @@ export async function materializeRow(
         }),
         [BULK_IMPORT_ROW_KEY]: row.id,
       },
-      status: "QUEUED",
+      // DRAFT when the Bulk Booking queue owns booking: nothing books until someone approves it.
+      status: options.shipmentStatus ?? "QUEUED",
     })
     .select("id")
     .single();
@@ -901,6 +904,39 @@ export async function materializeRow(
     throw new AppError(ERROR_CODES.SHIPMENT_FAILED, error?.message || "Could not create shipment from Excel.");
   }
   return linkImportRowShipment(supabase, row.id, { id: shipment.id as string, barcode, order_id: String(orderId) });
+}
+
+/**
+ * Puts a materialized Excel row in the Bulk Booking queue, waiting for approval. The import already
+ * validated the row. Idempotent per import row (unique index), so a resumed job does not duplicate.
+ */
+async function ensureExcelQueueItem(
+  supabase: SupabaseClient,
+  organizationId: string,
+  batch: BatchRow,
+  row: ImportRow,
+  shipmentId: string
+) {
+  const { data: shipment, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("order_id")
+    .eq("organization_id", organizationId)
+    .eq("id", shipmentId)
+    .maybeSingle();
+  if (shipmentError || !shipment?.order_id) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError?.message || "The shipment for this row was not found.");
+  }
+  const { error } = await supabase.from("booking_queue_items").insert({
+    organization_id: organizationId,
+    shipment_id: shipmentId,
+    order_id: shipment.order_id,
+    source: "EXCEL",
+    import_row_id: row.id,
+    state: "WAITING_APPROVAL",
+    enrolled_by: batch.created_by,
+    enrolled_via: "EXCEL",
+  });
+  if (error && error.code !== "23505") throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 }
 
 export async function materializeBulkExcelImport(
@@ -923,9 +959,13 @@ export async function materializeBulkExcelImport(
   const ctx = workerActor(organizationId, batch.created_by || "");
   const chunk = rows.slice(0, MATERIALIZE_CHUNK);
   const shipmentIds: string[] = [];
+  // With the Bulk Booking queue on, rows wait for approval there instead of booking right away.
+  const queueMode = bookingQueueEnabledFor(organizationId);
   for (const row of chunk) {
     try {
-      shipmentIds.push(await materializeRow(supabase, ctx, batch, row));
+      const shipmentId = await materializeRow(supabase, ctx, batch, row, { shipmentStatus: queueMode ? "DRAFT" : "QUEUED" });
+      if (queueMode) await ensureExcelQueueItem(supabase, organizationId, batch, row, shipmentId);
+      shipmentIds.push(shipmentId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not create the order.";
       await supabase
@@ -937,7 +977,7 @@ export async function materializeBulkExcelImport(
         .eq("id", row.id);
     }
   }
-  if (shipmentIds.length) await startBookingForShipmentIds(supabase, ctx, shipmentIds);
+  if (shipmentIds.length && !queueMode) await startBookingForShipmentIds(supabase, ctx, shipmentIds);
   const remaining = rows.length - chunk.length;
   if (remaining > 0) {
     const job = await createBackgroundJob(supabase, {

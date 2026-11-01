@@ -4,6 +4,14 @@ import { z } from "zod";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import {
+  approveAllWaiting,
+  approveItems,
+  dispatchItems,
+  excludeItems,
+  QUEUE_ACTION_MAX_ITEMS,
+  revalidateItems,
+} from "@/modules/booking-queue/actions";
+import {
   ENQUEUE_MAX_ORDERS,
   enqueueOrders,
   getQueueItem,
@@ -11,6 +19,19 @@ import {
   listQueueItems,
   queueSummary,
 } from "@/modules/booking-queue/service";
+
+const itemIdsSchema = z.object({ itemIds: z.array(z.string().uuid()).min(1).max(QUEUE_ACTION_MAX_ITEMS) });
+const approveSchema = z.union([
+  itemIdsSchema,
+  z.object({ all: z.literal(true), expectedCount: z.number().int().min(0) }),
+]);
+const dispatchSchema = itemIdsSchema.extend({ idempotencyKey: z.string().min(8).max(120) });
+
+async function body<T>(request: NextRequest, schema: z.ZodType<T>, message: string): Promise<T> {
+  const parsed = schema.safeParse(await request.json().catch(() => ({})));
+  if (!parsed.success) throw new AppError(ERROR_CODES.VALIDATION_ERROR, message);
+  return parsed.data;
+}
 
 const enqueueSchema = z.object({
   orderIds: z.array(z.string().uuid()).min(1).max(ENQUEUE_MAX_ORDERS),
@@ -38,6 +59,10 @@ function listQuery(request: NextRequest) {
  * GET  booking-queue/items/:id  one item with its timeline
  * GET  booking-queue/history    every booked shipment, however it was booked (?q=&source=&from=&to=&page=)
  * POST booking-queue/enqueue    { orderIds } add existing orders; validates, never books
+ * POST booking-queue/approve    { itemIds } or { all: true, expectedCount } -> ready to book; never books
+ * POST booking-queue/exclude    { itemIds } leave orders out of booking
+ * POST booking-queue/revalidate { itemIds } check orders again
+ * POST booking-queue/dispatch   { itemIds, idempotencyKey } book approved orders with India Post
  * Off unless the workspace is in BOOKING_QUEUE_ORGS: reads report enabled:false, enqueue is refused.
  */
 export async function handleBookingQueueRoutes(
@@ -72,6 +97,16 @@ export async function handleBookingQueueRoutes(
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, `Send 1 to ${ENQUEUE_MAX_ORDERS} order ids.`);
     }
     return enqueueOrders(supabase, ctx, parsed.data.orderIds, { via: parsed.data.via ?? "ORDERS_PAGE" });
+  }
+  if (method === "POST" && slugs.length === 2) {
+    const ids = `Send 1 to ${QUEUE_ACTION_MAX_ITEMS} queue item ids.`;
+    if (slugs[1] === "approve") {
+      const input = await body(request, approveSchema, ids);
+      return "all" in input ? approveAllWaiting(supabase, ctx, input.expectedCount) : approveItems(supabase, ctx, input.itemIds);
+    }
+    if (slugs[1] === "exclude") return excludeItems(supabase, ctx, (await body(request, itemIdsSchema, ids)).itemIds);
+    if (slugs[1] === "revalidate") return revalidateItems(supabase, ctx, (await body(request, itemIdsSchema, ids)).itemIds);
+    if (slugs[1] === "dispatch") return dispatchItems(supabase, ctx, await body(request, dispatchSchema, ids));
   }
   return null;
 }
