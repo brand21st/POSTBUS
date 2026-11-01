@@ -34,6 +34,8 @@ export type ShopifyPaymentSnapshot = {
   outstanding: number | null;
   updatedAt: string | null;
   reason: string;
+  originalTotal?: number | null;
+  currentTotal?: number | null;
   collectionMode?: ShopifyCollectionMode | null;
   override?: ShopifyPaymentOverride | null;
   bookingConflict?: ShopifyBookingConflict | null;
@@ -51,10 +53,30 @@ export type ShopifyPaymentRemote = {
   updated_at?: string | null;
   updatedAt?: string | null;
   total_price?: string | number | null;
+  current_total_price?: string | number | null;
+  currentTotalPriceSet?: { shop_money?: { amount?: string | number | null } } | null;
+  current_subtotal_price?: string | number | null;
+  currentSubtotalPriceSet?: { shop_money?: { amount?: string | number | null } } | null;
   total_outstanding?: string | number | null;
   totalOutstandingSet?: { shop_money?: { amount?: string | number | null } } | null;
   transactions?: ShopifyPaymentTransaction[] | null;
 };
+
+export function shopifyOriginalOrderTotal(remote: ShopifyPaymentRemote): number | null {
+  return money(remote.total_price);
+}
+
+export function shopifyCurrentOrderTotal(remote: ShopifyPaymentRemote): number | null {
+  return (
+    money(remote.current_total_price) ??
+    money(remote.currentTotalPriceSet?.shop_money?.amount)
+  );
+}
+
+/** Current Shopify order total after edits; original total if current is absent. */
+export function shopifyOperationalOrderTotal(remote: ShopifyPaymentRemote): number {
+  return shopifyCurrentOrderTotal(remote) ?? shopifyOriginalOrderTotal(remote) ?? 0;
+}
 
 function text(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -191,13 +213,14 @@ export function classifyShopifyRemotePayment(
   const normalized = normalizeShopifyPaymentFields(remote);
   const financial = shopifyFinancialStatus(normalized);
   const gateways = shopifyPaymentGateways(normalized);
+  const operationalTotal = shopifyOperationalOrderTotal(normalized);
   const paidByTransaction = shopifyHasSuccessfulPaymentTransaction(
     normalized.transactions,
-    normalized.total_price
+    operationalTotal
   );
   let paymentStatus = mapShopifyPaymentStatus(financial, gateways, {
     transactions: normalized.transactions,
-    totalPrice: normalized.total_price,
+    totalPrice: operationalTotal,
   });
   let reason = classificationReason(paymentStatus, financial, gateways, paidByTransaction);
   const overrideApplies =
@@ -217,6 +240,8 @@ export function classifyShopifyRemotePayment(
       gateways,
       sourceName: text(normalized.source_name),
       outstanding: shopifyOutstandingAmount(normalized),
+      originalTotal: shopifyOriginalOrderTotal(normalized),
+      currentTotal: shopifyCurrentOrderTotal(normalized),
       updatedAt: text(normalized.updated_at),
       reason,
       collectionMode: collectModeFromPaymentStatus(collect.paymentStatus),
@@ -242,10 +267,17 @@ export function bookedShipmentCollectConflict(
 }
 
 export function mapShopifyCollectable(
-  remote: Pick<ShopifyPaymentRemote, "total_price" | "total_outstanding" | "totalOutstandingSet">,
+  remote: Pick<
+    ShopifyPaymentRemote,
+    | "total_price"
+    | "current_total_price"
+    | "currentTotalPriceSet"
+    | "total_outstanding"
+    | "totalOutstandingSet"
+  >,
   paymentStatus: PaymentStatus
 ) {
-  const total = Number(remote.total_price ?? 0);
+  const total = shopifyOperationalOrderTotal(remote);
   if (paymentStatus === "PARTIAL") {
     const outstanding = shopifyOutstandingAmount(remote);
     const amountPaid =

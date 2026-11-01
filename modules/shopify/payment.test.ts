@@ -119,6 +119,50 @@ describe("shopify payment classification", () => {
     ).toEqual({ paymentStatus: "PARTIAL", amountPaid: 600, codAmount: 400 });
   });
 
+  it("uses current order total after edits so amount_paid matches the captured sale", () => {
+    expect(
+      mapShopifyCollectable(
+        {
+          total_price: "5554.80",
+          current_total_price: "4296.00",
+          total_outstanding: "3037.20",
+        },
+        "PARTIAL"
+      )
+    ).toEqual({ paymentStatus: "PARTIAL", amountPaid: 1258.8, codAmount: 3037.2 });
+  });
+
+  it("treats a ₹1049 edited partial COD as 314.70 settled and 734.30 outstanding", () => {
+    expect(
+      mapShopifyCollectable(
+        { total_price: "1363.70", current_total_price: "1049.00", total_outstanding: "734.30" },
+        "PARTIAL"
+      )
+    ).toEqual({ paymentStatus: "PARTIAL", amountPaid: 314.7, codAmount: 734.3 });
+  });
+
+  it("does not invent a paid amount from outstanding 0 on an authorized unpaid order", () => {
+    expect(mapShopifyPaymentStatus("authorized", ["manual"])).toBe("PENDING");
+    expect(mapShopifyCollectable({ total_price: "500", total_outstanding: "500" }, "PENDING")).toEqual({
+      paymentStatus: "PENDING",
+      amountPaid: 0,
+      codAmount: 0,
+    });
+  });
+
+  it("keeps full refunds as REFUNDED rather than PARTIAL COD", () => {
+    expect(mapShopifyPaymentStatus("refunded")).toBe("REFUNDED");
+    expect(mapShopifyCollectable({ total_price: "1049", current_total_price: "0", total_outstanding: "0" }, "REFUNDED")).toEqual(
+      { paymentStatus: "REFUNDED", amountPaid: 0, codAmount: 0 }
+    );
+  });
+
+  it("uses current total after shipping or discount adjustments when outstanding is zero", () => {
+    expect(
+      mapShopifyCollectable({ total_price: "1100", current_total_price: "1049", total_outstanding: "0" }, "PAID")
+    ).toEqual({ paymentStatus: "PAID", amountPaid: 1049, codAmount: 0 });
+  });
+
   it("records merchant override as collection mode, not captured payment", () => {
     const prepaid = classifyShopifyRemotePayment(
       { financial_status: "pending", payment_gateway_names: ["manual"], total_price: "200" },
