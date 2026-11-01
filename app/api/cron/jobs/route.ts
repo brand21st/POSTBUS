@@ -45,6 +45,17 @@ export async function POST(request: NextRequest) {
     if (shouldEnqueueTracking && hasAdminClient()) {
       await enqueueDueTrackingSyncJobs(createAdminClient());
     }
+    if (hasAdminClient() && (!jobTypes || jobTypes.includes("woocommerce-sync"))) {
+      // Polling fallback so WooCommerce orders still import when webhooks are missing or dropped.
+      try {
+        const { enqueueDueWooCommerceSyncJobs } = await import("@/modules/woocommerce/sync-job");
+        await enqueueDueWooCommerceSyncJobs(createAdminClient());
+      } catch (pollError) {
+        logError("woocommerce.poll_failed", {
+          message: pollError instanceof Error ? pollError.message : "WooCommerce poll failed.",
+        });
+      }
+    }
     if (hasAdminClient()) {
       const { sweepAbandonedSignups } = await import("@/modules/vachat/abandoned-signup");
       await sweepAbandonedSignups(createAdminClient());

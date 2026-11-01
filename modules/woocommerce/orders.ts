@@ -142,8 +142,10 @@ export async function upsertWooCommerceOrder(
     measures?: Map<string, WooProductMeasure>;
     userId?: string;
     applyAutomation?: boolean;
+    /** Internal: set when re-running after losing a concurrent-create race. */
+    raceRetry?: boolean;
   }
-) {
+): Promise<{ created: boolean; updated: boolean; skipped: boolean; orderId: string | null }> {
   const mapped = mapWooOrder(input.remote, {
     eligibleStatuses: input.eligibleStatuses,
     weightUnit: input.weightUnit,
@@ -327,20 +329,73 @@ export async function upsertWooCommerceOrder(
     metadata: mapped.metadata,
   };
 
+  const draft = { customerId: customer.id as string, addressIds: [shipping.id as string, billing.id as string] };
+  // order.created and order.updated usually arrive together and run as concurrent jobs. Whoever
+  // loses the race on order_number or the external reference discards its draft rows and re-runs
+  // as an update of the winner's order, so one WooCommerce order id maps to one PostBus order.
+  const loseRace = async (winnerOrderId: string | null, ownOrderId: string | null) => {
+    await discardWooDraft(supabase, input.organizationId, { ...draft, orderId: ownOrderId });
+    if (winnerOrderId) {
+      const { error } = await supabase.from("external_order_references").insert({
+        organization_id: input.organizationId,
+        order_id: winnerOrderId,
+        source: "WOOCOMMERCE",
+        source_order_id: mapped.sourceOrderId,
+        shop_domain: input.storeHost,
+      });
+      if (error && error.code !== "23505") throw new Error(error.message);
+    }
+    if (input.raceRetry) {
+      return { created: false, updated: false, skipped: true, orderId: winnerOrderId };
+    }
+    return upsertWooCommerceOrder(supabase, { ...input, raceRetry: true });
+  };
+
   let inserted = await supabase
     .from("orders")
     .insert({ ...orderPayload, order_number: mapped.orderNumber })
     .select("id")
     .single();
   if (inserted.error?.code === "23505") {
+    const twin = await findWooOrderBySource(supabase, input.organizationId, mapped.sourceOrderId);
+    if (twin) return loseRace(twin, null);
     inserted = await supabase
       .from("orders")
       .insert({ ...orderPayload, order_number: `WC-${mapped.sourceOrderId}` })
       .select("id")
       .single();
+    if (inserted.error?.code === "23505") {
+      const fallbackTwin = await findWooOrderBySource(supabase, input.organizationId, mapped.sourceOrderId);
+      if (fallbackTwin) return loseRace(fallbackTwin, null);
+    }
   }
-  if (inserted.error || !inserted.data) throw new Error(inserted.error?.message || "Could not save the WooCommerce order.");
+  if (inserted.error || !inserted.data) {
+    await discardWooDraft(supabase, input.organizationId, { ...draft, orderId: null });
+    throw new Error(inserted.error?.message || "Could not save the WooCommerce order.");
+  }
   const orderId = inserted.data.id as string;
+
+  const { error: refError } = await supabase.from("external_order_references").insert({
+    organization_id: input.organizationId,
+    order_id: orderId,
+    source: "WOOCOMMERCE",
+    source_order_id: mapped.sourceOrderId,
+    shop_domain: input.storeHost,
+  });
+  if (refError?.code === "23505") {
+    const { data: winnerRef } = await supabase
+      .from("external_order_references")
+      .select("order_id")
+      .eq("organization_id", input.organizationId)
+      .eq("source", "WOOCOMMERCE")
+      .eq("source_order_id", mapped.sourceOrderId)
+      .maybeSingle();
+    const winner = (winnerRef?.order_id as string | undefined) ?? null;
+    // A racing worker that hit our order_number may already have linked the reference to this order.
+    if (winner !== orderId) return loseRace(winner, orderId);
+  } else if (refError) {
+    throw new Error(refError.message);
+  }
 
   if (mapped.lines.length) {
     const { error: itemsError } = await supabase.from("order_line_items").insert(
@@ -357,15 +412,6 @@ export async function upsertWooCommerceOrder(
     );
     if (itemsError) throw new Error(itemsError.message);
   }
-
-  const { error: refError } = await supabase.from("external_order_references").insert({
-    organization_id: input.organizationId,
-    order_id: orderId,
-    source: "WOOCOMMERCE",
-    source_order_id: mapped.sourceOrderId,
-    shop_domain: input.storeHost,
-  });
-  if (refError && refError.code !== "23505") throw new Error(refError.message);
 
   await supabase.from("audit_logs").insert({
     organization_id: input.organizationId,
@@ -387,6 +433,31 @@ export async function upsertWooCommerceOrder(
     await maybeAutoShip(supabase, input, mapped, orderId);
   }
   return { created: true, updated: false, skipped: false, orderId };
+}
+
+async function findWooOrderBySource(supabase: SupabaseClient, organizationId: string, sourceOrderId: string) {
+  const { data } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("source", "WOOCOMMERCE")
+    .eq("source_order_id", sourceOrderId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data?.id as string | undefined) ?? null;
+}
+
+async function discardWooDraft(
+  supabase: SupabaseClient,
+  organizationId: string,
+  draft: { orderId: string | null; customerId: string; addressIds: string[] }
+) {
+  if (draft.orderId) {
+    await supabase.from("orders").delete().eq("id", draft.orderId).eq("organization_id", organizationId);
+  }
+  await supabase.from("addresses").delete().in("id", draft.addressIds).eq("organization_id", organizationId);
+  await supabase.from("customers").delete().eq("id", draft.customerId).eq("organization_id", organizationId);
 }
 
 function wooWeightKey(title?: string | null, sku?: string | null) {

@@ -506,6 +506,7 @@ export async function wooStatus(supabase: SupabaseClient, organizationId: string
       .select("status, last_error, created_at, progress")
       .eq("organization_id", organizationId)
       .eq("job_type", "woocommerce-sync")
+      .eq("entity_type", "woocommerce_connection")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),

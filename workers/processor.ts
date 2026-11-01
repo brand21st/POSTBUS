@@ -902,13 +902,31 @@ async function wooCommerceSync(supabase: ReturnType<typeof createAdminClient>, p
   if (!connection || connection.status !== "CONNECTED" || !credentials) {
     throw Object.assign(new Error("WooCommerce is not connected."), { code: "PERMANENT_AUTH_ERROR" });
   }
-  const result = await syncWooCommercePage(supabase, {
-    connection,
-    credentials,
-    userId: payload.userId,
-    page: progress.page ?? 1,
-    force: progress.force,
-  });
+  let result: Awaited<ReturnType<typeof syncWooCommercePage>>;
+  try {
+    result = await syncWooCommercePage(supabase, {
+      connection,
+      credentials,
+      userId: payload.userId,
+      page: progress.page ?? 1,
+      force: progress.force,
+    });
+  } catch (error) {
+    const { redactWooText } = await import("@/modules/woocommerce/sync-window");
+    const message = redactWooText(error instanceof Error ? error.message : "WooCommerce sync failed.");
+    logError("woocommerce.sync_failed", {
+      organizationId: payload.organizationId,
+      jobId: payload.jobId,
+      page: progress.page ?? 1,
+      force: Boolean(progress.force),
+      message,
+    });
+    await supabase
+      .from("woocommerce_connections")
+      .update({ last_error: message.slice(0, 500) })
+      .eq("id", connection.id);
+    throw error;
+  }
   const imported = (progress.imported ?? 0) + result.imported;
   const updated = (progress.updated ?? 0) + result.updated;
   const skipped = (progress.skipped ?? 0) + result.skipped;
@@ -928,7 +946,8 @@ async function wooCommerceSync(supabase: ReturnType<typeof createAdminClient>, p
     await enqueueWooCommerceSync(supabase, {
       organizationId: payload.organizationId,
       userId: payload.userId,
-      force: true,
+      // Keep the same window: a scheduled incremental run must not widen to the full import on page 2.
+      force: Boolean(progress.force),
       page: result.nextPage,
       imported,
       updated,
