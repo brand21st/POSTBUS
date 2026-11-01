@@ -42,6 +42,7 @@ import {
   type DimensionSource,
   type MetafieldEntry,
   type PackageOption,
+  type ResolvedShipmentDimensions,
   type ShipmentUnit,
 } from "@/modules/shopify/dimensions";
 import { buildShipmentComposition, normalizeShopifyId } from "@/modules/autopack/composition";
