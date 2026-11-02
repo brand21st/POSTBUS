@@ -959,7 +959,7 @@ async function wooCommerceSync(supabase: ReturnType<typeof createAdminClient>, p
     .update({
       last_sync_at: new Date().toISOString(),
       last_error: null,
-      ...(result.hasMore ? {} : { last_successful_sync_at: new Date().toISOString() }),
+      ...(result.hasMore ? {} : { last_successful_sync_at: result.queriedAt }),
     })
     .eq("id", connection.id);
   if (result.hasMore && result.nextPage) {

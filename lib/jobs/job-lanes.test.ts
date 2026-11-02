@@ -4,6 +4,7 @@ import {
   parseJobTypes,
   restDrainConcurrency,
   drainLaneName,
+  wooCommerceDrainPlan,
 } from "@/lib/jobs/job-lanes";
 
 describe("parseJobTypes", () => {
@@ -42,6 +43,26 @@ describe("drain lanes", () => {
   it("includes bulk-excel-import in the other drain lane", () => {
     expect(OTHER_JOB_TYPES).toContain("bulk-excel-import");
     expect(drainLaneName(["bulk-excel-import"])).toBe("other");
+  });
+
+  it("runs WooCommerce beside the other lane and keeps it off the oldest-first claim", () => {
+    expect(wooCommerceDrainPlan(["tracking-sync", "shopify-sync", "woocommerce-sync"])).toEqual({
+      primary: ["tracking-sync", "shopify-sync"],
+      skipPrimary: false,
+      woo: true,
+    });
+    expect(wooCommerceDrainPlan(["tracking-sync"]).woo).toBe(true);
+    expect(wooCommerceDrainPlan(["label-generation"])).toEqual({
+      primary: ["label-generation"],
+      skipPrimary: false,
+      woo: false,
+    });
+    expect(wooCommerceDrainPlan(["woocommerce-sync"])).toEqual({
+      primary: undefined,
+      skipPrimary: true,
+      woo: true,
+    });
+    expect(wooCommerceDrainPlan(undefined).woo).toBe(false);
   });
 
   it("uses concurrency 4 when no bookings are in the batch", () => {
