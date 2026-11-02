@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { commercePendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
-import { refreshAddressPrebooking } from "@/modules/orders/prebooking-validation";
+import { commerceAddressReviewRequired, refreshAddressPrebooking } from "@/modules/orders/prebooking-validation";
 import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapExcelRowToArticle, mapShipmentToArticle } from "@/modules/india-post/article-mapper";
@@ -186,6 +186,7 @@ export async function validateOrdersForBooking(
       refreshCursor += 1;
       const address = order.shipping_address as { id?: string | null } | null;
       if (!address?.id) continue;
+      if (!commerceAddressReviewRequired((order as { source?: string | null }).source)) continue;
       refreshedAddresses.set(
         order.id as string,
         await refreshAddressPrebooking(supabase, {
@@ -323,7 +324,9 @@ export async function validateOrdersForBooking(
       });
       continue;
     }
-    const addressBlock = shippingAddressBookingBlock(address);
+    const addressBlock = commerceAddressReviewRequired((order as { source?: string | null }).source)
+      ? shippingAddressBookingBlock(address)
+      : null;
     if (addressBlock) {
       const issue: ValidationIssue = {
         orderId: order.id,

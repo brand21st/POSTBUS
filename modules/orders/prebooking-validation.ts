@@ -452,6 +452,12 @@ export async function refreshAddressPrebooking(
   return { ...input.address, ...assessed.address, ...patch, address_validation_errors: assessed.issues };
 }
 
+/** PostBus address review applies to store orders. Manual and other sources book as entered. */
+export function commerceAddressReviewRequired(source?: string | null) {
+  const value = String(source ?? "").trim().toUpperCase();
+  return value === "SHOPIFY" || value === "WOOCOMMERCE";
+}
+
 export async function gateAddressForBooking(
   supabase: SupabaseClient,
   input: {
@@ -459,6 +465,7 @@ export async function gateAddressForBooking(
     address: StoredShippingFields | null;
     searchPostOffices?: SearchPostOffices;
     allowAi?: boolean;
+    orderSource?: string | null;
   }
 ) {
   if (!input.address) {
@@ -468,6 +475,10 @@ export async function gateAddressForBooking(
       message: "Missing shipping address. Correct the shipping address before India Post booking.",
       address: input.address,
     };
+  }
+  const knownSource = String(input.orderSource ?? "").trim();
+  if (knownSource && !commerceAddressReviewRequired(knownSource)) {
+    return { ok: true as const, retryable: false, message: null, address: input.address };
   }
   const address = await refreshAddressPrebooking(supabase, {
     organizationId: input.organizationId,
@@ -573,18 +584,24 @@ async function loadPrebookingOrders(supabase: SupabaseClient, organizationId: st
 }
 
 function orderResult(row: PrebookingOrderRow, address: StoredShippingFields | null | undefined, extra: PrebookingIssue[] = []): PrebookingOrderResult {
+  const reviewApplies = commerceAddressReviewRequired(row.source);
   const current = address ? addressValidationFingerprint(address) : "";
-  const issues = [
-    ...(Array.isArray(address?.address_validation_errors) ? (address?.address_validation_errors as PrebookingIssue[]) : []),
-    ...extra,
-  ].filter((issue) => issue && (issue.message || issue.code));
-  const status = extra.some((issue) => issue.code === "already_booked")
-    ? "fix_required"
-    : extra.some((issue) => issue.blocking)
-      ? address && prebookingUiStatus(address.address_validation_status, address.address_validation_fingerprint, current) === "validation_unavailable"
-        ? "validation_unavailable"
-        : "fix_required"
-      : prebookingUiStatus(address?.address_validation_status, address?.address_validation_fingerprint, current);
+  const storedIssues =
+    reviewApplies && Array.isArray(address?.address_validation_errors)
+      ? (address.address_validation_errors as PrebookingIssue[])
+      : [];
+  const issues = [...storedIssues, ...extra].filter((issue) => issue && (issue.message || issue.code));
+  const status = !reviewApplies
+    ? extra.some((issue) => issue.blocking)
+      ? "fix_required"
+      : "ready"
+    : extra.some((issue) => issue.code === "already_booked")
+      ? "fix_required"
+      : extra.some((issue) => issue.blocking)
+        ? address && prebookingUiStatus(address.address_validation_status, address.address_validation_fingerprint, current) === "validation_unavailable"
+          ? "validation_unavailable"
+          : "fix_required"
+        : prebookingUiStatus(address?.address_validation_status, address?.address_validation_fingerprint, current);
   return {
     orderId: row.id,
     orderNumber: String(row.order_number ?? ""),
@@ -628,6 +645,7 @@ export async function precheckOrders(
       const shipments = row.shipments ?? [];
       if (shipments.some((item) => isIndiaPostAcceptedStatus(item.status))) return;
       if (!row.shipping_address) return;
+      if (!commerceAddressReviewRequired(row.source)) return;
       row.shipping_address = await refreshAddressPrebooking(supabase, {
         organizationId: ctx.organizationId,
         address: row.shipping_address,

@@ -13,6 +13,7 @@ import {
   assessDestinationOffices,
   assessPrebookingAddress,
   clearDestinationPinCache,
+  commerceAddressReviewRequired,
   formattingSuggestion,
   gateAddressForBooking,
   isIndiaPostAddressError,
@@ -334,5 +335,119 @@ describe("pre-booking address checks", () => {
   it("recognizes an India Post address rejection without treating a weight error as one", () => {
     expect(isIndiaPostAddressError("Destination pincode 000000 not found")).toBe(true);
     expect(isIndiaPostAddressError("Weight must be at least 1 gram.")).toBe(false);
+  });
+
+  it("reviews Shopify and WooCommerce addresses and lets other sources book", () => {
+    expect(commerceAddressReviewRequired("SHOPIFY")).toBe(true);
+    expect(commerceAddressReviewRequired("woocommerce")).toBe(true);
+    expect(commerceAddressReviewRequired("MANUAL")).toBe(false);
+    expect(commerceAddressReviewRequired("API")).toBe(false);
+    expect(commerceAddressReviewRequired("WHATSAPP")).toBe(false);
+    expect(commerceAddressReviewRequired("EXCEL")).toBe(false);
+  });
+
+  it("lets a manual order book when house details look missing", async () => {
+    const searchPostOffices = vi.fn(async () => {
+      throw new Error("address review should not run");
+    });
+    const gate = await gateAddressForBooking({} as SupabaseClient, {
+      organizationId: "org-1",
+      address: address({ line1: "Kalpetta" }),
+      searchPostOffices,
+      orderSource: "MANUAL",
+    });
+    expect(gate.ok).toBe(true);
+    expect(gate.message).toBeNull();
+    expect(searchPostOffices).not.toHaveBeenCalled();
+  });
+
+  it("still blocks a Shopify order when house details are missing from line 1", async () => {
+    clearDestinationPinCache();
+    const supabase = {
+      from() {
+        return {
+          update() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          then(resolve: (value: unknown) => unknown) {
+            return Promise.resolve({ error: null }).then(resolve);
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    const gate = await gateAddressForBooking(supabase, {
+      organizationId: "org-1",
+      address: address({ line1: "Kalpetta" }),
+      searchPostOffices: search([office()]),
+      allowAi: false,
+      orderSource: "SHOPIFY",
+    });
+    expect(gate.ok).toBe(false);
+    expect(gate.message).toMatch(/House or building details look missing from address line 1/);
+  });
+
+  it("treats a stored address review as ready for manual orders and keeps it for Shopify", async () => {
+    const reviewed = {
+      ...address({ line1: "Kalpetta" }),
+      address_validation_status: "NEEDS_REVIEW",
+      address_validation_errors: [
+        {
+          code: "missing_house",
+          field: "line1",
+          message: "House or building details look missing from address line 1.",
+          blocking: false,
+        },
+      ],
+    };
+    const rows = [
+      {
+        id: "manual-1",
+        order_number: "200",
+        source: "MANUAL",
+        customers: { name: "Manual" },
+        shipments: [{ status: "QUEUED", weight_grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
+        shipping_address: reviewed,
+      },
+      {
+        id: "shop-1",
+        order_number: "201",
+        source: "SHOPIFY",
+        customers: { name: "Store" },
+        shipments: [{ status: "QUEUED", weight_grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
+        shipping_address: reviewed,
+      },
+    ];
+    const supabase = {
+      from() {
+        return {
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          in() {
+            return Promise.resolve({ data: rows, error: null });
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    validateOrdersForBooking.mockResolvedValue({
+      rows: [
+        { orderId: "manual-1", valid: true, issues: [] },
+        { orderId: "shop-1", valid: true, issues: [] },
+      ],
+      issues: [],
+    });
+    const result = await precheckOrders(supabase, ctx, ["manual-1", "shop-1"], { allowAi: false });
+    const manual = result.orders.find((order) => order.orderId === "manual-1");
+    const shop = result.orders.find((order) => order.orderId === "shop-1");
+    expect(manual?.status).toBe("ready");
+    expect(manual?.issues.some((issue) => issue.code === "missing_house")).toBe(false);
+    expect(shop?.status).toBe("needs_review");
+    expect(shop?.issues.some((issue) => issue.code === "missing_house")).toBe(true);
   });
 });

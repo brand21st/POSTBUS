@@ -29,6 +29,7 @@ import { parcelBoxIssue } from "@/modules/india-post/article-validator";
 import { sameBox } from "@/modules/autopack/decide";
 import { recordMerchantBox } from "@/modules/autopack/history";
 import { DEFAULT_INDIA_POST_SERVICE, INDIA_POST_SERVICES } from "@/types/domain";
+import { commerceAddressReviewRequired } from "@/modules/orders/prebooking-validation";
 import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 import { merchantSmartAutoRetryView, resumeSmartAutoRetryAfterCorrection } from "@/modules/india-post/smart-auto-retry";
 
@@ -316,7 +317,7 @@ export async function createShipmentsForOrders(
       skipped.push(order.id);
       continue;
     }
-    if (enqueueBooking) {
+    if (enqueueBooking && commerceAddressReviewRequired(String(order.source ?? ""))) {
       const shipping = order.shipping_address_id ? addressById.get(order.shipping_address_id as string) : null;
       const addressBlock = shippingAddressBookingBlock(shipping ?? null);
       if (addressBlock) {

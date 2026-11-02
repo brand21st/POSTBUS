@@ -595,6 +595,7 @@ async function runIndiaPostBookingAttempt(
     }
 
     const rawAddress = shipment.addresses as StoredShippingFields | null;
+    const bookingOrder = shipment.orders as { source?: string | null } | null;
     let addressGate: Awaited<ReturnType<typeof gateAddressForBooking>>;
     try {
       addressGate = await gateAddressForBooking(supabase, {
@@ -602,6 +603,7 @@ async function runIndiaPostBookingAttempt(
         address: rawAddress,
         searchPostOffices: (pin) => provider.searchPostOffices(pin),
         allowAi: true,
+        orderSource: bookingOrder?.source ?? null,
       });
     } catch (error) {
       if (!isDatabaseInfraError(error)) throw error;
