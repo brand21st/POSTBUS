@@ -13,9 +13,11 @@ import {
   assessDestinationOffices,
   assessPrebookingAddress,
   clearDestinationPinCache,
+  commerceAddressReviewRequired,
   formattingSuggestion,
   gateAddressForBooking,
   isIndiaPostAddressError,
+  packAddressForIndiaPostBooking,
   precheckOrders,
   refreshAddressPrebooking,
 } from "@/modules/orders/prebooking-validation";
@@ -73,8 +75,10 @@ function search(offices: IndiaPostOffice[] | Error) {
 }
 
 describe("pre-booking address checks", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     validateOrdersForBooking.mockReset();
+    const { requestAiAddressSuggestion } = await import("@/modules/shopify/address-ai");
+    vi.mocked(requestAiAddressSuggestion).mockReset();
   });
 
   it("accepts a complete address when the PIN office matches", async () => {
@@ -112,6 +116,113 @@ describe("pre-booking address checks", () => {
     expect(result.issues.some((issue) => issue.code === "pin_state_mismatch")).toBe(true);
   });
 
+  it("packs floor and unit details onto line 1 for booking", async () => {
+    clearDestinationPinCache();
+    const result = await assessPrebookingAddress(
+      address({
+        line1: "Plot No-13/14P, Vaishnavi West Block, Mithila Nagar",
+        line2: "Pragathi Nagar, First Floor,G3",
+        city: "Hyderabad",
+        state: "Telangana",
+        pincode: "500090",
+      }),
+      { searchPostOffices: search([office({ city_name: "Hyderabad", state_name: "Telangana" })]) }
+    );
+    expect(result.status).toBe("READY");
+    expect(result.autoCorrected).toBe(true);
+    expect(result.address.line1).toMatch(/Plot No-13\/14P/i);
+    expect(result.address.line1).toMatch(/First Floor/i);
+    expect(result.address.line1).toMatch(/G3/i);
+    expect(result.address.line2).toMatch(/Mithila Nagar/i);
+    expect(result.address.line2).toMatch(/Pragathi Nagar/i);
+    expect(result.address.pincode).toBe("500090");
+  });
+
+  it("lengthens a 2-character address line before booking", async () => {
+    clearDestinationPinCache();
+    const result = await assessPrebookingAddress(
+      address({ line1: "12", line2: "Green Park Road" }),
+      { searchPostOffices: search([office()]) }
+    );
+    expect(result.status).toBe("READY");
+    expect(result.autoCorrected).toBe(true);
+    expect(result.address.line1.length).toBeGreaterThanOrEqual(3);
+    expect(result.address.line1).toMatch(/^12\b/);
+    expect(`${result.address.line1} ${result.address.line2}`).toContain("Green Park Road");
+  });
+
+  it("does not pack a simple house-and-street address", () => {
+    expect(packAddressForIndiaPostBooking(address())).toBeNull();
+  });
+
+  it("auto-applies a safe AI street reorder", async () => {
+    clearDestinationPinCache();
+    const { requestAiAddressSuggestion } = await import("@/modules/shopify/address-ai");
+    vi.mocked(requestAiAddressSuggestion).mockResolvedValue({
+      address_line_1: "House 22, Alpha, Beta",
+      address_line_2: "Gamma, Delta, Epsilon",
+      address_line_3: "Zeta, Eta",
+      city: "Kalpetta",
+      state: "Kerala",
+      pincode: "673121",
+      changes: ["Packed street lines"],
+      warnings: [],
+      needs_review: false,
+    });
+    const result = await assessPrebookingAddress(
+      address({ line1: "House 22, Alpha, Beta, Gamma, Delta, Epsilon, Zeta, Eta" }),
+      { searchPostOffices: search([office()]), allowAi: true }
+    );
+    expect(result.status).toBe("READY");
+    expect(result.autoCorrected).toBe(true);
+    expect(result.address.line1).toBe("House 22, Alpha, Beta");
+    expect(result.address.line2).toBe("Gamma, Delta, Epsilon");
+    expect(result.issues.some((issue) => issue.code === "ai_formatting")).toBe(false);
+  });
+
+  it("books a repeated locality after removing the duplicate", async () => {
+    clearDestinationPinCache();
+    const result = await assessPrebookingAddress(
+      address({ line1: "House 22, Main Road, Main Road, Kalpetta" }),
+      { searchPostOffices: search([office()]) }
+    );
+    expect(result.status).toBe("READY");
+    expect(result.autoCorrected).toBe(true);
+    expect(result.address.line1.match(/Main Road/g)).toHaveLength(1);
+    expect(result.issues.some((issue) => issue.code === "address_formatting")).toBe(false);
+  });
+
+  it("lets a stored formatting note through once the live address is ready", async () => {
+    clearDestinationPinCache();
+    const stored = address({
+      address_validation_status: "NEEDS_REVIEW",
+      address_validation_errors: [
+        { code: "address_formatting", message: "Repeated locality or address line removed.", blocking: false },
+      ],
+    });
+    stored.address_validation_fingerprint = addressValidationFingerprint(stored);
+    const gate = await gateAddressForBooking(
+      {
+        from() {
+          return {
+            update() {
+              return this;
+            },
+            eq() {
+              return this;
+            },
+            then(resolve: (value: unknown) => unknown) {
+              return Promise.resolve({ data: null, error: null }).then(resolve);
+            },
+          };
+        },
+      } as unknown as SupabaseClient,
+      { organizationId: "org-1", address: stored, searchPostOffices: search([office()]) }
+    );
+    expect(gate.ok).toBe(true);
+    expect(gate.message).toBeNull();
+  });
+
   it("suggests a cleanup for duplicate words without dropping the house number", () => {
     const suggestion = formattingSuggestion(address({ line1: "House 22, , Main Road, Main Road, Kalpetta, , Wayanad" }));
     expect(suggestion?.line1).toContain("House 22");
@@ -121,7 +232,7 @@ describe("pre-booking address checks", () => {
   });
 
   it("flags a very long address for review", async () => {
-    const result = await assessPrebookingAddress(address({ line1: "X".repeat(81) }));
+    const result = await assessPrebookingAddress(address({ line1: "X".repeat(250) }));
     expect(result.status).toBe("NEEDS_REVIEW");
     expect(result.issues.some((issue) => issue.code === "address_too_long")).toBe(true);
   });
@@ -161,13 +272,132 @@ describe("pre-booking address checks", () => {
     expect(result.status).toBe("VALIDATION_UNAVAILABLE");
   });
 
-  it("does not treat several offices as the first office", () => {
-    const result = assessDestinationOffices("Kerala", "Sultan Bathery", [
-      office({ office_name: "Kalpetta SO", city_name: "Kalpetta" }),
-      office({ office_id: "10000002", office_name: "Sultan Bathery SO", city_name: "Sultan Bathery" }),
+  it("accepts a PIN that has post offices even when the city name differs", () => {
+    const result = assessDestinationOffices("Tamil Nadu", "Chengalpattu", [
+      office({ office_name: "Kattankolathur SO", city_name: "Kattankolathur", state_name: "Tamil Nadu" }),
+      office({ office_id: "10000002", office_name: "Kavanur BO", city_name: "Kavanur", state_name: "Tamil Nadu" }),
+      office({ office_id: "10000003", office_name: "Ninnakarai BO", city_name: "Ninnakarai", state_name: "Tamil Nadu" }),
     ]);
     expect(result.status).toBe("VERIFIED");
-    expect(result.offices.map((item) => item.name)).toEqual(["Sultan Bathery SO"]);
+    expect(result.message).toBe("");
+    expect(result.offices.map((item) => item.name)).toEqual(["Kattankolathur SO", "Kavanur BO", "Ninnakarai BO"]);
+  });
+
+  it("sets the city from the PIN delivery office when the typed city does not match", async () => {
+    clearDestinationPinCache();
+    const result = await assessPrebookingAddress(
+      address({ city: "Chengalpattu", state: "Tamil Nadu", pincode: "603203" }),
+      {
+        searchPostOffices: search([
+          office({
+            office_name: "Kattankolathur SO",
+            city_name: "Kattankolathur",
+            state_name: "Tamil Nadu",
+            delivery_office_flag: true,
+          }),
+          office({
+            office_id: "10000002",
+            office_name: "Kavanur BO",
+            city_name: "Kavanur",
+            state_name: "Tamil Nadu",
+            delivery_office_flag: false,
+          }),
+        ]),
+      }
+    );
+    expect(result.status).toBe("READY");
+    expect(result.address.city).toBe("Kattankolathur");
+    expect(result.autoCorrected).toBe(true);
+  });
+
+  it("leaves the city unchanged when eligible delivery offices disagree", async () => {
+    clearDestinationPinCache();
+    const result = await assessPrebookingAddress(
+      address({ city: "Chengalpattu", state: "Tamil Nadu", pincode: "603203" }),
+      {
+        searchPostOffices: search([
+          office({
+            office_name: "Kattankolathur SO",
+            city_name: "Kattankolathur",
+            state_name: "Tamil Nadu",
+            delivery_office_flag: true,
+          }),
+          office({
+            office_id: "10000002",
+            office_name: "Kavanur BO",
+            city_name: "Kavanur",
+            state_name: "Tamil Nadu",
+            delivery_office_flag: true,
+          }),
+        ]),
+      }
+    );
+    expect(result.address.city).toBe("Chengalpattu");
+  });
+
+  it("does not replace the city with an office name", async () => {
+    clearDestinationPinCache();
+    const result = await assessPrebookingAddress(
+      address({ city: "Chengalpattu", state: "Tamil Nadu", pincode: "603203" }),
+      {
+        searchPostOffices: search([
+          office({
+            office_name: "Kattankolathur SO",
+            city_name: "",
+            state_name: "Tamil Nadu",
+            delivery_office_flag: true,
+          }),
+        ]),
+      }
+    );
+    expect(result.address.city).toBe("Chengalpattu");
+  });
+
+  it("says when a PIN has no post office", () => {
+    const result = assessDestinationOffices("Tamil Nadu", "Chengalpattu", []);
+    expect(result.status).toBe("INVALID");
+    expect(result.message).toMatch(/PIN code was not found/i);
+  });
+
+  it("rewrites a cached READY address when premises sit on line 2", async () => {
+    clearDestinationPinCache();
+    const lookup = search([office({ city_name: "Hyderabad", state_name: "Telangana" })]);
+    const updates: unknown[] = [];
+    const supabase = {
+      from() {
+        return {
+          update(values: unknown) {
+            updates.push(values);
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          then(resolve: (value: unknown) => unknown) {
+            return Promise.resolve({ data: null, error: null }).then(resolve);
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    const messy = address({
+      line1: "Plot No-13/14P, Vaishnavi West Block, Mithila Nagar",
+      line2: "Pragathi Nagar, First Floor,G3",
+      city: "Hyderabad",
+      state: "Telangana",
+      pincode: "500090",
+    });
+    const next = await refreshAddressPrebooking(supabase, {
+      organizationId: "org-1",
+      address: {
+        ...messy,
+        address_validation_status: "READY",
+        address_validation_fingerprint: addressValidationFingerprint(messy),
+      },
+      searchPostOffices: lookup,
+    });
+    expect(next.line1).toMatch(/G3/i);
+    expect(lookup).toHaveBeenCalled();
+    expect(updates[0]).toEqual(expect.objectContaining({ line1: expect.stringMatching(/First Floor/i) }));
   });
 
   it("reuses a stored result until the address changes", async () => {
@@ -334,5 +564,119 @@ describe("pre-booking address checks", () => {
   it("recognizes an India Post address rejection without treating a weight error as one", () => {
     expect(isIndiaPostAddressError("Destination pincode 000000 not found")).toBe(true);
     expect(isIndiaPostAddressError("Weight must be at least 1 gram.")).toBe(false);
+  });
+
+  it("reviews Shopify and WooCommerce addresses and lets other sources book", () => {
+    expect(commerceAddressReviewRequired("SHOPIFY")).toBe(true);
+    expect(commerceAddressReviewRequired("woocommerce")).toBe(true);
+    expect(commerceAddressReviewRequired("MANUAL")).toBe(false);
+    expect(commerceAddressReviewRequired("API")).toBe(false);
+    expect(commerceAddressReviewRequired("WHATSAPP")).toBe(false);
+    expect(commerceAddressReviewRequired("EXCEL")).toBe(false);
+  });
+
+  it("lets a manual order book when house details look missing", async () => {
+    const searchPostOffices = vi.fn(async () => {
+      throw new Error("address review should not run");
+    });
+    const gate = await gateAddressForBooking({} as SupabaseClient, {
+      organizationId: "org-1",
+      address: address({ line1: "Kalpetta" }),
+      searchPostOffices,
+      orderSource: "MANUAL",
+    });
+    expect(gate.ok).toBe(true);
+    expect(gate.message).toBeNull();
+    expect(searchPostOffices).not.toHaveBeenCalled();
+  });
+
+  it("still blocks a Shopify order when house details are missing from line 1", async () => {
+    clearDestinationPinCache();
+    const supabase = {
+      from() {
+        return {
+          update() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          then(resolve: (value: unknown) => unknown) {
+            return Promise.resolve({ error: null }).then(resolve);
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    const gate = await gateAddressForBooking(supabase, {
+      organizationId: "org-1",
+      address: address({ line1: "Kalpetta" }),
+      searchPostOffices: search([office()]),
+      allowAi: false,
+      orderSource: "SHOPIFY",
+    });
+    expect(gate.ok).toBe(false);
+    expect(gate.message).toMatch(/House or building details look missing from address line 1/);
+  });
+
+  it("treats a stored address review as ready for manual orders and keeps it for Shopify", async () => {
+    const reviewed = {
+      ...address({ line1: "Kalpetta" }),
+      address_validation_status: "NEEDS_REVIEW",
+      address_validation_errors: [
+        {
+          code: "missing_house",
+          field: "line1",
+          message: "House or building details look missing from address line 1.",
+          blocking: false,
+        },
+      ],
+    };
+    const rows = [
+      {
+        id: "manual-1",
+        order_number: "200",
+        source: "MANUAL",
+        customers: { name: "Manual" },
+        shipments: [{ status: "QUEUED", weight_grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
+        shipping_address: reviewed,
+      },
+      {
+        id: "shop-1",
+        order_number: "201",
+        source: "SHOPIFY",
+        customers: { name: "Store" },
+        shipments: [{ status: "QUEUED", weight_grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
+        shipping_address: reviewed,
+      },
+    ];
+    const supabase = {
+      from() {
+        return {
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          in() {
+            return Promise.resolve({ data: rows, error: null });
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    validateOrdersForBooking.mockResolvedValue({
+      rows: [
+        { orderId: "manual-1", valid: true, issues: [] },
+        { orderId: "shop-1", valid: true, issues: [] },
+      ],
+      issues: [],
+    });
+    const result = await precheckOrders(supabase, ctx, ["manual-1", "shop-1"], { allowAi: false });
+    const manual = result.orders.find((order) => order.orderId === "manual-1");
+    const shop = result.orders.find((order) => order.orderId === "shop-1");
+    expect(manual?.status).toBe("ready");
+    expect(manual?.issues.some((issue) => issue.code === "missing_house")).toBe(false);
+    expect(shop?.status).toBe("needs_review");
+    expect(shop?.issues.some((issue) => issue.code === "missing_house")).toBe(true);
   });
 });

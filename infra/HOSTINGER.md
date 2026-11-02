@@ -54,11 +54,11 @@ Then add **three** scheduled tasks on the **same** PostBus web container (do not
 | --- | --- |
 | Booking | `JOB_TYPES=shipment-booking node scripts/drain-jobs.mjs` |
 | Labels | `JOB_TYPES=label-generation node scripts/drain-jobs.mjs` |
-| Other | `JOB_TYPES=invoice-generation,tracking-sync,shopify-fulfillment,wati-notify,vachat-notify,manifest-generation,webhook-processing,shopify-sync,woocommerce-sync,woocommerce-tracking,india-post-events,notifications,cleanup,reports node scripts/drain-jobs.mjs` |
+| Other | `JOB_TYPES=invoice-generation,tracking-sync,shopify-fulfillment,shopify-address-correction,wati-notify,vachat-notify,manifest-generation,webhook-processing,shopify-sync,woocommerce-sync,woocommerce-tracking,india-post-events,notifications,cleanup,reports node scripts/drain-jobs.mjs` |
 
 `scripts/drain-jobs.mjs` appends `JOB_TYPES` as `?types=` on `POST /api/cron/jobs`. Unknown types are rejected. An untyped drain (`node scripts/drain-jobs.mjs` with no `JOB_TYPES`) still claims every due job.
 
-A drain that includes `woocommerce-sync` (the Other lane, or an untyped drain) also enqueues an incremental WooCommerce pull for each connected store not synced in the last 10 minutes. This is the fallback when store webhooks are missing or dropped, so new WooCommerce orders only import automatically while that lane is scheduled.
+The Other lane also imports WooCommerce orders, even when `JOB_TYPES` does not list `woocommerce-sync` or `woocommerce-tracking`. Those two types are taken off the main claim (that claim is oldest-first and a store-event backlog would block tracking) and run in a separate newest-first batch of 8. The same tick enqueues an incremental pull for each connected store not synced in the last 10 minutes, which covers stores whose webhooks are missing or dropped. A label-only or booking-only drain does not import WooCommerce.
 
 Label-only and other-only drains run the rest pool at concurrency 4. A mixed untyped drain still runs `shipment-booking` first at booking concurrency (default 4), then remaining jobs at concurrency 2.
 

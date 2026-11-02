@@ -7,6 +7,7 @@ const BOOKING_FAILURE_EXEMPT_QUEUES = new Set([
   "wati-notify",
   "vachat-notify",
   "support-ingest",
+  "shopify-address-correction",
 ]);
 
 /** Label and invoice failures must not change the India Post booking outcome. */
@@ -44,20 +45,46 @@ const PRE_POST_TRANSIENT_CODES = new Set([
  * PRE_POST_TRANSIENT also records a "never submitted" code on the shipment, so the next run
  * may use the barcode this run claimed instead of sending it to review.
  */
+const CARRIED_ERROR_FIELDS = ["status", "statusCode", "bookingPhase", "ceptNotCalled", "retryAfterMs", "shipmentIds"] as const;
+
+/**
+ * DOMException.code is a getter. Object.assign onto that error throws
+ * "Cannot set property code of #<DOMException> which has only a getter"
+ * and that TypeError replaces the real booking failure.
+ * Always return a fresh Error with own writable fields.
+ */
+export function stampCaughtError(
+  error: unknown,
+  fields: Record<string, unknown>,
+  fallbackMessage = "Provider request failed."
+) {
+  const base = error instanceof Error ? error : new Error(fallbackMessage);
+  const next = new Error(base.message || fallbackMessage);
+  if (base.name && base.name !== "Error") next.name = base.name;
+  const source = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+  const merged: Record<string, unknown> = {};
+  for (const key of CARRIED_ERROR_FIELDS) {
+    if (source[key] !== undefined) merged[key] = source[key];
+  }
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) merged[key] = value;
+  }
+  for (const [key, value] of Object.entries(merged)) {
+    Object.defineProperty(next, key, { value, enumerable: true, writable: true, configurable: true });
+  }
+  return next;
+}
+
 export function tagPrePostBookingError(error: unknown) {
   const classified = classifyProviderError(error);
   const serverError = (classified.httpStatus ?? 0) >= 500;
   const transient = PRE_POST_TRANSIENT_CODES.has(classified.code) && classified.httpStatus !== 409;
   if (classified.code !== "ETIMEDOUT" && !serverError && !transient) return error;
-  const wrapped = new Error(classified.message) as Error & {
-    code: string;
-    bookingPhase: "PRE_POST";
-    status?: number;
-  };
-  wrapped.code = "PRE_POST_TRANSIENT";
-  wrapped.bookingPhase = "PRE_POST";
-  if (classified.httpStatus) wrapped.status = classified.httpStatus;
-  return wrapped;
+  return stampCaughtError(error, {
+    code: "PRE_POST_TRANSIENT",
+    bookingPhase: "PRE_POST",
+    ...(classified.httpStatus ? { status: classified.httpStatus } : {}),
+  }, classified.message);
 }
 
 /**

@@ -539,10 +539,13 @@ export type StoredShippingFields = {
   pincode?: string | null;
   country?: string | null;
   original_shipping?: unknown;
+  normalized_shipping?: unknown;
   address_validation_status?: string | null;
   address_validation_errors?: unknown;
   address_validation_fingerprint?: string | null;
+  address_normalization_source?: string | null;
   address_manual_override?: boolean | null;
+  autoCorrected?: boolean;
 };
 
 function issueMessages(errors: unknown) {
@@ -554,6 +557,22 @@ function issueMessages(errors: unknown) {
       return "";
     })
     .filter(Boolean);
+}
+
+const FORMATTING_REVIEW_NOTE =
+  /repeated locality or address line removed|extra commas or spaces removed|address lines were corrected for india post/i;
+
+/** True when every stored note is a safe cleanup, with nothing the merchant still has to confirm. */
+export function formattingReviewOnly(errors: unknown) {
+  if (!Array.isArray(errors) || errors.length === 0) return false;
+  return errors.every((issue) => {
+    if (!issue || typeof issue !== "object") return false;
+    const row = issue as { code?: unknown; message?: unknown; blocking?: unknown };
+    if (row.blocking === true) return false;
+    const code = String(row.code ?? "");
+    if (code === "address_formatting" || code === "address_auto_corrected") return true;
+    return FORMATTING_REVIEW_NOTE.test(String(row.message ?? ""));
+  });
 }
 
 function bookingBlockMessage(status: string, errors: unknown) {
@@ -644,6 +663,10 @@ export function shippingAddressBookingBlock(address?: StoredShippingFields | nul
     }
     if (stored === "VALIDATION_UNAVAILABLE") {
       return "India Post PIN verification is temporarily unavailable. Retry the address check before booking.";
+    }
+    if (stored === "NEEDS_REVIEW" && formattingReviewOnly(address.address_validation_errors)) {
+      const live = classifyStoredShippingAddress(address);
+      if (live.status === "READY") return null;
     }
     if (stored === "NEEDS_REVIEW" || stored === "INVALID") {
       return bookingBlockMessage(stored, address.address_validation_errors);

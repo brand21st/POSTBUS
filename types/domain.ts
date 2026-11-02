@@ -205,6 +205,7 @@ export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 
 export const JOB_TYPES = [
   "shopify-sync",
+  "shopify-address-correction",
   "woocommerce-sync",
   "woocommerce-tracking",
   "shipment-booking",

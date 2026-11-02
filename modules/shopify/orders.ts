@@ -11,6 +11,12 @@ import {
 } from "@/modules/shopify/oauth";
 import { buildPostBusTrackingUrl } from "@/modules/tracking-pages/host";
 import { logError } from "@/lib/logger";
+import {
+  correctShopifyShippingAddress,
+  enqueueShopifyAddressCorrection,
+  shopifyBookingWaitsForAddressCorrection,
+  type ShopifyAddressBookingIntent,
+} from "@/modules/shopify/address-corrector";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { fetchWithShopifyTimeout, shopifyHttpError } from "@/modules/shopify/http";
@@ -2562,9 +2568,51 @@ type UpsertShopifyOrderInput = {
  * Imports or updates one Shopify order. When the Bulk Booking queue owns Shopify bookings, the
  * order is offered to the queue afterwards (new orders, and updates such as payment turning paid).
  */
+async function prepareShopifyAddressForBooking(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    addressId: string;
+    userId?: string;
+    sourceUpdatedAt?: string | null;
+    bookingIntent: ShopifyAddressBookingIntent;
+    allowRequeue: boolean;
+  }
+) {
+  try {
+    return await correctShopifyShippingAddress(supabase, {
+      organizationId: input.organizationId,
+      orderId: input.orderId,
+      addressId: input.addressId,
+      userId: input.userId,
+      source: "SHOPIFY",
+      sourceUpdatedAt: input.sourceUpdatedAt,
+      phase: "deterministic",
+      allowRequeue: input.allowRequeue,
+      bookingIntent: input.bookingIntent,
+    });
+  } catch (error) {
+    logError("shopify.address_correction", {
+      outcome: "failed",
+      organizationId: input.organizationId,
+      orderId: input.orderId,
+      addressId: input.addressId,
+      message: error instanceof Error ? error.name : "unknown",
+    });
+    return {
+      outcome: "failed" as const,
+      changed: false,
+      deferBooking: false,
+      requeued: false,
+      fingerprint: null,
+    };
+  }
+}
+
 export async function upsertShopifyOrder(supabase: SupabaseClient, input: UpsertShopifyOrderInput) {
   const result = await upsertShopifyOrderRecord(supabase, input);
-  if (input.enrollInQueue && result.orderId && !result.skipped) {
+  if (input.enrollInQueue && result.orderId && !result.skipped && !("deferBooking" in result && result.deferBooking)) {
     const { enrollOrderAutomatically } = await import("@/modules/booking-queue/auto-enroll");
     await enrollOrderAutomatically(supabase, {
       organizationId: input.organizationId,
@@ -2770,7 +2818,36 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
         message: error instanceof Error ? error.message : "unknown",
       });
     }
-    return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string };
+    let deferBooking = false;
+    if (existingOrder?.shipping_address_id) {
+      const bookingIntent = {
+        enqueueBooking: input.enqueueBooking === true,
+        enrollInQueue: input.enrollInQueue === true,
+      };
+      const corrected = await prepareShopifyAddressForBooking(supabase, {
+        organizationId: input.organizationId,
+        orderId: existing.order_id as string,
+        addressId: existingOrder.shipping_address_id,
+        userId: input.userId,
+        sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
+        bookingIntent,
+        allowRequeue: true,
+      });
+      deferBooking = shopifyBookingWaitsForAddressCorrection(corrected.deferBooking);
+      if (deferBooking) {
+        await enqueueShopifyAddressCorrection(supabase, {
+          organizationId: input.organizationId,
+          orderId: existing.order_id as string,
+          addressId: existingOrder.shipping_address_id,
+          userId: input.userId,
+          fingerprint: corrected.fingerprint,
+          sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
+          bookingIntent,
+          allowRequeue: true,
+        }).catch(() => undefined);
+      }
+    }
+    return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string, deferBooking };
   }
 
   const eligibility = evaluateShopifyOrderEligibility(input.remote);
@@ -2953,6 +3030,25 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
     shipment: null,
   });
   const parcelExtras = autopackChoice ? autopackShipmentExtras(autopackChoice) : ruleExtras;
+  const shopifyDirectBooking =
+    input.enqueueBooking !== false &&
+    contact.readyForBooking &&
+    resolvedPaymentStatus !== "PENDING" &&
+    !["ON_HOLD", "SCHEDULED", "IN_PROGRESS", "REQUEST_DECLINED"].includes(eligibility.displayStatus);
+  const bookingIntent = {
+    enqueueBooking: !autoShopifyProcessing && Boolean(input.createShipment) && shopifyDirectBooking,
+    enrollInQueue: input.enrollInQueue === true,
+  };
+  const corrected = await prepareShopifyAddressForBooking(supabase, {
+    organizationId: input.organizationId,
+    orderId: order.id as string,
+    addressId: shippingId,
+    userId: input.userId,
+    sourceUpdatedAt: sourceUpdatedAt,
+    bookingIntent,
+    allowRequeue: false,
+  });
+  const deferBooking = shopifyBookingWaitsForAddressCorrection(corrected.deferBooking);
   const shipmentCtx = {
     userId: input.userId ?? "",
     email: null,
@@ -2979,10 +3075,8 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
       const { createShipmentsForOrders } = await import("@/modules/shipments/service");
       await createShipmentsForOrders(supabase, shipmentCtx, [order.id], {
         enqueueBooking:
-          input.enqueueBooking !== false &&
-          contact.readyForBooking &&
-          resolvedPaymentStatus !== "PENDING" &&
-          !["ON_HOLD", "SCHEDULED", "IN_PROGRESS", "REQUEST_DECLINED"].includes(eligibility.displayStatus),
+          shopifyDirectBooking &&
+          !deferBooking,
         runBookingNow: false,
         setOrderProcessing: false,
         ...parcelExtras,
@@ -3003,7 +3097,20 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
     });
   }
 
-  return { imported: true, updated: false, skipped: false, orderId: order.id as string };
+  if (deferBooking) {
+    await enqueueShopifyAddressCorrection(supabase, {
+      organizationId: input.organizationId,
+      orderId: order.id as string,
+      addressId: shippingId,
+      userId: input.userId,
+      fingerprint: corrected.fingerprint,
+      sourceUpdatedAt: sourceUpdatedAt,
+      bookingIntent,
+      allowRequeue: false,
+    }).catch(() => undefined);
+  }
+
+  return { imported: true, updated: false, skipped: false, orderId: order.id as string, deferBooking };
 }
 
 /** Exported for tests: which booking path a Shopify import uses. */
