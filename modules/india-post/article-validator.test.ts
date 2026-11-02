@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mapShipmentToArticle } from "@/modules/india-post/article-mapper";
-import { assertValidatedArticle, validateIndiaPostArticle } from "@/modules/india-post/article-validator";
+import { assertValidatedArticle, isParcelDimensionBookingError, validateIndiaPostArticle } from "@/modules/india-post/article-validator";
 import { assertPayloadCoversDocumentedFields, indiaPostBookingArticle, serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
 import { splitIndiaPostBookingResult } from "@/modules/india-post/booking-apply";
 import { chunkIds, indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
@@ -269,6 +269,18 @@ describe("booking batch transport", () => {
       if (failedBarcode) expect(split.failed.size).toBe(1);
       expect(chunkIds(barcodes, 50).flat()).toHaveLength(size);
     }
+  });
+});
+
+describe("isParcelDimensionBookingError", () => {
+  it("matches India Post box errors the merchant can fix by editing size", () => {
+    expect(
+      isParcelDimensionBookingError("Parcel length, breadth and height are required and must be within India Post limits.")
+    ).toBe(true);
+    expect(isParcelDimensionBookingError("Length must be between 14 and 150 cm.")).toBe(true);
+    expect(isParcelDimensionBookingError("Breadth/diameter must be between 9 and 150 cm.")).toBe(true);
+    expect(isParcelDimensionBookingError("Height must be between 1 and 150 cm.")).toBe(true);
+    expect(isParcelDimensionBookingError("fetch failed")).toBe(false);
   });
 });
 

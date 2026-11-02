@@ -22,9 +22,11 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
+import { BookingErrorCell, BookingErrorDialog, type FinalErrorStatus } from "@/components/orders/address-check-cell";
 import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
 import { ShopifyPaymentConfirm } from "@/components/orders/shopify-payment-confirm";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
+import { PrebookingReviewDialog } from "@/components/orders/prebooking-review-dialog";
 import { AddToQueueButton } from "@/components/booking-queue/add-to-queue-button";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import {
@@ -178,6 +180,13 @@ export default function OrdersPage() {
   const [source, setSource] = useState("all");
   const [payment, setPayment] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
+  const [reviewIds, setReviewIds] = useState<string[] | null>(null);
+  const [checkingIds, setCheckingIds] = useState<string[]>([]);
+  const [parcelOrder, setParcelOrder] = useState<OrderRecord | null>(null);
+  const [errorDialog, setErrorDialog] = useState<{ orderId: string; confirmForce: boolean } | null>(null);
+  const openParcelEditor = (order: OrderRecord) => {
+    window.setTimeout(() => setParcelOrder(order), 0);
+  };
   const [dateFilter, setDateFilter] = useState<OrderDateFilterValue>({ kind: "all" });
   const [confirmFulfill, setConfirmFulfill] = useState(false);
   const [columnsReady, setColumnsReady] = useState(false);
@@ -373,6 +382,19 @@ export default function OrdersPage() {
   });
 
   const list = asPaginated<OrderRecord>(query.data, ["orders", "items"]);
+  const visibleOrderIds = list.items.map((row) => row.id).join(",");
+  const errorStatuses = useQuery({
+    queryKey: ["order-error-status", visibleOrderIds],
+    enabled: list.items.length > 0,
+    staleTime: 60_000,
+    queryFn: () =>
+      api<{ orders: Array<FinalErrorStatus & { orderId: string }> }>("/api/v1/orders/error-status", {
+        method: "POST",
+        body: JSON.stringify({ orderIds: visibleOrderIds.split(",").filter(Boolean) }),
+      }),
+  });
+  const errorByOrder = new Map((errorStatuses.data?.orders ?? []).map((row) => [row.orderId, row]));
+  const errorDialogOrder = errorDialog ? list.items.find((row) => row.id === errorDialog.orderId) ?? null : null;
   const dateCounts = query.data?.counts ?? { all: list.total, today: undefined, yesterday: undefined };
   const tariffSender = tariffCapabilities.data?.senderChoices.find((choice) => choice.id === "pickup")
     ?? tariffCapabilities.data?.senderChoices[0];
@@ -555,6 +577,22 @@ export default function OrdersPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const forceBook = useMutation({
+    mutationFn: (shipmentId: string) =>
+      api<{ message?: string }>(`/api/v1/shipments/${shipmentId}/force-book`, {
+        method: "POST",
+        body: JSON.stringify({ confirm: true }),
+      }),
+    onSuccess: (result) => {
+      toast.success(result.message || "Force book scheduled with the same barcode.");
+      setErrorDialog(null);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["order-error-status"] });
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const setService = useMutation({
     mutationFn: ({ orderId, service }: { orderId: string; service: string }) =>
       api(`/api/v1/orders/${orderId}/service`, {
@@ -688,6 +726,13 @@ export default function OrdersPage() {
     );
   }
 
+  function onErrorAction(row: OrderRecord, action: "force" | "parcel" | "review" | "open" | "details") {
+    if (action === "parcel") openParcelEditor(row);
+    else if (action === "review") setReviewIds([row.id]);
+    else if (action === "open") router.push(`/dashboard/orders/${row.id}`);
+    else setErrorDialog({ orderId: row.id, confirmForce: action === "force" });
+  }
+
   function rowActions(row: OrderRecord) {
     const pending = ship.isPending && (ship.variables?.orderIds ?? []).includes(row.id);
     const menu = orderStageMenu(row.status, row.source, row.paymentStatus ?? row.payment_status);
@@ -705,7 +750,10 @@ export default function OrdersPage() {
               disabled={pending}
               aria-label={next.label}
               title={next.label}
-              onClick={() => ship.mutate({ orderIds: [row.id], action: next.action })}
+              onClick={() => {
+                if (next.action === "fulfill") setReviewIds([row.id]);
+                else ship.mutate({ orderIds: [row.id], action: next.action });
+              }}
             >
               <Truck className="size-3.5" />
             </Button>
@@ -728,7 +776,10 @@ export default function OrdersPage() {
                 <DropdownMenuItem
                   className="font-semibold"
                   disabled={pending}
-                  onSelect={() => ship.mutate({ orderIds: [row.id], action: next.action })}
+                  onSelect={() => {
+                    if (next.action === "fulfill") setReviewIds([row.id]);
+                    else ship.mutate({ orderIds: [row.id], action: next.action });
+                  }}
                 >
                   {next.label}
                 </DropdownMenuItem>
@@ -829,11 +880,24 @@ export default function OrdersPage() {
           {
             id: "dimensions",
             header: "Parcel",
-            className: "w-[7.5rem] px-2 whitespace-nowrap",
-            cell: (row: OrderRecord) => <OrderDimensionBadge order={row} />,
+            className: "w-[7.5rem] min-w-[7.5rem] px-2 whitespace-normal",
+            cell: (row: OrderRecord) => <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />,
           } satisfies DataTableColumn<OrderRecord>,
         ]
       : []),
+    {
+      id: "error",
+      header: "Error status",
+      className: "w-[16rem] whitespace-normal",
+      cell: (row) => (
+        <BookingErrorCell
+          order={row}
+          checking={checkingIds.includes(row.id)}
+          finalStatus={errorByOrder.get(row.id)}
+          onAction={(action) => onErrorAction(row, action)}
+        />
+      ),
+    },
     ...(visibleColumns.payment
       ? [
           {
@@ -1002,7 +1066,7 @@ export default function OrdersPage() {
                   variant="secondary"
                   size="xs"
                   disabled={ship.isPending}
-                  onClick={() => ship.mutate({ orderIds: selected, action: "fulfill" })}
+                  onClick={() => setReviewIds(selected)}
                 >
                   <Truck className="size-4" />
                   Ship
@@ -1170,6 +1234,44 @@ export default function OrdersPage() {
         </div>
       ) : null}
 
+      <PrebookingReviewDialog
+        open={reviewIds !== null}
+        onOpenChange={(next) => {
+          if (!next) setReviewIds(null);
+        }}
+        orderIds={reviewIds ?? []}
+        onCheckingChange={setCheckingIds}
+        onBookReady={(ids) => ship.mutate({ orderIds: ids, action: "fulfill" })}
+      />
+      {errorDialogOrder ? (
+        <BookingErrorDialog
+          key={`${errorDialogOrder.id}:${errorDialog?.confirmForce ? "force" : "details"}`}
+          order={errorDialogOrder}
+          finalStatus={errorByOrder.get(errorDialogOrder.id)}
+          confirmForce={errorDialog?.confirmForce}
+          forcing={forceBook.isPending}
+          onOpenChange={(next) => {
+            if (!next && !forceBook.isPending) setErrorDialog(null);
+          }}
+          onAction={(action) => {
+            setErrorDialog(null);
+            onErrorAction(errorDialogOrder, action);
+          }}
+          onForce={() => {
+            if (errorDialogOrder.shipment?.id) forceBook.mutate(errorDialogOrder.shipment.id);
+          }}
+        />
+      ) : null}
+      {parcelOrder ? (
+        <OrderDimensionBadge
+          order={list.items.find((item) => item.id === parcelOrder.id) ?? parcelOrder}
+          dialogOnly
+          open
+          onOpenChange={(next) => {
+            if (!next) setParcelOrder(null);
+          }}
+        />
+      ) : null}
       <DataTable
         columns={columns}
         data={list.items}
@@ -1255,7 +1357,13 @@ export default function OrdersPage() {
                       onPointerDown={(event) => event.stopPropagation()}
                     >
                       <StatusBadge value={row.source} />
-                      <OrderDimensionBadge order={row} />
+                      <BookingErrorCell
+                        order={row}
+                        checking={checkingIds.includes(row.id)}
+                        finalStatus={errorByOrder.get(row.id)}
+                        onAction={(action) => onErrorAction(row, action)}
+                      />
+                      <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />
                       <ShopifyPaymentConfirm order={row} />
                     </div>
                     <div className="flex items-center justify-between gap-2">

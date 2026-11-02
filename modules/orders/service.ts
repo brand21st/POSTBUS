@@ -38,7 +38,7 @@ import {
 } from "@/modules/orders/order-number";
 import {
   classifyStoredShippingAddress,
-  validationPatchFromClassification,
+  validationPatchPendingPinCheck,
 } from "@/modules/shopify/shipping-contact";
 
 type CreateInput = z.infer<typeof createOrderSchema> & { status?: OrderStatus };
@@ -47,8 +47,9 @@ type OrderListQuery = z.infer<typeof orderListQuery>;
 
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
+// Fingerprint stays off this query until the migration is applied. The other address fields already exist.
 const ORDER_LIST_SELECT =
-  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, india_post_estimate_amount, india_post_estimated_at, india_post_estimate_key, parcel_weight_mode, parcel_weight_grams, customers(name, phone), shipping_address:addresses!shipping_address_id(pincode), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at, metadata)";
+  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, india_post_estimate_amount, india_post_estimated_at, india_post_estimate_key, parcel_weight_mode, parcel_weight_grams, customers(name, phone), shipping_address:addresses!shipping_address_id(name, phone, line1, line2, line3, city, state, pincode, country, address_validation_status, address_validation_errors), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at, metadata, last_error, last_error_code)";
 
 function wantsOrderCounts(query: OrderListQuery) {
   const value = (query.includeCounts ?? "").toLowerCase();
@@ -404,7 +405,7 @@ function insertAddress(
       pincode: address.pincode,
       country: address.country ?? "IN",
       address_manual_override: true,
-      ...validationPatchFromClassification(classified, "manual"),
+      ...validationPatchPendingPinCheck(classified, "manual"),
     })
     .select()
     .single()
@@ -571,6 +572,19 @@ export async function updateOrderShippingAddress(
 
   const phone = input.phone ? extractIndiaMobileDigits(input.phone) ?? input.phone : null;
   const name = input.name?.trim() || null;
+  if (order.shipping_address_id && input.expectedFingerprint) {
+    const { data: current, error: currentError } = await supabase
+      .from("addresses")
+      .select("address_validation_fingerprint")
+      .eq("id", order.shipping_address_id)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (currentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, currentError.message);
+    const storedFingerprint = (current as { address_validation_fingerprint?: string | null } | null)?.address_validation_fingerprint;
+    if (storedFingerprint && storedFingerprint !== input.expectedFingerprint) {
+      throw new AppError(ERROR_CODES.CONFLICT, "This address was changed. Reload and review it again.");
+    }
+  }
   const classified = classifyStoredShippingAddress({
     name,
     phone,
@@ -591,7 +605,7 @@ export async function updateOrderShippingAddress(
     pincode: input.pincode,
     country: input.country ?? "IN",
     address_manual_override: true,
-    ...validationPatchFromClassification(classified, "manual"),
+    ...validationPatchPendingPinCheck(classified, "manual"),
   };
 
   if (order.shipping_address_id) {
@@ -696,7 +710,7 @@ export async function restoreOrderShippingAddress(supabase: SupabaseClient, ctx:
     .update({
       ...restored,
       address_manual_override: true,
-      ...validationPatchFromClassification(classified, "restore"),
+      ...validationPatchPendingPinCheck(classified, "restore"),
     })
     .eq("id", address.id)
     .eq("organization_id", ctx.organizationId);
@@ -719,7 +733,7 @@ export async function acceptOrderShippingAddress(supabase: SupabaseClient, ctx: 
     .from("addresses")
     .update({
       address_manual_override: true,
-      ...validationPatchFromClassification(classified, "manual"),
+      ...validationPatchPendingPinCheck(classified, "manual"),
     })
     .eq("id", address.id)
     .eq("organization_id", ctx.organizationId);
@@ -742,7 +756,7 @@ export async function revalidateOrderShippingAddress(supabase: SupabaseClient, c
       .from("addresses")
       .update({
         address_manual_override: override ? true : null,
-        ...validationPatchFromClassification(classified, "revalidate"),
+        ...validationPatchPendingPinCheck(classified, "revalidate"),
       })
       .eq("id", address.id)
       .eq("organization_id", ctx.organizationId);
@@ -1047,6 +1061,9 @@ export async function confirmWhatsAppOrder(
         ...(input.city ? { city: input.city.trim() } : {}),
         ...(input.state ? { state: input.state.trim() } : {}),
         ...(input.pincode ? { pincode: input.pincode.trim() } : {}),
+        address_validation_status: null,
+        address_validation_fingerprint: null,
+        address_review_required: true,
       })
       .eq("id", order.shipping_address_id)
       .eq("organization_id", ctx.organizationId);

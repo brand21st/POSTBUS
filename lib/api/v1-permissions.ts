@@ -17,6 +17,8 @@ export function permissionForTenantRoute(
   if (key === "PATCH bookings/excel-settings") return "integrations.manage";
   // Bulk Booking automation decides whether orders book without a person: owners and admins.
   if (key === "PATCH booking-queue/settings") return "integrations.manage";
+  if (key === "POST bookings/precheck") return "orders.write";
+  if (key === "POST orders/error-status") return "orders.read";
   if (root === "bookings" || root === "booking-queue") {
     return method === "GET" ? "shipments.read" : "shipments.write";
   }

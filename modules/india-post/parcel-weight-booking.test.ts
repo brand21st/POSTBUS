@@ -56,6 +56,7 @@ function chainableWrite(
   self.eq = next;
   self.in = next;
   self.is = next;
+  self.filter = next;
   self.select = next;
   self.maybeSingle = async () => ({ data, error: null });
   self.then = (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>

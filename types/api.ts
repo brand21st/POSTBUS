@@ -172,6 +172,7 @@ export type AddressSummary = {
   pincode?: string | null;
   country?: string | null;
   address_validation_status?: string | null;
+  address_validation_fingerprint?: string | null;
   address_review_required?: boolean | null;
   address_validation_errors?: Array<{ message?: string } | string> | null;
   address_normalization_source?: string | null;
@@ -349,6 +350,67 @@ export type BulkBookingIssue = {
   error: string;
   status: "Failed";
   category: string;
+};
+
+export type PrebookingUiStatus =
+  | "not_checked"
+  | "checking"
+  | "ready"
+  | "needs_review"
+  | "fix_required"
+  | "validation_unavailable";
+
+export type PrebookingIssue = {
+  code: string;
+  field?: string;
+  message: string;
+  blocking?: boolean;
+  suggestion?: {
+    line1?: string;
+    line2?: string;
+    line3?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+  };
+  offices?: Array<{ officeId: string; name: string; city: string; state: string }>;
+};
+
+export type PrebookingOrderResult = {
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  source: string;
+  status: PrebookingUiStatus;
+  blocking: boolean;
+  fingerprint: string;
+  issues: PrebookingIssue[];
+  address: {
+    name: string;
+    phone: string;
+    line1: string;
+    line2: string;
+    line3: string;
+    city: string;
+    state: string;
+    pincode: string;
+    country: string;
+  };
+  parcel: {
+    weightGrams: number;
+    lengthCm: number;
+    widthCm: number;
+    heightCm: number;
+  } | null;
+};
+
+export type PrebookingCheckResult = {
+  total: number;
+  ready: number;
+  fixRequired: number;
+  needsReview: number;
+  unavailable: number;
+  orders: PrebookingOrderResult[];
 };
 
 export type BulkBookingResult = {

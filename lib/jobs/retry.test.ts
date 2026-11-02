@@ -57,4 +57,11 @@ describe("classifyProviderError", () => {
     }
     expect(classifyProviderError({ status: 422, message: "unprocessable" }).retryable).toBe(false);
   });
+
+  it("retries Node fetch failures instead of treating them as validation", () => {
+    const failed = classifyProviderError({ name: "TypeError", message: "fetch failed" });
+    expect(failed.retryable).toBe(true);
+    expect(failed.code).toBe("ECONNRESET");
+    expect(failed.message).not.toMatch(/fetch failed/i);
+  });
 });

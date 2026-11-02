@@ -272,9 +272,22 @@ export async function handleCommerceRoutes(
     return { ...order, shipment: shipment ?? null };
   }
 
+  if (key === "POST orders/error-status") {
+    const { explainOrderErrorStatuses } = await import("@/modules/orders/error-status");
+    const body = (await request.json().catch(() => ({}))) as { orderIds?: string[] };
+    return explainOrderErrorStatuses(supabase, ctx, body.orderIds ?? []);
+  }
+
   if (key === "POST orders/bulk/status") {
     const body = bulkOrderStatusSchema.parse(await request.json());
     return bulkUpdateOrderStatus(supabase, ctx, body);
+  }
+
+  if (key === "POST bookings/precheck") {
+    const { precheckOrders } = await import("@/modules/orders/prebooking-validation");
+    const body = await request.json();
+    const orderIds: string[] = body.orderIds ?? [];
+    return precheckOrders(supabase, ctx, orderIds, { allowAi: body.allowAi !== false });
   }
 
   if (key === "POST bookings/validate") {
@@ -371,6 +384,22 @@ export async function handleCommerceRoutes(
   if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "reconcile-booking") {
     const { reconcileUncertainBooking } = await import("@/modules/india-post/booking-reconcile");
     return reconcileUncertainBooking(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "force-book") {
+    const body = (await request.json().catch(() => ({}))) as { confirm?: boolean };
+    if (body.confirm !== true) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Confirm force book to submit this article again.");
+    }
+    const { forceBookUnknownShipment } = await import("@/modules/india-post/booking-force-retry");
+    const { reconcileUncertainBooking } = await import("@/modules/india-post/booking-reconcile");
+    try {
+      const tracked = await reconcileUncertainBooking(supabase, ctx, slugs[1]);
+      if (tracked.reconciled) return tracked;
+    } catch (error) {
+      if (!(error instanceof AppError) || error.code !== ERROR_CODES.CONFLICT) throw error;
+    }
+    return forceBookUnknownShipment(supabase, ctx, slugs[1]);
   }
 
   if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "india-post-label") {

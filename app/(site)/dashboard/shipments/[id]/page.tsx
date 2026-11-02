@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardList, ExternalLink, RefreshCw, Truck } from "lucide-react";
 import { BookingRetryPanel } from "@/components/shipments/booking-retry-panel";
+import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
 import { toast } from "sonner";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
@@ -23,13 +24,14 @@ import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
+import { isParcelDimensionBookingError } from "@/modules/india-post/article-validator";
 import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { TRACKING_REFRESH_MESSAGES } from "@/modules/india-post/tracking-refresh-messages";
 import { FEATURE } from "@/modules/billing/entitlements";
 import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 import { indiaPostServiceLabel, type MemberRole } from "@/types/domain";
 import { dimensionSourceLabel, formatParcelSize, readParcelDimensionSource } from "@/modules/shopify/dimensions";
-import type { ShipmentManifestLink, ShipmentRecord, TrackingEvent } from "@/types/api";
+import type { OrderRecord, ShipmentManifestLink, ShipmentRecord, TrackingEvent } from "@/types/api";
 
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -38,6 +40,7 @@ export default function ShipmentDetailPage() {
   const entitlements = usePlanEntitlements();
   const invoicesLocked = !entitlements.loading && !entitlements.allows(FEATURE.invoices);
   const canSync = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "shipments.write");
+  const [parcelOpen, setParcelOpen] = useState(false);
 
   const shipment = useQuery({
     queryKey: ["shipment", params.id],
@@ -52,6 +55,13 @@ export default function ShipmentDetailPage() {
       return shipmentNeedsLiveTracking(current.state.data) ? 15_000 : false;
     },
     refetchIntervalInBackground: true,
+  });
+
+  const orderId = shipment.data?.orderId ?? shipment.data?.order_id;
+  const order = useQuery({
+    queryKey: ["order", orderId],
+    queryFn: () => api<OrderRecord>(`/api/v1/orders/${orderId}`),
+    enabled: Boolean(orderId) && (parcelOpen || isParcelDimensionBookingError(shipment.data?.lastError ?? shipment.data?.last_error)),
   });
 
   const sync = useMutation({
@@ -185,6 +195,14 @@ export default function ShipmentDetailPage() {
   const providerError = record.lastError ?? record.last_error;
   const trackingLookupFailed = /tracking lookup failed/i.test(providerError ?? "");
   const statusValue = indiaPostDisplayShipmentStatus(record);
+  const parcelError = isParcelDimensionBookingError(providerError);
+  const canEditParcel = canSync && !bookedAt;
+  const parcelOrder: OrderRecord = {
+    ...(order.data ?? { id: String(orderId || record.id) }),
+    id: String(orderId || record.id),
+    shipment: record,
+    indiaPostService: record.serviceCode ?? record.service_code ?? order.data?.indiaPostService,
+  };
 
   return (
     <div className="space-y-6">
@@ -251,7 +269,14 @@ export default function ShipmentDetailPage() {
                 Article is booked. India Post tracking often stays empty until the first post-office scan.
               </p>
             ) : providerError ? (
-              <p className="whitespace-pre-wrap break-words text-error">{providerError}</p>
+              <div className="space-y-2">
+                <p className="whitespace-pre-wrap break-words text-error">{providerError}</p>
+                {parcelError && canEditParcel ? (
+                  <Button type="button" variant="secondary" onClick={() => setParcelOpen(true)}>
+                    Edit parcel size
+                  </Button>
+                ) : null}
+              </div>
             ) : (
               <p className="text-muted">No provider error recorded.</p>
             )}
@@ -265,8 +290,15 @@ export default function ShipmentDetailPage() {
             <p>Service: {indiaPostServiceLabel(record.serviceCode ?? record.service_code)}</p>
             <p>Payment: {record.paymentMode ?? record.payment_mode ?? "—"}</p>
             <p>Weight: {record.weightGrams ?? record.weight_grams ?? "—"} g</p>
-            <p>
-              Size: {formatParcelSize(record.lengthCm ?? record.length_cm, record.widthCm ?? record.width_cm, record.heightCm ?? record.height_cm)}
+            <p className="flex flex-wrap items-center gap-2">
+              <span>
+                Size: {formatParcelSize(record.lengthCm ?? record.length_cm, record.widthCm ?? record.width_cm, record.heightCm ?? record.height_cm)}
+              </span>
+              {canEditParcel ? (
+                <Button type="button" variant="secondary" size="sm" onClick={() => setParcelOpen(true)}>
+                  {parcelError ? "Edit parcel size" : "Edit size"}
+                </Button>
+              ) : null}
             </p>
             {dimensionSourceLabel(readParcelDimensionSource(record.metadata)) ? (
               <p>{dimensionSourceLabel(readParcelDimensionSource(record.metadata))}</p>
@@ -415,6 +447,10 @@ export default function ShipmentDetailPage() {
           </PlanLock>
         </CardContent>
       </Card>
+
+      {canEditParcel ? (
+        <OrderDimensionBadge order={parcelOrder} dialogOnly open={parcelOpen} onOpenChange={setParcelOpen} />
+      ) : null}
     </div>
   );
 }

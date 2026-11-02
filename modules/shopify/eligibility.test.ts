@@ -208,4 +208,24 @@ describe("evaluateShopifyOrderEligibility", () => {
     expect(result.bookableFulfillmentLines.map((line) => line.assignedLocationId)).toEqual(["loc-a", "loc-b"]);
     expect(result.remainingShippableQuantity).toBe(5);
   });
+
+  it("books in-progress Shopify orders from fulfillment-order remaining when line items are empty", () => {
+    const result = evaluateShopifyOrderEligibility(
+      {
+        displayFulfillmentStatus: "IN_PROGRESS",
+        line_items: [],
+      },
+      {
+        fulfillmentOrdersFetched: true,
+        fulfillmentOrders: [
+          openFo(0, { id: "gid://shopify/FulfillmentOrder/closed", status: "CLOSED", supportedActions: [] }),
+          openFo(1, { id: "gid://shopify/FulfillmentOrder/open", status: "IN_PROGRESS" }),
+        ],
+        currentShipmentId: "this-ship",
+      }
+    );
+    expect(result.exclusionReason).toBeNull();
+    expect(result.eligibleForBooking).toBe(true);
+    expect(result.bookableFulfillmentLines[0]?.remainingQuantity).toBe(1);
+  });
 });

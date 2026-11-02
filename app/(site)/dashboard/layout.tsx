@@ -7,7 +7,7 @@ import {
   billingAnnouncementPhase,
   type AnnouncementPlan,
 } from "@/lib/dashboard/billing-announcement";
-import { pickDashboardTopBanner } from "@/lib/dashboard/top-banner";
+import { organizationHasPaidPlan, pickDashboardTopBanner } from "@/lib/dashboard/top-banner";
 import { getOrganizationEntitlements } from "@/modules/billing/entitlements";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -57,7 +57,13 @@ async function loadTopAnnouncement() {
           trialLive: entitlements.trial,
           trialEnd: entitlements.trialEnd,
           trialCohort: entitlements.trialCohort,
+          paidPlan: organizationHasPaidPlan({
+            status: entitlements.status,
+            trialLive: entitlements.trial,
+            coverageEnded: entitlements.coverageEnded,
+          }),
         });
+        if (banner.kind === "none") return null;
         if (banner.kind === "trial") {
           return <TrialStatusBar {...banner.copy} />;
         }

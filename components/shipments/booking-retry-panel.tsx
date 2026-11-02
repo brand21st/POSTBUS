@@ -48,6 +48,24 @@ export function BookingRetryPanel({ shipmentId, canRetry }: { shipmentId: string
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const forceBook = useMutation({
+    mutationFn: () =>
+      api<{ message?: string; scheduled?: boolean; reconciled?: boolean }>(
+        `/api/v1/shipments/${shipmentId}/force-book`,
+        {
+          method: "POST",
+          body: JSON.stringify({ confirm: true }),
+        }
+      ),
+    onSuccess: (result) => {
+      toast.success(result.message || "Force book scheduled.");
+      queryClient.invalidateQueries({ queryKey: ["shipment", shipmentId] });
+      queryClient.invalidateQueries({ queryKey: ["booking-retry", shipmentId] });
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   if (!canRetry || !decision.data) return null;
   const current = decision.data;
   if (current.action === "ALREADY_BOOKED") return null;
@@ -63,9 +81,19 @@ export function BookingRetryPanel({ shipmentId, canRetry }: { shipmentId: string
         <p className="max-w-sm text-sm text-muted">{current.reason}</p>
       )}
       {current.requiresManualReview ? (
-        <Button type="button" variant="secondary" onClick={() => reconcile.mutate()} disabled={reconcile.isPending}>
-          {reconcile.isPending ? "Checking…" : "Check India Post tracking"}
-        </Button>
+        <>
+          <Button type="button" variant="secondary" onClick={() => reconcile.mutate()} disabled={reconcile.isPending}>
+            {reconcile.isPending ? "Checking…" : "Check India Post tracking"}
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => forceBook.mutate()}
+            disabled={forceBook.isPending}
+          >
+            {forceBook.isPending ? "Force booking…" : "Force book article"}
+          </Button>
+        </>
       ) : null}
     </div>
   );

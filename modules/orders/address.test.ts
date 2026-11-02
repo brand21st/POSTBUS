@@ -29,7 +29,7 @@ const address = {
   country: "IN",
 };
 
-function addressClient(options: { shipmentStatus: string; shippingAddressId?: string | null }) {
+function addressClient(options: { shipmentStatus: string; shippingAddressId?: string | null; fingerprint?: string | null }) {
   const updates: Array<{ table: string; values: unknown }> = [];
   const inserts: Array<{ table: string; values: unknown }> = [];
   const orderRow = {
@@ -50,7 +50,7 @@ function addressClient(options: { shipmentStatus: string; shippingAddressId?: st
       let data: unknown = {};
       if (table === "orders") data = orderRow;
       if (table === "shipments") data = [{ id: "ship-1", status: options.shipmentStatus }];
-      if (table === "addresses") data = { id: "addr-new", ...address };
+      if (table === "addresses") data = { id: "addr-new", ...address, address_validation_fingerprint: options.fingerprint ?? null };
       const payload = { data, error: null };
       const self: Record<string, unknown> = {};
       self.select = () => self;
@@ -91,8 +91,9 @@ describe("updateOrderShippingAddress", () => {
             pincode: "673602",
             country: "IN",
             address_manual_override: true,
-            address_validation_status: "READY",
-            address_review_required: false,
+            address_validation_status: null,
+            address_review_required: true,
+            address_validation_fingerprint: null,
             address_normalization_source: "manual",
           }),
         },
@@ -114,6 +115,17 @@ describe("updateOrderShippingAddress", () => {
         }),
       ])
     );
+  });
+
+  it("rejects a stale address fingerprint", async () => {
+    const client = addressClient({ shipmentStatus: "QUEUED", fingerprint: "stored-fingerprint-value" });
+    await expect(
+      updateOrderShippingAddress(client as never, ctx, "ord-1", {
+        ...address,
+        expectedFingerprint: "client-fingerprint-value",
+      })
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(client.updates).toEqual([]);
   });
 
   it("writes a 91-prefixed number as 10 digits on both customer and address", async () => {
@@ -233,7 +245,8 @@ describe("address review actions", () => {
         expect.objectContaining({
           table: "addresses",
           values: expect.objectContaining({
-            address_validation_status: "READY",
+            address_validation_status: null,
+            address_validation_fingerprint: null,
             address_manual_override: true,
           }),
         }),
@@ -344,7 +357,8 @@ describe("address review actions", () => {
             pincode: "673121",
             address_manual_override: true,
             address_normalization_source: "restore",
-            address_validation_status: "READY",
+            address_validation_status: null,
+            address_validation_fingerprint: null,
           }),
         }),
       ])

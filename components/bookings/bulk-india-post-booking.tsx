@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { PrebookingReviewDialog } from "@/components/orders/prebooking-review-dialog";
 import { api } from "@/lib/hooks/use-api";
 import type { BulkBookingResult } from "@/types/api";
 
@@ -53,6 +54,7 @@ export function BulkIndiaPostBooking({
   iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [result, setResult] = useState<BulkBookingResult | null>(null);
 
   const summary = useQuery({
@@ -125,15 +127,25 @@ export function BulkIndiaPostBooking({
         disabled={selectedIds.length === 0}
         title="Bulk book"
         aria-label="Bulk book"
-        onClick={() => {
-          setOpen(true);
-          setResult(null);
-          if (selectedIds.length) validate.mutate(selectedIds);
-        }}
+        onClick={() => setReviewOpen(true)}
       >
         <Truck className="size-4" />
         {iconOnly ? null : "Bulk book"}
       </Button>
+      {iconOnly ? null : (
+        <Button type="button" variant="ghost" size={size} disabled={selectedIds.length === 0} onClick={() => { setOpen(true); setResult(null); }}>
+          Excel
+        </Button>
+      )}
+      <PrebookingReviewDialog
+        open={reviewOpen}
+        onOpenChange={setReviewOpen}
+        orderIds={selectedIds}
+        onBookReady={(ids) => {
+          queue.mutate(ids);
+          setReviewOpen(false);
+        }}
+      />
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
           <DialogHeader>

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { shopifyPendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { refreshAddressPrebooking } from "@/modules/orders/prebooking-validation";
 import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapExcelRowToArticle, mapShipmentToArticle } from "@/modules/india-post/article-mapper";
@@ -173,6 +174,27 @@ export async function validateOrdersForBooking(
 
   const sender = organizationLabelSender(store.org, store.pickup, store.shop?.shop_name);
   const provider = indiaPostFromRow(store.connection);
+  const refreshedAddresses = new Map<string, Awaited<ReturnType<typeof refreshAddressPrebooking>>>();
+  const refreshQueue = [...(orders ?? [])];
+  let refreshCursor = 0;
+  async function refreshWorker() {
+    while (refreshCursor < refreshQueue.length) {
+      const order = refreshQueue[refreshCursor];
+      refreshCursor += 1;
+      const address = order.shipping_address as { id?: string | null } | null;
+      if (!address?.id) continue;
+      refreshedAddresses.set(
+        order.id as string,
+        await refreshAddressPrebooking(supabase, {
+          organizationId: ctx.organizationId,
+          address: order.shipping_address as never,
+          searchPostOffices: (pin) => provider.searchPostOffices(pin),
+          allowAi: true,
+        })
+      );
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(3, refreshQueue.length) }, () => refreshWorker()));
   const destSample =
     (orders?.[0] as { shipping_address?: { pincode?: string } } | undefined)?.shipping_address?.pincode ?? "";
   let origin: { officeId: string; pincode: string; city: string; state: string } | null = null;
@@ -207,7 +229,7 @@ export async function validateOrdersForBooking(
   const shipmentStats = countsFromShipments(orders?.flatMap((order) => (order.shipments as Array<{ status?: string }>) ?? []) ?? []);
 
   for (const order of orders ?? []) {
-    const address = order.shipping_address as {
+    const address = (refreshedAddresses.get(order.id as string) ?? order.shipping_address) as {
       name?: string;
       company_name?: string | null;
       line1?: string;

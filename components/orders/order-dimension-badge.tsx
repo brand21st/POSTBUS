@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Loader2, Package, Scale, Zap } from "lucide-react";
 import { toast } from "sonner";
@@ -24,13 +24,24 @@ import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
 import { isParcelArticle } from "@/modules/india-post/article-validator";
 import { indiaPostStatusOf, isIndiaPostAcceptedStatus, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
-import { dimensionSourceLabel, formatParcelSize, readParcelDimensionSource } from "@/modules/shopify/dimensions";
+import {
+  dimensionSourceLabel,
+  dimensionSourceShort,
+  formatParcelSize,
+  readParcelDimensionSource,
+} from "@/modules/shopify/dimensions";
 import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
 import type { OrderRecord } from "@/types/api";
 
 type Props = {
   order: OrderRecord;
   disabled?: boolean;
+  /** Table button asks the page to open one dialog outside the row. */
+  onEdit?: () => void;
+  /** Renders only the editor, owned by the page so a table refresh cannot close it. */
+  dialogOnly?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 const WEIGHT_PRESETS = [
@@ -43,15 +54,18 @@ const WEIGHT_PRESETS = [
 
 function ParcelPill({
   tone,
+  className,
   children,
 }: {
   tone: "ok" | "action" | "locked" | "neutral";
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
     <span
       className={cn(
         "inline-flex max-w-full items-center gap-0.5 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-4",
+        className,
         tone === "ok" &&
           "border border-emerald-200/80 bg-emerald-50 text-emerald-900 shadow-2xs transition-colors hover:border-emerald-300 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300",
         tone === "action" &&
@@ -67,8 +81,22 @@ function ParcelPill({
   );
 }
 
-export function OrderDimensionBadge({ order, disabled }: Props) {
-  const [open, setOpen] = useState(false);
+export function OrderDimensionBadge({ order, disabled, onEdit, dialogOnly, open: openProp, onOpenChange }: Props) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = dialogOnly ? Boolean(openProp) : uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (dialogOnly) onOpenChange?.(next);
+    else setUncontrolledOpen(next);
+  };
+  // The click that opened the dialog can land as an outside click; ignore closes for a moment.
+  const openedAt = useRef(0);
+  useEffect(() => {
+    openedAt.current = open ? performance.now() : 0;
+  }, [open]);
+  const requestOpenChange = (next: boolean) => {
+    if (!next && performance.now() - openedAt.current < 500) return;
+    setOpen(next);
+  };
   const lengthId = useId();
   const widthId = useId();
   const heightId = useId();
@@ -81,12 +109,13 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const width = Number(shipment?.widthCm ?? shipment?.width_cm ?? 0);
   const height = Number(shipment?.heightCm ?? shipment?.height_cm ?? 0);
   const hasDimensions = length > 0 && width > 0 && height > 0;
-  const sourceLabel = dimensionSourceLabel(
-    readParcelDimensionSource(
-      (shipment as { metadata?: unknown } | null | undefined)?.metadata
-    )
+  const dimensionSource = readParcelDimensionSource(
+    (shipment as { metadata?: unknown } | null | undefined)?.metadata
   );
+  const sourceLabel = dimensionSourceLabel(dimensionSource);
+  const sourceShort = dimensionSourceShort(dimensionSource);
   const sizeLabel = formatParcelSize(length, width, height);
+  const compactSize = sizeLabel.replace(" cm", "").replaceAll(" × ", "×");
 
   const currentWeightGrams = bookingBoxWeightGrams({
     parcelWeightMode: order.parcelWeightMode ?? order.parcel_weight_mode,
@@ -123,11 +152,25 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   );
 
   // Controlled form states
-  const [lengthInput, setLengthInput] = useState("");
-  const [widthInput, setWidthInput] = useState("");
-  const [heightInput, setHeightInput] = useState("");
-  const [boxWeightInput, setBoxWeightInput] = useState("");
-  const [itemWeights, setItemWeights] = useState<Record<string, string>>({});
+  const [lengthInput, setLengthInput] = useState(() => (length > 0 ? String(length) : ""));
+  const [widthInput, setWidthInput] = useState(() => (width > 0 ? String(width) : ""));
+  const [heightInput, setHeightInput] = useState(() => (height > 0 ? String(height) : ""));
+  const [boxWeightInput, setBoxWeightInput] = useState(() => {
+    const savedBox = Number(
+      order.parcelWeightGrams ?? order.parcel_weight_grams ?? shipment?.weightGrams ?? shipment?.weight_grams
+    );
+    if (Number.isFinite(savedBox) && savedBox > 0) return String(Math.round(savedBox));
+    if (currentWeightGrams > 0) return String(Math.round(currentWeightGrams));
+    return "";
+  });
+  const [itemWeights, setItemWeights] = useState<Record<string, string>>(() => {
+    const initialWeights: Record<string, string> = {};
+    lineItemsList.forEach((item) => {
+      const g = Number(item.weightGrams ?? item.weight_grams);
+      initialWeights[item.id] = Number.isFinite(g) && g > 0 ? String(Math.round(g)) : "";
+    });
+    return initialWeights;
+  });
   const [formError, setFormError] = useState<string | null>(null);
   // Where the box came from: a saved pack size, an AutoPack suggestion, or typed.
   const [pickedPresetId, setPickedPresetId] = useState<string | null>(null);
@@ -199,6 +242,12 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["order", order.id] });
       queryClient.invalidateQueries({ queryKey: ["autopack", order.id] });
+      if (shipment?.id) {
+        queryClient.invalidateQueries({ queryKey: ["shipment", shipment.id] });
+        queryClient.invalidateQueries({ queryKey: ["booking-retry", shipment.id] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
+      queryClient.invalidateQueries({ queryKey: ["order-error-status"] });
       setOpen(false);
     },
     onError: (err: unknown) => {
@@ -291,7 +340,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       return (
         <ParcelPill tone="neutral">
           <span className="tabular-nums" title={`Document: ${sizeLabel}`}>
-            {sizeLabel}
+            {compactSize}
           </span>
         </ParcelPill>
       );
@@ -336,9 +385,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
     triggerTitle = `${sizeLabel} saved. Weight missing.${optionalHint}`;
     triggerContent = (
       <span className="flex items-center gap-1">
-        <span className="text-[11px] font-medium tabular-nums text-muted">
-          {length}×{width}×{height}
-        </span>
+        <span className="text-[11px] font-medium tabular-nums text-muted">{compactSize}</span>
         <ParcelPill tone={missingTone}>
           <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
           <span>No wt</span>
@@ -350,42 +397,29 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       ? `Parcel ${sizeLabel} · ${currentWeightGrams}g · Booked${sourceLabel ? ` · ${sourceLabel}` : ""}`
       : `Parcel ${sizeLabel} · ${currentWeightGrams}g · Click to edit${sourceLabel ? ` · ${sourceLabel}` : ""}`;
     triggerContent = (
-      <ParcelPill tone="ok">
-        <Check className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-        <span className="tabular-nums font-medium">
-          {sizeLabel}
-          {currentWeightGrams > 0 ? ` · ${currentWeightGrams}g` : ""}
+      <span className="flex min-w-0 flex-col items-start gap-0.5 whitespace-normal leading-none">
+        <ParcelPill tone="ok" className="max-w-full overflow-hidden">
+          <Check className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          <span className="min-w-0 truncate tabular-nums font-medium">{compactSize}</span>
+        </ParcelPill>
+        <span className="max-w-full truncate px-0.5 text-[10px] font-medium tabular-nums text-muted">
+          {currentWeightGrams > 0 ? `${currentWeightGrams}g` : null}
+          {currentWeightGrams > 0 && sourceShort ? " · " : null}
+          {sourceShort}
         </span>
-        {sourceLabel ? <span className="font-medium text-muted">{sourceLabel}</span> : null}
-      </ParcelPill>
+      </span>
     );
   }
 
-  return (
-    <>
-      <button
-        type="button"
-        disabled={isLocked}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (!isLocked) setOpen(true);
-        }}
-        title={triggerTitle}
-        aria-label={triggerTitle}
-        className={cn(
-          "inline-flex max-w-full text-left transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 rounded-full",
-          !isLocked ? "cursor-pointer active:scale-[0.98]" : "cursor-default"
-        )}
-      >
-        {triggerContent}
-      </button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
+  const dialog = (
+      <Dialog open={open} onOpenChange={requestOpenChange}>
         <DialogContent
           className="sm:max-w-md max-h-[90vh] overflow-y-auto"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
+          onPointerDownOutside={(event) => {
+            if (performance.now() - openedAt.current < 500) event.preventDefault();
+          }}
         >
           <form onSubmit={handleSubmit}>
             <DialogHeader className="gap-1.5">
@@ -729,6 +763,34 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
           </form>
         </DialogContent>
       </Dialog>
+  );
+
+  if (dialogOnly) return dialog;
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={isLocked}
+        onPointerDown={(e) => e.stopPropagation()}
+        onPointerUp={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (isLocked) return;
+          if (onEdit) onEdit();
+          else setOpen(true);
+        }}
+        title={triggerTitle}
+        aria-label={triggerTitle}
+        className={cn(
+          "inline-flex w-full min-w-0 max-w-full text-left whitespace-normal transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 rounded-md",
+          !isLocked ? "cursor-pointer active:scale-[0.98]" : "cursor-default"
+        )}
+      >
+        {triggerContent}
+      </button>
+      {onEdit ? null : dialog}
     </>
   );
 }

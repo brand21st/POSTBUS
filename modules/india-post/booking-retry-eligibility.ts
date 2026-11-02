@@ -1,6 +1,6 @@
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
 import { isAuthoritativeIndiaPostBooking, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
-import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
+import { readCeptForceResubmitAt, readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 
 /** Matches claim_background_jobs stale RUNNING recovery. */
 export const STALE_BOOKING_LOCK_MS = 15 * 60 * 1000;
@@ -76,6 +76,9 @@ const AMBIGUOUS_CODES = new Set([
 export const NEVER_SUBMITTED_CODES = new Set([
   "PRE_POST_TRANSIENT",
   "QUEUE_UNAVAILABLE",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ECONNREFUSED",
   "INVALID_PINCODE",
   "INVALID_ADDRESS",
   "INVALID_WEIGHT",
@@ -172,6 +175,9 @@ function nextAttemptMs(job: NonNullable<BookingRetryJob>) {
  * An empty error code is not that record.
  */
 export function existingBarcodeMayBeSubmitted(shipment: BookingRetryShipment) {
+  if (readCeptForceResubmitAt(shipment.metadata) && shipmentBarcode(shipment.barcode || shipment.trackingNumber || shipment.tracking_number)) {
+    return true;
+  }
   if (readCeptSubmitIntentAt(shipment.metadata)) return false;
   if (shipment.bookedAt ?? shipment.booked_at) return false;
   if (shipmentBarcode(shipment.trackingNumber ?? shipment.tracking_number)) return false;
@@ -197,6 +203,7 @@ export function shipmentOutcomeIsUncertain(
   shipment: BookingRetryShipment,
   job?: BookingRetryJob
 ) {
+  if (readCeptForceResubmitAt(shipment.metadata)) return false;
   const status = statusOf(shipment);
   if (status === "RECOVERY_REQUIRED") return true;
   if (hasSubmissionArtifact(shipment)) return true;
@@ -238,6 +245,8 @@ export function evaluateBookingRetryEligibility(
     });
   }
 
+  const forceResubmit = Boolean(readCeptForceResubmitAt(shipment.metadata));
+
   const job = input.job;
   if (job?.id) {
     const state = jobStatus(job);
@@ -260,13 +269,23 @@ export function evaluateBookingRetryEligibility(
         });
       }
     }
-    if (state === "SUCCEEDED") {
-      return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job.id });
+    if (state === "SUCCEEDED" && !forceResubmit) {
+      const recordedPrePostFailure =
+        status === "FAILED" &&
+        !hasSubmissionArtifact(shipment) &&
+        NEVER_SUBMITTED_CODES.has(errorCodeOf(shipment));
+      if (!recordedPrePostFailure) {
+        return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job.id });
+      }
     }
   }
 
   if (status === "BOOKING") {
     return decision("BOOKING_IN_PROGRESS", shipmentId, { existingJobId: job?.id ?? undefined });
+  }
+
+  if (forceResubmit && (SAFE_STATUSES.has(status) || status === "RECOVERY_REQUIRED")) {
+    return decision("SAFE_TO_REQUEUE", shipmentId, { existingJobId: job?.id ?? undefined });
   }
 
   if (!SAFE_STATUSES.has(status)) {

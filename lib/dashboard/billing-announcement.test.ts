@@ -55,6 +55,25 @@ describe("billing announcement copy", () => {
 });
 
 describe("pickDashboardTopBanner", () => {
+  it("hides the billing banner once a paid plan is active", async () => {
+    const { organizationHasPaidPlan, pickDashboardTopBanner } = await import("@/lib/dashboard/top-banner");
+    expect(
+      organizationHasPaidPlan({ status: "ACTIVE", trialLive: false, coverageEnded: false })
+    ).toBe(true);
+    expect(
+      organizationHasPaidPlan({ status: "ACTIVE", trialLive: false, coverageEnded: true })
+    ).toBe(false);
+    expect(
+      organizationHasPaidPlan({ status: "TRIAL", trialLive: true, coverageEnded: false })
+    ).toBe(false);
+    const banner = pickDashboardTopBanner({
+      phase: "billing",
+      trialLive: false,
+      paidPlan: true,
+    });
+    expect(banner.kind).toBe("none");
+  });
+
   it("keeps a live Business trial on 1 Nov instead of the paid-billing banner", async () => {
     const { pickDashboardTopBanner } = await import("@/lib/dashboard/top-banner");
     const banner = pickDashboardTopBanner({

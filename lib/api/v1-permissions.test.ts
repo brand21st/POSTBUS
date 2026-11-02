@@ -63,6 +63,8 @@ describe("permissionForTenantRoute", () => {
       "shipments.write"
     );
     expect(permissionForTenantRoute("POST", "bookings/validate", ["bookings", "validate"])).toBe("shipments.write");
+    expect(permissionForTenantRoute("POST", "bookings/precheck", ["bookings", "precheck"])).toBe("orders.write");
+    expect(permissionForTenantRoute("POST", "orders/error-status", ["orders", "error-status"])).toBe("orders.read");
     expect(permissionForTenantRoute("GET", "bookings/summary", ["bookings", "summary"])).toBe("shipments.read");
     expect(permissionForTenantRoute("POST", "bookings/excel-imports", ["bookings", "excel-imports"])).toBe(
       "shipments.write"

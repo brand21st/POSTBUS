@@ -622,7 +622,18 @@ export function DataTable<TData extends Record<string, unknown>>({
                         onRowClick && "cursor-pointer",
                         selectedIds?.includes(row.id) && "ring-1 ring-inset ring-brand/20"
                       )}
-                      onClick={() => onRowClick?.(row.original)}
+                      onClick={(event) => {
+                        const target = event.target;
+                        if (!(target instanceof Element)) return;
+                        const parcelCell = target.closest("[data-col-id='dimensions']");
+                        if (parcelCell) {
+                          const edit = parcelCell.querySelector("button");
+                          if (edit instanceof HTMLButtonElement && !edit.contains(target)) edit.click();
+                          return;
+                        }
+                        if (target.closest("button, a, input, textarea, select, label")) return;
+                        onRowClick?.(row.original);
+                      }}
                       onMouseEnter={() => onRowHover?.(row.original)}
                     >
                       {cells.map((cell, index) => {
@@ -642,7 +653,7 @@ export function DataTable<TData extends Record<string, unknown>>({
                           )}
                           style={columnBoxStyle(widths[cell.column.id], boxMode, column?.width)}
                         >
-                          <table.FlexRender cell={cell} />
+                          {column?.cell ? column.cell(row.original) : <table.FlexRender cell={cell} />}
                         </td>
                         );
                       })}

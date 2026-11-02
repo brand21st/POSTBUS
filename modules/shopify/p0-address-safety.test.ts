@@ -118,8 +118,9 @@ describe("P0-04 barcode allocation order", () => {
   it("checks the address gate before allocateNextBarcode in booking-run", () => {
     const source = readFileSync(new URL("./../india-post/booking-run.ts", import.meta.url), "utf8");
     const pending = source.slice(source.indexOf("for (const shipment of pending)"));
-    expect(pending.indexOf("shippingAddressBookingBlock")).toBeGreaterThan(-1);
-    expect(pending.indexOf("shippingAddressBookingBlock")).toBeLessThan(pending.indexOf("allocateNextBarcode"));
+    expect(pending.indexOf("gateAddressForBooking")).toBeGreaterThan(-1);
+    expect(pending.indexOf("gateAddressForBooking")).toBeLessThan(pending.indexOf("allocateNextBarcode"));
+    expect(pending.indexOf("validateIndiaPostArticle")).toBeLessThan(pending.indexOf("allocateNextBarcode"));
   });
 });
 
