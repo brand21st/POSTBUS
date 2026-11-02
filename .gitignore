@@ -25,6 +25,7 @@
 # misc
 .DS_Store
 *.pem
+print-agent-desktop/.tauri/signing.key
 
 # debug
 npm-debug.log*
@@ -41,6 +42,7 @@ yarn-error.log*
 /.staging/
 coolify.local.json
 .cursor/mcp.json
+postbus-production-audit.local.json
 
 # Supabase CLI cache
 supabase/.temp/

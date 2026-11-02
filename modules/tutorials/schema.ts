@@ -19,7 +19,7 @@ export const adminTutorialQuerySchema = z.object({
 
 export const upsertTutorialSchema = z.object({
   title: z.string().trim().min(1).max(200),
-  youtubeUrl: z.string().trim().min(1).max(500),
+  youtubeUrl: z.string().trim().min(1).max(2000),
   categoryId: z.string().uuid(),
   description: z.string().trim().max(2000).optional().nullable(),
   status: tutorialStatusSchema.default("draft"),
@@ -28,7 +28,7 @@ export const upsertTutorialSchema = z.object({
 
 export const patchTutorialSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
-  youtubeUrl: z.string().trim().min(1).max(500).optional(),
+  youtubeUrl: z.string().trim().min(1).max(2000).optional(),
   categoryId: z.string().uuid().optional(),
   description: z.string().trim().max(2000).optional().nullable(),
   status: tutorialStatusSchema.optional(),

@@ -16,6 +16,7 @@ export type MeUser = {
   fullName: string | null;
   avatarUrl: string | null;
   whatsappNumber?: string | null;
+  indiaPostOnboardingDismissedAt?: string | null;
 };
 
 export type MeOrganization = {
@@ -38,6 +39,14 @@ export type MeSubscription = {
   planName?: string | null;
   status?: string | null;
   features?: string[];
+  trial?: boolean;
+  trialEnd?: string | null;
+  coverageEnded?: boolean;
+  /** Server decision: may run paid operations. */
+  entitled?: boolean;
+  accessState?: string | null;
+  /** Plan features whose existing records stay readable after coverage ends. */
+  historyFeatures?: string[];
 };
 
 export type MeResponse = {
@@ -47,6 +56,8 @@ export type MeResponse = {
   organizations?: MeMembership[];
   memberships?: MeMembership[];
   subscription?: MeSubscription | null;
+  merchantApi?: { enabled: boolean };
+  addons?: Array<{ slug: string; accessMode: "FULL" | "READ_ONLY" | "NONE"; status: string }>;
 };
 
 export type OrderListCounts = {
@@ -103,6 +114,14 @@ export type AnalyticsPeriodKpi = {
   orders: number;
   codOrders: number;
   codAmount: number;
+  prepaidOrders: number;
+  prepaidAmount: number;
+  indiaPostBooked: number;
+  indiaPostBookedAmount: number;
+  indiaPostCodBooked: number;
+  indiaPostCodAmount: number;
+  indiaPostPrepaidBooked: number;
+  indiaPostPrepaidAmount: number;
 };
 
 export type AnalyticsSeriesPoint = {
@@ -113,6 +132,9 @@ export type AnalyticsSeriesPoint = {
   orders: number;
   cod: number;
   prepaid: number;
+  indiaPostBooked: number;
+  indiaPostCodAmount: number;
+  indiaPostPrepaidAmount: number;
 };
 
 export type AnalyticsSourceShare = {
@@ -270,6 +292,8 @@ export type OrderRecord = {
   amount_paid?: number | string;
   codAmount?: number | string;
   cod_amount?: number | string;
+  extraCodCharge?: number | string;
+  extra_cod_charge?: number | string;
   currency?: string;
   customer?: CustomerSummary | null;
   customerName?: string | null;
@@ -286,6 +310,12 @@ export type OrderRecord = {
   updated_at?: string;
   indiaPostService?: string | null;
   india_post_service?: string | null;
+  indiaPostEstimateAmount?: number | string | null;
+  india_post_estimate_amount?: number | string | null;
+  indiaPostEstimatedAt?: string | null;
+  india_post_estimated_at?: string | null;
+  indiaPostEstimateKey?: string | null;
+  india_post_estimate_key?: string | null;
   parcelWeightMode?: "auto" | "manual" | string | null;
   parcel_weight_mode?: "auto" | "manual" | string | null;
   parcelWeightGrams?: number | null;
@@ -356,11 +386,25 @@ export type ShipmentRecord = {
   width_cm?: number | null;
   heightCm?: number | null;
   height_cm?: number | null;
+  metadata?: Record<string, unknown> | null;
   shape?: string | null;
   tariffAmount?: number | string | null;
   tariff_amount?: number | string | null;
   lastError?: string | null;
   last_error?: string | null;
+  lastErrorCode?: string | null;
+  last_error_code?: string | null;
+  smartAutoRetry?: {
+    merchantState?: string;
+    class?: string | null;
+    attemptCount?: number;
+    maxAttempts?: number;
+    nextAttemptAt?: string | null;
+    reason?: string;
+    errorCode?: string | null;
+    correctionKind?: string | null;
+    canEditShipment?: boolean;
+  } | null;
   customer?: CustomerSummary | null;
   createdAt?: string;
   created_at?: string;
@@ -490,6 +534,7 @@ export type LabelRecord = {
   printError?: string | null;
   print_error?: string | null;
   printJob?: PrintJobRecord | null;
+  print_job?: PrintJobRecord | null;
   packingLabelId?: string | null;
   packing_label_id?: string | null;
   indiaPostLabelId?: string | null;
@@ -500,17 +545,33 @@ export type LabelRecord = {
   barcode_status?: string | null;
 };
 
-export type ManifestRecord = {
-  id: string;
-  name?: string;
-  status?: string;
-  shipmentCount?: number;
-  shipment_count?: number;
-  fileUrl?: string | null;
-  file_url?: string | null;
-  createdAt?: string;
-  created_at?: string;
+export type {
+  ManifestSummary as ManifestRecord,
+  ManifestDetail,
+  ManifestLine,
+  ManifestTotals,
+} from "@/modules/manifests/service";
+
+export type ManifestListResponse = Paginated<import("@/modules/manifests/service").ManifestSummary> & {
+  summary: { openDrafts: number; awaitingManifest: number; unscannedAfterHandover: number };
 };
+
+export type ManifestEligibleShipment = {
+  shipmentId: string;
+  barcode: string;
+  status: string;
+  orderNumber: string | null;
+  consignee: string | null;
+  pincode: string | null;
+  serviceLabel: string;
+  weightGrams: number;
+  bookedAt: string | null;
+  officeId: string | null;
+  officeName: string | null;
+  hasLabel: boolean;
+};
+
+export type ShipmentManifestLink = { id: string; number: string | null; status: string; date: string };
 
 export type TrackingEvent = {
   id?: string;
@@ -535,6 +596,7 @@ export type NdrSummary = {
   rto: number;
   rtoInTransit: number;
   rtoDelivered: number;
+  unclassifiedTracked: number;
 };
 
 export type NdrShipmentRecord = ShipmentRecord & {
@@ -577,6 +639,10 @@ export type AutomationSettings = {
   auto_shopify_fulfillment?: boolean;
   autoShopifyProcessing?: boolean;
   auto_shopify_processing?: boolean;
+  autoWooCommerceSync?: boolean;
+  auto_woocommerce_sync?: boolean;
+  autoWooCommerceTracking?: boolean;
+  auto_woocommerce_tracking?: boolean;
   autoWatiOrderConfirmation?: boolean;
   auto_wati_order_confirmation?: boolean;
   autoWatiProcessing?: boolean;
@@ -589,6 +655,8 @@ export type AutomationSettings = {
   auto_wati_delivered?: boolean;
   autoLabelPrinting?: boolean;
   auto_label_printing?: boolean;
+  autoPackageSelection?: boolean;
+  auto_package_selection?: boolean;
 };
 
 export type PrintStation = {
@@ -613,6 +681,15 @@ export type PrintStation = {
   offline_message?: string | null;
   defaultDelivery?: "webusb" | "agent";
   default_delivery?: "webusb" | "agent";
+  selectedDeviceId?: string | null;
+  selected_device_id?: string | null;
+  devices?: Array<{
+    id: string;
+    deviceName: string;
+    connection: "online" | "offline";
+    printers: string[];
+    selected: boolean;
+  }>;
 };
 
 export type SavedPrinter = {
@@ -634,6 +711,8 @@ export type PrintingConfiguration = {
   printers: SavedPrinter[];
   autoLabelPrinting?: boolean;
   auto_label_printing?: boolean;
+  paperSize?: string;
+  paper_size?: string;
   labelSizeLabel?: string;
   label_size_label?: string;
 };
@@ -801,6 +880,8 @@ export type IndiaPostConfig = {
   last_error?: string | null;
   uatConfigured?: boolean;
   prodConfigured?: boolean;
+  id?: string | null;
+  connectionId?: string | null;
   bookingWebhookUrl?: string;
   booking_webhook_url?: string;
   eventsWebhookUrl?: string;
@@ -1062,6 +1143,8 @@ export type PublicTrackingEvent = {
 
 export type TutorialStatus = "draft" | "published";
 
+export type TutorialVideoProvider = "youtube" | "vimeo" | "facebook" | "instagram";
+
 export type TutorialCategorySummary = {
   id: string;
   name: string;
@@ -1075,6 +1158,7 @@ export type TutorialPublic = {
   slug: string;
   description: string | null;
   youtubeUrl: string;
+  provider: TutorialVideoProvider;
   thumbnailUrl: string;
   embedUrl: string;
   sortOrder: number;
@@ -1098,6 +1182,7 @@ export type AdminTutorial = {
   slug: string;
   description: string | null;
   youtubeUrl: string;
+  provider: TutorialVideoProvider;
   thumbnailUrl: string;
   embedUrl: string;
   status: TutorialStatus;
@@ -1139,9 +1224,18 @@ export type PublicTrackedShipment = {
   events: PublicTrackingEvent[];
 };
 
+export type TrackingAvailability =
+  | "TRACKING_AVAILABLE"
+  | "TRACKING_NO_SCANS_YET"
+  | "TRACKING_SYNC_PENDING"
+  | "TRACKING_TEMPORARILY_UNAVAILABLE"
+  | "TRACKING_PROVIDER_UNAUTHORIZED"
+  | "TRACKING_DATA_STALE";
+
 export type PublicTrackResult = {
   found: boolean;
-  liveTracking: "ok" | "unavailable" | "not_connected";
+  liveTracking: "ok" | "cached" | "unavailable" | "not_connected";
   liveMessage?: string | null;
+  trackingAvailability?: TrackingAvailability | null;
   shipment?: PublicTrackedShipment | null;
 };

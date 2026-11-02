@@ -1,4 +1,5 @@
 import { indiaPostResolvedBaseUrl } from "@/modules/india-post/environment";
+import { assertStagingAuthIsolation } from "@/lib/env/staging-isolation";
 
 function optional(value: string | undefined) {
   return value?.trim() || "";
@@ -21,6 +22,7 @@ export const env = {
   cronSecret: optional(process.env.CRON_SECRET),
   shopifyApiKey: optional(process.env.SHOPIFY_API_KEY),
   shopifyApiSecret: optional(process.env.SHOPIFY_API_SECRET),
+  shopifyPublicAppApiVersion: optional(process.env.SHOPIFY_PUBLIC_APP_API_VERSION) || "2026-04",
   shopifyScopes:
     optional(process.env.SHOPIFY_SCOPES) ||
     "read_orders,write_orders,read_products,read_fulfillments,write_fulfillments,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders,read_locations",
@@ -34,6 +36,15 @@ export const env = {
     "https://app.indiapost.gov.in/beextcustomer",
   indiaPostBookingBatchSize: optional(process.env.INDIA_POST_BOOKING_BATCH_SIZE) || "1",
   indiaPostBookingConcurrency: optional(process.env.INDIA_POST_BOOKING_CONCURRENCY) || "4",
+  indiaPostBulkEnabled: optional(process.env.INDIA_POST_BULK_ENABLED) || "false",
+  indiaPostTariffQuotesEnabled: optional(process.env.INDIA_POST_TARIFF_QUOTES_ENABLED).toLowerCase() === "true",
+  indiaPostBulkMaxArticles: optional(process.env.INDIA_POST_BULK_MAX_ARTICLES) || "2",
+  indiaPostBulkConcurrency: optional(process.env.INDIA_POST_BULK_CONCURRENCY) || "1",
+  // Empty = webhook HTTP is acknowledged but events are quarantined (not processed). Set official CEPT CIDRs only after India Post confirms them.
+  indiaPostWebhookAllowedCidrs: optional(process.env.INDIA_POST_WEBHOOK_ALLOWED_CIDRS),
+  indiaPostTrackingSyncMinIntervalMs: optional(process.env.INDIA_POST_TRACKING_SYNC_MIN_INTERVAL_MS) || "900000",
+  indiaPostTrackingSyncPageSize: optional(process.env.INDIA_POST_TRACKING_SYNC_PAGE_SIZE) || "500",
+  indiaPostTrackingSyncEnqueueLimit: optional(process.env.INDIA_POST_TRACKING_SYNC_ENQUEUE_LIMIT) || "50",
   razorpayKeyId: optional(process.env.RAZORPAY_KEY_ID),
   razorpayKeySecret: optional(process.env.RAZORPAY_KEY_SECRET),
   razorpayWebhookSecret: optional(process.env.RAZORPAY_WEBHOOK_SECRET),
@@ -44,6 +55,10 @@ export const env = {
   vachatApiKey: optional(process.env.VACHAT_API_KEY),
   vachatApiBaseUrl: optional(process.env.VACHAT_API_BASE_URL),
   vachatWebhookSecret: optional(process.env.VACHAT_WEBHOOK_SECRET),
+  vachatSignupWelcomeTemplateName: optional(process.env.VACHAT_SIGNUP_WELCOME_TEMPLATE_NAME),
+  vachatSignupWelcomeTemplateLanguage: optional(process.env.VACHAT_SIGNUP_WELCOME_TEMPLATE_LANGUAGE) || "en",
+  vachatAbandonedSignupTemplateName: optional(process.env.VACHAT_ABANDONED_SIGNUP_TEMPLATE_NAME),
+  vachatAbandonedSignupTemplateLanguage: optional(process.env.VACHAT_ABANDONED_SIGNUP_TEMPLATE_LANGUAGE) || "en",
   // Coolify persistent volume destination. Relative DB paths are resolved under this root.
   labelStoragePath: optional(process.env.LABEL_STORAGE_PATH) || "/data/labels",
   // Default on. Set POSTBUS_UNICODE_LABEL_RENDERING=false to use Helvetica-only Postbus PDFs.
@@ -57,7 +72,23 @@ export const env = {
   coolifyBaseUrl: optional(process.env.COOLIFY_BASE_URL),
   coolifyApplicationUuid: optional(process.env.COOLIFY_APPLICATION_UUID),
   coolifyApiToken: optional(process.env.COOLIFY_API_TOKEN),
+  // Reversible storefront rollout. Leave unset until the marketplace migration is verified.
+  storefrontMarketplaceEnabled: optional(process.env.STOREFRONT_MARKETPLACE_ENABLED).toLowerCase() === "true",
+  // Merchant Public API. Empty MERCHANT_API_ORG_ALLOWLIST disables every org. Set * or all to open every workspace. MERCHANT_API_ENABLED=false kills the API without a DB rollback.
+  merchantApiEnabled: optional(process.env.MERCHANT_API_ENABLED).toLowerCase() !== "false",
+  merchantApiOrgAllowlist: optional(process.env.MERCHANT_API_ORG_ALLOWLIST),
+  // Outbound merchant webhooks. Empty allowlist sends nothing. MERCHANT_WEBHOOKS_ENABLED=false stops fan-out.
+  merchantWebhooksEnabled: optional(process.env.MERCHANT_WEBHOOKS_ENABLED).toLowerCase() !== "false",
+  merchantWebhooksOrgAllowlist: optional(process.env.MERCHANT_WEBHOOKS_ORG_ALLOWLIST),
+  // Empty keeps live 14 × 9 × 1 cm booking fill. Comma-separated organization UUIDs, or * for every workspace.
+  strictParcelDimensionsOrgIds: optional(process.env.POSTBUS_STRICT_PARCEL_DIMENSIONS_ORG_IDS),
 };
+
+assertStagingAuthIsolation({
+  mode: optional(process.env.POSTBUS_ENV),
+  supabaseUrl: env.supabaseUrl,
+  appUrl: env.appUrl,
+});
 
 export function usesDatabaseJobRunner() {
   return env.jobRunner === "database";

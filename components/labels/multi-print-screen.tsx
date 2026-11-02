@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   ChevronDown,
@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Settings2,
   SlidersHorizontal,
+  Star,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -41,9 +42,20 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { asPaginated } from "@/lib/dashboard/records";
+import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
+import { downloadPdfFile } from "@/lib/print/download-pdf";
 import { ApiError, api } from "@/lib/hooks/use-api";
+import { useMe } from "@/lib/hooks/use-me";
 import { usePrintStation } from "@/lib/hooks/use-print-station";
+import { hasPermission } from "@/lib/permissions/rbac";
 import { cn } from "@/lib/utils";
+import type { LabelRecord, Paginated } from "@/types/api";
+import type { MemberRole } from "@/types/domain";
+import {
+  generatedOrderChipGroups,
+  generatedOrderChips,
+  type GeneratedOrderChip,
+} from "@/modules/labels/generated-order-chips";
 import { ptFromMm } from "@/modules/labels/layout/units";
 import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
 import {
@@ -59,13 +71,21 @@ import {
   type SlotBox,
 } from "@/modules/labels/multi-up/align";
 import { nextGroupFromList, sheetGroups } from "@/modules/labels/multi-up/group";
+import { MAX_LABELS } from "@/modules/labels/multi-up/request";
+import {
+  labelCopyCount,
+  mergeSelectedItems,
+  MULTI_PRINT_PAGE_SIZE,
+  multiPrintLabelsPath,
+  remainingLabelSlots,
+} from "@/modules/labels/multi-up/selection";
 import {
   applyPlacementOverrides,
   calculateMultiUpLayout,
   type MultiUpPlacementOverride,
   type MultiUpRotation,
 } from "@/modules/labels/multi-up/layout";
-import { LABEL_4X6, generate4x6Presets, type FourBySixPreset } from "@/modules/labels/multi-up/presets";
+import { LABEL_4X6, generateSheetPresets, sheetLabelSizeName, type FourBySixPreset } from "@/modules/labels/multi-up/presets";
 import {
   applySmartSnap,
   emptySnapLocks,
@@ -83,8 +103,12 @@ import {
   multiPrintPaperName,
   type MultiPrintPaperId,
 } from "@/modules/labels/page-presets";
-import type { LabelTemplate, NamedLabelTemplate } from "@/modules/labels/template-schema";
-import type { LabelRecord, Paginated } from "@/types/api";
+import {
+  defaultLabelTemplateId,
+  withDefaultNamedTemplate,
+  type LabelTemplate,
+  type NamedLabelTemplate,
+} from "@/modules/labels/template-schema";
 
 type TemplateResponse = { template: LabelTemplate };
 type SheetChoice = MultiPrintPaperId | "custom";
@@ -138,44 +162,95 @@ function listedTemplates(template: LabelTemplate): NamedLabelTemplate[] {
   return [{ id: "active", name: "Current template", isDefault: true, page: template.page, elements: template.elements }];
 }
 
-function generatedOrderNumber(row: LabelRecord) {
-  const barcodeState = String(row.barcodeStatus ?? row.barcode_status ?? "").toUpperCase();
-  const packingState = String(row.packingStatus ?? row.packing_status ?? "").toUpperCase();
-  const status = String(row.status ?? "").toUpperCase();
-  const generated = barcodeState === "READY" || packingState === "READY" || status === "READY";
-  if (!generated) return "";
-  return (row.orderNumber || row.order_number || "").trim();
-}
-
-async function fetchAllLabelRecords() {
-  const pageSize = 100;
-  const items: LabelRecord[] = [];
-  let page = 1;
-  let total = Number.POSITIVE_INFINITY;
-  while (items.length < total) {
-    const list = asPaginated<LabelRecord>(
-      await api<Paginated<LabelRecord>>(`/api/v1/labels?page=${page}&pageSize=${pageSize}`),
-      ["labels", "items"]
-    );
-    items.push(...list.items);
-    total = list.total;
-    if (list.items.length < pageSize) break;
-    page += 1;
-  }
-  return items;
+async function fetchLabelPage(page: number, q: string, signal?: AbortSignal) {
+  return asPaginated<LabelRecord>(
+    await api<Paginated<LabelRecord>>(multiPrintLabelsPath(page, MULTI_PRINT_PAGE_SIZE, q), { signal }),
+    ["labels", "items"]
+  );
 }
 
 function presetCaption(preset: FourBySixPreset | null, fallback: string) {
   if (!preset) return fallback;
-  return preset.name.includes(" × 4×6") ? `${preset.name} Labels` : preset.name;
+  return preset.name.includes(" × ") ? `${preset.name} Labels` : preset.name;
+}
+
+function chipCountLine(today: number, earlier: number, printed: number) {
+  return [
+    today ? `${today} today` : null,
+    earlier ? `${earlier} earlier` : null,
+    printed ? `${printed} printed` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function OrderIdChip({
+  chip,
+  selected,
+  onSelect,
+  onRemove,
+}: {
+  chip: GeneratedOrderChip;
+  selected: boolean;
+  onSelect: (orderId: string) => void;
+  onRemove: (orderId: string) => void;
+}) {
+  const number = chip.orderNumber;
+  if (!selected) {
+    return (
+      <button
+        type="button"
+        aria-pressed={false}
+        onClick={() => onSelect(number)}
+        className={cn(
+          "rounded-full border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
+          chip.printed
+            ? "border-zinc-200 bg-zinc-100 text-zinc-500 hover:border-zinc-300 hover:bg-zinc-200"
+            : "border-border bg-card text-foreground hover:border-zinc-300 hover:bg-surface-soft"
+        )}
+      >
+        {number}
+      </button>
+    );
+  }
+  return (
+    <div
+      className={cn(
+        "inline-flex h-[29px] items-center overflow-hidden rounded-full border shadow-sm",
+        chip.printed ? "border-zinc-200 bg-zinc-100 text-zinc-500" : "border-brand/30 bg-rose-50 text-brand-dark"
+      )}
+    >
+      <button
+        type="button"
+        aria-pressed="true"
+        onClick={() => onSelect(number)}
+        className="px-2.5 py-1.5 text-xs font-medium transition-all duration-200"
+      >
+        {number}
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "mr-1 flex size-5 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-red-100 hover:text-red-700",
+          chip.printed ? "text-zinc-400" : "text-brand-dark/70"
+        )}
+        onClick={() => onRemove(number)}
+        aria-label={`Remove ${number} from print order`}
+        title="Remove"
+      >
+        <X className="size-3" />
+      </button>
+    </div>
+  );
 }
 
 function presetChoiceCopy(item: FourBySixPreset) {
+  const sizeName = sheetLabelSizeName(item.labelWidthMm, item.labelHeightMm);
   if (item.id === "A4-4-labels") {
     return { title: "4 labels", hint: "A4 2×2 · auto-fit 4×6" };
   }
-  if (item.scale === 1 && item.labelWidthMm === LABEL_4X6.widthMm) {
-    return { title: `${item.quantity} label${item.quantity === 1 ? "" : "s"}`, hint: "4×6 · full size" };
+  if (item.scale === 1) {
+    return { title: `${item.quantity} label${item.quantity === 1 ? "" : "s"}`, hint: `${sizeName} · full size` };
   }
   return { title: `${item.quantity} label${item.quantity === 1 ? "" : "s"}`, hint: `${item.columns}×${item.rows}` };
 }
@@ -189,14 +264,15 @@ function pageMm(page: LabelTemplate["page"]) {
 
 function templateOptionLabel(item: NamedLabelTemplate) {
   const size = pageMm(item.page);
-  return `${item.name} (${Math.round(size.widthMm)} × ${Math.round(size.heightMm)} mm)`;
+  const label = `${item.name} (${Math.round(size.widthMm)} × ${Math.round(size.heightMm)} mm)`;
+  return item.isDefault ? `${label} · Default` : label;
 }
 
-async function postSheet(body: unknown) {
+async function postSheet(body: unknown, headers?: Record<string, string>) {
   const response = await fetch("/api/v1/label-template/multi-sheet", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
   const contentType = response.headers.get("Content-Type") ?? "";
@@ -239,13 +315,43 @@ function playPreviewChime() {
 }
 
 export function MultiPrintScreen() {
+  const queryClient = useQueryClient();
+  const me = useMe();
+  const canWriteLabels = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "labels.write");
+  const [labelSearch, setLabelSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const printIdempotencyKey = useRef<string | null>(null);
   const templates = useQuery({
     queryKey: ["label-template"],
     queryFn: () => api<TemplateResponse>("/api/v1/label-template"),
   });
-  const labels = useQuery({
-    queryKey: ["labels", "multi-print"],
-    queryFn: fetchAllLabelRecords,
+  const saveTemplate = useMutation({
+    mutationFn: (template: LabelTemplate) =>
+      api<TemplateResponse>("/api/v1/label-template", {
+        method: "PUT",
+        body: JSON.stringify({ template }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["label-template"] });
+      setJustSavedDefault(true);
+      window.setTimeout(() => setJustSavedDefault(false), 900);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(labelSearch.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [labelSearch]);
+
+  const labels = useInfiniteQuery({
+    queryKey: ["labels", "multi-print", debouncedSearch],
+    queryFn: ({ pageParam, signal }) => fetchLabelPage(pageParam, debouncedSearch, signal),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, pages) => {
+      const loaded = pages.reduce((sum, page) => sum + page.items.length, 0);
+      if (loaded >= lastPage.total || lastPage.items.length < MULTI_PRINT_PAGE_SIZE) return undefined;
+      return lastPage.page + 1;
+    },
   });
   const station = usePrintStation();
   const library = useMemo(
@@ -253,6 +359,7 @@ export function MultiPrintScreen() {
     [templates.data]
   );
   const [templateId, setTemplateId] = useState("");
+  const [justSavedDefault, setJustSavedDefault] = useState(false);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("preset");
   const [paper, setPaper] = useState<SheetChoice>("A4");
   const [presetQuantity, setPresetQuantity] = useState(2);
@@ -270,6 +377,7 @@ export function MultiPrintScreen() {
   const [items, setItems] = useState<CopyRow[]>([]);
   const [sheetPage, setSheetPage] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewBlob = useRef<Blob | null>(null);
   const [busy, setBusy] = useState<"preview" | "download" | "print" | null>(null);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>("labels");
   const [showPdfPreview, setShowPdfPreview] = useState(false);
@@ -363,13 +471,22 @@ export function MultiPrintScreen() {
     };
   }, []);
 
-  const selectedId = library.some((item) => item.id === templateId) ? templateId : (library[0]?.id ?? "");
+  const fallbackTemplateId =
+    (templates.data ? defaultLabelTemplateId(templates.data.template) : null) ?? library[0]?.id ?? "";
+  const selectedId = library.some((item) => item.id === templateId) ? templateId : fallbackTemplateId;
   const selected = library.find((item) => item.id === selectedId);
   const templateLabel = useMemo(() => (selected ? pageMm(selected.page) : null), [selected]);
-  const labeledOrders = useMemo(
-    () => [...new Set((labels.data ?? []).map(generatedOrderNumber).filter(Boolean))],
+  const loadedLabelRows = useMemo(
+    () => labels.data?.pages.flatMap((page) => page.items) ?? [],
     [labels.data]
   );
+  const labelsTotal = labels.data?.pages.at(-1)?.total ?? loadedLabelRows.length;
+  const labeledOrderChips = useMemo(() => generatedOrderChips(loadedLabelRows), [loadedLabelRows]);
+  const labeledOrders = useMemo(() => labeledOrderChips.map((chip) => chip.orderNumber), [labeledOrderChips]);
+  const labeledOrderGroups = useMemo(() => generatedOrderChipGroups(labeledOrderChips), [labeledOrderChips]);
+  const todayCount = labeledOrderGroups.today.length;
+  const earlierCount = labeledOrderGroups.earlier.length;
+  const printedCount = labeledOrderGroups.printed.length;
   const namedPaper = isMultiPrintPaperId(paper) ? multiPrintPaper(paper) : null;
   const sheetWidthMm = namedPaper?.widthMm ?? Number(customWidth);
   const sheetHeightMm = namedPaper?.heightMm ?? Number(customHeight);
@@ -380,8 +497,15 @@ export function MultiPrintScreen() {
         ? `${Math.round(sheetWidthMm)}×${Math.round(sheetHeightMm)} mm`
         : null;
   const fourBySixPresets = useMemo(
-    () => generate4x6Presets(sheetWidthMm, sheetHeightMm, paper),
-    [paper, sheetHeightMm, sheetWidthMm]
+    () =>
+      generateSheetPresets(
+        sheetWidthMm,
+        sheetHeightMm,
+        paper,
+        templateLabel?.widthMm ?? LABEL_4X6.widthMm,
+        templateLabel?.heightMm ?? LABEL_4X6.heightMm
+      ),
+    [paper, sheetHeightMm, sheetWidthMm, templateLabel]
   );
   const chosenFourBySix =
     layoutMode === "preset"
@@ -390,15 +514,13 @@ export function MultiPrintScreen() {
   const presetOn = Boolean(chosenFourBySix);
   const slotLabel = chosenFourBySix
     ? { widthMm: chosenFourBySix.labelWidthMm, heightMm: chosenFourBySix.labelHeightMm }
-    : layoutMode === "preset"
-      ? { widthMm: LABEL_4X6.widthMm, heightMm: LABEL_4X6.heightMm }
-      : templateLabel;
+    : templateLabel;
   const activeMargins = chosenFourBySix?.margins ?? margins;
   const activeGapX = chosenFourBySix ? String(chosenFourBySix.gaps.horizontalMm) : gapX;
   const activeGapY = chosenFourBySix ? String(chosenFourBySix.gaps.verticalMm) : gapY;
   const layout = useMemo(() => {
     if (layoutMode === "preset" && !chosenFourBySix) {
-      return { ok: false as const, message: "No valid 4×6 layout for this paper size." };
+      return { ok: false as const, message: "No valid label layout for this paper size." };
     }
     if (!slotLabel || !(sheetWidthMm > 0) || !(sheetHeightMm > 0)) return null;
     return calculateMultiUpLayout({
@@ -516,8 +638,13 @@ export function MultiPrintScreen() {
     canvasScaleRef.current = canvasScale;
   }, [canvasScale]);
   const agentPaper = station.data?.paperSize ?? "";
-  const canPrint = paper !== "custom" && Boolean(station.data?.connected) && agentPaper === paper && Boolean(layout?.ok);
-  const labelCount = items.reduce((sum, item) => sum + item.copies, 0);
+  const canPrint =
+    canWriteLabels &&
+    paper !== "custom" &&
+    Boolean(station.data?.connected) &&
+    agentPaper === paper &&
+    Boolean(layout?.ok);
+  const labelCount = labelCopyCount(items);
   const sheetOrders =
     displayLayout?.ok ? displayLayout.placements.filter((placement) => placement.page === pageIndex) : [];
   const markManual = useCallback(() => {
@@ -659,13 +786,48 @@ export function MultiPrintScreen() {
       layout?.ok ? layout.perSheet : chosenFourBySix?.quantity ?? 4
     );
     if (!added.length) return;
-    setItems((current) => [...current, ...added.map((id) => ({ orderId: id, copies: 1 }))]);
+    setItems((current) => {
+      const remaining = remainingLabelSlots(current);
+      if (!remaining) {
+        toast.error(`A sheet run can include up to ${MAX_LABELS} labels.`);
+        return current;
+      }
+      const next = mergeSelectedItems(
+        current,
+        added.slice(0, remaining).map((id) => ({ orderId: id, copies: 1 }))
+      );
+      if (next.length === current.length) {
+        toast.error(`A sheet run can include up to ${MAX_LABELS} labels.`);
+      }
+      return next;
+    });
+  }
+
+  function removeChipOrder(orderId: string) {
+    setItems((current) => current.filter((item) => item.orderId !== orderId));
+    if (!displayLayout?.ok) return;
+    const dropIndexes = new Set(
+      displayLayout.placements.filter((item) => item.orderId === orderId).map((item) => item.index)
+    );
+    if (!dropIndexes.size) return;
+    setSelectedSlots((current) => current.filter((index) => !dropIndexes.has(index)));
   }
 
   function addItem(orderId: string, copies = Number(draftCopies) || 1) {
     const key = orderId.trim();
     if (!key) return;
-    setItems((current) => [...current, { orderId: key, copies: Math.max(1, Math.floor(copies)) }]);
+    setItems((current) => {
+      const next = mergeSelectedItems(current, [{ orderId: key, copies: Math.max(1, Math.floor(copies)) }]);
+      if (next.length === current.length) {
+        toast.error(
+          current.some((item) => item.orderId === key)
+            ? "That order is already in the print queue."
+            : `A sheet run can include up to ${MAX_LABELS} labels.`
+        );
+        return current;
+      }
+      return next;
+    });
     setDraftOrder("");
   }
 
@@ -695,6 +857,7 @@ export function MultiPrintScreen() {
     try {
       const result = await postSheet({ ...requestBody(), disposition: "inline" });
       if (!(result instanceof Blob)) return;
+      previewBlob.current = result;
       const href = URL.createObjectURL(result);
       setPreviewUrl((current) => {
         if (current) URL.revokeObjectURL(current);
@@ -709,18 +872,13 @@ export function MultiPrintScreen() {
     }
   }
 
-  function saveSheetPdf(href: string) {
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = "shipping-labels.pdf";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+  async function saveSheetPdf(source: Blob) {
+    downloadPdfFile(source, "shipping-labels.pdf");
   }
 
   function downloadPreview() {
-    if (previewUrl) {
-      saveSheetPdf(previewUrl);
+    if (previewBlob.current) {
+      void saveSheetPdf(previewBlob.current);
       return;
     }
     void download();
@@ -731,9 +889,7 @@ export function MultiPrintScreen() {
     try {
       const result = await postSheet({ ...requestBody(), disposition: "attachment" });
       if (!(result instanceof Blob)) return;
-      const href = URL.createObjectURL(result);
-      saveSheetPdf(href);
-      URL.revokeObjectURL(href);
+      await saveSheetPdf(result);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not download the sheet.");
     } finally {
@@ -742,14 +898,26 @@ export function MultiPrintScreen() {
   }
 
   async function print() {
+    if (!canWriteLabels) {
+      toast.error("You do not have permission to print labels.");
+      return;
+    }
+    const key = beginClientPrint("multi-print", printIdempotencyKey.current);
+    if (!key) return;
+    printIdempotencyKey.current = key;
     setBusy("print");
     try {
-      const result = await postSheet({ ...requestBody(), disposition: "print" });
+      const result = await postSheet(
+        { ...requestBody(), disposition: "print" },
+        { "Idempotency-Key": key }
+      );
       if (result instanceof Blob) return;
-      toast.success(result.message || "Sheet sent to the printer.");
+      printIdempotencyKey.current = null;
+      toast.success(result.message || "Queued for the Print Agent.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not print the sheet.");
     } finally {
+      endClientPrint("multi-print");
       setBusy(null);
     }
   }
@@ -1012,13 +1180,15 @@ export function MultiPrintScreen() {
   }
 
   const printerMessage =
-    paper === "custom"
-      ? "Custom sheets can be previewed and downloaded."
-      : !station.data?.connected
-        ? "Connect a printer to print."
-        : agentPaper !== paper
-          ? `Printer paper must match ${paper}.`
-          : "Printer ready.";
+    !canWriteLabels
+      ? "Preview and download are available. Printing needs labels write access."
+      : paper === "custom"
+        ? "Custom sheets can be previewed and downloaded."
+        : !station.data?.connected
+          ? "Connect a printer to print."
+          : agentPaper !== paper
+            ? `Printer paper must match ${paper}.`
+            : "Printer ready.";
   const selectedOrderIds = new Set(items.map((item) => item.orderId));
 
   const outputActions = (
@@ -1050,7 +1220,7 @@ export function MultiPrintScreen() {
         {[
           { label: "Selected", value: `${labelCount} labels`, icon: FileText },
           { label: "Sheets", value: layout?.ok ? String(pages) : "—", icon: Layers3 },
-          { label: "Layout", value: presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual"), icon: Grid2X2 },
+          { label: "Layout", value: presetCaption(chosenFourBySix, layoutMode === "preset" ? "No label fit" : "Manual"), icon: Grid2X2 },
           {
             label: "Printer",
             value: canPrint ? "Ready" : station.data?.connected ? "Check paper" : "Offline",
@@ -1111,7 +1281,7 @@ export function MultiPrintScreen() {
                     <h2 className="text-sm font-semibold text-ink">1. Choose labels</h2>
                     <Badge variant="brand">{labelCount} selected</Badge>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-muted">Only orders with a generated label appear here. Selecting a chip fills one sheet using the current 4×6 quantity.</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">Only orders with a generated label appear here. Selecting a chip fills one sheet using the current quantity preset.</p>
                 </div>
 
                 <div className="flex gap-2">
@@ -1125,41 +1295,77 @@ export function MultiPrintScreen() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-medium text-muted">Generated labels</p>
-                    {labels.isLoading ? null : (
-                      <p className="text-xs font-semibold text-ink">{labeledOrders.length} order IDs</p>
+                    {labels.isPending ? null : (
+                      <p className="text-xs font-semibold text-ink">
+                        {chipCountLine(todayCount, earlierCount, printedCount) || `${labeledOrders.length} order IDs`}
+                      </p>
                     )}
                   </div>
-                  {labels.isLoading ? (
+                  <Input
+                    value={labelSearch}
+                    onChange={(event) => setLabelSearch(event.target.value)}
+                    placeholder="Search order ID"
+                    aria-label="Search generated labels"
+                  />
+                  {labels.isPending ? (
                     <div className="flex flex-wrap gap-2">
                       {Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="h-8 w-16 rounded-full" />)}
                     </div>
+                  ) : labels.isError ? (
+                    <div className="rounded-xl border border-dashed border-border bg-surface-soft p-4 text-center">
+                      <p className="text-sm font-medium">Could not load labels</p>
+                      <Button type="button" variant="secondary" className="mt-2" onClick={() => void labels.refetch()}>
+                        Try again
+                      </Button>
+                    </div>
                   ) : labeledOrders.length ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {labeledOrders.map((number) => {
-                        const active = selectedOrderIds.has(number);
-                        return (
-                          <button
-                            key={number}
+                    <div className="space-y-2.5">
+                      {([
+                        ["Today", labeledOrderGroups.today],
+                        ["Earlier", labeledOrderGroups.earlier],
+                        ["Printed", labeledOrderGroups.printed],
+                      ] as const)
+                        .filter(([, chips]) => chips.length)
+                        .map(([title, chips]) => (
+                          <div key={title} className="space-y-1">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{title}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {chips.map((chip) => (
+                                <OrderIdChip
+                                  key={chip.orderNumber}
+                                  chip={chip}
+                                  selected={selectedOrderIds.has(chip.orderNumber)}
+                                  onSelect={onChipClick}
+                                  onRemove={removeChipOrder}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted">
+                          Showing {loadedLabelRows.length} of {labelsTotal}
+                        </p>
+                        {labels.hasNextPage ? (
+                          <Button
                             type="button"
-                            aria-pressed={active}
-                            onClick={() => onChipClick(number)}
-                            className={cn(
-                              "rounded-full border px-2.5 py-1.5 text-xs font-medium transition-all duration-200",
-                              active
-                                ? "border-brand/30 bg-rose-50 text-brand-dark shadow-sm"
-                                : "border-border bg-card text-foreground hover:border-zinc-300 hover:bg-surface-soft"
-                            )}
+                            size="sm"
+                            variant="secondary"
+                            disabled={labels.isFetchingNextPage}
+                            onClick={() => void labels.fetchNextPage()}
                           >
-                            {number}
-                          </button>
-                        );
-                      })}
+                            {labels.isFetchingNextPage ? "Loading…" : "Load more"}
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
                   ) : (
                     <div className="rounded-xl border border-dashed border-border bg-surface-soft p-4 text-center">
                       <FileText className="mx-auto size-5 text-muted" />
-                      <p className="mt-2 text-sm font-medium">No generated labels yet</p>
-                      <p className="mt-1 text-xs text-muted">Generate a shipping label, then return here.</p>
+                      <p className="mt-2 text-sm font-medium">{debouncedSearch ? "No matching labels" : "No generated labels yet"}</p>
+                      <p className="mt-1 text-xs text-muted">
+                        {debouncedSearch ? "Try another order ID, or add it manually." : "Generate a shipping label, then return here."}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -1210,30 +1416,73 @@ export function MultiPrintScreen() {
                   <div className="flex items-center justify-between gap-2">
                     <h2 className="text-sm font-semibold text-ink">2. Arrange sheet</h2>
                     <Badge variant={presetOn ? "brand" : "outline"}>
-                      {presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual")}
+                      {presetCaption(chosenFourBySix, layoutMode === "preset" ? "No label fit" : "Manual")}
                     </Badge>
                   </div>
                   <p className="mt-1 text-xs leading-5 text-muted">
-                    Paper size is independent of the 4×6 label ({Math.round(LABEL_4X6.widthMm)} × {Math.round(LABEL_4X6.heightMm)} mm). The A4 2×2 preset scales that template uniformly to fit; other presets stay at 100%.
+                    Paper size is independent of the label template ({Math.round(slotLabel?.widthMm ?? LABEL_4X6.widthMm)} × {Math.round(slotLabel?.heightMm ?? LABEL_4X6.heightMm)} mm). Quantity presets use that size at 100%. The A4 2×2 option only scales a 4×6 template down to fit.
                   </p>
                 </div>
 
-                <label className="block space-y-1.5 text-xs font-medium text-muted">
-                  Label template
-                  <select className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm text-foreground" value={selectedId} onChange={(event) => setTemplateId(event.target.value)}>
-                    {library.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {templateOptionLabel(item)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="space-y-1.5">
+                  <label className="block space-y-1.5 text-xs font-medium text-muted">
+                    Label template
+                    <select
+                      className="h-10 w-full rounded-[var(--radius-input)] border border-border bg-card px-3 text-sm text-foreground"
+                      value={selectedId}
+                      onChange={(event) => {
+                        setJustSavedDefault(false);
+                        setTemplateId(event.target.value);
+                      }}
+                    >
+                      {library.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {templateOptionLabel(item)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {templates.data?.template.library?.length && selected ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className={cn(
+                        "w-full",
+                        justSavedDefault &&
+                          "border-amber-300 bg-amber-50 text-amber-950 disabled:opacity-100 motion-safe:animate-[default-save_0.7s_ease-out]"
+                      )}
+                      disabled={(selected.isDefault && !justSavedDefault) || saveTemplate.isPending}
+                      onClick={() => {
+                        const stored = templates.data?.template;
+                        if (!stored?.library?.length) return;
+                        saveTemplate.mutate(withDefaultNamedTemplate(stored, selectedId), {
+                          onSuccess: () => toast.success("Default template updated."),
+                        });
+                      }}
+                    >
+                      <Star
+                        className={cn(
+                          "size-4 text-amber-400 transition-transform",
+                          selected.isDefault || justSavedDefault ? "fill-amber-400" : "fill-amber-400/30",
+                          saveTemplate.isPending && "motion-safe:animate-pulse",
+                          justSavedDefault && "motion-safe:animate-[default-star_0.7s_ease-out]"
+                        )}
+                      />
+                      {saveTemplate.isPending
+                        ? "Saving…"
+                        : selected.isDefault || justSavedDefault
+                          ? "Saved as default"
+                          : "Save as default"}
+                    </Button>
+                  ) : null}
+                </div>
 
                 <div className="space-y-3 rounded-xl border border-border bg-surface-soft p-3">
                   <div>
-                    <p className="text-sm font-semibold text-ink">4×6 Multi-Print</p>
+                    <p className="text-sm font-semibold text-ink">Multi-Print</p>
                     <p className="mt-0.5 text-xs leading-5 text-muted">
-                      Choose paper, then a quantity that physically fits. Positions initialize once; you can still move and align labels after that.
+                      Choose paper, then a quantity that physically fits the selected template. Positions initialize once; you can still move and align labels after that.
                     </p>
                   </div>
                   <label className="block space-y-1.5 text-xs font-medium text-muted">
@@ -1306,7 +1555,7 @@ export function MultiPrintScreen() {
                         })}
                       </div>
                     ) : (
-                      <p className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted">No valid 4×6 layout for this paper size.</p>
+                      <p className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted">No valid label layout for this paper size.</p>
                     )}
                   </div>
                 </div>
@@ -1363,7 +1612,7 @@ export function MultiPrintScreen() {
                   <div className="flex items-center justify-between text-sm"><span className="text-muted">Labels</span><strong>{labelCount}</strong></div>
                   <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Sheets</span><strong>{layout?.ok ? pages : "—"}</strong></div>
                   <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Paper</span><strong>{multiPrintPaperName(paper)}</strong></div>
-                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Layout</span><strong>{presetCaption(chosenFourBySix, layoutMode === "preset" ? "No 4×6 fit" : "Manual")}</strong></div>
+                  <div className="mt-2 flex items-center justify-between text-sm"><span className="text-muted">Layout</span><strong>{presetCaption(chosenFourBySix, layoutMode === "preset" ? "No label fit" : "Manual")}</strong></div>
                 </div>
 
                 {layout?.ok ? (
@@ -1585,7 +1834,12 @@ export function MultiPrintScreen() {
                           onPointerMove={manual ? (event) => onSlotPointerMove(placement.index, event) : undefined}
                           onPointerUp={manual ? endDrag : undefined}
                         >
-                          <SheetSlotLabel orderId={placement.orderId} templateId={selectedId} rotation={placement.rotation} />
+                          <SheetSlotLabel
+                            orderId={placement.orderId}
+                            templateId={selectedId}
+                            rotation={placement.rotation}
+                            cssWidthPx={placement.widthPt * canvasScale}
+                          />
                           {selected ? (
                             <span className="pointer-events-none absolute left-1 top-1 z-10 rounded-md bg-brand px-1.5 py-0.5 text-[9px] font-semibold text-white shadow-sm">
                               {placement.orderId}
@@ -1671,10 +1925,12 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
   orderId,
   templateId,
   rotation,
+  cssWidthPx,
 }: {
   orderId: string;
   templateId: string;
   rotation: 0 | 90;
+  cssWidthPx: number;
 }) {
   const label = useQuery({
     queryKey: ["multi-print-label-raster", templateId, orderId],
@@ -1695,7 +1951,7 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
       return response.arrayBuffer();
     },
   });
-  const { url, error } = usePdfFirstPageUrl(label.data);
+  const { url, error } = usePdfFirstPageUrl(label.data, { cssWidthPx: Math.max(1, Math.round(cssWidthPx)) });
 
   if (!url) {
     return (
@@ -1710,6 +1966,7 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
       <img
         alt=""
         src={url}
+        decoding="async"
         className="pointer-events-none absolute left-1/2 top-1/2 max-w-none bg-white object-contain"
         style={{
           width: "100cqh",
@@ -1721,6 +1978,6 @@ const SheetSlotLabel = memo(function SheetSlotLabel({
   }
 
   return (
-    <img alt="" src={url} className="pointer-events-none absolute inset-0 h-full w-full bg-white object-contain" />
+    <img alt="" src={url} decoding="async" className="pointer-events-none absolute inset-0 h-full w-full bg-white object-contain" />
   );
 });

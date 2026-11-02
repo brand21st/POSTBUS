@@ -1,6 +1,6 @@
 # Billing APIs
 
-All tenant billing routes go through `/api/v1/...` and return `{ success, message, data }`. Super Admin routes go through `/api/admin/...`. Razorpay secrets never appear in responses.
+All tenant billing routes go through `/api/v1/...` and return `{ success, message, data }`. Super Admin routes go through `/api/admin/...`. Razorpay secrets never appear in responses. Platform Razorpay keys live only on Domain A (PostBus billing).
 
 ## Customer
 
@@ -49,8 +49,12 @@ Requires a `platform_admins` row (or `PLATFORM_ADMIN_EMAIL` matching the signed-
 
 Plans with subscribers are archived (`is_active = false`), never deleted. Audit logs have no update/delete API.
 
-## Razorpay
+## Razorpay (Domain A — PostBus platform billing)
 
-`POST /api/webhooks/razorpay` — HMAC of the raw body with the webhook secret from Super Admin settings (or `RAZORPAY_WEBHOOK_SECRET`). Duplicate `x-razorpay-event-id` values return 200 without applying the payload again.
+`public.payments`, `modules/razorpay/*`, and `POST /api/webhooks/razorpay` are **PostBus platform billing only** (subscriptions, plan periods, AI Credits). Do not reuse platform API keys or this webhook for merchant WhatsApp Store checkout. Merchant payment webhooks, if added later, must use a **different URL** and tenant credentials.
+
+`POST /api/webhooks/razorpay` — HMAC of the raw body with the webhook secret from Super Admin settings (or `RAZORPAY_WEBHOOK_SECRET`). Duplicate `x-razorpay-event-id` values return 200 without applying the payload again. `payment.captured` is classified as AI Credits, subscription, or unmatched; unmatched events are stored as `ignored` and do not grant credits or activate subscriptions.
 
 Checkout uses Razorpay **Orders** (one-time payment for the selected app plan period). `payment.captured` activates the local subscription by `order_id`. Razorpay Subscriptions (`subscription.charged` / `invoice.paid`) can renew a period later if that product is enabled; a second event for the same period is ignored.
+
+`GET`/`PATCH /api/admin/trial-settings` returns only `trial_enabled` and `trial_days`. Encrypted Razorpay columns on `platform_settings` are not granted to `anon` or `authenticated`.

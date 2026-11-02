@@ -1,4 +1,5 @@
 import { withSentryConfig } from "@sentry/nextjs/config";
+import { execSync } from "node:child_process";
 import path from "node:path";
 import type { NextConfig } from "next";
 import { securityHeaderEntries } from "./lib/security/headers";
@@ -6,8 +7,25 @@ import { securityHeaderEntries } from "./lib/security/headers";
 const rasterClient = "./modules/labels/unicode/raster-client.ts";
 const canvasStub = "./modules/labels/unicode/canvas-browser-stub.ts";
 
+/** Commit for /api/health and the x-postbus-build header (lib/build-info.ts). */
+function resolveBuildSha() {
+  const fromEnv = process.env.SOURCE_COMMIT || process.env.POSTBUS_BUILD_SHA || process.env.GIT_COMMIT_SHA;
+  if (fromEnv && /^[0-9a-f]{7,40}$/i.test(fromEnv.trim())) return fromEnv.trim();
+  try {
+    return execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const buildSha = resolveBuildSha();
+
 const nextConfig: NextConfig = {
   output: "standalone",
+  env: {
+    NEXT_PUBLIC_BUILD_SHA: buildSha,
+    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
+  },
   poweredByHeader: false,
   compress: true,
   serverExternalPackages: ["bullmq", "ioredis", "@napi-rs/canvas", "sharp"],
@@ -69,7 +87,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/:path*",
-        headers: securityHeaderEntries(),
+        headers: [...securityHeaderEntries(), { key: "x-postbus-build", value: buildSha.slice(0, 12) }],
       },
     ];
   },

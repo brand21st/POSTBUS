@@ -2,18 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ERROR_CODES } from "@/lib/api/errors";
 
 const getUser = vi.fn();
+const getClassification = vi.fn();
 const from = vi.fn();
 
 vi.mock("@/lib/supabase/request-auth", () => ({
   getRequestAuthUser: async () => ({
     supabase: { from },
     user: getUser(),
+    classification: getClassification(),
   }),
 }));
 
 describe("requireTenant", () => {
   beforeEach(() => {
     getUser.mockReset();
+    getClassification.mockReset();
     from.mockReset();
     vi.resetModules();
   });
@@ -61,9 +64,51 @@ describe("requireTenant", () => {
 
   it("rejects an unauthenticated request", async () => {
     getUser.mockReturnValue(null);
+    getClassification.mockReturnValue("AUTH_SESSION_MISSING");
     const { requireTenant } = await import("@/lib/api/context");
     await expect(requireTenant()).rejects.toMatchObject({
       code: ERROR_CODES.AUTH_REQUIRED,
+    });
+  });
+
+  it("does not treat a transient auth failure as session expiration", async () => {
+    getUser.mockReturnValue(null);
+    getClassification.mockReturnValue("AUTH_TRANSIENT_FAILURE");
+    const { requireTenant } = await import("@/lib/api/context");
+    await expect(requireTenant()).rejects.toMatchObject({
+      code: ERROR_CODES.AUTH_UNAVAILABLE,
+    });
+  });
+
+  it("does not map a profile query error to AUTH_REQUIRED", async () => {
+    getUser.mockReturnValue({ id: "user-1", email: "a@example.com" });
+    getClassification.mockReturnValue("AUTH_VALID");
+    from.mockImplementation((table: string) => {
+      if (table === "profiles") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({
+                data: null,
+                error: { message: "timeout" },
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: null, error: null }),
+            }),
+          }),
+        }),
+      };
+    });
+    const { requireTenant } = await import("@/lib/api/context");
+    await expect(requireTenant()).rejects.toMatchObject({
+      code: ERROR_CODES.PROFILE_UNAVAILABLE,
     });
   });
 

@@ -11,6 +11,12 @@ describe("security headers", () => {
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("https://www.youtube.com");
     expect(csp).toContain("https://www.youtube-nocookie.com");
+    expect(csp).toContain("https://player.vimeo.com");
+    expect(csp).toContain("https://www.facebook.com");
+    expect(csp).toContain("https://www.instagram.com");
+    expect(csp).not.toContain("tawk.to");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
+    expect(csp).toContain("form-action 'self'");
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("upgrade-insecure-requests");
 

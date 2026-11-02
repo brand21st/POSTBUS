@@ -4,6 +4,7 @@ import {
   indiaPostPincodeSearchApiUrl,
   indiaPostBookingArticle,
   indiaPostBookingArticleType,
+  indiaPostBookingServiceCode,
   indiaPostBookingFileUrl,
   indiaPostBookingUrl,
   indiaPostDomesticLabelPayload,
@@ -79,12 +80,25 @@ describe("production login and booking URLs", () => {
 
 describe("article type and shape", () => {
   it("sends the India Post parcel product codes, not Inland Speed Post", () => {
+    expect(indiaPostBookingArticleType("Speed Post Parcel Domestic", "CL556973995IN")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostBookingArticleType("SP Inland Parcel", "CL556973995IN")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostBookingArticleType("Business Parcel", "CL556973995IN")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostBookingArticleType("India Post Parcel Contractual", "CL556973995IN")).toBe(
+      "BUSINESS_PARCEL"
+    );
+    expect(indiaPostBookingServiceCode("Speed Post Parcel Domestic", "CL556973995IN")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostBookingServiceCode("India Post Parcel Contractual", "CL556973995IN")).toBe(
+      "BUSINESS_PARCEL"
+    );
     expect(indiaPostBookingArticleType("SP_INLAND_PARCEL")).toBe("SP_INLAND_PARCEL");
     expect(indiaPostBookingArticleType("SP")).toBe("SP_INLAND_PARCEL");
     expect(indiaPostBookingArticleType("SP_INLAND_DOC")).toBe("SP_INLAND_DOC");
     expect(indiaPostBookingArticleType("BUSINESS_PARCEL")).toBe("BUSINESS_PARCEL");
     expect(indiaPostBookingArticleType("BP")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostBookingArticleType("BUSINESS_PARCEL", "EY123456785IN")).toBe("SP_INLAND_PARCEL");
+    expect(indiaPostBookingArticleType("BUSINESS_PARCEL", "EL123456785IN")).toBe("SP_INLAND_PARCEL");
     expect(indiaPostBookingArticleType("SP_INLAND_PARCEL", "CX075250510IN")).toBe("BUSINESS_PARCEL");
+    expect(indiaPostLabelServiceType("SP_INLAND_PARCEL", "EY123456785IN")).toBe("SP");
     expect(indiaPostLabelServiceType("SP_INLAND_PARCEL", "CX075250554IN")).toBe("BUSINESS_PARCEL");
     expect(indiaPostTransmissionMode("SP_INLAND_PARCEL", "CX075250554IN")).toBe("S");
     expect(indiaPostLabelProductCaption("SP_INLAND_PARCEL", "CX075250554IN")).toBe(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -9,6 +9,8 @@ import { format, isValid, parseISO, subDays } from "date-fns";
 import {
   Check,
   ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
   Columns3,
   Download,
   Link2,
@@ -20,6 +22,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
+import { ShopifyPaymentConfirm } from "@/components/orders/shopify-payment-confirm";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import {
@@ -31,7 +34,7 @@ import {
 import { OrderKpiStrip } from "@/components/dashboard/order-kpi-strip";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
-import { orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
+import { orderStatusBadgeValue, orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -60,6 +63,16 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
+  committedSearchChanged,
+  nextOrdersNumberSort,
+  ordersListHref,
+  ordersNumberSortState,
+  parseOrdersPageParam,
+  parseOrdersSortParam,
+  patchOrdersListSearchParams,
+  selectionAfterFilterChange,
+} from "@/lib/dashboard/orders-list-query";
+import {
   asPaginated,
   customerName,
   customerPhone,
@@ -70,15 +83,24 @@ import {
   orderNumber,
   orderStageMenu,
 } from "@/lib/dashboard/records";
+import { toggleRowSelection } from "@/lib/dashboard/row-selection";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { api, toSearchParams } from "@/lib/hooks/use-api";
+import { ApiError, api, toSearchParams } from "@/lib/hooks/use-api";
 import {
   parcelServiceCode,
   resolveOrderBookingService,
   shipmentServiceLocked,
 } from "@/modules/india-post/booking-service";
+import { lowBarcodeServices } from "@/modules/india-post/barcode";
 import { parcelServiceToggleOptions, savedParcelContracts } from "@/modules/india-post/contracts";
+import {
+  FALLBACK_PARCEL_HEIGHT_CM,
+  FALLBACK_PARCEL_LENGTH_CM,
+  FALLBACK_PARCEL_WIDTH_CM,
+} from "@/modules/india-post/parcel-defaults";
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { tariffListState, type TariffListState } from "@/modules/india-post/tariff-list";
+import type { TariffQuote } from "@/modules/india-post/tariff-contract";
 import { ORDER_SOURCE_LABELS, ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
 import type { BulkOrderStatusResult, DashboardKpis, IndiaPostConfig, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
 
@@ -107,6 +129,24 @@ const COLUMN_LABELS: Record<OptionalColumn, string> = {
 
 const FILTER_SELECT_CLASS = "h-8 shadow-none";
 
+type TariffCapabilities = {
+  enabled: boolean;
+  organizationId: string;
+  senderChoices: Array<{ id: "pickup" | "dropoff"; label: string; pincode: string }>;
+  defaults?: {
+    weightGrams?: number;
+    lengthCm?: number;
+    widthCm?: number;
+    heightCm?: number;
+  } | null;
+};
+
+type TariffProgress = {
+  key: string;
+  status: "calculating" | "success" | "error";
+  amount?: number;
+};
+
 function CreatedCell({ value }: { value?: string | null }) {
   if (!value) return <span className="text-muted">—</span>;
   const date = parseISO(value);
@@ -123,19 +163,31 @@ export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
+  const urlQ = searchParams.get("q") ?? "";
+  const page = parseOrdersPageParam(searchParams.get("page"));
+  const sort = parseOrdersSortParam(searchParams.get("sort"));
+  const numberSort = sort === "order_number" || sort === "-order_number" ? sort : undefined;
+  const numberSortState = ordersNumberSortState(numberSort);
   const [pageSize, setPageSize] = useState(20);
-  const [search, setSearch] = useState(searchParams.get("q") ?? "");
-  const [debounced, setDebounced] = useState("");
+  const [search, setSearch] = useState(urlQ);
+  const [debounced, setDebounced] = useState(urlQ.trim());
+  const committedSearchRef = useRef(urlQ.trim());
   const [status, setStatus] = useState("all");
   const [source, setSource] = useState("all");
   const [payment, setPayment] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
+  const [parcelOrder, setParcelOrder] = useState<OrderRecord | null>(null);
+  const openParcelEditor = (order: OrderRecord) => {
+    window.setTimeout(() => setParcelOrder(order), 0);
+  };
   const [dateFilter, setDateFilter] = useState<OrderDateFilterValue>({ kind: "all" });
   const [confirmFulfill, setConfirmFulfill] = useState(false);
   const [columnsReady, setColumnsReady] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState(DEFAULT_COLUMNS);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [tariffProgress, setTariffProgress] = useState<Record<string, TariffProgress>>({});
+  const attemptedTariffs = useRef(new Set<string>());
+  const workspaceBookingSeen = useRef<string | null | undefined>(undefined);
 
   const tableLayout = useQuery({
     queryKey: ["ui-table-layout", "orders"],
@@ -158,19 +210,43 @@ export default function OrdersPage() {
     };
   }, []);
 
+  const replaceListParams = useCallback(
+    (patch: { page?: number; q?: string | null; sort?: typeof sort | null }) => {
+      const next = patchOrdersListSearchParams(searchParams, patch);
+      router.replace(ordersListHref(next), { scroll: false });
+    },
+    [router, searchParams, sort]
+  );
+
+  const toggleOrderNumberSort = useCallback(() => {
+    setSelected(selectionAfterFilterChange());
+    replaceListParams({ page: 1, sort: nextOrdersNumberSort(numberSort) ?? null });
+  }, [numberSort, replaceListParams]);
+
+  const applyFilterChange = useCallback(() => {
+    setSelected(selectionAfterFilterChange());
+    replaceListParams({ page: 1 });
+  }, [replaceListParams]);
+
   useEffect(() => {
-    const q = searchParams.get("q") ?? "";
-    const timer = window.setTimeout(() => setSearch(q), 0);
+    const timer = window.setTimeout(() => setSearch(urlQ), 0);
     return () => window.clearTimeout(timer);
-  }, [searchParams]);
+  }, [urlQ]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setDebounced(search.trim());
-      setPage(1);
+      const next = search.trim();
+      setDebounced(next);
+      if (committedSearchChanged(committedSearchRef.current, next)) {
+        committedSearchRef.current = next;
+        setSelected(selectionAfterFilterChange());
+        replaceListParams({ page: 1, q: next });
+        return;
+      }
+      committedSearchRef.current = next;
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [replaceListParams, search]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -224,6 +300,18 @@ export default function OrdersPage() {
     queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
     staleTime: 60_000,
   });
+  const lowBarcodes = useMemo(() => lowBarcodeServices(indiaPost.data), [indiaPost.data]);
+  const barcodeWarningDismissed = useRef(false);
+  const [barcodeWarningOpen, setBarcodeWarningOpen] = useState(false);
+  useEffect(() => {
+    if (barcodeWarningDismissed.current || lowBarcodes.length === 0) return;
+    setBarcodeWarningOpen(true);
+  }, [lowBarcodes]);
+  const tariffCapabilities = useQuery({
+    queryKey: ["tariff-capabilities", "orders-list"],
+    queryFn: () => api<TariffCapabilities>("/api/v1/india-post/tariff-capabilities", { cache: "no-store" }),
+    retry: false,
+  });
   const kpis = useQuery({
     queryKey: ["dashboard-kpis", kpiWindow],
     queryFn: () => api<DashboardKpis>(`/api/v1/dashboard/kpis?${toSearchParams(kpiWindow)}`),
@@ -248,6 +336,7 @@ export default function OrdersPage() {
       status,
       source,
       payment,
+      sort,
       activeFrom,
       activeTo,
       todayRange.from.toISOString(),
@@ -260,6 +349,7 @@ export default function OrdersPage() {
         status: status === "all" ? undefined : status,
         source: source === "all" ? undefined : source,
         paymentStatus: payment === "all" ? undefined : payment,
+        sort,
         from: activeFrom,
         to: activeTo,
         includeCounts: "1",
@@ -277,6 +367,129 @@ export default function OrdersPage() {
 
   const list = asPaginated<OrderRecord>(query.data, ["orders", "items"]);
   const dateCounts = query.data?.counts ?? { all: list.total, today: undefined, yesterday: undefined };
+  const tariffSender = tariffCapabilities.data?.senderChoices.find((choice) => choice.id === "pickup")
+    ?? tariffCapabilities.data?.senderChoices[0];
+  const tariffRows = useMemo(() => {
+    const states = new Map<string, TariffListState>();
+    const allowedServices = savedParcelContracts(indiaPost.data).map((contract) => contract.serviceCode);
+    for (const row of list.items) {
+      const service = resolveOrderBookingService({
+        orderService: row.indiaPostService ?? row.india_post_service,
+        workspaceOverride: indiaPost.data?.bookingServiceOverride,
+        defaultService: indiaPost.data?.defaultServiceCode,
+        allowedServices,
+      });
+      const sharedDefaults = tariffCapabilities.data?.defaults;
+      states.set(row.id, tariffListState(row, {
+        ...sharedDefaults,
+        service,
+        sourcePincode: tariffSender?.pincode,
+        lengthCm: sharedDefaults?.lengthCm ?? FALLBACK_PARCEL_LENGTH_CM,
+        widthCm: sharedDefaults?.widthCm ?? FALLBACK_PARCEL_WIDTH_CM,
+        heightCm: sharedDefaults?.heightCm ?? FALLBACK_PARCEL_HEIGHT_CM,
+      }));
+    }
+    return states;
+  }, [indiaPost.data, list.items, tariffCapabilities.data?.defaults, tariffSender?.pincode]);
+  const tariffQueueSignature = Array.from(tariffRows.entries())
+    .filter(([, state]) => state.status === "quote")
+    .map(([id, state]) => `${id}:${state.status === "quote" ? state.key : ""}`)
+    .join(",");
+
+  useEffect(() => {
+    if (!indiaPost.isFetched) return;
+    const next = indiaPost.data?.bookingServiceOverride ?? null;
+    const previous = workspaceBookingSeen.current;
+    workspaceBookingSeen.current = next;
+    if (previous === undefined || previous === next) return;
+    const followsWorkspace = list.items.filter(
+      (row) => !parcelServiceCode(row.indiaPostService ?? row.india_post_service)
+    );
+    for (const row of followsWorkspace) {
+      const prefix = `${row.id}:`;
+      for (const key of attemptedTariffs.current) {
+        if (key.startsWith(prefix)) attemptedTariffs.current.delete(key);
+      }
+    }
+    setTariffProgress((current) => {
+      let changed = false;
+      const progress = { ...current };
+      for (const row of followsWorkspace) {
+        if (!(row.id in progress)) continue;
+        delete progress[row.id];
+        changed = true;
+      }
+      return changed ? progress : current;
+    });
+  }, [indiaPost.data?.bookingServiceOverride, indiaPost.isFetched, list.items]);
+
+  useEffect(() => {
+    if (!tariffCapabilities.data?.enabled || !tariffSender) return;
+    const jobs = Array.from(tariffRows.entries()).flatMap(([orderId, state]) => {
+      if (state.status !== "quote") return [];
+      const attemptKey = `${orderId}:${state.key}`;
+      if (attemptedTariffs.current.has(attemptKey)) return [];
+      attemptedTariffs.current.add(attemptKey);
+      return [{ orderId, state, attemptKey }];
+    });
+    if (!jobs.length) return;
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < jobs.length) {
+        const job = jobs[cursor++];
+        setTariffProgress((current) => ({
+          ...current,
+          [job.orderId]: { key: job.state.key, status: "calculating" },
+        }));
+        try {
+          let quote: TariffQuote | null = null;
+          for (let attempt = 0; attempt < 6; attempt += 1) {
+            try {
+              quote = await api<TariffQuote>(`/api/v1/orders/${encodeURIComponent(job.orderId)}/tariff-quote`, {
+                method: "POST",
+                body: JSON.stringify({
+                  senderOffice: tariffSender.id,
+                  service: job.state.input.service,
+                  weightGrams: job.state.input.weightGrams,
+                  lengthCm: job.state.input.lengthCm,
+                  widthCm: job.state.input.widthCm,
+                  heightCm: job.state.input.heightCm,
+                }),
+              });
+              break;
+            } catch (error) {
+              const waiting = error instanceof ApiError && (error.status === 429 || error.code === "RATE_LIMITED");
+              if (!waiting || attempt === 5) throw error;
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+            }
+          }
+          if (!quote) throw new ApiError("Please wait before requesting another estimate.", 429);
+          queryClient.setQueriesData<Paginated<OrderRecord>>({ queryKey: ["orders"] }, (current) => current ? {
+            ...current,
+            items: current.items.map((row) => row.id === job.orderId ? {
+              ...row,
+              indiaPostEstimateAmount: quote.estimatedTotal,
+              india_post_estimate_amount: quote.estimatedTotal,
+              indiaPostEstimatedAt: quote.calculatedAt,
+              india_post_estimated_at: quote.calculatedAt,
+              indiaPostEstimateKey: job.state.key,
+              india_post_estimate_key: job.state.key,
+            } : row),
+          } : current);
+          setTariffProgress((current) => ({
+            ...current,
+            [job.orderId]: { key: job.state.key, status: "success", amount: quote.estimatedTotal },
+          }));
+        } catch {
+          setTariffProgress((current) => ({
+            ...current,
+            [job.orderId]: { key: job.state.key, status: "error" },
+          }));
+        }
+      }
+    };
+    void Promise.all([worker(), worker()]);
+  }, [queryClient, tariffCapabilities.data?.enabled, tariffQueueSignature, tariffRows, tariffSender]);
 
   useEffect(() => {
     if (!syncInFlight) return;
@@ -341,8 +554,40 @@ export default function OrdersPage() {
         method: "PATCH",
         body: JSON.stringify({ service }),
       }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      for (const key of attemptedTariffs.current) {
+        if (key.startsWith(`${variables.orderId}:`)) attemptedTariffs.current.delete(key);
+      }
+      setTariffProgress((current) => {
+        if (!(variables.orderId in current)) return current;
+        const next = { ...current };
+        delete next[variables.orderId];
+        return next;
+      });
+      queryClient.setQueriesData<Paginated<OrderRecord>>({ queryKey: ["orders"] }, (current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((row) =>
+                row.id === variables.orderId
+                  ? {
+                      ...row,
+                      indiaPostService: variables.service,
+                      india_post_service: variables.service,
+                      indiaPostEstimateKey: null,
+                      india_post_estimate_key: null,
+                    }
+                  : row
+              ),
+            }
+          : current
+      );
       queryClient.invalidateQueries({ queryKey: ["orders"] });
+      toast.success(
+        variables.service === "BUSINESS_PARCEL"
+          ? "Switched to Business Parcel."
+          : "Switched to Speed Post Parcel Domestic."
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -385,6 +630,7 @@ export default function OrdersPage() {
       status: status === "all" ? undefined : status,
       source: source === "all" ? undefined : source,
       paymentStatus: payment === "all" ? undefined : payment,
+      sort,
       from: activeFrom,
       to: activeTo,
       format: "csv",
@@ -397,11 +643,13 @@ export default function OrdersPage() {
   function resetFilters() {
     setSearch("");
     setDebounced("");
+    committedSearchRef.current = "";
     setStatus("all");
     setSource("all");
     setPayment("all");
     setDateFilter({ kind: "all" });
-    setPage(1);
+    setSelected(selectionAfterFilterChange());
+    replaceListParams({ page: 1, q: "" });
   }
 
   function toggleColumn(key: OptionalColumn, next: boolean) {
@@ -425,7 +673,7 @@ export default function OrdersPage() {
         options={parcelServiceToggleOptions(indiaPost.data)}
         disabled={locked || pending}
         onChange={(service) => {
-          if (service !== (row.indiaPostService ?? row.india_post_service)) {
+          if (service !== parcelServiceCode(effective)) {
             setService.mutate({ orderId: row.id, service });
           }
         }}
@@ -493,6 +741,11 @@ export default function OrdersPage() {
       resizable: true,
       minWidth: 64,
       maxWidth: 280,
+      sort: {
+        state: numberSortState,
+        onToggle: toggleOrderNumberSort,
+        title: "Sort by order number",
+      },
       cell: (row) => (
         <Link href={`/dashboard/orders/${row.id}`} className="font-medium hover:text-brand">
           {orderNumber(row)}
@@ -561,16 +814,16 @@ export default function OrdersPage() {
     {
       id: "status",
       header: "Status",
-      className: "w-[5.75rem] whitespace-nowrap",
-      cell: (row) => <StatusBadge value={row.status} />,
+      className: "w-[6.75rem] whitespace-nowrap",
+      cell: (row) => <StatusBadge value={orderStatusBadgeValue(row.status)} />,
     },
     ...(visibleColumns.dimensions
       ? [
           {
             id: "dimensions",
             header: "Parcel",
-            className: "w-[7.5rem] px-2 whitespace-nowrap",
-            cell: (row: OrderRecord) => <OrderDimensionBadge order={row} />,
+            className: "w-[7.5rem] min-w-[7.5rem] px-2 whitespace-normal",
+            cell: (row: OrderRecord) => <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />,
           } satisfies DataTableColumn<OrderRecord>,
         ]
       : []),
@@ -579,8 +832,8 @@ export default function OrdersPage() {
           {
             id: "payment",
             header: "Payment",
-            className: "w-[4.25rem] whitespace-nowrap",
-            cell: (row: OrderRecord) => <StatusBadge value={row.paymentStatus ?? row.payment_status} />,
+            className: "w-[6.25rem] overflow-visible whitespace-nowrap",
+            cell: (row: OrderRecord) => <ShopifyPaymentConfirm order={row} />,
           } satisfies DataTableColumn<OrderRecord>,
         ]
       : []),
@@ -593,6 +846,35 @@ export default function OrdersPage() {
           {formatCurrency(row.totalAmount ?? row.total_amount, row.currency)}
         </span>
       ),
+    },
+    {
+      id: "estimatedShipping",
+      header: "Est. shipping",
+      className: "w-[8.5rem] whitespace-nowrap",
+      cell: (row) => {
+        const state = tariffRows.get(row.id);
+        const progress = tariffProgress[row.id];
+        if (state?.status === "missing" || state?.status === "blocked") {
+          return <span className="text-xs font-medium text-amber-700" title={state.warning}>{state.warning}</span>;
+        }
+        if (state?.status === "quote" && progress?.key === state.key) {
+          if (progress.status === "calculating") return <span className="text-xs text-muted">Calculating…</span>;
+          if (progress.status === "error") return <span className="text-xs font-medium text-amber-700">Unavailable</span>;
+          if (progress.status === "success" && progress.amount != null) {
+            return <span className="whitespace-nowrap tabular-nums">{formatCurrency(progress.amount, "INR")}</span>;
+          }
+        }
+        const amount = row.indiaPostEstimateAmount ?? row.india_post_estimate_amount;
+        return state?.status === "quote" ? (
+          <span className="text-xs text-muted">Queued…</span>
+        ) : amount == null ? (
+          <span className="text-xs text-muted">—</span>
+        ) : (
+          <span className="whitespace-nowrap tabular-nums" title="Latest India Post pre-booking estimate">
+            {formatCurrency(amount, "INR")}
+          </span>
+        );
+      },
     },
     ...(visibleColumns.created
       ? [
@@ -616,16 +898,18 @@ export default function OrdersPage() {
 
   const filterSelects = (
     <>
-      <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}>
+      <Select value={status} onValueChange={(value) => { setStatus(value); applyFilterChange(); }}>
         <SelectTrigger className={FILTER_SELECT_CLASS}><SelectValue placeholder="Status" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All statuses</SelectItem>
           {ORDER_STATUSES.map((item) => (
-            <SelectItem key={item} value={item}>{item}</SelectItem>
+            <SelectItem key={item} value={item}>
+              {item === "READY" ? "Unfulfilled" : item}
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>
-      <Select value={source} onValueChange={(value) => { setSource(value); setPage(1); }}>
+      <Select value={source} onValueChange={(value) => { setSource(value); applyFilterChange(); }}>
         <SelectTrigger className={FILTER_SELECT_CLASS}><SelectValue placeholder="Source" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All sources</SelectItem>
@@ -634,7 +918,7 @@ export default function OrdersPage() {
           ))}
         </SelectContent>
       </Select>
-      <Select value={payment} onValueChange={(value) => { setPayment(value); setPage(1); }}>
+      <Select value={payment} onValueChange={(value) => { setPayment(value); applyFilterChange(); }}>
         <SelectTrigger className={FILTER_SELECT_CLASS}><SelectValue placeholder="Payment" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All payments</SelectItem>
@@ -742,7 +1026,7 @@ export default function OrdersPage() {
         activeStatus={status}
         onSelect={(next) => {
           setStatus(next);
-          setPage(1);
+          applyFilterChange();
         }}
       />
 
@@ -756,7 +1040,7 @@ export default function OrdersPage() {
           }}
           onChange={(next) => {
             setDateFilter(next);
-            setPage(1);
+            applyFilterChange();
           }}
         />
         <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center">
@@ -770,6 +1054,23 @@ export default function OrdersPage() {
             {filterSelects}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-8 lg:hidden"
+              title="Sort by order number"
+              onClick={toggleOrderNumberSort}
+            >
+              # Order
+              {numberSortState === "asc" ? (
+                <ChevronUp className="size-3.5" aria-hidden />
+              ) : numberSortState === "desc" ? (
+                <ChevronDown className="size-3.5" aria-hidden />
+              ) : (
+                <ChevronsUpDown className="size-3.5 opacity-50" aria-hidden />
+              )}
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button type="button" variant="secondary" size="sm" className="h-8 lg:hidden">
@@ -809,26 +1110,32 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {selected.length >= 2 ? (
+      {selected.length > 0 ? (
         <div className="sticky top-2 z-20 rounded-xl border border-border bg-card px-3 py-2 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm font-medium text-ink">{selected.length} selected</p>
+            <p className="text-sm font-medium text-ink">
+              {selected.length === 1 ? "1 selected" : `${selected.length} selected`}
+            </p>
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                disabled={bulkFulfill.isPending}
-                className={orderActionButtonClass("PROCESSING")}
-                onClick={() => setConfirmFulfill(true)}
-              >
-                <Truck className="size-4" />
-                {bulkFulfill.isPending ? "Processing…" : "Fulfill · Booked / packed"}
-              </Button>
-              <BulkIndiaPostBooking
-                selectedIds={selected}
-                size="sm"
-                onQueued={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
-              />
+              {selected.length >= 2 ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={bulkFulfill.isPending}
+                    className={orderActionButtonClass("PROCESSING")}
+                    onClick={() => setConfirmFulfill(true)}
+                  >
+                    <Truck className="size-4" />
+                    {bulkFulfill.isPending ? "Processing…" : "Fulfill · Booked / packed"}
+                  </Button>
+                  <BulkIndiaPostBooking
+                    selectedIds={selected}
+                    size="sm"
+                    onQueued={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
+                  />
+                </>
+              ) : null}
               <Button
                 type="button"
                 variant="secondary"
@@ -843,12 +1150,23 @@ export default function OrdersPage() {
         </div>
       ) : null}
 
+      {parcelOrder ? (
+        <OrderDimensionBadge
+          order={list.items.find((item) => item.id === parcelOrder.id) ?? parcelOrder}
+          dialogOnly
+          open
+          onOpenChange={(next) => {
+            if (!next) setParcelOrder(null);
+          }}
+        />
+      ) : null}
+
       <DataTable
         columns={columns}
         data={list.items}
         density="compact"
         paginationStyle="numbered"
-        fetching={query.isFetching && !query.isLoading}
+        fetching={(query.isFetching && !query.isLoading) || query.isPlaceholderData}
         loading={query.isLoading && !query.data}
         error={query.error instanceof Error ? query.error : null}
         emptyTitle={shopifyReady ? "No unfulfilled Shopify orders yet" : "No orders match these filters"}
@@ -868,14 +1186,14 @@ export default function OrdersPage() {
             </Link>
           )
         }
-        page={list.page}
+        page={page}
         pageSize={pageSize}
         total={list.total}
-        onPageChange={setPage}
+        onPageChange={(next) => replaceListParams({ page: next })}
         pageSizeOptions={PAGE_SIZE_OPTIONS}
         onPageSizeChange={(size) => {
           setPageSize(size);
-          setPage(1);
+          replaceListParams({ page: 1 });
         }}
         selectable
         selectedIds={selected}
@@ -907,9 +1225,7 @@ export default function OrdersPage() {
                       checked={checked}
                       aria-label={`Select ${orderNumber(row)}`}
                       onCheckedChange={(value) => {
-                        setSelected((current) =>
-                          value ? Array.from(new Set([...current, row.id])) : current.filter((id) => id !== row.id)
-                        );
+                        setSelected((current) => toggleRowSelection(current, row.id, value === true));
                       }}
                     />
                   </div>
@@ -922,7 +1238,7 @@ export default function OrdersPage() {
                           <p className="truncate text-xs text-muted">{customerPhone(row)}</p>
                         ) : null}
                       </div>
-                      <StatusBadge value={row.status} />
+                      <StatusBadge value={orderStatusBadgeValue(row.status)} />
                     </div>
                     <div
                       className="flex flex-wrap items-center gap-1.5"
@@ -930,8 +1246,8 @@ export default function OrdersPage() {
                       onPointerDown={(event) => event.stopPropagation()}
                     >
                       <StatusBadge value={row.source} />
-                      <OrderDimensionBadge order={row} />
-                      <StatusBadge value={row.paymentStatus ?? row.payment_status} />
+                      <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />
+                      <ShopifyPaymentConfirm order={row} />
                     </div>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium tabular-nums">
@@ -946,6 +1262,47 @@ export default function OrdersPage() {
           </div>
         }
       />
+      <Dialog
+        open={barcodeWarningOpen}
+        onOpenChange={(open) => {
+          if (!open) barcodeWarningDismissed.current = true;
+          setBarcodeWarningOpen(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Low barcode series</DialogTitle>
+            <DialogDescription>
+              {lowBarcodes
+                .map((service) => `${service.label} has ${service.left} barcodes left.`)
+                .join(" ")}{" "}
+              Add a barcode series. Otherwise you can’t book this shipment.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                barcodeWarningDismissed.current = true;
+                setBarcodeWarningOpen(false);
+              }}
+            >
+              Close
+            </Button>
+            <Link
+              href="/dashboard/integrations/india-post"
+              className={buttonVariants({ size: "sm" })}
+              onClick={() => {
+                barcodeWarningDismissed.current = true;
+              }}
+            >
+              Add barcode
+            </Link>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={confirmFulfill}
         onOpenChange={(open) => {

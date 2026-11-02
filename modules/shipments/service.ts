@@ -4,6 +4,9 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
+import { isAuthoritativeIndiaPostBooking } from "@/modules/india-post/booking-idempotency";
+import { scheduleForceRetryBooking } from "@/modules/india-post/booking-force-retry";
+import { evaluateBookingRetryEligibility } from "@/modules/india-post/booking-retry-eligibility";
 import { resolveOrderBookingService, shipmentServiceLocked } from "@/modules/india-post/booking-service";
 import {
   indiaPostDisplayShipmentStatus,
@@ -11,12 +14,57 @@ import {
   isIndiaPostAcceptedStatus,
 } from "@/modules/india-post/booking-status";
 import { resolveDefaultServiceCode, savedParcelContracts } from "@/modules/india-post/contracts";
-import { whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { commercePendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
-import { INDIA_POST_SERVICES } from "@/types/domain";
+import {
+  manualDimensionLock,
+  parcelDimensionsMetadata,
+  readParcelDimensionSource,
+  type DimensionSource,
+  type ResolvedShipmentDimensions,
+} from "@/modules/shopify/dimensions";
+import { parcelBoxIssue } from "@/modules/india-post/article-validator";
+import { sameBox } from "@/modules/autopack/decide";
+import { recordMerchantBox } from "@/modules/autopack/history";
+import { DEFAULT_INDIA_POST_SERVICE, INDIA_POST_SERVICES } from "@/types/domain";
+import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
+import { merchantSmartAutoRetryView, resumeSmartAutoRetryAfterCorrection } from "@/modules/india-post/smart-auto-retry";
 
 const OPEN_SHIPMENT_STATUSES = ["DRAFT", "QUEUED", "FAILED"] as const;
+
+async function enqueueBookingOrMarkFailed(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentId: string
+) {
+  try {
+    return await createBackgroundJob(supabase, {
+      organizationId: ctx.organizationId,
+      jobType: "shipment-booking",
+      entityType: "shipment",
+      entityId: shipmentId,
+      userId: ctx.userId,
+    });
+  } catch (error) {
+    await supabase
+      .from("shipments")
+      .update({
+        status: "FAILED",
+        last_error: "Booking could not be queued. Retry when the queue is available.",
+        last_error_code: "QUEUE_UNAVAILABLE",
+      })
+      .eq("id", shipmentId)
+      .eq("organization_id", ctx.organizationId)
+      .is("booked_at", null)
+      .in("status", ["QUEUED", "DRAFT"]);
+    if (error instanceof AppError) throw error;
+    throw new AppError(
+      ERROR_CODES.JOB_FAILED,
+      error instanceof Error ? error.message : "Booking could not be queued."
+    );
+  }
+}
 
 function assertIndiaPostService(serviceCode: string) {
   if (!INDIA_POST_SERVICES.some((service) => service.code === serviceCode)) {
@@ -83,6 +131,10 @@ export async function createShipmentsForOrders(
     lengthCm?: number;
     widthCm?: number;
     heightCm?: number;
+    dimensionSource?: DimensionSource;
+    dimensionPackageId?: string;
+    dimensionPackageName?: string;
+    dimensionEvidenceId?: string;
     serviceCode?: string;
     enqueueBooking?: boolean;
     runBookingNow?: boolean;
@@ -118,7 +170,7 @@ export async function createShipmentsForOrders(
 
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("*, order_line_items(quantity, weight_grams, unit_price)")
+    .select("*, order_line_items(quantity, unfulfilled_quantity, weight_grams, unit_price)")
     .eq("organization_id", ctx.organizationId)
     .in("id", orderIds);
 
@@ -127,15 +179,52 @@ export async function createShipmentsForOrders(
 
   const { data: existing } = await supabase
     .from("shipments")
-    .select("id, order_id, status")
+    .select("id, order_id, status, booked_at, barcode, tracking_number, provider_ref, last_error_code, metadata")
     .eq("organization_id", ctx.organizationId)
     .in("order_id", orders.map((order) => order.id))
     .not("status", "eq", "CANCELLED");
-  const existingByOrder = new Map<string, { id: string; order_id: string; status: string }>();
+  const existingByOrder = new Map<string, {
+    id: string;
+    order_id: string;
+    status: string;
+    booked_at?: string | null;
+    barcode?: string | null;
+    tracking_number?: string | null;
+    provider_ref?: string | null;
+    last_error_code?: string | null;
+    metadata?: unknown;
+  }>();
   for (const row of existing ?? []) {
     const prev = existingByOrder.get(row.order_id as string);
     if (!prev || ((prev.status === "FAILED") && row.status !== "FAILED")) {
-      existingByOrder.set(row.order_id as string, row as { id: string; order_id: string; status: string });
+      existingByOrder.set(row.order_id as string, row as {
+        id: string;
+        order_id: string;
+        status: string;
+        booked_at?: string | null;
+        barcode?: string | null;
+        tracking_number?: string | null;
+        provider_ref?: string | null;
+        last_error_code?: string | null;
+        metadata?: unknown;
+      });
+    }
+  }
+
+  const latestJobByShipment = new Map<string, Record<string, unknown>>();
+  const existingIds = [...existingByOrder.values()].map((row) => row.id);
+  if (existingIds.length) {
+    const { data: priorJobs } = await supabase
+      .from("background_jobs")
+      .select("id, entity_id, status, attempt_count, max_attempts, next_attempt_at, locked_at, created_at")
+      .eq("organization_id", ctx.organizationId)
+      .eq("job_type", "shipment-booking")
+      .eq("entity_type", "shipment")
+      .in("entity_id", existingIds)
+      .order("created_at", { ascending: false });
+    for (const job of priorJobs ?? []) {
+      const entityId = String((job as { entity_id?: string }).entity_id ?? "");
+      if (entityId && !latestJobByShipment.has(entityId)) latestJobByShipment.set(entityId, job as Record<string, unknown>);
     }
   }
 
@@ -156,7 +245,25 @@ export async function createShipmentsForOrders(
 
   const created = [];
   const skipped = [];
+  const addressIds = [
+    ...new Set(
+      orders
+        .map((order) => order.shipping_address_id as string | null | undefined)
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+  const { data: addressRows } = addressIds.length
+    ? await supabase
+        .from("addresses")
+        .select("*")
+        .eq("organization_id", ctx.organizationId)
+        .in("id", addressIds)
+    : { data: [] as Array<Record<string, unknown>> };
+  const addressById = new Map((addressRows ?? []).map((row) => [row.id as string, row as Record<string, unknown>]));
+
   const whatsappBlocked: string[] = [];
+  const shopifyPendingBlocked: string[] = [];
+  const addressBlocked: string[] = [];
   for (const order of orders) {
     if (
       whatsappShipmentBlocked({
@@ -169,14 +276,42 @@ export async function createShipmentsForOrders(
       skipped.push(order.id);
       continue;
     }
+    if (enqueueBooking && commercePendingBookingBlocked(order)) {
+      shopifyPendingBlocked.push(String(order.order_number ?? order.id));
+      skipped.push(order.id);
+      continue;
+    }
+    if (enqueueBooking) {
+      const shipping = order.shipping_address_id ? addressById.get(order.shipping_address_id as string) : null;
+      const addressBlock = shippingAddressBookingBlock(shipping ?? null);
+      if (addressBlock) {
+        addressBlocked.push(String(order.order_number ?? order.id));
+        skipped.push(order.id);
+        continue;
+      }
+    }
     const current = existingByOrder.get(order.id);
     const currentStatus = (current?.status ?? "").toUpperCase();
-    const alreadyBooked = isIndiaPostAcceptedStatus(currentStatus);
-    const items = (order.order_line_items as Array<{ quantity: number; weight_grams?: number }>) ?? [];
+    const alreadyBooked =
+      isIndiaPostAcceptedStatus(currentStatus) ||
+      (current ? isAuthoritativeIndiaPostBooking(current) : false);
+    const items = (order.order_line_items as Array<{
+      quantity: number;
+      unfulfilled_quantity?: number | null;
+      weight_grams?: number;
+    }>) ?? [];
+    const shopifyOrder = (order.source ?? "").toUpperCase() === "SHOPIFY";
     const weight = bookingBoxWeightGrams({
       parcelWeightMode: order.parcel_weight_mode as string | null,
       parcelWeightGrams: order.parcel_weight_grams as number | null,
-      lineItems: items,
+      lineItems: items.map((item) => ({
+        quantity: shopifyOrder
+          ? item.unfulfilled_quantity == null
+            ? 0
+            : Number(item.unfulfilled_quantity)
+          : item.quantity,
+        weight_grams: item.weight_grams,
+      })),
       explicitGrams: extras?.weightGrams,
     });
 
@@ -214,30 +349,64 @@ export async function createShipmentsForOrders(
     }
 
     if (enqueueBooking && current && !alreadyBooked) {
-      const recovering = currentStatus === "RECOVERY_REQUIRED" || currentStatus === "BOOKING";
+      const decision = evaluateBookingRetryEligibility({
+        shipment: current,
+        job: latestJobByShipment.get(current.id) ?? null,
+        order: {
+          status: order.status,
+          fulfillment_status: (order as { fulfillment_status?: string | null }).fulfillment_status,
+        },
+        purpose: "retry",
+      });
+      if (!decision.eligible) {
+        skipped.push(order.id);
+        continue;
+      }
       const collect = shipmentCollectFromOrder(order);
-      await supabase
+      // A size the merchant chose in PostBus is never replaced by an automatic one.
+      // AutoPack boxes are only written together with their evidence record (see modules/autopack).
+      const keepMerchantDims =
+        manualDimensionLock(readParcelDimensionSource(current.metadata), current.metadata) ||
+        extras?.dimensionSource === "autopack_history";
+      const { data: requeued, error: requeueError } = await supabase
         .from("shipments")
         .update({
-          ...(recovering
-            ? { status: currentStatus }
-            : { status: "QUEUED", last_error: null, last_error_code: null }),
+          status: "QUEUED",
+          last_error: null,
+          last_error_code: null,
           payment_mode: collect.payment_mode,
           cod_amount: collect.cod_amount,
           service_code: serviceFor(order),
           weight_grams: weight,
-          ...(extras?.lengthCm != null ? { length_cm: extras.lengthCm } : {}),
-          ...(extras?.widthCm != null ? { width_cm: extras.widthCm } : {}),
-          ...(extras?.heightCm != null ? { height_cm: extras.heightCm } : {}),
+          ...(!keepMerchantDims && extras?.lengthCm != null ? { length_cm: extras.lengthCm } : {}),
+          ...(!keepMerchantDims && extras?.widthCm != null ? { width_cm: extras.widthCm } : {}),
+          ...(!keepMerchantDims && extras?.heightCm != null ? { height_cm: extras.heightCm } : {}),
         })
-        .eq("id", current.id);
-      const job = await createBackgroundJob(supabase, {
-        organizationId: ctx.organizationId,
-        jobType: "shipment-booking",
-        entityType: "shipment",
-        entityId: current.id,
-        userId: ctx.userId,
-      });
+        .eq("id", current.id)
+        .eq("organization_id", ctx.organizationId)
+        .is("booked_at", null)
+        .is("barcode", null)
+        .is("tracking_number", null)
+        .is("provider_ref", null)
+        .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED"])
+        .filter("metadata->>ceptSubmitIntentAt", "is", null)
+        .select("id")
+        .maybeSingle();
+      if (requeueError || !requeued) {
+        skipped.push(order.id);
+        continue;
+      }
+      if (currentStatus !== "QUEUED") {
+        const { publishBookingRequested } = await import("@/modules/webhooks/publish");
+        await publishBookingRequested(supabase, {
+          organizationId: ctx.organizationId,
+          shipmentId: current.id,
+          orderId: order.id,
+          orderNumber: order.order_number as string | undefined,
+          previousStatus: currentStatus,
+        });
+      }
+      const job = await enqueueBookingOrMarkFailed(supabase, ctx, current.id);
       bookingJobs.push(job);
       created.push({ ...current, jobId: job.id });
       continue;
@@ -263,6 +432,21 @@ export async function createShipmentsForOrders(
         length_cm: extras?.lengthCm ?? null,
         width_cm: extras?.widthCm ?? null,
         height_cm: extras?.heightCm ?? null,
+        ...(extras?.dimensionSource && extras.lengthCm && extras.widthCm && extras.heightCm
+          ? {
+              metadata: {
+                parcelDimensions: parcelDimensionsMetadata({
+                  lengthCm: extras.lengthCm,
+                  widthCm: extras.widthCm,
+                  heightCm: extras.heightCm,
+                  source: extras.dimensionSource,
+                  packageId: extras.dimensionPackageId,
+                  packageName: extras.dimensionPackageName,
+                  evidenceId: extras.dimensionEvidenceId,
+                }),
+              },
+            }
+          : {}),
         status: enqueueBooking ? "QUEUED" : "DRAFT",
       })
       .select()
@@ -270,6 +454,17 @@ export async function createShipmentsForOrders(
 
     if (shipError || !shipment) {
       throw new AppError(ERROR_CODES.SHIPMENT_FAILED, shipError?.message || "Shipment create failed.");
+    }
+
+    if (enqueueBooking) {
+      const { publishBookingRequested } = await import("@/modules/webhooks/publish");
+      await publishBookingRequested(supabase, {
+        organizationId: ctx.organizationId,
+        shipmentId: shipment.id,
+        orderId: order.id,
+        orderNumber: order.order_number as string | undefined,
+        previousStatus: "NEW",
+      });
     }
 
     if (action === "processing") {
@@ -289,13 +484,7 @@ export async function createShipmentsForOrders(
       continue;
     }
 
-    const job = await createBackgroundJob(supabase, {
-      organizationId: ctx.organizationId,
-      jobType: "shipment-booking",
-      entityType: "shipment",
-      entityId: shipment.id,
-      userId: ctx.userId,
-    });
+    const job = await enqueueBookingOrMarkFailed(supabase, ctx, shipment.id);
     bookingJobs.push(job);
     created.push({ ...shipment, jobId: job.id });
   }
@@ -310,6 +499,10 @@ export async function createShipmentsForOrders(
       ERROR_CODES.CONFLICT,
       whatsappBlocked.length
         ? `${whatsappBlocked[0]} cannot be booked until the WhatsApp order is READY.`
+        : shopifyPendingBlocked.length
+          ? `${shopifyPendingBlocked[0]} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`
+        : addressBlocked.length
+          ? `${addressBlocked[0]} cannot be booked until the shipping address is valid and ready.`
         : skipped.length === 1
           ? "This order already has a shipment. Open the shipment to retry or cancel it."
           : "Every selected order already has a shipment."
@@ -388,9 +581,22 @@ export async function getShipment(supabase: SupabaseClient, ctx: TenantContext, 
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Shipment not found.");
+  const { manifestForShipment } = await import("@/modules/manifests/service");
   return {
     ...mapShipment(data),
-    events: data.tracking_events ?? [],
+    manifest: await manifestForShipment(supabase, ctx.organizationId, id),
+    events: nestedRows(data.tracking_events).map((row) => ({
+      id: String(row.id ?? ""),
+      eventCode: row.event_code ?? row.eventCode ?? null,
+      event_code: row.event_code ?? row.eventCode ?? null,
+      eventDescription: row.event_description ?? row.eventDescription ?? null,
+      event_description: row.event_description ?? row.eventDescription ?? null,
+      officeName: row.office_name ?? row.officeName ?? null,
+      office_name: row.office_name ?? row.officeName ?? null,
+      occurredAt: row.occurred_at ?? row.occurredAt ?? null,
+      occurred_at: row.occurred_at ?? row.occurredAt ?? null,
+      classification: row.classification ?? null,
+    })),
   };
 }
 
@@ -406,16 +612,30 @@ export async function retryShipment(
   }
 ) {
   const shipment = await getShipment(supabase, ctx, id);
-  const { checkQuota } = await import("@/modules/billing/usage");
-  await checkQuota(supabase, ctx.organizationId, 1);
   const orderId = shipment.orderId ?? shipment.order_id ?? "";
-  let serviceCode: string | undefined;
-  if (orderId && !shipmentServiceLocked(String(shipment.status ?? ""))) {
+  let linkedOrder: { india_post_service?: string | null; source?: string | null; payment_status?: string | null } | null =
+    null;
+  if (orderId) {
     const { data: order } = await supabase
       .from("orders")
-      .select("india_post_service")
+      .select("india_post_service, source, payment_status")
       .eq("id", orderId)
+      .eq("organization_id", ctx.organizationId)
       .maybeSingle();
+    linkedOrder = order;
+    if (commercePendingBookingBlocked(order ?? {})) {
+      const source = (order?.source ?? "").toUpperCase() === "WOOCOMMERCE" ? "WooCommerce" : "Shopify";
+      throw new AppError(
+        ERROR_CODES.CONFLICT,
+        `${shipment.orderNumber ?? shipment.order_number ?? "This order"} cannot be booked until ${source} payment is confirmed as Prepaid or COD.`
+      );
+    }
+  }
+  const { checkQuota } = await import("@/modules/billing/usage");
+  await checkQuota(supabase, ctx.organizationId, 1);
+  let serviceCode: string | undefined;
+  if (orderId && !shipmentServiceLocked(String(shipment.status ?? ""))) {
+    const order = linkedOrder;
     const choice = await workspaceBookingChoice(supabase, ctx.organizationId);
     serviceCode = resolveOrderBookingService({
       orderService: order?.india_post_service,
@@ -425,29 +645,31 @@ export async function retryShipment(
     });
     assertIndiaPostService(serviceCode);
   }
-  await supabase
-    .from("shipments")
-    .update({
-      status: "QUEUED",
-      last_error: null,
-      last_error_code: null,
-      ...(serviceCode ? { service_code: serviceCode } : {}),
-      ...(extras?.weightGrams != null && extras.weightGrams > 0 ? { weight_grams: Math.round(extras.weightGrams) } : {}),
-      ...(extras?.lengthCm != null && extras.lengthCm > 0 ? { length_cm: extras.lengthCm } : {}),
-      ...(extras?.widthCm != null && extras.widthCm > 0 ? { width_cm: extras.widthCm } : {}),
-      ...(extras?.heightCm != null && extras.heightCm > 0 ? { height_cm: extras.heightCm } : {}),
-    })
-    .eq("id", id);
-  const job = await createBackgroundJob(supabase, {
-    organizationId: ctx.organizationId,
-    jobType: "shipment-booking",
-    entityType: "shipment",
-    entityId: id,
-    userId: ctx.userId,
-  });
-  const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
-  await runQueuedJobsNow([claimedJobFromRow(job)]);
-  return { shipmentId: id, jobId: job.id, message: "Retry queued." };
+  const { evaluateOwnedBookingRetry } = await import("@/modules/india-post/booking-force-retry");
+  const preview = await evaluateOwnedBookingRetry(supabase, ctx.organizationId, id);
+  if (preview.action === "RETRY_ALREADY_SCHEDULED") {
+    return { shipmentId: id, jobId: preview.existingJobId ?? null, message: preview.reason, scheduled: false, action: preview.action };
+  }
+  if (!preview.eligible) {
+    throw new AppError(ERROR_CODES.CONFLICT, preview.reason, { action: preview.action });
+  }
+  if (serviceCode) {
+    await supabase
+      .from("shipments")
+      .update({ service_code: serviceCode })
+      .eq("id", id)
+      .eq("organization_id", ctx.organizationId)
+      .is("booked_at", null)
+      .in("status", ["DRAFT", "QUEUED", "FAILED", "VALIDATING"]);
+  }
+  const scheduled = await scheduleForceRetryBooking(supabase, ctx, id, extras);
+  return {
+    shipmentId: id,
+    jobId: scheduled.jobId,
+    message: scheduled.message,
+    scheduled: scheduled.scheduled,
+    action: scheduled.decision.action,
+  };
 }
 
 export const updateShipmentDimensionsSchema = z.preprocess(
@@ -468,6 +690,9 @@ export const updateShipmentDimensionsSchema = z.preprocess(
       parcelWeightMode: v.parcelWeightMode ?? v.parcel_weight_mode,
       lineItems: v.lineItems ?? v.line_items,
       shape: v.shape,
+      presetId: v.presetId ?? v.preset_id,
+      measured: v.measured,
+      autopackEvidenceId: v.autopackEvidenceId ?? v.autopack_evidence_id,
     };
   },
   z.object({
@@ -498,8 +723,92 @@ export const updateShipmentDimensionsSchema = z.preprocess(
       )
       .optional(),
     shape: z.enum(["NROL", "ROLL"]).optional(),
+    /** Saved pack size the merchant picked. Ignored when the box no longer matches it. */
+    presetId: z.string().uuid().optional(),
+    /** Merchant confirms the box was physically measured. */
+    measured: z.boolean().optional(),
+    /** Merchant accepted this AutoPack suggestion (packaging_history id). */
+    autopackEvidenceId: z.string().uuid().optional(),
   })
 );
+
+type MerchantDimensionInput = Pick<
+  z.infer<typeof updateShipmentDimensionsSchema>,
+  "lengthCm" | "widthCm" | "heightCm" | "presetId" | "autopackEvidenceId"
+>;
+
+/**
+ * Labels a merchant-entered box with where it came from: a saved pack size, an accepted
+ * AutoPack suggestion, or a custom size. All three are merchant-locked.
+ */
+async function merchantDimensionChoice(
+  supabase: SupabaseClient,
+  organizationId: string,
+  input: MerchantDimensionInput
+): Promise<{ choice: ResolvedShipmentDimensions; packageSource: "preset" | "custom"; presetId: string | null }> {
+  const box = { lengthCm: input.lengthCm, widthCm: input.widthCm, heightCm: input.heightCm };
+  if (input.autopackEvidenceId) {
+    const { data } = await supabase
+      .from("packaging_history")
+      .select("id, length_cm, width_cm, height_cm, preset_id, package_source, superseded_at")
+      .eq("organization_id", organizationId)
+      .eq("id", input.autopackEvidenceId)
+      .maybeSingle();
+    const row = data as {
+      id: string;
+      length_cm: number | string;
+      width_cm: number | string;
+      height_cm: number | string;
+      preset_id: string | null;
+      package_source: string;
+      superseded_at: string | null;
+    } | null;
+    const evidenceBox = row
+      ? { lengthCm: Number(row.length_cm), widthCm: Number(row.width_cm), heightCm: Number(row.height_cm) }
+      : null;
+    if (!row || row.superseded_at || !evidenceBox || !sameBox(evidenceBox, box)) {
+      throw new AppError(ERROR_CODES.CONFLICT, "That suggested box changed. Reload the order and try again.");
+    }
+    const fromPreset = row.package_source === "preset" && Boolean(row.preset_id);
+    return {
+      choice: {
+        ...box,
+        source: "autopack_history",
+        evidenceId: row.id,
+        merchantAccepted: true,
+        ...(fromPreset && row.preset_id ? { packageId: row.preset_id } : {}),
+      },
+      packageSource: fromPreset ? "preset" : "custom",
+      presetId: fromPreset ? row.preset_id : null,
+    };
+  }
+  if (input.presetId) {
+    const { data } = await supabase
+      .from("user_shipment_presets")
+      .select("id, name, length_cm, width_cm, height_cm")
+      .eq("organization_id", organizationId)
+      .eq("id", input.presetId)
+      .maybeSingle();
+    const preset = data as { id: string; name: string; length_cm: number; width_cm: number; height_cm: number } | null;
+    if (
+      preset &&
+      sameBox({ lengthCm: Number(preset.length_cm), widthCm: Number(preset.width_cm), heightCm: Number(preset.height_cm) }, box)
+    ) {
+      return {
+        choice: { ...box, source: "postbus_preset", packageId: preset.id, packageName: preset.name },
+        packageSource: "preset",
+        presetId: preset.id,
+      };
+    }
+  }
+  return { choice: { ...box, source: "postbus_custom" }, packageSource: "custom", presetId: null };
+}
+
+/** Same India Post limits for saved pack sizes, custom sizes and AutoPack boxes. */
+function assertBoxFitsService(serviceCode: string | null | undefined, box: MerchantDimensionInput, weightGrams?: number | null) {
+  const problem = parcelBoxIssue(serviceCode || DEFAULT_INDIA_POST_SERVICE, box, Number(weightGrams) || 0);
+  if (problem) throw new AppError(ERROR_CODES.VALIDATION_ERROR, problem);
+}
 
 export async function updateShipmentDimensions(
   supabase: SupabaseClient,
@@ -509,7 +818,7 @@ export async function updateShipmentDimensions(
 ) {
   const { data: shipment, error } = await supabase
     .from("shipments")
-    .select("id, status, order_id, organization_id")
+    .select("id, status, order_id, organization_id, metadata, service_code, weight_grams")
     .eq("organization_id", ctx.organizationId)
     .eq("id", shipmentId)
     .maybeSingle();
@@ -525,6 +834,11 @@ export async function updateShipmentDimensions(
   }
 
   const orderId = shipment.order_id as string | undefined;
+  const shipmentService = (shipment as { service_code?: string | null }).service_code ?? null;
+  const storedWeight = (shipment as { weight_grams?: number | null }).weight_grams;
+  // Validate and label the box before anything is written.
+  assertBoxFitsService(shipmentService, input, input.boxWeightGrams ?? storedWeight);
+  const merchant = await merchantDimensionChoice(supabase, ctx.organizationId, input);
 
   // 1. If line items weights are supplied, update order_line_items
   if (input.lineItems?.length && orderId) {
@@ -579,10 +893,15 @@ export async function updateShipmentDimensions(
     length_cm: input.lengthCm,
     width_cm: input.widthCm,
     height_cm: input.heightCm,
+    metadata: {
+      ...((shipment as { metadata?: Record<string, unknown> }).metadata ?? {}),
+      parcelDimensions: parcelDimensionsMetadata(merchant.choice),
+    },
   };
   if (boxWeight != null && boxWeight > 0) {
     updatePayload.weight_grams = boxWeight;
   }
+  const finalWeight = boxWeight ?? (storedWeight != null ? Number(storedWeight) : null);
 
   const { data: updated, error: updateError } = await supabase
     .from("shipments")
@@ -598,6 +917,12 @@ export async function updateShipmentDimensions(
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError?.message || "Failed to update shipment dimensions.");
   }
 
+  await resumeSmartAutoRetryAfterCorrection(supabase, {
+    organizationId: ctx.organizationId,
+    shipmentIds: [shipmentId],
+    userId: ctx.userId,
+  });
+
   await supabase.from("audit_logs").insert({
     organization_id: ctx.organizationId,
     actor_id: ctx.userId,
@@ -609,8 +934,25 @@ export async function updateShipmentDimensions(
       width_cm: input.widthCm,
       height_cm: input.heightCm,
       ...(boxWeight != null ? { weight_grams: boxWeight } : {}),
+      dimension_source: merchant.choice.source,
+      ...(merchant.choice.evidenceId ? { packaging_history_id: merchant.choice.evidenceId } : {}),
     },
   });
+
+  if (orderId) {
+    await recordMerchantBox(supabase, {
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      orderId,
+      shipmentId,
+      box: input,
+      weightGrams: finalWeight,
+      serviceCode: shipmentService || DEFAULT_INDIA_POST_SERVICE,
+      packageSource: merchant.packageSource,
+      presetId: merchant.presetId,
+      measured: input.measured === true,
+    });
+  }
 
   return mapShipment(updated);
 }
@@ -678,6 +1020,9 @@ export async function setOrderShipmentDimensions(
             })),
         });
 
+  assertBoxFitsService(serviceCode, input, weight);
+  const merchant = await merchantDimensionChoice(supabase, ctx.organizationId, input);
+
   if (input.boxWeightGrams != null && input.boxWeightGrams > 0) {
     await supabase
       .from("orders")
@@ -704,6 +1049,9 @@ export async function setOrderShipmentDimensions(
       length_cm: input.lengthCm,
       width_cm: input.widthCm,
       height_cm: input.heightCm,
+      metadata: {
+        parcelDimensions: parcelDimensionsMetadata(merchant.choice),
+      },
       status: "DRAFT",
     })
     .select(
@@ -726,7 +1074,22 @@ export async function setOrderShipmentDimensions(
       width_cm: input.widthCm,
       height_cm: input.heightCm,
       weight_grams: weight,
+      dimension_source: merchant.choice.source,
+      ...(merchant.choice.evidenceId ? { packaging_history_id: merchant.choice.evidenceId } : {}),
     },
+  });
+
+  await recordMerchantBox(supabase, {
+    organizationId: ctx.organizationId,
+    userId: ctx.userId,
+    orderId: order.id,
+    shipmentId: shipment.id,
+    box: input,
+    weightGrams: weight,
+    serviceCode,
+    packageSource: merchant.packageSource,
+    presetId: merchant.presetId,
+    measured: input.measured === true,
   });
 
   return mapShipment(shipment);
@@ -981,6 +1344,7 @@ function mapShipment(row: Record<string, unknown>) {
     last_error: row.last_error as string | null | undefined,
     booked_at: row.booked_at as string | null | undefined,
   });
+  const smartAutoRetry = merchantSmartAutoRetryView({ shipment: row });
   return {
     ...row,
     orderId: row.order_id as string | undefined,
@@ -1005,6 +1369,9 @@ function mapShipment(row: Record<string, unknown>) {
     trackingNumber: row.tracking_number,
     lastError,
     last_error: lastError,
+    lastErrorCode: row.last_error_code ?? null,
+    last_error_code: row.last_error_code ?? null,
+    smartAutoRetry,
     serviceCode: row.service_code,
     createdAt: row.created_at,
     operationalStatus: row.operational_status,

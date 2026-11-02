@@ -98,6 +98,11 @@ describe("layoutLabel", () => {
       if (element.autoHeight === false) expect(block?.height).toBeCloseTo(expected.height, 5);
     }
     expect(layout.blocks.at(-1)?.id).toBe(WATERMARK_ID);
+    expect(layout.blocks.at(-1)?.kind).toBe("watermark");
+    expect(layout.blocks.at(-1)?.rotationDeg).toBeUndefined();
+    expect(layout.blocks.at(-1)?.y).toBeLessThan(4);
+    expect(layout.blocks.at(-1)?.height).toBeLessThanOrEqual(7);
+    expect((layout.blocks.at(-1)?.y ?? 0) + (layout.blocks.at(-1)?.height ?? 0)).toBeLessThan(layout.page.heightPt * 0.12);
     expect(layout.blocks.some((block) => block.id === "orderNumber")).toBe(false);
   });
 

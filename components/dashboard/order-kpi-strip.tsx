@@ -38,13 +38,13 @@ export const ORDER_KPI_FILTERS: Array<{
   },
   {
     id: "ready",
-    label: "Ready to Ship",
+    label: "Unfulfilled",
     kpi: "readyToShip",
     fallback: ["ready", "readyToShip"],
     status: "READY",
     icon: Package,
-    className: "border-emerald-100 bg-emerald-50/80",
-    iconClass: "bg-emerald-100 text-emerald-700",
+    className: "border-yellow-200 bg-yellow-50/80",
+    iconClass: "bg-yellow-100 text-yellow-800",
   },
   {
     id: "booked",

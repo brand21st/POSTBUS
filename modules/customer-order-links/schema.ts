@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bundleSelectionSchema } from "@/modules/storefront/bundle-pricing";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { CUSTOMER_ORDER_LINK_STATUSES } from "@/types/domain";
 
@@ -114,6 +115,8 @@ export const customerOrderLinkListQuery = z.object({
 });
 
 export const submitCustomerOrderLinkSchema = z.object({
+  bundles: bundleSelectionSchema.optional(),
+  quoteVersion: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   customerName: z.string().trim().min(2, "Name is required."),
   phone: z
     .string()

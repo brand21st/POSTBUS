@@ -10,12 +10,14 @@ export function StoreImage({
   sizes,
   className,
   preload = false,
+  objectPosition,
 }: {
   src?: string | null;
   alt: string;
   sizes: string;
   className?: string;
   preload?: boolean;
+  objectPosition?: string;
 }) {
   if (!src) {
     return (
@@ -34,6 +36,7 @@ export function StoreImage({
       preload={preload}
       loading={preload ? undefined : "lazy"}
       className={cn("object-cover", className)}
+      style={objectPosition ? { objectPosition } : undefined}
     />
   );
 }

@@ -159,7 +159,7 @@ export const INDIA_POST_SERVICES = [
   {
     code: "BUSINESS_PARCEL",
     label: "Business Parcel",
-    description: "India Post Parcel Contractual (CX)",
+    description: "India Post Parcel Contractual",
   },
 ] as const;
 
@@ -205,6 +205,8 @@ export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 
 export const JOB_TYPES = [
   "shopify-sync",
+  "woocommerce-sync",
+  "woocommerce-tracking",
   "shipment-booking",
   "label-generation",
   "manifest-generation",
@@ -218,6 +220,13 @@ export const JOB_TYPES = [
   "wati-notify",
   "vachat-notify",
   "invoice-generation",
+  "sales-invoice-issue",
+  "support-ingest",
+  "ai-image",
+  "cod-report-extract",
+  "gst-draft",
+  "accounting-rebuild",
+  "bulk-excel-import",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
@@ -252,4 +261,117 @@ export type Permission =
   | "api_keys.manage"
   | "webhooks.manage"
   | "audit.read"
-  | "settings.manage";
+  | "settings.manage"
+  | "support.read"
+  | "support.reply"
+  | "support.assign"
+  | "support.manage"
+  | "support.settings"
+  | "accounting.read"
+  | "accounting.write";
+
+export const SUPPORT_TICKET_STATUSES = [
+  "open",
+  "in_progress",
+  "pending_customer",
+  "pending_merchant",
+  "resolved",
+  "closed",
+  "reopened",
+] as const;
+export type SupportTicketStatus = (typeof SUPPORT_TICKET_STATUSES)[number];
+
+export const SUPPORT_TICKET_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+export type SupportTicketPriority = (typeof SUPPORT_TICKET_PRIORITIES)[number];
+
+export const SUPPORT_TICKET_CATEGORIES = [
+  "order_cancellation",
+  "product_return",
+  "product_exchange",
+  "refund_request",
+  "delivery_issue",
+  "damaged_product",
+  "wrong_product",
+  "missing_product",
+  "general_inquiry",
+  "other",
+] as const;
+export type SupportTicketCategory = (typeof SUPPORT_TICKET_CATEGORIES)[number];
+
+export const SUPPORT_WORKFLOW_KINDS = ["cancellation", "return", "exchange"] as const;
+export type SupportWorkflowKind = (typeof SUPPORT_WORKFLOW_KINDS)[number];
+
+export const CANCELLATION_WORKFLOW_STATUSES = [
+  "requested",
+  "under_review",
+  "approved",
+  "rejected",
+  "needs_info",
+  "completed",
+  "cancelled",
+] as const;
+export type CancellationWorkflowStatus = (typeof CANCELLATION_WORKFLOW_STATUSES)[number];
+
+export const RETURN_WORKFLOW_STATUSES = [
+  "requested",
+  "under_review",
+  "approved",
+  "rejected",
+  "needs_info",
+  "awaiting_return_shipment",
+  "return_in_transit",
+  "return_received",
+  "inspection",
+  "refund_decision",
+  "exchange_decision",
+  "completed",
+  "cancelled",
+  "expired",
+  "failed",
+] as const;
+export type ReturnWorkflowStatus = (typeof RETURN_WORKFLOW_STATUSES)[number];
+
+export const EXCHANGE_WORKFLOW_STATUSES = [
+  "requested",
+  "under_review",
+  "approved",
+  "rejected",
+  "needs_info",
+  "awaiting_return",
+  "replacement_ready",
+  "replacement_booked",
+  "completed",
+  "cancelled",
+  "failed",
+] as const;
+export type ExchangeWorkflowStatus = (typeof EXCHANGE_WORKFLOW_STATUSES)[number];
+
+export const SUPPORT_TICKET_STATUS_LABELS: Record<SupportTicketStatus, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  pending_customer: "Waiting on customer",
+  pending_merchant: "Waiting on you",
+  resolved: "Resolved",
+  closed: "Closed",
+  reopened: "Reopened",
+};
+
+export const SUPPORT_TICKET_PRIORITY_LABELS: Record<SupportTicketPriority, string> = {
+  low: "Low",
+  normal: "Normal",
+  high: "High",
+  urgent: "Urgent",
+};
+
+export const SUPPORT_TICKET_CATEGORY_LABELS: Record<SupportTicketCategory, string> = {
+  order_cancellation: "Cancellation",
+  product_return: "Return",
+  product_exchange: "Exchange",
+  refund_request: "Refund",
+  delivery_issue: "Delivery",
+  damaged_product: "Damaged item",
+  wrong_product: "Wrong item",
+  missing_product: "Missing item",
+  general_inquiry: "Question",
+  other: "Other",
+};

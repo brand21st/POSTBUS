@@ -213,7 +213,9 @@ function shipmentStatusKey(shipment: PublicTrackedShipment, latestStatus: string
   const operational = (shipment.operationalStatus ?? "").toUpperCase();
   if (operational) return operational;
   const status = (shipment.status ?? "").toUpperCase();
-  if (status === "SHIPPED" || status === "MANIFEST_READY" || status === "LABEL_READY") return "IN_TRANSIT";
+  if (status === "SHIPPED" || status === "MANIFEST_READY" || status === "LABEL_READY") {
+    return shipment.events?.length || latestStatus ? "IN_TRANSIT" : "BOOKED";
+  }
   if (status) return status;
   return latestStatus || "BOOKED";
 }
@@ -340,7 +342,10 @@ export function toCustomerTrackView(result: PublicTrackResult): CustomerTrackVie
     statusKey,
     statusLabel: titleCase(statusKey.replace(/_/g, " ")),
     statusTone: statusToneFor(statusKey),
-    statusSupport: STATUS_SUPPORT[statusKey] ?? "Latest carrier update is shown below.",
+    statusSupport:
+      result.liveTracking === "cached" && result.liveMessage
+        ? result.liveMessage
+        : (STATUS_SUPPORT[statusKey] ?? "Latest carrier update is shown below."),
     serviceLabel: shipment.serviceLabel ?? null,
     lastUpdatedAt,
     expectedDeliveryAt: null,

@@ -1,19 +1,33 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { MobileNav } from "@/components/dashboard/mobile-nav";
+import { IndiaPostOnboardingHost } from "@/components/dashboard/india-post-onboarding-host";
 import { ProductTour } from "@/components/dashboard/product-tour";
 import { NewOrderAlerts } from "@/components/dashboard/new-order-alerts";
 import { WebusbJobListener } from "@/components/dashboard/webusb-job-listener";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ApiError } from "@/lib/hooks/use-api";
+import { isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use-api";
 import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
+import { useUserPresenceHeartbeat } from "@/lib/hooks/use-user-presence-heartbeat";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { PlanLock } from "@/components/billing/plan-lock";
-import { shouldMountDashboardChildren } from "@/lib/dashboard/shell-gate";
+import { TrialEndedModal } from "@/components/billing/trial-ended-modal";
+import { TrialStatusBar } from "@/components/dashboard/trial-status-bar";
+import { hideBillingAnnouncementForPaidPlan } from "@/lib/dashboard/billing-announcement";
+import { trialBannerCopy } from "@/modules/billing/trial-policy";
+import {
+  shouldMountDashboardChildren,
+  shouldRedirectToLoginFromMe,
+  shouldRedirectToOnboardingFromMe,
+} from "@/lib/dashboard/shell-gate";
+
+function subscribeNever() {
+  return () => {};
+}
 
 function DashboardPlanGate({ pathname, children }: { pathname: string; children: ReactNode }) {
   const entitlements = usePlanEntitlements();
@@ -49,7 +63,7 @@ export function DashboardShell({
   const router = useRouter();
   const pathname = usePathname();
   const me = useMe();
-  const [hydrated, setHydrated] = useState(false);
+  const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
   const [collapsed, setCollapsed] = useState(false);
   const [tablet, setTablet] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -62,32 +76,82 @@ export function DashboardShell({
     return () => media.removeEventListener("change", sync);
   }, []);
 
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-
   const [navPath, setNavPath] = useState(pathname);
   if (navPath !== pathname) {
     setNavPath(pathname);
     if (mobileOpen) setMobileOpen(false);
   }
 
+  const subscription = me.data?.subscription;
+  const [trialElapsed, setTrialElapsed] = useState(false);
+  const paidPlan =
+    hideBillingAnnouncementForPaidPlan(subscription?.accessState) ||
+    hideBillingAnnouncementForPaidPlan(subscription?.status);
+  const trialExpired =
+    !paidPlan &&
+    (subscription?.status === "EXPIRED" ||
+      ((subscription?.status === "TRIAL" || Boolean(subscription?.trial)) &&
+        (Boolean(subscription?.coverageEnded) || trialElapsed)));
+  const trialCopy = paidPlan
+    ? null
+    : trialBannerCopy({
+        trial: Boolean(subscription?.trial) && !trialElapsed,
+        coverageEnded: trialExpired,
+        trialEnd: subscription?.trialEnd,
+        status: subscription?.status,
+        accessState: subscription?.accessState,
+      });
+
   useEffect(() => {
-    if (me.isLoading) return;
-    if (me.error instanceof ApiError && me.error.status === 401) {
+    setTrialElapsed(false);
+    const end = subscription?.trialEnd ? Date.parse(subscription.trialEnd) : NaN;
+    if (!subscription?.trial || !Number.isFinite(end)) return;
+    const wait = end - Date.now();
+    if (wait <= 0) {
+      setTrialElapsed(true);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setTrialElapsed(true);
+      void me.refetch();
+    }, Math.min(wait, 2_147_000_000));
+    return () => window.clearTimeout(timer);
+  }, [me.refetch, subscription?.trial, subscription?.trialEnd]);
+
+  const confirmedLoss = isConfirmedSessionLoss(me.error);
+  const transientAuth = isTransientApiAuthError(me.error);
+  useUserPresenceHeartbeat(Boolean(me.data) && !confirmedLoss);
+
+  useEffect(() => {
+    if (
+      shouldRedirectToLoginFromMe({
+        isLoading: me.isLoading,
+        isConfirmedSessionLoss: confirmedLoss,
+        isTransient: transientAuth,
+      })
+    ) {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
       return;
     }
-    if (!me.data?.organization && membershipsFromMe(me.data).length === 0) {
+    if (
+      shouldRedirectToOnboardingFromMe({
+        isLoading: me.isLoading,
+        hasError: Boolean(me.error),
+        isConfirmedSessionLoss: confirmedLoss,
+        isTransient: transientAuth,
+        hasOrganization: Boolean(me.data?.organization),
+        membershipCount: membershipsFromMe(me.data).length,
+      })
+    ) {
       router.replace("/onboarding");
     }
-  }, [me.data, me.error, me.isLoading, pathname, router]);
+  }, [confirmedLoss, me.data, me.error, me.isLoading, pathname, router, transientAuth]);
 
-  const unauthorized = me.error instanceof ApiError && me.error.status === 401;
   const mountChildren = shouldMountDashboardChildren({
-    isUnauthorized: unauthorized,
+    isUnauthorized: confirmedLoss,
     hydrated,
     hasMe: Boolean(me.data),
+    isTransient: transientAuth,
   });
 
   return (
@@ -100,26 +164,41 @@ export function DashboardShell({
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="sticky top-0 z-30 bg-background">
-          {announcement}
+          {trialCopy ? <TrialStatusBar {...trialCopy} /> : announcement}
           <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
         </div>
-        <NewOrderAlerts />
-        <WebusbJobListener />
+        {me.data && !confirmedLoss ? <NewOrderAlerts /> : null}
+        {me.data && !confirmedLoss ? <WebusbJobListener /> : null}
         <main
           id="main-content"
           className={
-            pathname === "/dashboard/orders"
+            pathname === "/dashboard/orders" || pathname.startsWith("/dashboard/support")
               ? "min-w-0 flex-1 px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:py-4 xl:px-6"
               : "min-w-0 flex-1 px-4 py-6 lg:px-8 lg:py-8"
           }
         >
           <div
             className={
-              pathname === "/dashboard/orders"
+              pathname === "/dashboard/orders" || pathname.startsWith("/dashboard/support")
                 ? "mx-auto w-full min-w-0 max-w-full"
                 : "mx-auto w-full min-w-0 max-w-[1280px]"
             }
           >
+            {me.data && !confirmedLoss ? <IndiaPostOnboardingHost /> : null}
+            {transientAuth ? (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted">
+                <p>Connection issue. Retrying your session without signing you out…</p>
+                {me.isFetching ? null : (
+                  <button
+                    type="button"
+                    className="rounded-md border border-border px-3 py-1 text-ink"
+                    onClick={() => void me.refetch()}
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            ) : null}
             {mountChildren ? (
               <DashboardPlanGate pathname={pathname}>{children}</DashboardPlanGate>
             ) : (
@@ -137,6 +216,7 @@ export function DashboardShell({
       </div>
       <MobileNav open={mobileOpen} onOpenChange={setMobileOpen} me={me.data} />
       <ProductTour userId={me.data?.user.id} />
+      <TrialEndedModal open={Boolean(trialExpired)} />
     </div>
   );
 }

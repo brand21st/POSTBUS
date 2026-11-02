@@ -5,6 +5,8 @@ import type { AdminContext } from "@/lib/api/admin-context";
 import { encryptSecret } from "@/lib/security/crypto";
 import { writeBillingAudit } from "@/modules/billing/audit";
 import type { createAdminClient } from "@/lib/supabase/admin";
+import { getImageStudioConfig } from "@/modules/ai-image/config";
+import { OPENROUTER_IMAGE_MODELS, sanitizeOpenRouterImageModel } from "@/modules/ai-image/models";
 import {
   fetchOpenRouterChatGptModels,
   mergeChatGptModels,
@@ -25,6 +27,11 @@ const saveSchema = z.object({
   clearKey: z.boolean().optional(),
   packSize: z.number().int().min(1).max(100000).optional(),
   packPaise: z.number().int().min(100).max(10_000_000).optional(),
+  imageStudioEnabled: z.boolean().optional(),
+  imageModel: z.string().optional().nullable(),
+  imageCreditCost: z.number().int().min(1).max(500).optional(),
+  coverCreditCost: z.number().int().min(1).max(500).optional(),
+  imageMaxVariations: z.number().int().min(1).max(3).optional(),
 });
 
 function ip(request: NextRequest) {
@@ -34,9 +41,16 @@ function ip(request: NextRequest) {
 export async function loadOpenRouterSettings() {
   const config = await getPlatformOpenRouterConfig();
   const live = await fetchOpenRouterChatGptModels(config.apiKey);
+  const studio = await getImageStudioConfig();
   return {
     ...publicOpenRouterStatus(config),
     models: mergeChatGptModels(live, config.model),
+    imageStudioEnabled: studio.flagEnabled,
+    imageModel: studio.model,
+    imageCreditCost: studio.creditCost,
+    coverCreditCost: studio.coverCreditCost,
+    imageMaxVariations: studio.maxVariations,
+    imageModels: [...OPENROUTER_IMAGE_MODELS],
   };
 }
 
@@ -63,6 +77,11 @@ export async function saveOpenRouterSettings(
   if (body.model != null) patch.openrouter_model = sanitizeOpenRouterModel(body.model);
   if (body.packSize != null) patch.ai_credit_pack_size = body.packSize;
   if (body.packPaise != null) patch.ai_credit_pack_paise = body.packPaise;
+  if (typeof body.imageStudioEnabled === "boolean") patch.ai_image_studio_enabled = body.imageStudioEnabled;
+  if (body.imageModel != null) patch.openrouter_image_model = sanitizeOpenRouterImageModel(body.imageModel);
+  if (body.imageCreditCost != null) patch.ai_image_credit_cost = body.imageCreditCost;
+  if (body.coverCreditCost != null) patch.ai_cover_credit_cost = body.coverCreditCost;
+  if (body.imageMaxVariations != null) patch.ai_image_max_variations = body.imageMaxVariations;
   if (body.clearKey) {
     patch.encrypted_openrouter_api_key = null;
     patch.openrouter_enabled = false;

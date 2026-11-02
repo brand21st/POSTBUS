@@ -12,20 +12,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { formatDate, formatNumber } from "@/lib/format";
 import {
   BARCODE_ALLOTMENT_DIGITS,
+  barcodePrefixAllowedForService,
+  barcodePrefixServiceMessage,
   barcodeStockForService,
   barcodesLeft,
+  LOW_BARCODE_THRESHOLD,
   formatStoredSerial,
-  primaryActiveBarcodeRange,
   sanitizeBarcodeAllotmentField,
 } from "@/modules/india-post/barcode";
 import { api } from "@/lib/hooks/use-api";
@@ -39,12 +34,19 @@ import {
   DEFAULT_INDIA_POST_SERVICE,
   DEFAULT_PROVIDER_ENVIRONMENT,
   INDIA_POST_SERVICES,
-  PROVIDER_ENVIRONMENTS,
   indiaPostServiceLabel,
 } from "@/types/domain";
 import type { IndiaPostConfig } from "@/types/api";
 
 type ContractRow = { serviceCode: string; contractId: string };
+
+type SeriesDraft = {
+  serviceCode: string;
+  prefix: string;
+  suffix: string;
+  startNumber: string;
+  endNumber: string;
+};
 
 type FormState = {
   environment: string;
@@ -61,32 +63,50 @@ type FormState = {
   pickupOfficeState: string;
   contracts: ContractRow[];
   defaultServiceCode: string;
-  rangeServiceCode: string;
-  prefix: string;
-  suffix: string;
-  startNumber: string;
-  endNumber: string;
+  ranges: SeriesDraft[];
 };
 
-const ANY_SERVICE = "ANY";
-
-function displayedIndiaPostRange(config: IndiaPostConfig | undefined) {
-  if (!config) return null;
-  return config.barcodeRange ?? primaryActiveBarcodeRange(config.barcodeRanges ?? []) ?? null;
+function withReadableWebhookId(url: string, customerId: string) {
+  const id = customerId.replace(/\D/g, "");
+  if (!url || id.length < 6) return url;
+  return url.replace(/\/india-post\/[^/]+\//, `/india-post/${id}/`);
 }
 
-function barcodeRangeWritePayload(snapshot: FormState) {
-  const prefix = snapshot.prefix.trim();
-  const startNumber = snapshot.startNumber.trim();
-  const endNumber = snapshot.endNumber.trim();
+function emptySeries(serviceCode: string): SeriesDraft {
+  return { serviceCode, prefix: "", suffix: "IN", startNumber: "", endNumber: "" };
+}
+
+function seriesDraftsFromConfig(
+  config?: Pick<IndiaPostConfig, "barcodeRanges" | "barcodeRange"> | null
+): SeriesDraft[] {
+  return INDIA_POST_SERVICES.map((service) => {
+    const saved =
+      config?.barcodeRanges?.find((range) => range.serviceCode === service.code) ??
+      (config?.barcodeRange?.serviceCode === service.code ? config.barcodeRange : undefined);
+    if (!saved) return emptySeries(service.code);
+    return {
+      serviceCode: service.code,
+      prefix: String(saved.prefix ?? ""),
+      suffix: "IN",
+      startNumber:
+        saved.startNumber != null ? formatStoredSerial(Number(saved.startNumber)) : "",
+      endNumber: saved.endNumber != null ? formatStoredSerial(Number(saved.endNumber)) : "",
+    };
+  });
+}
+
+function barcodeRangeWritePayload(draft: SeriesDraft) {
+  const prefix = draft.prefix.trim();
+  const startNumber = draft.startNumber.trim();
+  const endNumber = draft.endNumber.trim();
   if (!prefix && !startNumber && !endNumber) return null;
   if (!prefix || !startNumber || !endNumber) return undefined;
   return {
     prefix,
-    suffix: snapshot.suffix.trim() || "IN",
+    suffix: "IN",
     startNumber,
     endNumber,
-    serviceCode: snapshot.rangeServiceCode === ANY_SERVICE ? null : snapshot.rangeServiceCode,
+    serviceCode: draft.serviceCode,
   };
 }
 
@@ -105,17 +125,14 @@ const EMPTY: FormState = {
   pickupOfficeState: "",
   contracts: [],
   defaultServiceCode: DEFAULT_INDIA_POST_SERVICE,
-  rangeServiceCode: ANY_SERVICE,
-  prefix: "",
-  suffix: "IN",
-  startNumber: "",
-  endNumber: "",
+  ranges: INDIA_POST_SERVICES.map((service) => emptySeries(service.code)),
 };
 
 export default function IndiaPostPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(EMPTY);
   const [replaceSecrets, setReplaceSecrets] = useState(false);
+  const [highlightConnection, setHighlightConnection] = useState(false);
 
   const query = useIndiaPost();
 
@@ -124,9 +141,27 @@ export default function IndiaPostPage() {
     config?.hasPassword ?? config?.has_password ?? config?.usernameMasked ?? config?.username_masked
   );
   const prodConfigured = Boolean(config?.prodConfigured);
-  const productionBlocked = form.environment === "PRODUCTION" && !prodConfigured;
+  const productionBlocked = !prodConfigured;
   const lastError = config?.lastError || config?.last_error;
   const lastVerified = config?.lastVerifiedAt ?? config?.last_verified_at;
+  const bookingWebhookUrl = withReadableWebhookId(
+    config?.bookingWebhookUrl ?? config?.booking_webhook_url ?? "",
+    form.customerId
+  );
+  const eventsWebhookUrl = withReadableWebhookId(
+    config?.eventsWebhookUrl ?? config?.events_webhook_url ?? "",
+    form.customerId
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== "#india-post-connection") return;
+    const el = document.getElementById("india-post-connection");
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlightConnection(true);
+    const timer = window.setTimeout(() => setHighlightConnection(false), 2400);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!config) return;
@@ -144,12 +179,10 @@ export default function IndiaPostPage() {
         : [];
 
     const savedDefault = config.defaultServiceCode ?? DEFAULT_INDIA_POST_SERVICE;
-    const displayedRange = displayedIndiaPostRange(config);
-    const savedRange = displayedRange?.serviceCode ?? ANY_SERVICE;
 
     setForm((current) => ({
       ...current,
-      environment: config.environment ?? DEFAULT_PROVIDER_ENVIRONMENT,
+      environment: DEFAULT_PROVIDER_ENVIRONMENT,
       customerId: String(config.bulkCustomerId ?? config.bulk_customer_id ?? ""),
       pickupDropoffOfficeId: String(
         config.pickupDropoffOfficeId ?? config.pickup_dropoff_office_id ?? ""
@@ -168,18 +201,7 @@ export default function IndiaPostPage() {
       pickupOfficeState: String(config.pickupOfficeState ?? config.pickup_office_state ?? ""),
       contracts,
       defaultServiceCode: knownService.has(savedDefault) ? savedDefault : DEFAULT_INDIA_POST_SERVICE,
-      rangeServiceCode:
-        savedRange === ANY_SERVICE || knownService.has(savedRange) ? savedRange : ANY_SERVICE,
-      prefix: String(displayedRange?.prefix ?? ""),
-      suffix: String(displayedRange?.suffix ?? "IN"),
-      startNumber:
-        displayedRange?.startNumber != null
-          ? formatStoredSerial(Number(displayedRange.startNumber))
-          : "",
-      endNumber:
-        displayedRange?.endNumber != null
-          ? formatStoredSerial(Number(displayedRange.endNumber))
-          : "",
+      ranges: seriesDraftsFromConfig(config),
     }));
   }, [config]);
 
@@ -202,19 +224,7 @@ export default function IndiaPostPage() {
   );
   const savedPickupOfficeCity = String(config?.pickupOfficeCity ?? config?.pickup_office_city ?? "");
   const savedPickupOfficeState = String(config?.pickupOfficeState ?? config?.pickup_office_state ?? "");
-  const displayedSavedRange = displayedIndiaPostRange(config);
-  const savedRangeService = displayedSavedRange?.serviceCode ?? ANY_SERVICE;
-  const savedPrefix = String(displayedSavedRange?.prefix ?? "");
-  const savedSuffix = String(displayedSavedRange?.suffix ?? "IN");
-  const savedStart =
-    displayedSavedRange?.startNumber != null
-      ? formatStoredSerial(Number(displayedSavedRange.startNumber))
-      : "";
-  const savedEnd =
-    displayedSavedRange?.endNumber != null
-      ? formatStoredSerial(Number(displayedSavedRange.endNumber))
-      : "";
-  const hasSavedRange = Boolean(savedPrefix || savedStart || savedEnd);
+  const savedRanges = seriesDraftsFromConfig(config);
 
   const dirty = useMemo(() => {
     if (!config) return false;
@@ -232,23 +242,13 @@ export default function IndiaPostPage() {
     if (form.pickupOfficeTypeCode !== savedPickupOfficeTypeCode) return true;
     if (form.pickupOfficeCity !== savedPickupOfficeCity) return true;
     if (form.pickupOfficeState !== savedPickupOfficeState) return true;
-    if (
-      form.rangeServiceCode !== savedRangeService &&
-      !(savedRangeService === ANY_SERVICE && form.rangeServiceCode === ANY_SERVICE)
-    ) {
-      return true;
-    }
-    if (form.prefix !== savedPrefix) return true;
-    if (form.suffix !== savedSuffix) return true;
-    if (form.startNumber !== savedStart) return true;
-    if (form.endNumber !== savedEnd) return true;
     if (form.defaultServiceCode !== savedDefault) return true;
     return INDIA_POST_SERVICES.some((service) => {
       const current = form.contracts.find((item) => item.serviceCode === service.code)?.contractId ?? "";
       const saved = config.contracts?.find((item) => item.serviceCode === service.code)?.contractId ?? "";
       return current !== saved;
     });
-  }, [config, form, replaceSecrets, savedOfficeId, savedOfficeName, savedOfficePincode, savedPickupOfficeId, savedPickupOfficeName, savedPickupOfficePincode, savedPickupOfficeTypeCode, savedPickupOfficeCity, savedPickupOfficeState, savedRangeService, savedPrefix, savedSuffix, savedStart, savedEnd]);
+  }, [config, form, replaceSecrets, savedOfficeId, savedOfficeName, savedOfficePincode, savedPickupOfficeId, savedPickupOfficeName, savedPickupOfficePincode, savedPickupOfficeTypeCode, savedPickupOfficeCity, savedPickupOfficeState]);
 
   const saveOffice = useMutation({
     mutationFn: ({
@@ -475,14 +475,14 @@ export default function IndiaPostPage() {
   const save = useMutation({
     mutationFn: (snapshot: FormState) => {
       const customerId = snapshot.customerId.trim();
-      if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
-        throw new Error("Live booking is not ready yet. Keep Sandbox / UAT selected.");
+      if (!prodConfigured) {
+        throw new Error("Live booking is not ready yet.");
       }
       return api<{ saved: boolean; status: string }>("/api/v1/integrations/india-post", {
         method: "POST",
         body: JSON.stringify({
           connect: false,
-          environment: snapshot.environment,
+          environment: DEFAULT_PROVIDER_ENVIRONMENT,
           username: replaceSecrets || !hasSecrets ? customerId || undefined : undefined,
           password: replaceSecrets || (!hasSecrets && snapshot.password.trim()) ? snapshot.password || undefined : undefined,
           bulkCustomerId: customerId || undefined,
@@ -502,10 +502,6 @@ export default function IndiaPostPage() {
               isDefault: snapshot.defaultServiceCode === service.code,
             };
           }),
-          barcodeRange: barcodeRangeWritePayload(snapshot),
-          barcodePrefix: snapshot.prefix.trim() || undefined,
-          rangeServiceCode:
-            snapshot.rangeServiceCode === ANY_SERVICE ? null : snapshot.rangeServiceCode,
         }),
       });
     },
@@ -523,8 +519,8 @@ export default function IndiaPostPage() {
     mutationFn: (snapshot: FormState) => {
       const customerId = snapshot.customerId.trim();
       const needsCredentials = replaceSecrets || !hasSecrets;
-      if (snapshot.environment === "PRODUCTION" && !prodConfigured) {
-        throw new Error("Live booking is not ready yet. Keep Sandbox / UAT selected.");
+      if (!prodConfigured) {
+        throw new Error("Live booking is not ready yet.");
       }
       if (!customerId) {
         throw new Error("Enter your India Post customer ID.");
@@ -538,7 +534,7 @@ export default function IndiaPostPage() {
       return api("/api/v1/integrations/india-post", {
         method: "POST",
         body: JSON.stringify({
-          environment: snapshot.environment,
+          environment: DEFAULT_PROVIDER_ENVIRONMENT,
           username: customerId,
           password: snapshot.password,
           bulkCustomerId: customerId,
@@ -560,12 +556,6 @@ export default function IndiaPostPage() {
       queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
     },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const test = useMutation({
-    mutationFn: () => api("/api/v1/integrations/india-post/test", { method: "POST" }),
-    onSuccess: () => toast.success("India Post confirmed the connection."),
     onError: (error: Error) => toast.error(error.message),
   });
 
@@ -691,8 +681,17 @@ export default function IndiaPostPage() {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function applyAllotmentField(field: "startNumber" | "endNumber", value: string) {
-    setForm((current) => ({ ...current, [field]: sanitizeBarcodeAllotmentField(value) }));
+  function updateSeries(serviceCode: string, patch: Partial<SeriesDraft>) {
+    setForm((current) => ({
+      ...current,
+      ranges: current.ranges.map((row) =>
+        row.serviceCode === serviceCode ? { ...row, ...patch } : row
+      ),
+    }));
+  }
+
+  function savedSeries(serviceCode: string) {
+    return savedRanges.find((row) => row.serviceCode === serviceCode) ?? emptySeries(serviceCode);
   }
 
   const saveRange = useMutation({
@@ -702,7 +701,7 @@ export default function IndiaPostPage() {
       prefix,
     }: {
       barcodeRange: ReturnType<typeof barcodeRangeWritePayload>;
-      serviceCode: string | null;
+      serviceCode: string;
       prefix?: string;
     }) =>
       api<{
@@ -713,67 +712,60 @@ export default function IndiaPostPage() {
         body: JSON.stringify({ barcodeRange, serviceCode, prefix }),
       }),
     onSuccess: (data, variables) => {
-      const next =
-        primaryActiveBarcodeRange(
-          [
-            ...(data.barcodeRange ? [data.barcodeRange] : []),
-            ...(data.barcodeRanges ?? []),
-          ].filter(Boolean)
-        ) ?? (variables.barcodeRange ? data.barcodeRange ?? null : null);
-      setForm((current) => ({
-        ...current,
-        rangeServiceCode: next?.serviceCode ?? ANY_SERVICE,
-        prefix: String(next?.prefix ?? ""),
-        suffix: String(next?.suffix ?? "IN"),
-        startNumber:
-          next?.startNumber != null ? formatStoredSerial(Number(next.startNumber)) : "",
-        endNumber: next?.endNumber != null ? formatStoredSerial(Number(next.endNumber)) : "",
-      }));
+      const ranges = seriesDraftsFromConfig({
+        barcodeRanges: data.barcodeRanges ?? [],
+        barcodeRange: data.barcodeRange,
+      });
+      setForm((current) => ({ ...current, ranges }));
       queryClient.setQueryData<IndiaPostConfig>(INDIA_POST_QUERY_KEY, (current) =>
         current
           ? {
               ...current,
-              barcodeRange: next,
+              barcodeRange: data.barcodeRange ?? null,
               barcodeRanges: data.barcodeRanges ?? [],
             }
           : current
       );
       queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
-      toast.success(variables.barcodeRange ? "Barcode range saved." : "Barcode range cleared.");
+      const label = indiaPostServiceLabel(variables.serviceCode);
+      toast.success(variables.barcodeRange ? `${label} barcode range saved.` : `${label} barcode range cleared.`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
   const rangeSaveFlight = useRef<string | null>(null);
 
-  function persistBarcodeRange(
-    snapshot: FormState,
-    options?: { force?: boolean; clearPrefix?: string }
-  ) {
-    const payload = barcodeRangeWritePayload(snapshot);
+  function persistSeries(draft: SeriesDraft, options?: { force?: boolean; clearPrefix?: string }) {
+    const prefix = draft.prefix.trim().toUpperCase();
+    if (prefix && !barcodePrefixAllowedForService(prefix, draft.serviceCode)) {
+      toast.error(barcodePrefixServiceMessage(prefix));
+      return;
+    }
+    const nextDraft = { ...draft, prefix };
+    const payload = barcodeRangeWritePayload(nextDraft);
     if (payload === undefined) return;
     if (payload === null && !options?.force) return;
+    const saved = savedSeries(draft.serviceCode);
+    const hasSaved = Boolean(saved.prefix || saved.startNumber || saved.endNumber);
     const sameAsSaved =
-      !payload && !hasSavedRange
+      !payload && !hasSaved
         ? true
         : Boolean(payload) &&
-          snapshot.prefix === savedPrefix &&
-          snapshot.suffix === savedSuffix &&
-          snapshot.startNumber === savedStart &&
-          snapshot.endNumber === savedEnd &&
-          (snapshot.rangeServiceCode === savedRangeService ||
-            (savedRangeService === ANY_SERVICE && snapshot.rangeServiceCode === ANY_SERVICE));
+          nextDraft.prefix === saved.prefix &&
+          nextDraft.suffix === saved.suffix &&
+          nextDraft.startNumber === saved.startNumber &&
+          nextDraft.endNumber === saved.endNumber;
     if (!options?.force && sameAsSaved) return;
     const flight = payload
-      ? `${payload.prefix}:${payload.suffix}:${payload.startNumber}:${payload.endNumber}:${payload.serviceCode ?? ""}`
-      : `clear:${options?.clearPrefix ?? snapshot.prefix}`;
+      ? `${payload.serviceCode}:${payload.prefix}:${payload.suffix}:${payload.startNumber}:${payload.endNumber}`
+      : `clear:${draft.serviceCode}:${options?.clearPrefix ?? prefix}`;
     if (!options?.force && rangeSaveFlight.current === flight) return;
     rangeSaveFlight.current = flight;
     saveRange.mutate(
       {
         barcodeRange: payload,
-        serviceCode: snapshot.rangeServiceCode === ANY_SERVICE ? null : snapshot.rangeServiceCode,
-        prefix: payload ? undefined : options?.clearPrefix || snapshot.prefix.trim() || savedPrefix,
+        serviceCode: draft.serviceCode,
+        prefix: payload ? undefined : options?.clearPrefix || prefix || saved.prefix,
       },
       {
         onSettled: () => {
@@ -783,18 +775,12 @@ export default function IndiaPostPage() {
     );
   }
 
-  function clearBarcodeRange() {
-    const prefix = form.prefix.trim() || savedPrefix;
-    const cleared: FormState = {
-      ...form,
-      rangeServiceCode: ANY_SERVICE,
-      prefix: "",
-      suffix: "IN",
-      startNumber: "",
-      endNumber: "",
-    };
-    setForm(cleared);
-    persistBarcodeRange(cleared, { force: true, clearPrefix: prefix });
+  function clearSeries(serviceCode: string) {
+    const current = form.ranges.find((row) => row.serviceCode === serviceCode) ?? emptySeries(serviceCode);
+    const prefix = current.prefix.trim() || savedSeries(serviceCode).prefix;
+    const cleared = emptySeries(serviceCode);
+    updateSeries(serviceCode, cleared);
+    persistSeries(cleared, { force: true, clearPrefix: prefix });
   }
 
   function setContract(serviceCode: string, contractId: string) {
@@ -807,9 +793,6 @@ export default function IndiaPostPage() {
       return { ...current, contracts };
     });
   }
-
-  const bookingWebhook = config?.bookingWebhookUrl ?? config?.booking_webhook_url ?? "";
-  const eventsWebhook = config?.eventsWebhookUrl ?? config?.events_webhook_url ?? "";
 
   return (
     <div className="space-y-5">
@@ -835,7 +818,10 @@ export default function IndiaPostPage() {
 
       <IndiaPostGuideBanner selectedService={form.defaultServiceCode} />
 
-      <Card>
+      <Card
+        id="india-post-connection"
+        className={cn(highlightConnection && "ring-2 ring-brand ring-offset-2 ring-offset-background")}
+      >
         <CardHeader className="pb-4">
           <CardTitle>Connection</CardTitle>
           <CardDescription>
@@ -844,38 +830,6 @@ export default function IndiaPostPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <div className="space-y-2">
-            <Label>India Post Environment</Label>
-            <Select
-              value={form.environment}
-              onValueChange={(value) => {
-                if (value === "PRODUCTION" && form.environment !== "PRODUCTION") {
-                  const ok = window.confirm(
-                    "Switch to India Post Production? Bookings will be sent to live CEPT (app.indiapost.gov.in), not Sandbox/UAT."
-                  );
-                  if (!ok) return;
-                }
-                set("environment", value);
-              }}
-            >
-              <SelectTrigger
-                className={
-                  form.environment === "PRODUCTION"
-                    ? "border-error/40 bg-error/5 font-medium text-error"
-                    : "border-amber-500/40 bg-amber-50 font-medium text-amber-950"
-                }
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PROVIDER_ENVIRONMENTS.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item === "UAT" ? "Sandbox / UAT" : "Production"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
           <Field
             label="Customer ID"
             value={form.customerId}
@@ -906,18 +860,9 @@ export default function IndiaPostPage() {
               autoComplete="new-password"
             />
           )}
-          {form.environment === "UAT" ? (
-            <p className="rounded-xl border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-950 sm:col-span-2 xl:col-span-3">
-              Sandbox / UAT is selected. Authentication and bookings use <strong>test.cept.gov.in</strong> only.
-            </p>
-          ) : (
-            <p className="rounded-xl border border-error/30 bg-error/5 px-3 py-2 text-sm text-error sm:col-span-2 xl:col-span-3">
-              Production is selected. Bookings go to live India Post. Use Sandbox / UAT for the test organization.
-            </p>
-          )}
           {productionBlocked ? (
             <p className="text-sm text-muted sm:col-span-2 xl:col-span-3">
-              Live booking is not ready yet. Keep <strong>Sandbox / UAT</strong> selected.
+              Live booking is not ready yet.
             </p>
           ) : null}
           {lastError ? (
@@ -940,11 +885,6 @@ export default function IndiaPostPage() {
           >
             {login.isPending ? "Logging in…" : "Login"}
           </Button>
-          {form.environment === "UAT" ? (
-            <Button type="button" variant="secondary" onClick={() => test.mutate()} disabled={test.isPending}>
-              {test.isPending ? "Checking…" : "Test connection"}
-            </Button>
-          ) : null}
           <Button
             type="button"
             variant="secondary"
@@ -963,6 +903,35 @@ export default function IndiaPostPage() {
             {logout.isPending ? "Logging out…" : "Logout"}
           </Button>
         </CardFooter>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle>Webhook URL</CardTitle>
+          <CardDescription>
+            Copy these links into your India Post portal. PostBus uses them to receive booking confirmations and
+            Shipment Tracking updates for this workspace.
+            {bookingWebhookUrl || eventsWebhookUrl
+              ? ""
+              : " Log in to India Post above to generate the links."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <CopyField
+            id="india-post-booking-webhook"
+            label="Booking"
+            hint="India Post sends a notice here when a shipment is booked."
+            value={bookingWebhookUrl}
+            placeholder="Log in to India Post to generate this link"
+          />
+          <CopyField
+            id="india-post-events-webhook"
+            label="Shipment Tracking"
+            hint="India Post sends scan updates here as the parcel moves — bagged, in transit, out for delivery, and delivered."
+            value={eventsWebhookUrl}
+            placeholder="Log in to India Post to generate this link"
+          />
+        </CardContent>
       </Card>
 
       <Card>
@@ -1159,106 +1128,110 @@ export default function IndiaPostPage() {
         <Card>
           <CardHeader className="pb-4">
             <CardTitle>Barcode range</CardTitle>
-            <CardDescription className="mt-1">
-              The article number series from your India Post allotment. These fields show the same start and end serials saved in the database. You can paste the 8-digit serial or the 9-digit number with check digit. CX books India Post Parcel Contractual (Business Parcel) only.
+            <CardDescription className="mt-1 space-y-2">
+              <span className="block">
+                Get the barcode series from your nearest post office. Enter the prefix and the start and end numbers they allotted you.
+              </span>
+              <span className="block">
+                Paste the 8-digit serial, or the 9-digit number that includes the check digit.
+              </span>
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2 sm:col-span-2">
-              <Label>Series applies to</Label>
-              <Select
-                value={form.rangeServiceCode}
-                onValueChange={(value) => {
-                  const next = { ...form, rangeServiceCode: value };
-                  setForm(next);
-                  if (barcodeRangeWritePayload(next)) persistBarcodeRange(next);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ANY_SERVICE}>Any service</SelectItem>
-                  {INDIA_POST_SERVICES.map((service) => (
-                    <SelectItem key={service.code} value={service.code}>
-                      {service.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Field
-              label="Prefix"
-              value={form.prefix}
-              placeholder="CL"
-              maxLength={2}
-              onChange={(value) => {
-                const prefix = value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
-                setForm((current) => ({
-                  ...current,
-                  prefix,
-                  ...(prefix === "CX" ? { rangeServiceCode: "BUSINESS_PARCEL" } : {}),
-                }));
-              }}
-              onBlur={(value) => {
-                const prefix = value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
-                persistBarcodeRange({
-                  ...form,
-                  prefix,
-                  ...(prefix === "CX" ? { rangeServiceCode: "BUSINESS_PARCEL" } : {}),
-                });
-              }}
-            />
-            <Field
-              label="Suffix"
-              value={form.suffix}
-              onChange={(value) => set("suffix", value)}
-              onBlur={(value) => persistBarcodeRange({ ...form, suffix: value })}
-            />
-            <Field
-              label="Start number"
-              value={form.startNumber}
-              placeholder="7536320"
-              maxLength={BARCODE_ALLOTMENT_DIGITS}
-              inputMode="numeric"
-              onChange={(value) => applyAllotmentField("startNumber", value)}
-              onBlur={(value) =>
-                persistBarcodeRange({ ...form, startNumber: sanitizeBarcodeAllotmentField(value) })
-              }
-            />
-            <Field
-              label="End number"
-              value={form.endNumber}
-              placeholder="7537319"
-              maxLength={BARCODE_ALLOTMENT_DIGITS}
-              inputMode="numeric"
-              onChange={(value) => applyAllotmentField("endNumber", value)}
-              onBlur={(value) =>
-                persistBarcodeRange({ ...form, endNumber: sanitizeBarcodeAllotmentField(value) })
-              }
-            />
+          <CardContent className="space-y-6">
+            {INDIA_POST_SERVICES.map((service) => {
+              const draft =
+                form.ranges.find((row) => row.serviceCode === service.code) ?? emptySeries(service.code);
+              const saved = savedSeries(service.code);
+              const hasSaved = Boolean(saved.prefix || saved.startNumber || saved.endNumber);
+              const payload = barcodeRangeWritePayload(draft);
+              return (
+                <div
+                  key={service.code}
+                  className="space-y-4 border-t border-border pt-4 first:border-t-0 first:pt-0"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{service.label}</p>
+                    <p className="text-xs text-muted">
+                      {service.code === "BUSINESS_PARCEL"
+                        ? "Books as India Post Parcel Contractual. Prefix CX or CL."
+                        : "Books as SP Inland Parcel. Prefix EY or EL."}
+                    </p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <Field
+                      label="Prefix"
+                      value={draft.prefix}
+                      placeholder={service.code === "BUSINESS_PARCEL" ? "CL" : "EY"}
+                      maxLength={2}
+                      onChange={(value) => {
+                        updateSeries(service.code, {
+                          prefix: value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
+                        });
+                      }}
+                      onBlur={(value) => {
+                        const prefix = value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+                        updateSeries(service.code, { prefix });
+                        persistSeries({ ...draft, prefix, suffix: "IN" });
+                      }}
+                    />
+                    <Field
+                      label="Start number"
+                      value={draft.startNumber}
+                      placeholder="7536320"
+                      maxLength={BARCODE_ALLOTMENT_DIGITS}
+                      inputMode="numeric"
+                      onChange={(value) =>
+                        updateSeries(service.code, { startNumber: sanitizeBarcodeAllotmentField(value) })
+                      }
+                      onBlur={(value) =>
+                        persistSeries({
+                          ...draft,
+                          startNumber: sanitizeBarcodeAllotmentField(value),
+                        })
+                      }
+                    />
+                    <Field
+                      label="End number"
+                      value={draft.endNumber}
+                      placeholder="7537319"
+                      maxLength={BARCODE_ALLOTMENT_DIGITS}
+                      inputMode="numeric"
+                      onChange={(value) =>
+                        updateSeries(service.code, { endNumber: sanitizeBarcodeAllotmentField(value) })
+                      }
+                      onBlur={(value) =>
+                        persistSeries({
+                          ...draft,
+                          endNumber: sanitizeBarcodeAllotmentField(value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => persistSeries(draft, { force: true })}
+                      disabled={saveRange.isPending || !payload}
+                    >
+                      {saveRange.isPending ? "Saving…" : "Save range"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => clearSeries(service.code)}
+                      disabled={
+                        saveRange.isPending ||
+                        (!hasSaved && !draft.prefix && !draft.startNumber && !draft.endNumber)
+                      }
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
           </CardContent>
-          <CardFooter className="flex flex-wrap gap-2 border-t border-border pt-4">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => persistBarcodeRange(form, { force: true })}
-              disabled={saveRange.isPending || !barcodeRangeWritePayload(form)}
-            >
-              {saveRange.isPending ? "Saving…" : "Save range"}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={clearBarcodeRange}
-              disabled={
-                saveRange.isPending ||
-                (!hasSavedRange && !form.prefix && !form.startNumber && !form.endNumber)
-              }
-            >
-              Clear
-            </Button>
-          </CardFooter>
         </Card>
       </div>
 
@@ -1288,7 +1261,12 @@ export default function IndiaPostPage() {
                     <p className="text-sm font-medium text-foreground">{service.label}</p>
                     <p className="truncate text-xs text-muted">{service.description}</p>
                     {left != null && stock ? (
-                      <p className="text-xs text-muted">
+                      <p
+                        className={cn(
+                          "text-xs",
+                          left <= LOW_BARCODE_THRESHOLD ? "font-medium text-warning" : "text-muted"
+                        )}
+                      >
                         {formatNumber(left)} barcodes left
                         {stock.prefix ? ` · ${stock.prefix} series` : ""}
                       </p>
@@ -1341,20 +1319,6 @@ export default function IndiaPostPage() {
         </CardContent>
       </Card>
 
-      {bookingWebhook || eventsWebhook ? (
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle>Tracking updates</CardTitle>
-            <CardDescription>
-              Paste these links in your India Post portal so booking and tracking updates come back to PostBus.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 lg:grid-cols-2">
-            <CopyField id="booking-webhook" label="After booking" value={bookingWebhook} />
-            <CopyField id="events-webhook" label="Tracking changes" value={eventsWebhook} />
-          </CardContent>
-        </Card>
-      ) : null}
     </div>
   );
 }
@@ -1363,25 +1327,36 @@ function CopyField({
   id,
   label,
   value,
+  placeholder,
+  hint,
 }: {
   id: string;
   label: string;
   value: string;
+  placeholder?: string;
+  hint?: string;
 }) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
+      {hint ? <p className="text-sm text-muted">{hint}</p> : null}
       <div className="flex gap-2">
-        <Input id={id} readOnly value={value} className="font-mono text-xs" />
+        <Input
+          id={id}
+          readOnly
+          value={value}
+          placeholder={placeholder}
+          className="font-mono text-sm tracking-tight"
+          onFocus={(event) => event.currentTarget.select()}
+        />
         <Button
           type="button"
           variant="secondary"
-          size="sm"
-          className="h-11"
+          className="h-11 shrink-0"
           disabled={!value}
           onClick={async () => {
             await navigator.clipboard.writeText(value);
-            toast.success(`${label} copied.`);
+            toast.success(`${label} link copied.`);
           }}
         >
           <Copy />

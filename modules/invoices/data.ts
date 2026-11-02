@@ -84,10 +84,10 @@ export const SAMPLE_INVOICE_DATA: InvoiceViewModel = {
     lines: [],
   },
   billing: {
-    name: "Sample Store",
-    phone: "9876543210",
+    name: "Priya Nair",
+    phone: "9876501234",
     email: "",
-    lines: ["12 Market Road", "Kochi, Kerala 682311"],
+    lines: ["8 Harbour Road", "Kochi, Kerala 682001"],
   },
   shipping: {
     name: "Priya Nair",
@@ -158,6 +158,31 @@ export function organizationInvoiceParty(
   return {
     ...partyFrom(source),
     email: (businessEmail ?? "").trim(),
+  };
+}
+
+/** Bill To is the customer. A missing billing address uses the ship-to customer, never the store. */
+export function customerBillTo(input: {
+  billing: Record<string, unknown> | null;
+  shipping: InvoiceParty;
+  customerName?: string;
+  customerPhone?: string;
+  customerEmail?: string;
+}): InvoiceParty {
+  const fromBilling = partyFrom(input.billing, input.customerName || "");
+  if (fromBilling.lines.length) {
+    return {
+      name: fromBilling.name || input.shipping.name || input.customerName || "Customer",
+      phone: fromBilling.phone || input.customerPhone || input.shipping.phone,
+      email: fromBilling.email || input.customerEmail || input.shipping.email,
+      lines: fromBilling.lines,
+    };
+  }
+  return {
+    name: input.shipping.name || input.customerName || "Customer",
+    phone: input.shipping.phone || input.customerPhone || "",
+    email: input.customerEmail || input.shipping.email || "",
+    lines: input.shipping.lines,
   };
 }
 
@@ -237,7 +262,7 @@ export async function invoiceDataForShipment(
   const { data: orderRow, error: orderError } = await supabase
     .from("orders")
     .select(
-      "id, order_number, created_at, subtotal, discount, shipping_amount, tax_amount, total_amount, payment_status, currency, customers(name, phone, email), shipping_address:addresses!shipping_address_id(*), order_line_items(title, sku, quantity, unit_price)"
+      "id, order_number, created_at, subtotal, discount, shipping_amount, tax_amount, total_amount, payment_status, currency, customers(name, phone, email), billing_address:addresses!billing_address_id(*), shipping_address:addresses!shipping_address_id(*), order_line_items(title, sku, quantity, unit_price)"
     )
     .eq("organization_id", organizationId)
     .eq("id", shipment.order_id)
@@ -258,8 +283,14 @@ export async function invoiceDataForShipment(
   const logo = await loadLogoBytes(supabase, org?.logo_path);
   const storeWebsite = await resolveStoreWebsite(supabase, organizationId, settings.website);
   const customer = asRecord(order?.customers);
-  const billing = organizationInvoiceParty(asRecord(org), settings.businessEmail);
   const shipping = partyFrom(asRecord(order?.shipping_address), String(customer?.name || ""));
+  const billing = customerBillTo({
+    billing: asRecord(order?.billing_address),
+    shipping,
+    customerName: String(customer?.name || ""),
+    customerPhone: String(customer?.phone || ""),
+    customerEmail: String(customer?.email || ""),
+  });
   const items = (Array.isArray(order?.order_line_items) ? order.order_line_items : []).map((item) => {
     const row = item as { title?: string; sku?: string | null; quantity?: number; unit_price?: number | string };
     const quantity = Number(row.quantity) || 1;
@@ -368,7 +399,7 @@ export async function invoicePreviewData(
       storeAddress: organization.lines.length ? organization.lines : SAMPLE_INVOICE_DATA.storeAddress,
       logoBytes: logo?.bytes ?? null,
       logoMime: logo?.mime ?? null,
-      billing: organization.name ? organization : SAMPLE_INVOICE_DATA.billing,
+      billing: SAMPLE_INVOICE_DATA.billing,
     } satisfies InvoiceViewModel,
   };
 }

@@ -18,6 +18,10 @@ export const POST = apiRouteWithContext(async (request: NextRequest) => {
   const supabase = publicStoreClient();
   const organizationId = await organizationFromLink(supabase, storeLinkRef(body));
   await assertStorePublished(supabase, organizationId);
+  const ua = request.headers.get("user-agent") ?? "";
+  if (/bot|crawler|spider|preview|facebookexternalhit|slurp/i.test(ua)) {
+    return ok({ recorded: false, skipped: "bot" });
+  }
   if (body.productId) {
     const { count } = await supabase
       .from("products")
@@ -29,10 +33,22 @@ export const POST = apiRouteWithContext(async (request: NextRequest) => {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Product not found.");
     }
   }
+  if (body.slideId) {
+    const { count } = await supabase
+      .from("storefront_slides")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId)
+      .eq("id", body.slideId);
+    if ((count ?? 0) !== 1) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Cover not found.");
+    }
+  }
   const { error } = await supabase.from("storefront_events").insert({
     organization_id: organizationId,
     event_type: body.eventType,
     product_id: body.productId ?? null,
+    slide_id: body.slideId ?? null,
+    device: body.device ?? null,
     quantity: body.quantity ?? null,
     value: body.value ?? null,
     session_id: body.sessionId ?? null,

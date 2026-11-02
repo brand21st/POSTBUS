@@ -20,6 +20,24 @@ function uniqueViolation(error: { code?: string; message?: string } | null) {
   return error?.code === "23505" || /duplicate key|unique constraint/i.test(message);
 }
 
+export async function loadLatestShipmentBookingJob(
+  supabase: SupabaseClient,
+  input: { organizationId: string; entityId: string }
+) {
+  const { data, error } = await supabase
+    .from("background_jobs")
+    .select("*")
+    .eq("organization_id", input.organizationId)
+    .eq("job_type", "shipment-booking")
+    .eq("entity_type", "shipment")
+    .eq("entity_id", input.entityId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function loadActiveShipmentBookingJob(
   supabase: SupabaseClient,
   input: { organizationId: string; entityId: string }

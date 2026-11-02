@@ -1,5 +1,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logInfo } from "@/lib/logger";
 import { mapIndiaPostEventToShipmentUpdate, planTrackingUpdate, type TrackingWhatsAppEvent } from "@/modules/india-post/event-mapper";
+import {
+  bulkArticleNumber,
+  civilIndiaPostDate,
+  normalizeTrackingDetail,
+} from "@/modules/india-post/tracking-response";
+
+export type TrackingNotifyNotice = {
+  event: TrackingWhatsAppEvent;
+  eventCode: string;
+  occurredAt: string;
+};
 
 export const TRACKING_POLL_STATUSES = [
   "BOOKED",
@@ -33,17 +45,29 @@ export type ApplyTrackingResult = {
   whatsappEvents: TrackingWhatsAppEvent[];
 };
 
+export type BulkTrackingEvent = {
+  event?: string;
+  office?: string;
+  officeid?: string;
+  date?: string;
+  time?: string;
+  event_code?: string;
+  event_date?: string;
+  event_time?: string;
+  event_description?: string;
+  event_office_name?: string;
+  remarks?: string;
+  rts?: boolean;
+};
+
 export type BulkTrackingArticle = {
-  booking_details?: { article_number?: string };
-  tracking_details?: Array<{
-    event?: string;
-    office?: string;
-    date?: string;
-    time?: string;
-    event_code?: string;
-  }>;
+  article_number?: string;
+  booking_details?: { article_number?: string; delivery_confirmed_on?: string | null };
+  tracking_details?: BulkTrackingEvent[];
   del_status?: { del_status?: string };
 };
+
+export type TrackingIngestSource = "bulk" | "webhook" | "public";
 
 type TrackingEventInput = {
   eventCode: string;
@@ -53,7 +77,17 @@ type TrackingEventInput = {
   occurredAt: string;
   raw: Record<string, unknown>;
   nonDeliveryReason: string | null;
+  rts?: boolean | null;
+  mapText?: string | null;
 };
+
+export function trackingEventRaw(raw: Record<string, unknown>, source: TrackingIngestSource) {
+  const meta =
+    raw._meta && typeof raw._meta === "object" && !Array.isArray(raw._meta)
+      ? (raw._meta as Record<string, unknown>)
+      : {};
+  return { ...raw, _meta: { ...meta, source } };
+}
 
 export function snapshotFromShipmentRow(
   row: {
@@ -80,17 +114,66 @@ export function snapshotFromShipmentRow(
   };
 }
 
-export function bulkEventOccurredAt(event: { date?: string; time?: string }) {
-  if (event.date && event.time) {
-    const combined = `${event.date}T${event.time}`;
-    const parsed = new Date(combined);
+function clockToHms(time: string) {
+  if (/^\d{2}:\d{2}:\d{2}$/.test(time)) return time;
+  if (/^\d{2}:\d{2}$/.test(time)) return `${time}:00`;
+  return time;
+}
+
+export function bulkEventOccurredAt(event: BulkTrackingEvent | Record<string, unknown>) {
+  const normalized = normalizeTrackingDetail(event as Record<string, unknown>);
+  const date = String(normalized.date ?? "").trim();
+  const time = String(normalized.time ?? "").trim();
+  const midnightIso = /^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?(Z|[+-]00:00)?$/.test(date);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(date) && (!midnightIso || !time)) {
+    const parsed = new Date(date);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
-  if (event.date) {
-    const parsed = new Date(event.date);
+  const civil = midnightIso ? date.slice(0, 10) : civilIndiaPostDate(date);
+  if (civil && time && (midnightIso || !date.includes("T"))) {
+    const parsed = new Date(`${civil}T${clockToHms(time)}+05:30`);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
-  return new Date().toISOString();
+  if (date) {
+    const parsed = new Date(date);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  return null;
+}
+
+export function isTrackingPollStatus(status: string) {
+  return (TRACKING_POLL_STATUSES as readonly string[]).includes(status);
+}
+
+export function matchingBulkTrackingArticle(articles: BulkTrackingArticle[] | undefined, barcode: string) {
+  const wanted = String(barcode ?? "").trim().toUpperCase();
+  if (!wanted || !articles?.length) return null;
+  const matched =
+    articles.find((item) => bulkArticleNumber(item).toUpperCase() === wanted) ?? null;
+  if (matched) return matched;
+  if (articles.length !== 1) return null;
+  const only = articles[0];
+  return (only?.tracking_details?.length ?? 0) > 0 ? only ?? null : null;
+}
+
+function bulkEventDescription(event: { event?: string; event_description?: string; remarks?: string }) {
+  const text = String(event.event ?? event.event_description ?? "").trim();
+  const remarks = String(event.remarks ?? "").trim();
+  if (text && remarks) return `${text} — ${remarks}`;
+  return text || remarks || null;
+}
+
+function latestArticleTimestamp(article: BulkTrackingArticle, fallback: string | null) {
+  const times = (article.tracking_details ?? [])
+    .map((event) => bulkEventOccurredAt(event))
+    .filter((value): value is string => Boolean(value));
+  const confirmed = article.booking_details?.delivery_confirmed_on;
+  if (confirmed) {
+    const parsed = new Date(confirmed);
+    if (!Number.isNaN(parsed.getTime())) times.push(parsed.toISOString());
+  }
+  times.sort();
+  return times.at(-1) ?? fallback;
 }
 
 function isReturnOperational(value: string | null) {
@@ -104,14 +187,16 @@ export async function applyIndiaPostTracking(
 ): Promise<ApplyTrackingResult> {
   const mapped = mapIndiaPostEventToShipmentUpdate({
     eventCode: event.eventCode,
-    eventDescription: event.eventDescription,
+    eventDescription: event.mapText ?? event.eventDescription,
     nonDeliveryReason: event.nonDeliveryReason,
+    rts: event.rts,
   });
+  const storedDescription = event.eventDescription;
   const { error: eventError } = await supabase.from("tracking_events").insert({
     organization_id: snapshot.organizationId,
     shipment_id: snapshot.id,
     event_code: mapped.eventCode,
-    event_description: mapped.eventDescription,
+    event_description: storedDescription,
     office_name: event.officeName,
     office_id: event.officeId,
     occurred_at: event.occurredAt,
@@ -123,6 +208,13 @@ export async function applyIndiaPostTracking(
   }
 
   const duplicate = eventError?.code === "23505";
+  if (duplicate) {
+    logInfo("india_post.tracking.duplicate_event", {
+      organizationId: snapshot.organizationId,
+      shipmentId: snapshot.id,
+      eventCode: mapped.eventCode,
+    });
+  }
   const plan = planTrackingUpdate({
     currentStatus: snapshot.status,
     currentOperational: snapshot.operationalStatus,
@@ -136,7 +228,7 @@ export async function applyIndiaPostTracking(
   const patch: Record<string, unknown> = { last_tracked_at: now };
   if (plan.updateLastScan) {
     patch.last_event_code = mapped.eventCode;
-    patch.last_event_description = mapped.eventDescription;
+    patch.last_event_description = storedDescription;
     patch.last_scan_office = event.officeName;
     patch.last_event_at = event.occurredAt;
   }
@@ -193,7 +285,7 @@ export async function applyIndiaPostTracking(
         : snapshot.rtoInitiatedAt,
   };
 
-  return {
+  const result: ApplyTrackingResult = {
     inserted: !duplicate,
     duplicate,
     statusUpdated: Boolean(plan.applyStatus),
@@ -201,8 +293,35 @@ export async function applyIndiaPostTracking(
     shipmentStatus: next.status,
     operationalStatus: next.operationalStatus,
     snapshot: next,
-    whatsappEvents: plan.whatsappEvents,
+    whatsappEvents: duplicate ? [] : plan.whatsappEvents,
   };
+  await publishAppliedTracking(supabase, snapshot, result, event);
+  return result;
+}
+
+async function publishAppliedTracking(
+  supabase: SupabaseClient,
+  snapshot: ShipmentTrackingSnapshot,
+  result: ApplyTrackingResult,
+  event: TrackingEventInput
+) {
+  try {
+    const { publishTrackingResult } = await import("@/modules/webhooks/publish");
+    await publishTrackingResult(supabase, {
+      organizationId: snapshot.organizationId,
+      shipmentId: snapshot.id,
+      orderId: snapshot.orderId,
+      inserted: result.inserted,
+      previousStatus: snapshot.status,
+      nextStatus: result.shipmentStatus ?? snapshot.status,
+      previousOperational: snapshot.operationalStatus,
+      nextOperational: result.operationalStatus,
+      eventCode: event.eventCode,
+      occurredAt: event.occurredAt,
+    });
+  } catch {
+    // Webhook fan-out must not break tracking ingestion.
+  }
 }
 
 export async function ingestBulkTrackingArticle(
@@ -211,48 +330,76 @@ export async function ingestBulkTrackingArticle(
     organizationId: string;
     shipment: ShipmentTrackingSnapshot;
     article: BulkTrackingArticle;
+    source?: TrackingIngestSource;
   }
 ) {
-  const details = [...(input.article.tracking_details ?? [])].sort((left, right) => {
-    return bulkEventOccurredAt(left).localeCompare(bulkEventOccurredAt(right));
+  const details = [...(input.article.tracking_details ?? [])]
+    .map((event) => normalizeTrackingDetail(event as Record<string, unknown>) as BulkTrackingEvent)
+    .sort((left, right) => {
+    const leftAt = bulkEventOccurredAt(left) ?? "";
+    const rightAt = bulkEventOccurredAt(right) ?? "";
+    const time = leftAt.localeCompare(rightAt);
+    if (time !== 0) return time;
+    return String(left.event_code ?? left.event ?? "").localeCompare(String(right.event_code ?? right.event ?? ""));
   });
   let snapshot = input.shipment;
   let orderStatus: "IN_TRANSIT" | "DELIVERED" | null = null;
   const whatsappEvents: TrackingWhatsAppEvent[] = [];
+  const notices: TrackingNotifyNotice[] = [];
 
   for (const event of details) {
+    const occurredAt = bulkEventOccurredAt(event);
+    if (!occurredAt) {
+      logInfo("india_post.tracking.missing_event_time", {
+        organizationId: input.organizationId,
+        shipmentId: snapshot.id,
+        event: event.event ?? event.event_code ?? null,
+      });
+      continue;
+    }
     const result = await applyIndiaPostTracking(supabase, snapshot, {
       eventCode: event.event_code || event.event || "EVENT",
-      eventDescription: event.event ?? null,
+      eventDescription: bulkEventDescription(event),
       officeName: event.office ?? null,
-      officeId: null,
-      occurredAt: bulkEventOccurredAt(event),
-      raw: event as Record<string, unknown>,
+      officeId: event.officeid ? String(event.officeid) : null,
+      occurredAt,
+      raw: trackingEventRaw(event as Record<string, unknown>, input.source ?? "bulk"),
       nonDeliveryReason: null,
+      rts: event.rts === true ? true : event.rts === false ? false : null,
+      mapText: event.event ?? event.event_code ?? null,
     });
     snapshot = result.snapshot;
     if (result.orderStatus) orderStatus = result.orderStatus;
     for (const notify of result.whatsappEvents) {
       if (!whatsappEvents.includes(notify)) whatsappEvents.push(notify);
+      notices.push({ event: notify, eventCode: event.event_code || event.event || "EVENT", occurredAt });
     }
   }
 
   const deliveredFlag = input.article.del_status?.del_status?.toLowerCase() === "delivered";
   const returnish = isReturnOperational(snapshot.operationalStatus) || snapshot.status === "RTO";
-  if (deliveredFlag && !returnish && snapshot.operationalStatus !== "DELIVERED" && snapshot.status !== "DELIVERED") {
+  const deliveredAt = latestArticleTimestamp(input.article, snapshot.lastEventAt);
+  if (
+    deliveredFlag &&
+    deliveredAt &&
+    !returnish &&
+    snapshot.operationalStatus !== "DELIVERED" &&
+    snapshot.status !== "DELIVERED"
+  ) {
     const result = await applyIndiaPostTracking(supabase, snapshot, {
       eventCode: "ITEM_DELIVERED",
       eventDescription: "Delivered",
       officeName: null,
       officeId: null,
-      occurredAt: new Date().toISOString(),
-      raw: { del_status: input.article.del_status ?? null },
+      occurredAt: deliveredAt,
+      raw: trackingEventRaw({ del_status: input.article.del_status ?? null }, input.source ?? "bulk"),
       nonDeliveryReason: null,
     });
     snapshot = result.snapshot;
     if (result.orderStatus) orderStatus = result.orderStatus;
     for (const notify of result.whatsappEvents) {
       if (!whatsappEvents.includes(notify)) whatsappEvents.push(notify);
+      notices.push({ event: notify, eventCode: "ITEM_DELIVERED", occurredAt: deliveredAt });
     }
   } else if (!details.length) {
     await supabase
@@ -262,5 +409,5 @@ export async function ingestBulkTrackingArticle(
       .eq("organization_id", input.organizationId);
   }
 
-  return { snapshot, orderStatus, whatsappEvents };
+  return { snapshot, orderStatus, whatsappEvents, notices };
 }

@@ -73,7 +73,23 @@ export default function ShipmentsPage() {
       header: "Order",
       cell: (row) => row.orderNumber ?? row.order_number ?? "—",
     },
-    { id: "status", header: "Status", cell: (row) => <StatusBadge value={row.status} /> },
+    {
+      id: "status",
+      header: "Status",
+      cell: (row) => (
+        <div className="space-y-1">
+          <StatusBadge value={row.status} />
+          {row.smartAutoRetry?.merchantState ? (
+            <p className="max-w-[14rem] text-xs text-muted">
+              {String(row.smartAutoRetry.merchantState).replaceAll("_", " ")}
+              {row.smartAutoRetry.nextAttemptAt
+                ? ` · next ${formatDate(row.smartAutoRetry.nextAttemptAt, true)}`
+                : ""}
+            </p>
+          ) : null}
+        </div>
+      ),
+    },
     {
       id: "service",
       header: "Service",

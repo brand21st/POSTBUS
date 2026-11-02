@@ -13,12 +13,38 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "ai-credits/quote", ["ai-credits", "quote"])).toBe("orders.read");
     expect(permissionForTenantRoute("GET", "shipment-presets", ["shipment-presets"])).toBe("orders.read");
     expect(permissionForTenantRoute("POST", "shipment-presets", ["shipment-presets"])).toBe("orders.write");
+    expect(permissionForTenantRoute("GET", "order-defaults", ["order-defaults"])).toBe("orders.read");
+    expect(permissionForTenantRoute("PUT", "order-defaults", ["order-defaults"])).toBe("orders.write");
     expect(
       permissionForTenantRoute("DELETE", "shipment-presets/abc", ["shipment-presets", "abc"])
     ).toBe("orders.write");
     expect(permissionForTenantRoute("GET", "products", ["products"])).toBe("products.read");
     expect(permissionForTenantRoute("POST", "products", ["products"])).toBe("products.write");
+    expect(permissionForTenantRoute("POST", "products/ai-copy", ["products", "ai-copy"])).toBe("products.write");
+    expect(permissionForTenantRoute("GET", "products/ai-image/quote", ["products", "ai-image", "quote"])).toBe(
+      "products.read"
+    );
+    expect(permissionForTenantRoute("POST", "products/ai-image/jobs", ["products", "ai-image", "jobs"])).toBe(
+      "products.write"
+    );
+    expect(
+      permissionForTenantRoute("POST", "products/ai-image/enhance-prompt", ["products", "ai-image", "enhance-prompt"])
+    ).toBe("products.write");
+    expect(permissionForTenantRoute("GET", "inventory/covers", ["inventory", "covers"])).toBe("products.read");
+    expect(permissionForTenantRoute("POST", "inventory/covers/jobs", ["inventory", "covers", "jobs"])).toBe(
+      "products.write"
+    );
+    expect(permissionForTenantRoute("POST", "inventory/covers/ai-copy", ["inventory", "covers", "ai-copy"])).toBe(
+      "products.write"
+    );
+    expect(permissionForTenantRoute("GET", "inventory/covers/analytics", ["inventory", "covers", "analytics"])).toBe(
+      "products.read"
+    );
+    expect(permissionForTenantRoute("PATCH", "inventory/storefront/slides/abc", ["inventory", "storefront", "slides", "abc"])).toBe(
+      "products.write"
+    );
     expect(permissionForTenantRoute("PATCH", "products/abc", ["products", "abc"])).toBe("products.write");
+    expect(permissionForTenantRoute("DELETE", "products/abc", ["products", "abc"])).toBe("products.write");
     expect(permissionForTenantRoute("POST", "products/abc/adjustments", ["products", "abc", "adjustments"])).toBe(
       "products.write"
     );
@@ -29,6 +55,9 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "inventory/categories", ["inventory", "categories"])).toBe("products.write");
     expect(permissionForTenantRoute("PATCH", "inventory/storefront", ["inventory", "storefront"])).toBe(
       "products.write"
+    );
+    expect(permissionForTenantRoute("POST", "orders/abc/shopify-payment", ["orders", "abc", "shopify-payment"])).toBe(
+      "orders.write"
     );
     expect(permissionForTenantRoute("POST", "orders/bulk/status", ["orders", "bulk", "status"])).toBe(
       "shipments.write"
@@ -58,12 +87,52 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "shipments/abc/retry", ["shipments", "abc", "retry"])).toBe(
       "shipments.write"
     );
+    expect(permissionForTenantRoute("GET", "support/conversations", ["support", "conversations"])).toBe(
+      "support.read"
+    );
+    expect(
+      permissionForTenantRoute("POST", "support/conversations/abc/messages", [
+        "support",
+        "conversations",
+        "abc",
+        "messages",
+      ])
+    ).toBe("support.reply");
+    expect(
+      permissionForTenantRoute("POST", "support/tickets/abc/assign", ["support", "tickets", "abc", "assign"])
+    ).toBe("support.assign");
+    expect(permissionForTenantRoute("PATCH", "support/settings", ["support", "settings"])).toBe(
+      "support.settings"
+    );
+    expect(permissionForTenantRoute("PATCH", "support/tickets/abc", ["support", "tickets", "abc"])).toBe(
+      "support.manage"
+    );
     expect(permissionForTenantRoute("GET", "ndr-rto", ["ndr-rto"])).toBe("shipments.read");
     expect(permissionForTenantRoute("GET", "ndr-rto/summary", ["ndr-rto", "summary"])).toBe("shipments.read");
     expect(permissionForTenantRoute("POST", "ndr-rto/abc/sync", ["ndr-rto", "abc", "sync"])).toBe(
       "shipments.write"
     );
+    expect(permissionForTenantRoute("POST", "ndr-rto/sync-visible", ["ndr-rto", "sync-visible"])).toBe(
+      "shipments.write"
+    );
     expect(permissionForTenantRoute("POST", "manifests", ["manifests"])).toBe("manifests.write");
+    expect(permissionForTenantRoute("GET", "manifests/abc/export", ["manifests", "abc", "export"])).toBe("manifests.read");
+    expect(permissionForTenantRoute("POST", "manifests/abc/close", ["manifests", "abc", "close"])).toBe("manifests.write");
+    expect(
+      permissionForTenantRoute("DELETE", "manifests/abc/shipments/def", ["manifests", "abc", "shipments", "def"])
+    ).toBe("manifests.write");
+    expect(permissionForTenantRoute("GET", "addons", ["addons"])).toBeUndefined();
+    expect(permissionForTenantRoute("POST", "addons/ai-accountant/checkout", ["addons", "ai-accountant", "checkout"])).toBe(
+      "org.manage"
+    );
+    expect(permissionForTenantRoute("GET", "ai-accountant", ["ai-accountant"])).toBe("accounting.read");
+    expect(permissionForTenantRoute("POST", "ai-accountant/assistant", ["ai-accountant", "assistant"])).toBe(
+      "accounting.read"
+    );
+    expect(permissionForTenantRoute("POST", "ai-accountant/expenses", ["ai-accountant", "expenses"])).toBe("accounting.write");
+    expect(
+      permissionForTenantRoute("POST", "ai-accountant/journal/x/reverse", ["ai-accountant", "journal", "x", "reverse"])
+    ).toBe("accounting.write");
   });
 
   it("protects admin surfaces and keeps status reads open to members", () => {
@@ -123,7 +192,11 @@ describe("permissionForTenantRoute", () => {
       "members.manage"
     );
     expect(permissionForTenantRoute("POST", "api-keys", ["api-keys"])).toBe("api_keys.manage");
+    expect(permissionForTenantRoute("GET", "merchant-api/usage", ["merchant-api", "usage"])).toBe(
+      "api_keys.manage"
+    );
     expect(permissionForTenantRoute("GET", "webhooks", ["webhooks"])).toBe("webhooks.manage");
+    expect(permissionForTenantRoute("POST", "webhooks/abc/test", ["webhooks", "abc", "test"])).toBe("webhooks.manage");
     expect(permissionForTenantRoute("GET", "audit-logs", ["audit-logs"])).toBe("audit.read");
     expect(permissionForTenantRoute("PATCH", "automation", ["automation"])).toBe("automation.manage");
     expect(permissionForTenantRoute("GET", "automation", ["automation"])).toBeUndefined();
@@ -147,6 +220,9 @@ describe("permissionForTenantRoute", () => {
     expect(permissionForTenantRoute("POST", "print-jobs/job-1/complete", ["print-jobs", "job-1", "complete"])).toBe(
       "labels.write"
     );
+    expect(permissionForTenantRoute("POST", "print-jobs/job-1/reprint", ["print-jobs", "job-1", "reprint"])).toBe(
+      "labels.write"
+    );
     expect(permissionForTenantRoute("POST", "labels/abc/print", ["labels", "abc", "print"])).toBe(
       "labels.write"
     );
@@ -160,6 +236,11 @@ describe("permissionForTenantRoute", () => {
     expect(
       permissionForTenantRoute("POST", "labels/retry-incomplete", ["labels", "retry-incomplete"])
     ).toBe("labels.write");
+    expect(permissionForTenantRoute("POST", "labels/bulk-print", ["labels", "bulk-print"])).toBe("labels.write");
+    expect(permissionForTenantRoute("POST", "labels/bulk-download", ["labels", "bulk-download"])).toBe(
+      "labels.read"
+    );
+    expect(permissionForTenantRoute("GET", "labels/summary", ["labels", "summary"])).toBe("labels.read");
     expect(
       permissionForTenantRoute("POST", "labels/abc/packing-slip", ["labels", "abc", "packing-slip"])
     ).toBe("labels.write");
@@ -168,6 +249,8 @@ describe("permissionForTenantRoute", () => {
     ).toBe("shipments.write");
     expect(permissionForTenantRoute("GET", "label-template", ["label-template"])).toBe("labels.read");
     expect(permissionForTenantRoute("PUT", "label-template", ["label-template"])).toBe("labels.write");
+    expect(permissionForTenantRoute("GET", "sales-invoices", ["sales-invoices"])).toBe("orders.read");
+    expect(permissionForTenantRoute("POST", "sales-invoices/abc/issue", ["sales-invoices", "abc", "issue"])).toBe("orders.write");
     expect(permissionForTenantRoute("GET", "invoices", ["invoices"])).toBe("orders.read");
     expect(permissionForTenantRoute("GET", "invoices/abc/download", ["invoices", "abc", "download"])).toBe(
       "orders.read"

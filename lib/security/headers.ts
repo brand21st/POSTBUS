@@ -45,6 +45,14 @@ export function contentSecurityPolicy() {
     "https://www.googletagmanager.com",
     "https://static.cloudflareinsights.com",
     "https://checkout.razorpay.com",
+    "https://cdn.jsdelivr.net",
+  ].join(" ");
+
+  const styleSrc = [
+    "'self'",
+    "'unsafe-inline'",
+    "https://fonts.googleapis.com",
+    "https://cdn.jsdelivr.net",
   ].join(" ");
 
   return [
@@ -54,12 +62,12 @@ export function contentSecurityPolicy() {
     "frame-ancestors 'none'",
     "form-action 'self'",
     `script-src ${scriptSrc}`,
-    "style-src 'self' 'unsafe-inline'",
+    `style-src ${styleSrc}`,
     "img-src 'self' data: blob: https:",
-    "font-src 'self' data:",
+    "font-src 'self' data: https://fonts.gstatic.com",
     `connect-src ${connectSrc}`,
     "worker-src 'self' blob:",
-    "frame-src 'self' blob: https://api.razorpay.com https://checkout.razorpay.com https://js.stripe.com https://hooks.stripe.com https://*.myshopify.com https://www.youtube.com https://www.youtube-nocookie.com",
+    "frame-src 'self' blob: https://api.razorpay.com https://checkout.razorpay.com https://js.stripe.com https://hooks.stripe.com https://*.myshopify.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://www.facebook.com https://www.instagram.com",
     "upgrade-insecure-requests",
   ].join("; ");
 }

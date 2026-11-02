@@ -19,6 +19,7 @@ import { formatWhatsAppOrderNumber } from "@/modules/orders/order-number";
 import { createManualOrder } from "@/modules/orders/service";
 import { loadCatalogProducts } from "@/modules/products/service";
 import { quoteCatalogPayment } from "@/modules/storefront/quote";
+import { resolveStoreCart } from "@/modules/storefront/resolve-cart";
 
 type PublicLinkRow = {
   id: string;
@@ -224,6 +225,14 @@ export async function submitPublicCustomerOrderLink(
     if (existing) {
       throw new AppError(ERROR_CODES.CONFLICT, "This order is already being submitted.");
     }
+  }
+  const resolved = (input.items?.length || input.bundles?.length)
+    ? await resolveStoreCart(supabase, row.organization_id, input.items ?? [], input.bundles ?? []) : null;
+  if (resolved && input.quoteVersion && resolved.quoteVersion !== input.quoteVersion) {
+    throw new AppError(ERROR_CODES.CONFLICT, "Prices changed. Review the updated quote before placing your order.");
+  }
+  if (input.bundles?.length && !input.quoteVersion) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Review your bundle quote before placing an order.");
+  if (idempotencyKey) {
     const requestHash = hashSecret(
       JSON.stringify({
         customerName: input.customerName.trim(),
@@ -235,6 +244,7 @@ export async function submitPublicCustomerOrderLink(
         pincode: input.pincode.trim(),
         paymentPreference: input.paymentPreference ?? null,
         items: input.items ?? [],
+        bundles: input.bundles ?? [],
       })
     );
     const { error: reservationError } = await supabase.from("idempotency_keys").insert({
@@ -251,7 +261,7 @@ export async function submitPublicCustomerOrderLink(
   }
 
   const cart = input.items ?? [];
-  const lineItems = cart.length
+  const lineItems = resolved ? resolved.lines.map((line) => ({ productId: line.productId!, quantity: line.quantity })) : cart.length
     ? cart.map((item) => ({ productId: item.productId, quantity: item.quantity }))
     : [{ title: "WhatsApp order", quantity: 1, unitPrice: 0 }];
 
@@ -278,7 +288,12 @@ export async function submitPublicCustomerOrderLink(
     unitPrice: number;
     returnPolicy: string;
   }> = [];
-  if (cart.length) {
+  if (resolved) {
+    quote = quoteCatalogPayment({ preference: input.paymentPreference === "COD" ? "COD" : "PREPAID", lines: resolved.lines.map((line) => ({ ...line, prepaidEnabled: line.prepaidEnabled !== false, codEnabled: line.codEnabled !== false })) });
+    returnSummary = { kind: resolved.returnAvailable ? "available" : "mixed", label: resolved.returnAvailable ? "Return available" : "Returns vary by product" };
+    messageItems.push(...resolved.lines.map((line) => ({ name: line.title, sku: line.sku, quantity: line.quantity, unitPrice: line.unitPrice, returnPolicy: returnSummary.label })));
+  }
+  if (cart.length && !resolved) {
     const { returnPolicyLabel, summarizeReturnPolicy } = await import("@/modules/products/return-policy");
     const catalog = await loadCatalogProducts(
       supabase,
@@ -358,6 +373,8 @@ export async function submitPublicCustomerOrderLink(
             total: quote.total,
             returnPolicy: returnSummary.label,
             items: messageItems,
+            bundles: resolved?.bundles ?? [],
+            quoteVersion: resolved?.quoteVersion,
           },
         }
       : undefined,
@@ -368,7 +385,8 @@ export async function submitPublicCustomerOrderLink(
     order = await createManualOrder(
       supabase,
       { organizationId: row.organization_id, userId: null },
-      { ...orderInput, status: "IMPORTED" }
+      { ...orderInput, status: "IMPORTED" },
+      resolved?.lines
     );
   } catch (error) {
     if (idempotencyKey) {
@@ -400,6 +418,9 @@ export async function submitPublicCustomerOrderLink(
         : "Cash on delivery"
       : "Prepaid";
   const result = {
+    orderId: order.id as string,
+    currency: "INR" as const,
+    items: resolved?.lines.map((line) => ({ productId: line.productId, name: line.title, quantity: line.quantity, unitPrice: line.unitPrice })) ?? [],
     status: "SUBMITTED" as const,
     orderNumber: (() => {
       const stored = (order.orderNumber ?? order.order_number ?? null) as string | null;

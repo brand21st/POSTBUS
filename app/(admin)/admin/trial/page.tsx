@@ -20,7 +20,7 @@ export default function AdminTrialPage() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [days, setDays] = useState<string>("");
   const trialEnabled = enabled ?? query.data?.trial_enabled ?? true;
-  const trialDays = days || String(query.data?.trial_days ?? 3);
+  const trialDays = days || String(query.data?.trial_days ?? 7);
   const save = useMutation({
     mutationFn: () =>
       api("/api/admin/trial-settings", {

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptSecret } from "@/lib/security/crypto";
 import { AUTOMATION_DEFAULTS, getAutomationSettings } from "@/modules/automation/service";
+import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
 import { parcelDefaultsFromConnection, type WorkspaceParcelDefaults } from "@/modules/india-post/parcel-defaults";
 import {
   normalizeShopDomain,
@@ -11,15 +12,57 @@ import {
 import { buildPostBusTrackingUrl } from "@/modules/tracking-pages/host";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
-import { settleOrderPayment } from "@/modules/orders/payment";
+import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { fetchWithShopifyTimeout, shopifyHttpError } from "@/modules/shopify/http";
-import type { FulfillmentStatus, PaymentStatus } from "@/types/domain";
+import {
+  bookedShipmentCollectConflict,
+  classifyShopifyRemotePayment,
+  isShopifyPaymentPayloadStale,
+  mergeShopifyPaymentMetadata,
+  shopifyCurrentOrderTotal,
+  shopifyOperationalOrderTotal,
+  shopifyOriginalOrderTotal,
+  shopifyPaymentNeedsRefresh,
+  shopifyPaymentSnapshotFromMetadata,
+  type ShopifyBookingConflict,
+  type ShopifyCollectionMode,
+  type ShopifyPaymentSnapshot,
+  type ShopifyPaymentTransaction,
+} from "@/modules/shopify/payment";
+import { selectActiveShopifyLineItems } from "@/modules/shopify/line-items";
+import { shopifyLineItemGid } from "@/modules/shopify/eligibility";
+import type { FulfillmentStatus } from "@/types/domain";
+import {
+  dimsFromMetafieldEntries,
+  mergeParcelDimensionsMetadata,
+  manualDimensionLock,
+  parcelDimensionsMetadata,
+  readParcelDimensionRecord,
+  resolveShipmentDimensions,
+  type DimensionSource,
+  type MetafieldEntry,
+  type PackageOption,
+  type ResolvedShipmentDimensions,
+  type ShipmentUnit,
+} from "@/modules/shopify/dimensions";
+import { buildShipmentComposition, normalizeShopifyId } from "@/modules/autopack/composition";
+import { AUTOPACK_WRITABLE_STATUSES, type DecisionShipment } from "@/modules/autopack/decide";
+
+export {
+  isShopifyCodGateway,
+  mapShopifyCollectable,
+  mapShopifyPaymentStatus,
+  normalizeShopifyPaymentFields,
+} from "@/modules/shopify/payment";
+
+export { shopifyDimensionToCm } from "@/modules/shopify/dimensions";
 
 export const SHOPIFY_API_VERSION = "2025-01";
 export const SHOPIFY_GRAPHQL_API_VERSION = "2026-04";
 export const ORDER_WEBHOOK_TOPICS = [
   "orders/create",
   "orders/updated",
+  "orders/paid",
   "orders/cancelled",
   "fulfillment_orders/progress_reported",
 ] as const;
@@ -118,6 +161,7 @@ export type ShopifyRemoteOrder = {
   email?: string | null;
   cancelled_at?: string | null;
   financial_status?: string | null;
+  displayFinancialStatus?: string | null;
   fulfillment_status?: string | null;
   currency?: string | null;
   subtotal_price?: string | number | null;
@@ -125,13 +169,25 @@ export type ShopifyRemoteOrder = {
   total_shipping_price_set?: { shop_money?: { amount?: string } } | null;
   total_tax?: string | number | null;
   total_price?: string | number | null;
+  current_total_price?: string | number | null;
+  currentTotalPriceSet?: { shop_money?: { amount?: string | number | null } } | null;
+  current_subtotal_price?: string | number | null;
+  currentSubtotalPriceSet?: { shop_money?: { amount?: string | number | null } } | null;
   total_outstanding?: string | number | null;
+  totalOutstandingSet?: { shop_money?: { amount?: string | number | null } } | null;
   shipping_address?: Record<string, string | null> | null;
   billing_address?: Record<string, string | null> | null;
   customer?: { first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null } | null;
   payment_gateway_names?: string[] | null;
+  paymentGatewayNames?: string[] | null;
   gateway?: string | null;
+  source_name?: string | null;
+  sourceName?: string | null;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+  transactions?: ShopifyPaymentTransaction[] | null;
   tags?: string | string[] | null;
+  edited?: boolean | null;
   line_items?: ShopifyRemoteLineItem[];
 };
 
@@ -142,11 +198,17 @@ export type ShopifyWeightValue =
   | null;
 
 export type ShopifyRemoteLineItem = {
+  id?: string | number | null;
   title?: string;
   name?: string | null;
   variant_title?: string | null;
   sku?: string | null;
   quantity?: number;
+  current_quantity?: number | null;
+  currentQuantity?: number | null;
+  unfulfilled_quantity?: number | null;
+  fulfillable_quantity?: number | null;
+  requires_shipping?: boolean | null;
   price?: string | number;
   grams?: number | string | null;
   weight?: ShopifyWeightValue;
@@ -197,35 +259,13 @@ type ShopifyVariantShipping = {
   heightCm?: number | null;
 };
 
-const SHOPIFY_PARCEL_LENGTH_CM = { min: 14, max: 150 };
-const SHOPIFY_PARCEL_WIDTH_CM = { min: 9, max: 150 };
-const SHOPIFY_PARCEL_HEIGHT_CM = { min: 1, max: 150 };
-
-const SHOPIFY_CM_PER_UNIT: Record<string, number> = {
-  cm: 1,
-  centimeter: 1,
-  centimeters: 1,
-  mm: 0.1,
-  millimeter: 0.1,
-  millimeters: 0.1,
-  in: 2.54,
-  inch: 2.54,
-  inches: 2.54,
-  ft: 30.48,
-  foot: 30.48,
-  feet: 30.48,
-  m: 100,
-  meter: 100,
-  meters: 100,
-  metre: 100,
-  metres: 100,
-};
-
 const SHOPIFY_VARIANT_SHIPPING_QUERY = `
   query ShopifyVariantShipping($ids: [ID!]!) {
     nodes(ids: $ids) {
       ... on ProductVariant {
         id
+        metafields(first: 25) { nodes { namespace key value type } }
+        product { metafields(first: 25) { nodes { namespace key value type } } }
         customLength: metafield(namespace: "custom", key: "length") { value type }
         customWidth: metafield(namespace: "custom", key: "width") { value type }
         customHeight: metafield(namespace: "custom", key: "height") { value type }
@@ -496,61 +536,6 @@ export function shopifyReadyToSync(row?: ShopifyConnectionRow | null) {
   return Boolean(row?.shop_domain && resolveShopifyAppCredentials(row));
 }
 
-const COD_GATEWAY = /cash[_\s-]*on[_\s-]*delivery|\bcod\b/i;
-
-export function isShopifyCodGateway(gateways?: string[] | string | null) {
-  const list = Array.isArray(gateways) ? gateways : gateways ? [gateways] : [];
-  return list.some((gateway) => COD_GATEWAY.test(gateway));
-}
-
-export function mapShopifyPaymentStatus(
-  value?: string | null,
-  gateways?: string[] | string | null
-): PaymentStatus {
-  switch ((value || "").toLowerCase()) {
-    case "paid":
-      return "PAID";
-    case "partially_paid":
-      return "PARTIAL";
-    case "refunded":
-    case "partially_refunded":
-      return "REFUNDED";
-    case "voided":
-      return "FAILED";
-    case "pending":
-    case "authorized":
-    default:
-      if (isShopifyCodGateway(gateways)) return "COD";
-      return "PENDING";
-  }
-}
-
-export function mapShopifyCollectable(
-  remote: Pick<ShopifyRemoteOrder, "total_price" | "total_outstanding">,
-  paymentStatus: PaymentStatus
-) {
-  const total = Number(remote.total_price ?? 0);
-  if (paymentStatus === "PARTIAL") {
-    const outstanding =
-      remote.total_outstanding == null || remote.total_outstanding === ""
-        ? null
-        : Number(remote.total_outstanding);
-    const amountPaid =
-      outstanding == null || Number.isNaN(outstanding) ? 0 : Math.max(0, total - outstanding);
-    return settleOrderPayment({
-      paymentStatus: "PARTIAL",
-      totalAmount: total,
-      amountPaid,
-      strict: false,
-    });
-  }
-  return settleOrderPayment({
-    paymentStatus,
-    totalAmount: total,
-    strict: false,
-  });
-}
-
 export function nextShopifyOrderStatus(input: {
   cancelledAt?: string | null;
   fulfillmentStatus: FulfillmentStatus;
@@ -787,42 +772,6 @@ export function shopifyVariantGid(id: number | string | null | undefined) {
   return `gid://shopify/ProductVariant/${raw}`;
 }
 
-function clampShopifyCm(value: number, min: number, max: number) {
-  if (!Number.isFinite(value) || value <= 0) return null;
-  const rounded = Math.round(value * 10) / 10;
-  return Math.min(max, Math.max(min, rounded));
-}
-
-export function shopifyDimensionToCm(value: unknown, unit?: string | null): number | null {
-  if (value == null || value === "") return null;
-  if (typeof value === "object") {
-    const row = value as { value?: unknown; unit?: string | null };
-    return shopifyDimensionToCm(row.value, row.unit ?? unit);
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-      try {
-        return shopifyDimensionToCm(JSON.parse(trimmed) as unknown, unit);
-      } catch {
-        // Fall through to numeric + unit suffix parsing.
-      }
-    }
-    const match = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)?$/);
-    if (match) {
-      return shopifyDimensionToCm(Number(match[1]), match[2] || unit);
-    }
-  }
-  const amount = shopifyNumeric(value);
-  if (amount == null || amount <= 0) return null;
-  const key = String(unit || "cm").trim().toLowerCase();
-  const factor = SHOPIFY_CM_PER_UNIT[key] ?? (key.endsWith("s") ? SHOPIFY_CM_PER_UNIT[key.slice(0, -1)] : undefined);
-  if (!factor) return amount;
-  const cm = amount * factor;
-  return cm > 0 ? cm : null;
-}
-
 function metafieldMapFromVariantNode(node: Record<string, unknown> | null | undefined) {
   const map = new Map<string, string>();
   if (!node) return map;
@@ -834,48 +783,57 @@ function metafieldMapFromVariantNode(node: Record<string, unknown> | null | unde
   return map;
 }
 
-function dimsFromMetafields(fields: Map<string, string>): { lengthCm: number; widthCm: number; heightCm: number } | null {
-  const groups = [
-    ["custom.length", "custom.width", "custom.height"],
-    ["custom.length_cm", "custom.width_cm", "custom.height_cm"],
-    ["custom.package_length", "custom.package_width", "custom.package_height"],
-    ["shipping.length", "shipping.width", "shipping.height"],
-    ["shipping.length_cm", "shipping.width_cm", "shipping.height_cm"],
-  ] as const;
-  for (const [lengthKey, widthKey, heightKey] of groups) {
-    const lengthCm = shopifyDimensionToCm(fields.get(lengthKey));
-    const widthCm = shopifyDimensionToCm(fields.get(widthKey));
-    const heightCm = shopifyDimensionToCm(fields.get(heightKey));
-    if (lengthCm && widthCm && heightCm) return { lengthCm, widthCm, heightCm };
+function dimsFromMetafields(fields: Map<string, string>) {
+  const entries: MetafieldEntry[] = [];
+  for (const [key, value] of fields) {
+    const dot = key.indexOf(".");
+    entries.push({
+      namespace: dot >= 0 ? key.slice(0, dot) : "custom",
+      key: dot >= 0 ? key.slice(dot + 1) : key,
+      value,
+    });
   }
-  return null;
+  return dimsFromMetafieldEntries(entries);
+}
+
+function metafieldNodes(value: unknown): MetafieldEntry[] {
+  const nodes = (value as { nodes?: MetafieldEntry[] } | null | undefined)?.nodes;
+  return Array.isArray(nodes) ? nodes : [];
+}
+
+export function shopifyShipmentUnits(items: ShopifyRemoteLineItem[]): ShipmentUnit[] {
+  const units: ShipmentUnit[] = [];
+  for (const item of items) {
+    if (item.requires_shipping === false) continue;
+    const remaining = item.unfulfilled_quantity ?? item.fulfillable_quantity ?? item.quantity;
+    const quantity = remaining == null ? 0 : Number(remaining) || 0;
+    if (quantity <= 0) continue;
+    units.push({
+      quantity,
+      lengthCm: shopifyNumeric(item.length_cm),
+      widthCm: shopifyNumeric(item.width_cm),
+      heightCm: shopifyNumeric(item.height_cm),
+    });
+  }
+  return units;
 }
 
 export function shopifyParcelFromLineItems(items: ShopifyRemoteLineItem[]): ShopifyParcelDims {
   let weightGrams = 0;
-  let maxL = 0;
-  let maxW = 0;
-  let maxH = 0;
-  let hasBox = false;
   for (const item of items) {
-    const quantity = Number(item.quantity) || 1;
+    if (item.requires_shipping === false) continue;
+    const remaining = item.unfulfilled_quantity ?? item.fulfillable_quantity ?? item.quantity;
+    const quantity = remaining == null ? 0 : Number(remaining) || 0;
     const grams = shopifyLineItemWeightGrams(item);
     if (grams && quantity > 0) weightGrams += grams * quantity;
-    const lengthCm = shopifyNumeric(item.length_cm);
-    const widthCm = shopifyNumeric(item.width_cm);
-    const heightCm = shopifyNumeric(item.height_cm);
-    if (lengthCm && widthCm && heightCm && lengthCm > 0 && widthCm > 0 && heightCm > 0) {
-      hasBox = true;
-      maxL = Math.max(maxL, lengthCm);
-      maxW = Math.max(maxW, widthCm);
-      maxH = Math.max(maxH, heightCm);
-    }
   }
+  const resolved = resolveShipmentDimensions({ units: shopifyShipmentUnits(items) });
+  const single = resolved?.source === "shopify" ? resolved : null;
   return {
     weightGrams: weightGrams > 0 ? Math.round(weightGrams) : null,
-    lengthCm: hasBox ? clampShopifyCm(maxL, SHOPIFY_PARCEL_LENGTH_CM.min, SHOPIFY_PARCEL_LENGTH_CM.max) : null,
-    widthCm: hasBox ? clampShopifyCm(maxW, SHOPIFY_PARCEL_WIDTH_CM.min, SHOPIFY_PARCEL_WIDTH_CM.max) : null,
-    heightCm: hasBox ? clampShopifyCm(maxH, SHOPIFY_PARCEL_HEIGHT_CM.min, SHOPIFY_PARCEL_HEIGHT_CM.max) : null,
+    lengthCm: single?.lengthCm ?? null,
+    widthCm: single?.widthCm ?? null,
+    heightCm: single?.heightCm ?? null,
   };
 }
 
@@ -883,36 +841,85 @@ export type ShopifyShipmentDimExtras = {
   lengthCm?: number;
   widthCm?: number;
   heightCm?: number;
+  dimensionSource?: DimensionSource;
+  dimensionPackageId?: string;
+  dimensionPackageName?: string;
+  /** packaging_history id when dimensionSource is autopack_history. */
+  dimensionEvidenceId?: string;
 };
 
-export function shopifyShipmentParcelExtras(lineItems: ShopifyRemoteLineItem[]): ShopifyShipmentDimExtras {
-  const parcel = shopifyParcelFromLineItems(lineItems);
-  if (parcel.lengthCm == null || parcel.widthCm == null || parcel.heightCm == null) return {};
-  return { lengthCm: parcel.lengthCm, widthCm: parcel.widthCm, heightCm: parcel.heightCm };
+export function shopifyShipmentParcelExtras(
+  lineItems: ShopifyRemoteLineItem[],
+  workspace?: WorkspaceParcelDefaults | null,
+  packages?: PackageOption[]
+): ShopifyShipmentDimExtras {
+  return shopifyResolvedShipmentDims(lineItems, workspace, packages);
 }
 
-/** Metafield box first; else complete workspace L×W×H. Saved Shopify packages are not readable on Admin 2026-04. */
+/** Metafield box first; else one PostBus package or merchant default. Saved Shopify packages are not readable on Admin 2026-04. */
 export function shopifyResolvedShipmentDims(
   lineItems: ShopifyRemoteLineItem[],
-  workspace?: WorkspaceParcelDefaults | null
+  workspace?: WorkspaceParcelDefaults | null,
+  packages?: PackageOption[]
 ): ShopifyShipmentDimExtras {
-  const fromItems = shopifyShipmentParcelExtras(lineItems);
-  if (fromItems.lengthCm != null && fromItems.widthCm != null && fromItems.heightCm != null) {
-    return fromItems;
+  const resolved = resolveShipmentDimensions({
+    units: shopifyShipmentUnits(lineItems),
+    packages,
+    defaultPackage:
+      workspace?.lengthCm != null && workspace.widthCm != null && workspace.heightCm != null
+        ? { lengthCm: workspace.lengthCm, widthCm: workspace.widthCm, heightCm: workspace.heightCm }
+        : null,
+  });
+  if (!resolved) return {};
+  return {
+    lengthCm: resolved.lengthCm,
+    widthCm: resolved.widthCm,
+    heightCm: resolved.heightCm,
+    dimensionSource: resolved.source,
+    ...(resolved.packageId ? { dimensionPackageId: resolved.packageId } : {}),
+    ...(resolved.packageName ? { dimensionPackageName: resolved.packageName } : {}),
+  };
+}
+
+function shipmentDimChoice(extras: ShopifyShipmentDimExtras) {
+  if (extras.lengthCm == null || extras.widthCm == null || extras.heightCm == null || !extras.dimensionSource) {
+    return null;
   }
-  const lengthCm = workspace?.lengthCm != null
-    ? clampShopifyCm(workspace.lengthCm, SHOPIFY_PARCEL_LENGTH_CM.min, SHOPIFY_PARCEL_LENGTH_CM.max)
-    : null;
-  const widthCm = workspace?.widthCm != null
-    ? clampShopifyCm(workspace.widthCm, SHOPIFY_PARCEL_WIDTH_CM.min, SHOPIFY_PARCEL_WIDTH_CM.max)
-    : null;
-  const heightCm = workspace?.heightCm != null
-    ? clampShopifyCm(workspace.heightCm, SHOPIFY_PARCEL_HEIGHT_CM.min, SHOPIFY_PARCEL_HEIGHT_CM.max)
-    : null;
-  if (lengthCm != null && widthCm != null && heightCm != null) {
-    return { lengthCm, widthCm, heightCm };
+  return {
+    lengthCm: extras.lengthCm,
+    widthCm: extras.widthCm,
+    heightCm: extras.heightCm,
+    source: extras.dimensionSource,
+    packageId: extras.dimensionPackageId,
+    packageName: extras.dimensionPackageName,
+  };
+}
+
+async function loadOrganizationPackages(supabase: SupabaseClient, organizationId: string): Promise<PackageOption[]> {
+  try {
+    const { data, error } = await supabase
+      .from("user_shipment_presets")
+      .select("id, name, length_cm, width_cm, height_cm")
+      .eq("organization_id", organizationId);
+    if (error || !Array.isArray(data)) return [];
+    return data.flatMap((row) => {
+      const lengthCm = Number((row as { length_cm?: number }).length_cm);
+      const widthCm = Number((row as { width_cm?: number }).width_cm);
+      const heightCm = Number((row as { height_cm?: number }).height_cm);
+      if (!(lengthCm > 0 && widthCm > 0 && heightCm > 0)) return [];
+      return [
+        {
+          id: String((row as { id?: string }).id ?? ""),
+          name: String((row as { name?: string }).name ?? "Package"),
+          lengthCm,
+          widthCm,
+          heightCm,
+        },
+      ];
+    });
+  } catch {
+    return [];
   }
-  return {};
 }
 
 async function loadWorkspaceParcelDefaults(supabase: SupabaseClient, organizationId: string) {
@@ -963,17 +970,23 @@ export function applyShopifyProductShippingToLineItem(
 }
 
 function shopifyLineItemRows(organizationId: string, orderId: string, lineItems: ShopifyRemoteLineItem[]) {
-  return lineItems.map((item) => ({
-    organization_id: organizationId,
-    order_id: orderId,
-    title: shopifyLineItemTitle(item),
-    sku: item.sku ? String(item.sku) : null,
-    quantity: Number(item.quantity ?? 1),
-    unit_price: Number(item.price ?? 0),
-    weight_grams: shopifyLineItemWeightGrams(item),
-    weight_edited: false,
-    image_url: shopifyLineItemImageUrl(item),
-  }));
+  return lineItems.map((item) => {
+    const remaining = item.unfulfilled_quantity ?? item.fulfillable_quantity;
+    return {
+      organization_id: organizationId,
+      order_id: orderId,
+      title: shopifyLineItemTitle(item),
+      sku: item.sku ? String(item.sku) : null,
+      quantity: Number(item.quantity ?? 1),
+      unfulfilled_quantity: remaining == null ? null : Math.max(0, Number(remaining) || 0),
+      source_line_item_id: shopifyLineItemGid(item.id) ?? (item.id != null ? String(item.id) : null),
+      requires_shipping: item.requires_shipping !== false,
+      unit_price: Number(item.price ?? 0),
+      weight_grams: shopifyLineItemWeightGrams(item),
+      weight_edited: false,
+      image_url: shopifyLineItemImageUrl(item),
+    };
+  });
 }
 
 function shopifyWeightKey(title?: string | null, sku?: string | null) {
@@ -1047,6 +1060,7 @@ async function refreshShopifyLineItems(
     orderId: string;
     orderStatus?: string | null;
     lineItems: ShopifyRemoteLineItem[];
+    sourceUpdatedAt?: string | null;
   }
 ) {
   if (!input.lineItems.length) return;
@@ -1081,15 +1095,20 @@ async function refreshShopifyLineItems(
     Array.isArray(existingItems) ? existingItems : []
   );
 
-  const { error: deleteError } = await supabase
-    .from("order_line_items")
-    .delete()
-    .eq("organization_id", input.organizationId)
-    .eq("order_id", input.orderId);
-  if (deleteError) throw new Error(deleteError.message);
-
-  const { error: itemsError } = await supabase.from("order_line_items").insert(rows);
-  if (itemsError) throw new Error(itemsError.message);
+  const { data, error } = await supabase.rpc("replace_shopify_order_line_items", {
+    p_organization_id: input.organizationId,
+    p_order_id: input.orderId,
+    p_source_updated_at: input.sourceUpdatedAt ?? null,
+    p_lines: rows,
+  });
+  if (error) throw new Error(error.message);
+  const action = String((data as { action?: string } | null)?.action ?? "");
+  if (action === "skipped_locked") {
+    await applyShopifyLineItemImages(supabase, input);
+    return;
+  }
+  if (action === "skipped_stale") return;
+  await persistShopifyLineVariantIds(supabase, input).catch(() => undefined);
 
   await applyShopifyParcelToShipment(supabase, {
     organizationId: input.organizationId,
@@ -1117,23 +1136,36 @@ async function applyShopifyParcelToShipment(
 ) {
   const parcel = shopifyParcelFromLineItems(input.lineItems);
   const workspace = await loadWorkspaceParcelDefaults(supabase, input.organizationId);
-  const extras = shopifyResolvedShipmentDims(input.lineItems, workspace);
+  const packages = await loadOrganizationPackages(supabase, input.organizationId);
+  const extras = shopifyResolvedShipmentDims(input.lineItems, workspace, packages);
+  const choice = shipmentDimChoice(extras);
   const orderLocked = SHOPIFY_WEIGHT_LOCKED_ORDER.has((input.orderStatus ?? "").toUpperCase());
   if (orderLocked) return;
 
   const { data: shipments } = await supabase
     .from("shipments")
-    .select("id, status, length_cm, width_cm, height_cm, weight_grams")
+    .select("id, status, booked_at, barcode, service_code, length_cm, width_cm, height_cm, weight_grams, metadata")
     .eq("organization_id", input.organizationId)
     .eq("order_id", input.orderId);
   const rows = Array.isArray(shipments) ? shipments : [];
   const unlocked = rows.filter(
     (row) => !SHOPIFY_WEIGHT_LOCKED_SHIPMENT.has(String((row as { status?: string }).status ?? "").toUpperCase())
   );
+  const composition = shopifyShipmentComposition(input.lineItems);
 
   if (!rows.length) {
     if (!input.createIfMissing) return;
-    if (!extras.lengthCm) return;
+    const autopack = await shopifyAutoPack(supabase, {
+      organizationId: input.organizationId,
+      orderId: input.orderId,
+      composition,
+      packages,
+      fallback: choice,
+      weightGrams: parcel.weightGrams,
+      shipment: null,
+    });
+    const createExtras = autopack ? autopackShipmentExtras(autopack) : extras;
+    if (!createExtras.lengthCm) return;
     try {
       const { createShipmentsForOrders } = await import("@/modules/shipments/service");
       await createShipmentsForOrders(
@@ -1152,7 +1184,7 @@ async function applyShopifyParcelToShipment(
           enqueueBooking: input.enqueueBooking === true,
           runBookingNow: false,
           setOrderProcessing: input.setOrderProcessing !== false,
-          ...extras,
+          ...createExtras,
         }
       );
     } catch {
@@ -1161,37 +1193,187 @@ async function applyShopifyParcelToShipment(
     return;
   }
 
+  type HydrateRow = {
+    id: string;
+    status?: string | null;
+    booked_at?: string | null;
+    barcode?: string | null;
+    service_code?: string | null;
+    length_cm?: number | null;
+    width_cm?: number | null;
+    height_cm?: number | null;
+    weight_grams?: number | null;
+    metadata?: unknown;
+  };
+  const onlyOpen = unlocked.length === 1 ? (unlocked[0] as HydrateRow) : null;
+  const autopack = onlyOpen
+    ? await shopifyAutoPack(supabase, {
+        organizationId: input.organizationId,
+        orderId: input.orderId,
+        composition,
+        packages,
+        fallback: choice,
+        weightGrams: parcel.weightGrams ?? onlyOpen.weight_grams ?? null,
+        serviceCode: onlyOpen.service_code ?? null,
+        shipment: {
+          status: onlyOpen.status ?? null,
+          bookedAt: onlyOpen.booked_at ?? null,
+          barcode: onlyOpen.barcode ?? null,
+          metadata: onlyOpen.metadata,
+        },
+      })
+    : null;
+
   const { data: order } = await supabase
     .from("orders")
     .select("parcel_weight_mode")
     .eq("id", input.orderId)
     .maybeSingle();
   const autoWeight = String((order as { parcel_weight_mode?: string } | null)?.parcel_weight_mode ?? "auto").toLowerCase() !== "manual";
+  const singleOpenShipment = unlocked.length === 1;
 
-  for (const row of unlocked as Array<{
-    id: string;
-    length_cm?: number | null;
-    width_cm?: number | null;
-    height_cm?: number | null;
-    weight_grams?: number | null;
-  }>) {
+  for (const row of unlocked as HydrateRow[]) {
     const hasDims =
       Number(row.length_cm) > 0 && Number(row.width_cm) > 0 && Number(row.height_cm) > 0;
-    const patch: Record<string, number> = {};
-    if (!hasDims && extras.lengthCm != null && extras.widthCm != null && extras.heightCm != null) {
-      patch.length_cm = extras.lengthCm;
-      patch.width_cm = extras.widthCm;
-      patch.height_cm = extras.heightCm;
+    const existing = readParcelDimensionRecord(row.metadata);
+    const existingSource = existing?.source ?? null;
+    const patch: Record<string, unknown> = {};
+    const replaceDefault = existingSource === "postbus_default" && choice != null && choice.source !== "postbus_default";
+    const refreshShopify = existingSource === "shopify" && choice?.source === "shopify";
+    // Verified history only reaches here when the merchant opted in and the box is not merchant-locked.
+    const applyAutoPack =
+      autopack != null && row.id === onlyOpen?.id && existing?.evidenceId !== autopack.evidenceId;
+    if (applyAutoPack && autopack) {
+      patch.length_cm = autopack.lengthCm;
+      patch.width_cm = autopack.widthCm;
+      patch.height_cm = autopack.heightCm;
+      patch.metadata = mergeParcelDimensionsMetadata(row.metadata, parcelDimensionsMetadata(autopack));
+    } else if (
+      singleOpenShipment &&
+      choice &&
+      !manualDimensionLock(existingSource, row.metadata) &&
+      existingSource !== "autopack_history" &&
+      (!hasDims || replaceDefault || refreshShopify)
+    ) {
+      patch.length_cm = choice.lengthCm;
+      patch.width_cm = choice.widthCm;
+      patch.height_cm = choice.heightCm;
+      patch.metadata = mergeParcelDimensionsMetadata(row.metadata, parcelDimensionsMetadata(choice));
     }
     if (autoWeight && parcel.weightGrams != null && parcel.weightGrams >= 1) {
       patch.weight_grams = parcel.weightGrams;
     }
     if (!Object.keys(patch).length) continue;
-    await supabase
+    let update = supabase
       .from("shipments")
       .update(patch)
       .eq("id", row.id)
-      .eq("organization_id", input.organizationId);
+      .eq("organization_id", input.organizationId)
+      .is("booked_at", null);
+    if (applyAutoPack) {
+      // Re-check at write time: only unbooked drafts, never a row the booking pipeline has claimed.
+      update = update.in("status", [...AUTOPACK_WRITABLE_STATUSES]).is("barcode", null);
+    }
+    const { data: written } = await update.select("id").maybeSingle();
+    if (applyAutoPack && autopack && written) {
+      await supabase.from("audit_logs").insert({
+        organization_id: input.organizationId,
+        actor_id: null,
+        action: "autopack.applied",
+        entity_type: "shipment",
+        entity_id: row.id,
+        after: {
+          length_cm: autopack.lengthCm,
+          width_cm: autopack.widthCm,
+          height_cm: autopack.heightCm,
+          packaging_history_id: autopack.evidenceId,
+        },
+      });
+    }
+  }
+}
+
+/** Shopify lines → exact variant + remaining quantity composition (same units as shopifyShipmentUnits). */
+export function shopifyShipmentComposition(items: ShopifyRemoteLineItem[]) {
+  return buildShipmentComposition(
+    items.map((item) => {
+      const remaining = item.unfulfilled_quantity ?? item.fulfillable_quantity ?? item.quantity;
+      return {
+        variantId: item.variant_id ?? null,
+        productId: item.product_id ?? null,
+        sku: item.sku ?? null,
+        title: shopifyLineItemTitle(item),
+        quantity: remaining == null ? 0 : Number(remaining) || 0,
+        requiresShipping: item.requires_shipping,
+      };
+    })
+  );
+}
+
+/** Verified-history box to auto-apply, or null. Never throws: sizing must not block import. */
+async function shopifyAutoPack(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    composition: ReturnType<typeof shopifyShipmentComposition>;
+    packages: PackageOption[];
+    fallback: ResolvedShipmentDimensions | null;
+    weightGrams?: number | null;
+    serviceCode?: string | null;
+    shipment: DecisionShipment | null;
+  }
+): Promise<ResolvedShipmentDimensions | null> {
+  if (!input.composition.ok) return null;
+  try {
+    const { evaluateAutoPack } = await import("@/modules/autopack/service");
+    const evaluation = await evaluateAutoPack(supabase, {
+      organizationId: input.organizationId,
+      orderId: input.orderId,
+      composition: input.composition,
+      serviceCode: input.serviceCode ?? null,
+      weightGrams: input.weightGrams ?? null,
+      shipment: input.shipment,
+      presets: input.packages,
+      fallback: input.fallback,
+    });
+    return evaluation.autoChoice;
+  } catch {
+    return null;
+  }
+}
+
+function autopackShipmentExtras(choice: ResolvedShipmentDimensions): ShopifyShipmentDimExtras {
+  return {
+    lengthCm: choice.lengthCm,
+    widthCm: choice.widthCm,
+    heightCm: choice.heightCm,
+    dimensionSource: "autopack_history",
+    ...(choice.evidenceId ? { dimensionEvidenceId: choice.evidenceId } : {}),
+    ...(choice.packageId ? { dimensionPackageId: choice.packageId } : {}),
+    ...(choice.packageName ? { dimensionPackageName: choice.packageName } : {}),
+  };
+}
+
+/**
+ * Stores Shopify variant / product ids on order lines for AutoPack matching.
+ * Separate from the line insert so imports keep working before the columns exist.
+ */
+async function persistShopifyLineVariantIds(
+  supabase: SupabaseClient,
+  input: { organizationId: string; orderId: string; lineItems: ShopifyRemoteLineItem[] }
+) {
+  for (const item of input.lineItems) {
+    const variantId = normalizeShopifyId(item.variant_id);
+    const lineId = shopifyLineItemGid(item.id) ?? (item.id != null ? String(item.id) : null);
+    if (!variantId || !lineId) continue;
+    const { error } = await supabase
+      .from("order_line_items")
+      .update({ shopify_variant_id: variantId, shopify_product_id: normalizeShopifyId(item.product_id) })
+      .eq("organization_id", input.organizationId)
+      .eq("order_id", input.orderId)
+      .eq("source_line_item_id", lineId);
+    if (error) return;
   }
 }
 
@@ -1231,6 +1413,89 @@ async function shopifyRequest(shop: string, token: string, path: string, init?: 
       ...(init?.headers ?? {}),
     },
   });
+}
+
+export async function fetchShopifyOrderPayment(
+  shop: string,
+  token: string,
+  sourceOrderId: string
+): Promise<ShopifyRemoteOrder | null> {
+  const numericId = shopifyNumericId(sourceOrderId) ?? sourceOrderId;
+  const orderRes = await shopifyRequest(shop, token, `/orders/${encodeURIComponent(String(numericId))}.json`);
+  if (!orderRes.ok) return null;
+  const json = (await orderRes.json()) as { order?: ShopifyRemoteOrder };
+  const order = json.order;
+  if (!order) return null;
+  try {
+    const txRes = await shopifyRequest(
+      shop,
+      token,
+      `/orders/${encodeURIComponent(String(numericId))}/transactions.json`
+    );
+    if (txRes.ok) {
+      const txJson = (await txRes.json()) as { transactions?: ShopifyPaymentTransaction[] };
+      order.transactions = txJson.transactions ?? [];
+    }
+  } catch {
+    // Keep the order body if transactions cannot be loaded.
+  }
+  return order;
+}
+
+function mergeShopifyRemoteOrder(base: ShopifyRemoteOrder, fresh: ShopifyRemoteOrder): ShopifyRemoteOrder {
+  return {
+    ...base,
+    ...fresh,
+    line_items: fresh.line_items?.length ? fresh.line_items : base.line_items,
+    shipping_address: fresh.shipping_address ?? base.shipping_address,
+    billing_address: fresh.billing_address ?? base.billing_address,
+    customer: fresh.customer ?? base.customer,
+    transactions: fresh.transactions ?? base.transactions,
+  };
+}
+
+async function refreshUnbookedShopifyShipmentCollect(
+  supabase: SupabaseClient,
+  organizationId: string,
+  orderId: string,
+  collect: { payment_mode: "COD" | "PREPAID"; cod_amount: number },
+  classifiedStatus: string,
+  updateUnbookedCollect: boolean
+): Promise<ShopifyBookingConflict | null> {
+  const { data: rows } = await supabase
+    .from("shipments")
+    .select("id, status, booked_at, payment_mode")
+    .eq("organization_id", organizationId)
+    .eq("order_id", orderId);
+  const list = Array.isArray(rows) ? rows : [];
+  let conflict: ShopifyBookingConflict | null = null;
+  for (const row of list) {
+    const status = String(row.status ?? "").toUpperCase();
+    const booked = Boolean(row.booked_at) || isIndiaPostAcceptedStatus(status);
+    if (booked) {
+      if (
+        !conflict &&
+        bookedShipmentCollectConflict(row.payment_mode, classifiedStatus as "PAID" | "COD" | "PARTIAL" | "PENDING")
+      ) {
+        conflict = {
+          shipmentId: String(row.id ?? ""),
+          bookedPaymentMode: String(row.payment_mode).toUpperCase() as ShopifyCollectionMode,
+          classifiedCollectMode: collect.payment_mode,
+          at: new Date().toISOString(),
+        };
+      }
+      continue;
+    }
+    if (!updateUnbookedCollect || (status !== "DRAFT" && status !== "FAILED")) continue;
+    await supabase
+      .from("shipments")
+      .update({ payment_mode: collect.payment_mode, cod_amount: collect.cod_amount })
+      .eq("id", row.id)
+      .eq("organization_id", organizationId)
+      .in("status", ["DRAFT", "FAILED"])
+      .is("booked_at", null);
+  }
+  return conflict;
 }
 
 async function shopifyGraphql<T>(
@@ -2010,7 +2275,8 @@ export async function upsertShopifyOrder(
     autoShopifyProcessing?: boolean;
   }
 ) {
-  const sourceId = String(input.remote.id || "");
+  const remote = input.remote;
+  const sourceId = String(remote.id || "");
   if (!sourceId) return { imported: false, updated: false, skipped: true, orderId: null as string | null };
 
   const { data: existing } = await supabase
@@ -2021,55 +2287,142 @@ export async function upsertShopifyOrder(
     .eq("source_order_id", sourceId)
     .maybeSingle();
 
-  const fulfillmentStatus = mapShopifyFulfillmentStatus(
-    input.remote.fulfillment_status,
-    input.remote.cancelled_at
-  );
-  const paymentStatus = mapShopifyPaymentStatus(
-    input.remote.financial_status,
-    input.remote.payment_gateway_names ?? input.remote.gateway
-  );
+  const fulfillmentStatus = mapShopifyFulfillmentStatus(remote.fulfillment_status, remote.cancelled_at);
   const { data: existingOrder } = existing?.order_id
-    ? await supabase.from("orders").select("status").eq("id", existing.order_id).maybeSingle()
+    ? await supabase
+        .from("orders")
+        .select("status, payment_status, metadata, total_amount")
+        .eq("id", existing.order_id)
+        .eq("organization_id", input.organizationId)
+        .maybeSingle()
     : { data: null };
+  const storedSnapshot = shopifyPaymentSnapshotFromMetadata(existingOrder?.metadata);
+  const classified = classifyShopifyRemotePayment(remote, storedSnapshot?.override ?? null);
+  const stalePayment = isShopifyPaymentPayloadStale(classified.snapshot.updatedAt, storedSnapshot?.updatedAt);
+  if (existing?.order_id && stalePayment) {
+    return { imported: false, updated: false, skipped: true, orderId: existing.order_id as string };
+  }
   let orderStatus = nextShopifyOrderStatus({
-    cancelledAt: input.remote.cancelled_at,
+    cancelledAt: remote.cancelled_at,
     fulfillmentStatus,
     currentStatus: existingOrder?.status,
   });
   const autoShopifyProcessing = Boolean(input.autoShopifyProcessing);
-  if (
-    autoShopifyProcessing &&
-    shopifyRemoteSignalsProcessing(input.remote) &&
-    orderStatus === "READY"
-  ) {
+  if (autoShopifyProcessing && shopifyRemoteSignalsProcessing(remote) && orderStatus === "READY") {
     orderStatus = "PROCESSING";
   }
-  const collect = mapShopifyCollectable(input.remote, paymentStatus);
-  const totals = {
-    currency: input.remote.currency || "INR",
-    subtotal: Number(input.remote.subtotal_price ?? 0),
-    discount: Number(input.remote.total_discounts ?? 0),
-    shipping_amount: Number(input.remote.total_shipping_price_set?.shop_money?.amount ?? 0),
-    tax_amount: Number(input.remote.total_tax ?? 0),
-    total_amount: Number(input.remote.total_price ?? 0),
+  const collect = classified.collect;
+  const operationalTotal = shopifyOperationalOrderTotal(remote);
+  const originalTotal = shopifyOriginalOrderTotal(remote);
+  const currentTotalKnown = shopifyCurrentOrderTotal(remote) != null;
+  const operationalSubtotal =
+    Number(remote.current_subtotal_price ?? remote.currentSubtotalPriceSet?.shop_money?.amount ?? remote.subtotal_price ?? 0) ||
+    0;
+  const lineSelection = selectActiveShopifyLineItems(remote);
+  const bookingLocked = SHOPIFY_WEIGHT_LOCKED_ORDER.has(String(existingOrder?.status ?? "").toUpperCase());
+  const freezeOperationalMoney = (lineSelection.skipLineWrite && !currentTotalKnown) || bookingLocked;
+  const shipmentCollect = shipmentCollectFromOrder({
     payment_status: collect.paymentStatus,
+    total_amount: operationalTotal,
     amount_paid: collect.amountPaid,
     cod_amount: collect.codAmount,
+  });
+  let snapshot: ShopifyPaymentSnapshot = classified.snapshot;
+  if (existing?.order_id && !stalePayment && !lineSelection.skipLineWrite) {
+    const bookingConflict = await refreshUnbookedShopifyShipmentCollect(
+      supabase,
+      input.organizationId,
+      existing.order_id as string,
+      shipmentCollect,
+      collect.paymentStatus,
+      !bookingLocked && existingOrder?.payment_status !== collect.paymentStatus
+    );
+    if (bookingConflict) snapshot = { ...snapshot, bookingConflict };
+  }
+  const paymentFields = freezeOperationalMoney
+    ? { metadata: mergeShopifyPaymentMetadata(existingOrder?.metadata, snapshot) }
+    : {
+        payment_status: collect.paymentStatus,
+        amount_paid: collect.amountPaid,
+        cod_amount: collect.codAmount,
+        metadata: mergeShopifyPaymentMetadata(existingOrder?.metadata, snapshot),
+      };
+  const totals = {
+    currency: remote.currency || "INR",
     fulfillment_status: fulfillmentStatus,
     status: orderStatus,
+    ...(!freezeOperationalMoney
+      ? {
+          subtotal: operationalSubtotal,
+          discount: Number(remote.total_discounts ?? 0),
+          shipping_amount: Number(remote.total_shipping_price_set?.shop_money?.amount ?? 0),
+          tax_amount: Number(remote.total_tax ?? 0),
+          total_amount: operationalTotal,
+        }
+      : {}),
+    ...paymentFields,
   };
-  const lineItems = (input.remote.line_items ?? []).filter((item) => Number(item.quantity ?? 0) > 0);
+  const resolvedPaymentStatus = String(
+    ("payment_status" in paymentFields ? paymentFields.payment_status : existingOrder?.payment_status) ??
+      collect.paymentStatus
+  ).toUpperCase();
+  const lineItems = lineSelection.items;
+  if (lineSelection.skipLineWrite && !existing?.order_id) {
+    logError("shopify.line_items.current_quantity_missing", {
+      sourceOrderId: sourceId,
+      organizationId: input.organizationId,
+    });
+    return { imported: false, updated: false, skipped: true, orderId: null as string | null };
+  }
 
   if (existing?.order_id) {
-    await supabase.from("orders").update(totals).eq("id", existing.order_id);
-    await refreshShopifyLineItems(supabase, {
-      organizationId: input.organizationId,
-      orderId: existing.order_id as string,
-      orderStatus: existingOrder?.status,
-      lineItems,
-    });
-    return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string };
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update(totals)
+      .eq("id", existing.order_id)
+      .eq("organization_id", input.organizationId);
+    if (updateError) throw new Error(updateError.message);
+    if (snapshot.bookingConflict) {
+      await supabase.from("audit_logs").insert({
+        organization_id: input.organizationId,
+        actor_id: input.userId || null,
+        action: "order.shopify_booking_conflict",
+        entity_type: "order",
+        entity_id: existing.order_id,
+        after: snapshot.bookingConflict,
+      });
+    }
+      if (lineSelection.skipLineWrite) {
+        logError("shopify.line_items.current_quantity_missing", {
+          sourceOrderId: sourceId,
+          organizationId: input.organizationId,
+          orderId: existing.order_id,
+        });
+      } else {
+        await refreshShopifyLineItems(supabase, {
+          organizationId: input.organizationId,
+          orderId: existing.order_id as string,
+          orderStatus: existingOrder?.status,
+          lineItems,
+          sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
+        });
+      }
+      if (existingOrder?.status && existingOrder.status !== orderStatus) {
+        try {
+          const { publishOrderUpdated } = await import("@/modules/webhooks/publish");
+          await publishOrderUpdated(supabase, {
+            organizationId: input.organizationId,
+            orderId: existing.order_id as string,
+            orderNumber: shopifyOrderNumber(input.remote, sourceId),
+            externalOrderId: sourceId,
+            previousStatus: existingOrder.status,
+            status: orderStatus,
+          });
+        } catch {
+          // Webhook fan-out must not break Shopify import.
+        }
+      }
+      return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string };
   }
 
   if (!isUnfulfilledShopifyOrder(input.remote)) {
@@ -2146,6 +2499,7 @@ export async function upsertShopifyOrder(
         orderId: byNumber.id as string,
         orderStatus: duplicateOrder?.status,
         lineItems,
+        sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
       });
       return { imported: false, updated: true, skipped: false, orderId: byNumber.id as string };
     }
@@ -2156,10 +2510,13 @@ export async function upsertShopifyOrder(
   }
 
   if (lineItems.length) {
-    const { error: itemsError } = await supabase
-      .from("order_line_items")
-      .insert(shopifyLineItemRows(input.organizationId, order.id, lineItems));
-    if (itemsError) throw new Error(itemsError.message);
+    await refreshShopifyLineItems(supabase, {
+      organizationId: input.organizationId,
+      orderId: order.id as string,
+      orderStatus: orderStatus,
+      lineItems,
+      sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
+    });
   }
 
   const { error: refError } = await supabase.from("external_order_references").insert({
@@ -2199,15 +2556,38 @@ export async function upsertShopifyOrder(
   } catch {
     // Vachat confirmation is optional; the Shopify import should still succeed.
   }
-  try {
-    const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
-    scheduleMerchantKnowledgeSync(supabase, input.organizationId);
-  } catch {
-    // VaChat knowledge is optional; the Shopify import should still succeed.
-  }
+    try {
+      const { scheduleMerchantKnowledgeSync } = await import("@/modules/vachat/knowledge");
+      scheduleMerchantKnowledgeSync(supabase, input.organizationId);
+    } catch {
+      // VaChat knowledge is optional; the Shopify import should still succeed.
+    }
+    try {
+      const { publishOrderCreated } = await import("@/modules/webhooks/publish");
+      await publishOrderCreated(supabase, {
+        organizationId: input.organizationId,
+        orderId: order.id,
+        orderNumber: shopifyOrderNumber(input.remote, sourceId),
+        externalOrderId: sourceId,
+        status: orderStatus,
+      });
+    } catch {
+      // Webhook fan-out must not break Shopify import.
+    }
 
   const workspace = await loadWorkspaceParcelDefaults(supabase, input.organizationId);
-  const parcelExtras = shopifyResolvedShipmentDims(lineItems, workspace);
+  const packages = await loadOrganizationPackages(supabase, input.organizationId);
+  const ruleExtras = shopifyResolvedShipmentDims(lineItems, workspace, packages);
+  const autopackChoice = await shopifyAutoPack(supabase, {
+    organizationId: input.organizationId,
+    orderId: order.id as string,
+    composition: shopifyShipmentComposition(lineItems),
+    packages,
+    fallback: shipmentDimChoice(ruleExtras),
+    weightGrams: shopifyParcelFromLineItems(lineItems).weightGrams,
+    shipment: null,
+  });
+  const parcelExtras = autopackChoice ? autopackShipmentExtras(autopackChoice) : ruleExtras;
   const shipmentCtx = {
     userId: input.userId ?? "",
     email: null,
@@ -2233,7 +2613,7 @@ export async function upsertShopifyOrder(
     try {
       const { createShipmentsForOrders } = await import("@/modules/shipments/service");
       await createShipmentsForOrders(supabase, shipmentCtx, [order.id], {
-        enqueueBooking: input.enqueueBooking !== false,
+        enqueueBooking: input.enqueueBooking !== false && resolvedPaymentStatus !== "PENDING",
         runBookingNow: false,
         setOrderProcessing: false,
         ...parcelExtras,
@@ -2337,12 +2717,16 @@ export async function importShopifyWebhookOrder(
       const token = await resolveShopifyAdminToken(connection);
       const shop = connection.shop_domain || input.shopDomain;
       if (token && shop) {
+        if (shopifyPaymentNeedsRefresh(remote)) {
+          const fresh = await fetchShopifyOrderPayment(shop, token, String(remote.id ?? ""));
+          if (fresh) remote = mergeShopifyRemoteOrder(remote, fresh);
+        }
         const [enriched] = await withShopifyProductShippingData(shop, token, [remote]);
         if (enriched) remote = enriched;
       }
     }
   } catch {
-    // Keep the webhook import even if product weight/size cannot be loaded.
+    // Keep the webhook import even if product weight/size or payment refresh cannot be loaded.
   }
   return upsertShopifyOrder(supabase, {
     organizationId: input.organizationId,
@@ -2399,7 +2783,10 @@ async function fetchShopifyProductsByIds(shop: string, token: string, productIds
 }
 
 export function parseShopifyVariantShippingNode(node: Record<string, unknown> | null | undefined): ShopifyVariantShipping {
-  const dims = dimsFromMetafields(metafieldMapFromVariantNode(node));
+  const product = node?.product as { metafields?: unknown } | null | undefined;
+  const dims =
+    dimsFromMetafields(metafieldMapFromVariantNode(node)) ??
+    dimsFromMetafieldEntries([...metafieldNodes(node?.metafields), ...metafieldNodes(product?.metafields)]);
   return {
     grams: null,
     weight: null,

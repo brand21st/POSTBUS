@@ -5,6 +5,7 @@ import { siteEntityGraph, serializeJsonLd } from "@/lib/seo/json-ld";
 import { absoluteUrl } from "@/lib/seo/metadata";
 import { siteConfig } from "@/lib/site-config";
 import { Providers } from "@/components/providers";
+import { WhatsappSupportButton } from "@/components/layout/whatsapp-support-button";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -87,7 +88,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: serializeJsonLd(siteEntityGraph()) }}
         />
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          <WhatsappSupportButton />
+        </Providers>
       </body>
     </html>
   );

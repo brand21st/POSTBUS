@@ -46,6 +46,8 @@ import {
 } from "@/modules/shopify/oauth";
 import { shopifyReadyToSync } from "@/modules/shopify/orders";
 import { enqueueShopifyOrderSync, latestShopifySyncJob } from "@/modules/shopify/sync-job";
+import { registerWooWebhooks, testWooConnection } from "@/modules/woocommerce/connect";
+import { handleWooCommerceIntegrationRoutes } from "@/modules/woocommerce/routes";
 import { watiClientFromRow } from "@/modules/wati/client";
 import { watiBroadcastName, watiNotifyRecipient } from "@/modules/wati/notify";
 import { resolveWatiTrackingUrl } from "@/modules/wati/send";
@@ -139,6 +141,21 @@ async function listActiveBarcodeRanges(supabase: SupabaseClient, organizationId:
   return ranges ?? [];
 }
 
+async function retireSharedBarcodePrefix(
+  supabase: SupabaseClient,
+  organizationId: string,
+  prefix: string
+) {
+  const { error } = await supabase
+    .from("barcode_ranges")
+    .update({ is_active: false })
+    .eq("organization_id", organizationId)
+    .eq("is_active", true)
+    .is("service_code", null)
+    .eq("prefix", prefix);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+}
+
 async function persistIndiaPostBarcodeRange(
   supabase: SupabaseClient,
   organizationId: string,
@@ -153,8 +170,10 @@ async function persistIndiaPostBarcodeRange(
       .update({ is_active: false })
       .eq("organization_id", organizationId)
       .eq("is_active", true);
-    if (/^[A-Z]{2}$/.test(prefix)) retire = retire.eq("prefix", prefix);
-    else if (clear?.serviceCode) retire = retire.eq("service_code", clear.serviceCode);
+    if (clear?.serviceCode) {
+      retire = retire.eq("service_code", clear.serviceCode);
+      if (/^[A-Z]{2}$/.test(prefix)) retire = retire.eq("prefix", prefix);
+    } else if (/^[A-Z]{2}$/.test(prefix)) retire = retire.eq("prefix", prefix);
     else retire = retire.is("service_code", null);
     const { error } = await retire;
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
@@ -191,7 +210,12 @@ async function persistIndiaPostBarcodeRange(
     Number(currentRange.end_number) === parsed.endNumber &&
     (currentRange.service_code ?? null) === parsed.serviceCode;
 
-  if (sameSeries) return;
+  if (sameSeries) {
+    if (parsed.serviceCode) {
+      await retireSharedBarcodePrefix(supabase, organizationId, parsed.prefix);
+    }
+    return;
+  }
 
   const requestedNext = Number((barcodeRange as { nextNumber?: unknown }).nextNumber);
   const nextNumber = nextSerialForSavedRange(
@@ -210,6 +234,9 @@ async function persistIndiaPostBarcodeRange(
     : retire.is("service_code", null);
   const { error: retireError } = await retire;
   if (retireError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, retireError.message);
+  if (parsed.serviceCode) {
+    await retireSharedBarcodePrefix(supabase, organizationId, parsed.prefix);
+  }
 
   const { error: rangeError } = await supabase.from("barcode_ranges").insert({
     organization_id: organizationId,
@@ -248,15 +275,33 @@ export async function handleIntegrationRoutes(
   ctx: TenantContext,
   key: string
 ) {
+  const wooRoute = await handleWooCommerceIntegrationRoutes(request, supabase, ctx, key);
+  if (wooRoute) return wooRoute;
+
+  if (key === "POST integrations/woocommerce/test") {
+    const body = await request.json().catch(() => ({}));
+    return testWooConnection(supabase, ctx, {
+      storeUrl: String(body.storeUrl ?? body.store_url ?? ""),
+      consumerKey: String(body.consumerKey ?? body.consumer_key ?? ""),
+      consumerSecret: String(body.consumerSecret ?? body.consumer_secret ?? ""),
+    });
+  }
+
+  if (key === "POST integrations/woocommerce/webhooks") {
+    return registerWooWebhooks(supabase, ctx);
+  }
+
   if (key === "GET integrations") {
-    const [{ data: shopify }, { data: indiaPost }, { data: wati }, { data: vachat }, syncJob] =
+    const [{ data: shopify }, { data: indiaPost }, { data: wati }, { data: vachat }, wooResult, syncJob] =
       await Promise.all([
       supabase.from("shopify_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("india_post_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("wati_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
       supabase.from("vachat_connections").select("*").eq("organization_id", ctx.organizationId).maybeSingle(),
+      supabase.from("woocommerce_connections").select("status, store_host, last_sync_at, last_error").eq("organization_id", ctx.organizationId).maybeSingle(),
       latestShopifySyncJob(supabase, ctx.organizationId),
     ]);
+    const woo = wooResult.error ? null : wooResult.data;
     const { getPlatformVachatConfig, isPlatformVachatActive, merchantVachatRowReady } = await import(
       "@/modules/vachat/platform-config"
     );
@@ -326,7 +371,15 @@ export async function handleIntegrationRoutes(
           name: "Wati",
           status: wati?.status ?? "NOT_CONNECTED",
         },
-        { provider: "woocommerce", name: "WooCommerce", status: "NOT_CONNECTED", comingLater: true },
+        {
+          provider: "woocommerce",
+          name: "WooCommerce",
+          status: woo?.status ?? "NOT_CONNECTED",
+          comingLater: false,
+          lastSyncAt: woo?.last_sync_at,
+          lastError: woo?.last_error,
+          storeHost: woo?.store_host ?? "",
+        },
         ...(postbusWhatsapp ? [postbusWhatsapp] : []),
         {
           provider: "vachat",
@@ -647,7 +700,9 @@ export async function handleIntegrationRoutes(
       lastError: data?.last_error,
       uatConfigured: Boolean(env.indiaPostUatBaseUrl),
       prodConfigured: Boolean(env.indiaPostProdBaseUrl),
-      ...(data?.id ? indiaPostWebhookUrls(data.id) : {}),
+      id: data?.id ?? null,
+      connectionId: data?.id ?? null,
+      ...(data?.id ? indiaPostWebhookUrls(data.id, env.appUrl, data.bulk_customer_id) : {}),
       contracts,
       defaultServiceCode:
         contracts.find((contract) => contract.isDefault)?.serviceCode ?? DEFAULT_INDIA_POST_SERVICE,

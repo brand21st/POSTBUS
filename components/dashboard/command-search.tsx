@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Package, Search, Truck, User, X } from "lucide-react";
+import { Loader2, MessageCircle, Package, Search, Truck, User, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +20,7 @@ const GROUPS = [
   { type: "order", label: "Orders" },
   { type: "shipment", label: "Shipments" },
   { type: "customer", label: "Customers" },
+  { type: "support", label: "Support" },
 ] as const;
 
 function resultHref(result: SearchResult) {
@@ -27,6 +28,7 @@ function resultHref(result: SearchResult) {
   const type = (result.type ?? "").toLowerCase();
   if (type.includes("order")) return `/dashboard/orders/${result.id}`;
   if (type.includes("shipment")) return `/dashboard/shipments/${result.id}`;
+  if (type.includes("support")) return `/dashboard/support?conversation=${encodeURIComponent(result.id)}`;
   if (type.includes("track")) return `/dashboard/tracking?q=${encodeURIComponent(result.title ?? result.id)}`;
   return `/dashboard/orders/${result.id}`;
 }
@@ -35,6 +37,7 @@ function ResultIcon({ type }: { type?: string }) {
   const value = (type ?? "").toLowerCase();
   if (value.includes("shipment") || value.includes("track")) return <Truck className="size-4" />;
   if (value.includes("customer")) return <User className="size-4" />;
+  if (value.includes("support")) return <MessageCircle className="size-4" />;
   return <Package className="size-4" />;
 }
 
@@ -42,6 +45,7 @@ function resultGroup(type?: string) {
   const value = (type ?? "").toLowerCase();
   if (value.includes("shipment") || value.includes("track")) return "shipment";
   if (value.includes("customer")) return "customer";
+  if (value.includes("support")) return "support";
   return "order";
 }
 
@@ -145,7 +149,7 @@ export function CommandSearch({
           Search
         </DialogTitle>
         <DialogDescription className="absolute m-[-1px] h-px w-px overflow-hidden border-0 p-0 whitespace-nowrap [clip:rect(0,0,0,0)]">
-          Search orders, shipments, tracking numbers, and customers.
+          Search orders, shipments, tracking numbers, customers, and support phones.
         </DialogDescription>
 
         <div className="flex items-center gap-3 border-b border-border px-4 pt-3">
@@ -165,7 +169,7 @@ export function CommandSearch({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Search orders, AWB, tracking, customers…"
+            placeholder="Search orders, AWB, tracking, customers, support phone…"
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
@@ -199,8 +203,8 @@ export function CommandSearch({
         >
           {!ready ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-              <p className="text-sm font-medium text-ink">Find an order, shipment, or customer</p>
-              <p className="text-sm text-muted">Type at least two characters. Results update as you type.</p>
+              <p className="text-sm font-medium text-ink">Find an order, shipment, customer, or support chat</p>
+              <p className="text-sm text-muted">Type a name, AWB, or customer phone. Results update as you type.</p>
             </div>
           ) : search.isError ? (
             <p className="px-3 py-10 text-center text-sm text-error">

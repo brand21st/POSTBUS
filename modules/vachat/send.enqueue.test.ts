@@ -134,7 +134,7 @@ describe("enqueueVachatNotify", () => {
       expect.objectContaining({
         jobType: "vachat-notify",
         entityId: "s1",
-        progress: { event: "booked", shipmentId: "s1", orderId: null },
+        progress: { event: "booked", shipmentId: "s1", orderId: null, eventCode: null, occurredAt: null },
       })
     );
   });

@@ -11,6 +11,7 @@ import type {
   SearchResult,
 } from "@/types/api";
 import { titleCase } from "@/lib/format";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 
 export function pickString(...values: Array<string | null | undefined>) {
   for (const value of values) {
@@ -64,6 +65,30 @@ export function shipmentNumber(shipment: {
   return pickString(shipment.trackingNumber, shipment.tracking_number, shipment.barcode, shipment.id.slice(0, 8));
 }
 
+export function labelTemplateName(
+  template: { library?: Array<{ id: string; name?: string | null }> | null } | null | undefined,
+  id: string
+) {
+  const name = template?.library?.find((item) => item.id === id)?.name?.trim();
+  return name || "Template";
+}
+
+export function salesInvoiceNumber(invoice: {
+  invoiceNumber?: string | null;
+  invoice_number?: string | null;
+  orderNumber?: string | null;
+  order_number?: string | null;
+  id?: string;
+}) {
+  return pickString(
+    invoice.invoiceNumber,
+    invoice.invoice_number,
+    invoice.orderNumber,
+    invoice.order_number,
+    invoice.id?.slice(0, 8)
+  );
+}
+
 export function createdAt(record: { createdAt?: string; created_at?: string }) {
   return record.createdAt ?? record.created_at ?? null;
 }
@@ -76,7 +101,8 @@ export function customerName(order: {
 }
 
 export function customerPhone(order: { customer?: CustomerSummary | null }) {
-  return pickString(order.customer?.phone) || "";
+  const raw = pickString(order.customer?.phone);
+  return extractIndiaMobileDigits(raw) ?? raw;
 }
 
 export function addressLine(address?: AddressSummary | null) {
@@ -148,6 +174,34 @@ export function itemSummary(order: {
 const WHATSAPP_SETTLED_PAYMENTS = new Set(["COD", "PAID", "PARTIAL"]);
 const WHATSAPP_POST_READY_STATUSES = new Set(["BOOKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"]);
 
+export function shopifyPendingBookingBlocked(order: {
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  if ((order.source ?? "").toUpperCase() !== "SHOPIFY") return false;
+  const payment = (order.payment_status ?? order.paymentStatus ?? "").toUpperCase();
+  return payment === "PENDING";
+}
+
+export function woocommercePendingBookingBlocked(order: {
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  if ((order.source ?? "").toUpperCase() !== "WOOCOMMERCE") return false;
+  const payment = (order.payment_status ?? order.paymentStatus ?? "").toUpperCase();
+  return payment === "PENDING";
+}
+
+export function commercePendingBookingBlocked(order: {
+  source?: string | null;
+  payment_status?: string | null;
+  paymentStatus?: string | null;
+}) {
+  return shopifyPendingBookingBlocked(order) || woocommercePendingBookingBlocked(order);
+}
+
 export function whatsappShipmentBlocked(order: {
   status?: string | null;
   source?: string | null;
@@ -180,6 +234,7 @@ export function canFulfillOrder(order: {
   paymentStatus?: string | null;
 }) {
   if (whatsappShipmentBlocked(order)) return false;
+  if (commercePendingBookingBlocked(order)) return false;
   return !BLOCKED_FULFILL_STATUSES.has((order.status ?? "").toUpperCase());
 }
 
@@ -199,6 +254,14 @@ export function fulfillSkipReason(order: {
       order_number: order.order_number,
     });
     return `Order #${number} cannot be booked until the WhatsApp order is READY.`;
+  }
+  if (commercePendingBookingBlocked(order)) {
+    const number = orderNumber({
+      id: order.id ?? "",
+      orderNumber: order.orderNumber,
+      order_number: order.order_number,
+    });
+    return `Order #${number} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`;
   }
   if (canFulfillOrder(order)) return null;
   const status = (order.status ?? "").toUpperCase();
@@ -263,6 +326,7 @@ export function canFulfillOrderAction(
   const status = (order.status ?? "").toUpperCase();
   if (status === "CANCELLED") return false;
   if (whatsappShipmentBlocked(order)) return false;
+  if (commercePendingBookingBlocked(order)) return false;
   return extrasConnected || canFulfillOrder(order);
 }
 
@@ -320,6 +384,9 @@ export function orderStageMenu(
   const next = nextStep
     ? { action: nextStep.action, label: nextStep.nextLabel ?? nextStep.label }
     : null;
+  if (next?.action === "fulfill" && commercePendingBookingBlocked({ source, payment_status: paymentStatus })) {
+    return { hideActions, completed, next: null };
+  }
   return { hideActions, completed, next };
 }
 

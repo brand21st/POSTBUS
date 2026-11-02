@@ -390,6 +390,75 @@ export function defaultLabelTemplateId(template: LabelTemplate) {
   return template.library?.find((item) => item.isDefault)?.id ?? template.library?.[0]?.id ?? null;
 }
 
+export function withDefaultNamedTemplate(template: LabelTemplate, id: string): LabelTemplate {
+  if (!template.library?.length) return template;
+  const library = template.library.map((item) => ({ ...item, isDefault: item.id === id }));
+  const active = library.find((item) => item.isDefault);
+  if (!active) return template;
+  return {
+    ...template,
+    library,
+    page: active.page,
+    elements: active.elements,
+    templateVersion: Math.max(template.templateVersion, 5),
+  };
+}
+
+export function listedNamedTemplates(template: LabelTemplate): NamedLabelTemplate[] {
+  if (template.library?.length) return template.library;
+  return [
+    {
+      id: "active",
+      name: "Current template",
+      isDefault: true,
+      page: template.page,
+      elements: template.elements,
+    },
+  ];
+}
+
+export function nextNamedTemplateCopyName(existingNames: string[], sourceName: string) {
+  const base = sourceName.trim() || "Template";
+  const used = new Set(existingNames);
+  let candidate = `${base} (copy)`;
+  let n = 2;
+  while (used.has(candidate)) {
+    candidate = `${base} (copy ${n})`;
+    n += 1;
+  }
+  return candidate;
+}
+
+export function duplicateNamedTemplate(
+  source: NamedLabelTemplate,
+  existingNames: string[],
+  id: string
+): NamedLabelTemplate {
+  return {
+    id,
+    name: nextNamedTemplateCopyName(existingNames, source.name),
+    isDefault: false,
+    page: structuredClone(source.page),
+    elements: structuredClone(source.elements),
+  };
+}
+
+export function withDuplicatedNamedTemplate(template: LabelTemplate, sourceId: string, id: string): LabelTemplate {
+  const library = listedNamedTemplates(template);
+  const source = library.find((item) => item.id === sourceId);
+  if (!source) return template;
+  const copy = duplicateNamedTemplate(
+    source,
+    library.map((item) => item.name),
+    id
+  );
+  return {
+    ...template,
+    templateVersion: Math.max(template.templateVersion, 5),
+    library: [...library, copy],
+  };
+}
+
 export function defaultLabelTemplatePage(template: LabelTemplate) {
   return selectLabelTemplate(template, defaultLabelTemplateId(template)).page;
 }
@@ -678,6 +747,145 @@ export function arrangeIndiaPostBands(
   return fitLabelBorderToPage(next, page);
 }
 
+const INDIA_POST_A6_FONT_PT: Record<string, number> = {
+  merchantLogo: 10,
+  indiaPostBarcode: 14,
+  customerId: 11,
+  articleType: 11,
+  orderIdDate: 10,
+  parcelSize: 10,
+  codAmount: 10,
+  prepaid: 10,
+  shipTo: 11,
+  fromAddress: 10,
+  products: 7,
+};
+
+const MIN_FIT_FONT_PT = 5;
+
+type TemplatePageBox = { widthPt: number; heightPt: number; widthMm?: number; heightMm?: number };
+
+function pageWidthMm(page: TemplatePageBox) {
+  return page.widthMm ?? ptToMm(page.widthPt);
+}
+
+function pageHeightMm(page: TemplatePageBox) {
+  return page.heightMm ?? ptToMm(page.heightPt);
+}
+
+function hasIndiaPostBlocks(elements: LabelTemplate["elements"]) {
+  return Boolean(elements.indiaPostBarcode?.visible || elements.shipTo?.visible || elements.customerId?.visible);
+}
+
+function scaledFontSize(designPt: number, scale: number) {
+  return Math.max(MIN_FIT_FONT_PT, Math.round(designPt * scale * 10) / 10);
+}
+
+function a6DesignPage(): TemplatePageBox {
+  return {
+    widthPt: mmToPt(INDIA_POST_A6_MM.widthMm),
+    heightPt: mmToPt(INDIA_POST_A6_MM.heightMm),
+    widthMm: INDIA_POST_A6_MM.widthMm,
+    heightMm: INDIA_POST_A6_MM.heightMm,
+  };
+}
+
+function elementsOverflowPage(elements: LabelTemplate["elements"], page: TemplatePageBox) {
+  const epsilon = 0.75;
+  for (const element of Object.values(elements)) {
+    if (!element.visible) continue;
+    if (element.x < -epsilon || element.y < -epsilon) return true;
+    if (element.x + element.width > page.widthPt + epsilon) return true;
+    if (element.y + element.height > page.heightPt + epsilon) return true;
+  }
+  return false;
+}
+
+function scaleIndiaPostFonts(elements: LabelTemplate["elements"], page: TemplatePageBox): LabelTemplate["elements"] {
+  const scale = Math.min(
+    pageWidthMm(page) / INDIA_POST_A6_MM.widthMm,
+    pageHeightMm(page) / INDIA_POST_A6_MM.heightMm
+  );
+  const next = { ...elements };
+  for (const [id, element] of Object.entries(next)) {
+    const design = INDIA_POST_A6_FONT_PT[id];
+    if (design == null) continue;
+    next[id] = { ...element, fontSize: scaledFontSize(design, scale) };
+  }
+  return next;
+}
+
+export function scaleElementsToPage(
+  elements: LabelTemplate["elements"],
+  fromPage: TemplatePageBox,
+  toPage: TemplatePageBox
+): LabelTemplate["elements"] {
+  const fromWidth = fromPage.widthPt || 1;
+  const fromHeight = fromPage.heightPt || 1;
+  const scaleX = toPage.widthPt / fromWidth;
+  const scaleY = toPage.heightPt / fromHeight;
+  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) {
+    return fitLabelBorderToPage(elements, toPage);
+  }
+  const fontScale = Math.min(scaleX, scaleY);
+  const next: LabelTemplate["elements"] = {};
+  for (const [id, element] of Object.entries(elements)) {
+    const scaled = clampRect(
+      {
+        x: element.x * scaleX,
+        y: element.y * scaleY,
+        width: element.width * scaleX,
+        height: element.height * scaleY,
+      },
+      toPage.widthPt,
+      toPage.heightPt
+    );
+    next[id] = {
+      ...element,
+      ...scaled,
+      fontSize: element.fontSize != null ? scaledFontSize(element.fontSize, fontScale) : element.fontSize,
+      hLines: element.hLines?.map((line) => ({
+        ...line,
+        yMm: Math.round(line.yMm * scaleY * 10) / 10,
+      })),
+    };
+  }
+  return fitLabelBorderToPage(next, toPage);
+}
+
+export function needsCustomPageFit(page: TemplatePageBox & { paperSize?: string }) {
+  if (page.paperSize === "custom") return true;
+  return pageWidthMm(page) < 100 || pageHeightMm(page) < 100;
+}
+
+function clampAllElementsToPage(
+  elements: LabelTemplate["elements"],
+  page: TemplatePageBox
+): LabelTemplate["elements"] {
+  const next: LabelTemplate["elements"] = {};
+  for (const [id, element] of Object.entries(elements)) {
+    if (id === "labelBorder") {
+      next[id] = element;
+      continue;
+    }
+    next[id] = { ...element, ...clampRect(element, page.widthPt, page.heightPt) };
+  }
+  return fitLabelBorderToPage(next, page);
+}
+
+export function fitTemplateToCustomPage(
+  elements: LabelTemplate["elements"],
+  page: TemplatePageBox,
+  fromPage?: TemplatePageBox
+): LabelTemplate["elements"] {
+  const source = fromPage ?? (elementsOverflowPage(elements, page) ? a6DesignPage() : null);
+  let next = source ? scaleElementsToPage(elements, source, page) : elements;
+  if (hasIndiaPostBlocks(next)) {
+    next = scaleIndiaPostFonts(arrangeIndiaPostBands(next, page), page);
+  }
+  return clampAllElementsToPage(next, page);
+}
+
 export function indiaPostLabelTemplate(): LabelTemplate {
   const preset = pagePreset("A6");
   const page = {
@@ -789,9 +997,7 @@ export function applyPaperSize(template: LabelTemplate, paperSize: PaperSizeId):
     },
     elements,
   });
-  const indiaPost =
-    next.elements.indiaPostBarcode?.visible || next.elements.shipTo?.visible || next.elements.customerId?.visible;
-  if (!indiaPost) return next;
+  if (!hasIndiaPostBlocks(next.elements)) return next;
   return { ...next, elements: arrangeIndiaPostBands(next.elements, next.page) };
 }
 

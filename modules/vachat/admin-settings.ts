@@ -18,6 +18,7 @@ import { withApprovedVachatTemplates } from "@/modules/vachat/templates";
 
 const saveSchema = z.object({
   enabled: z.boolean().optional(),
+  supportEnabled: z.boolean().optional(),
   apiKey: z.string().optional().nullable(),
   apiBaseUrl: z.string().optional().nullable(),
   clearKey: z.boolean().optional(),
@@ -31,6 +32,8 @@ const saveSchema = z.object({
       delivered: z.boolean().optional(),
     })
     .optional(),
+  signupWelcomeEnabled: z.boolean().optional(),
+  abandonedSignupEnabled: z.boolean().optional(),
   templates: z
     .object({
       order_confirmation_template_name: z.string().nullable().optional(),
@@ -39,6 +42,8 @@ const saveSchema = z.object({
       in_transit_template_name: z.string().nullable().optional(),
       shipment_delayed_template_name: z.string().nullable().optional(),
       delivered_template_name: z.string().nullable().optional(),
+      signup_welcome_template_name: z.string().nullable().optional(),
+      abandoned_signup_template_name: z.string().nullable().optional(),
       notification_settings: z.record(z.string(), z.boolean()).optional(),
       template_language: z.string().optional(),
     })
@@ -85,24 +90,30 @@ async function vachatApi(
 function templateSyncPayload(body: z.infer<typeof saveSchema>, settings: ReturnType<typeof parseVachatEventSettings>) {
   const templates = body.templates;
   if (!templates) return null;
+  const {
+    signup_welcome_template_name: _signupWelcome,
+    abandoned_signup_template_name: _abandonedSignup,
+    ...orderTemplates
+  } = templates;
   const names = [
-    templates.order_confirmation_template_name,
-    templates.processing_template_name,
-    templates.booked_template_name,
-    templates.in_transit_template_name,
-    templates.shipment_delayed_template_name,
-    templates.delivered_template_name,
+    orderTemplates.order_confirmation_template_name,
+    orderTemplates.processing_template_name,
+    orderTemplates.booked_template_name,
+    orderTemplates.in_transit_template_name,
+    orderTemplates.shipment_delayed_template_name,
+    orderTemplates.delivered_template_name,
   ];
   const hasNamedTemplate = names.some((name) => typeof name === "string" && name.trim());
   if (!hasNamedTemplate) return null;
   return {
-    ...templates,
+    ...orderTemplates,
     notification_settings: settings,
   };
 }
 
 export async function loadPlatformVachatSettings() {
-  const status = publicPlatformVachatStatus(await getPlatformVachatConfig());
+  const config = await getPlatformVachatConfig();
+  const status = publicPlatformVachatStatus(config);
   let identity: {
     display_phone: string | null;
     verified_name: string | null;
@@ -134,7 +145,16 @@ export async function loadPlatformVachatSettings() {
       templates = { approved_templates: [] };
     }
   }
-  return { ...status, identity, templates, templatesLoadError };
+  return {
+    ...status,
+    identity,
+    templates: {
+      ...(templates ?? {}),
+      signup_welcome_template_name: config.signupWelcomeTemplateName || null,
+      abandoned_signup_template_name: config.abandonedSignupTemplateName || null,
+    },
+    templatesLoadError,
+  };
 }
 
 export async function savePlatformVachatSettings(
@@ -145,13 +165,23 @@ export async function savePlatformVachatSettings(
   const body = saveSchema.parse(await request.json());
   const current = await getPlatformVachatConfig();
   const incomingKey = body.apiKey?.trim() || "";
-  if (!current.apiKey && !incomingKey && !body.clearKey) {
+  const supportOnly =
+    typeof body.supportEnabled === "boolean" &&
+    !incomingKey &&
+    !body.clearKey &&
+    body.enabled === undefined &&
+    !body.eventSettings &&
+    body.signupWelcomeEnabled === undefined &&
+    body.abandonedSignupEnabled === undefined &&
+    !body.templates &&
+    body.apiBaseUrl == null &&
+    body.lastTestPhone == null;
+  if (!current.apiKey && !incomingKey && !body.clearKey && !supportOnly) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Paste a Vachat API key the first time you connect.");
   }
   const apiBaseUrl = parseVachatBaseUrl(body.apiBaseUrl ?? current.apiBaseUrl);
-  const patch: Record<string, unknown> = {
-    vachat_api_base_url: apiBaseUrl,
-  };
+  const patch: Record<string, unknown> = supportOnly ? {} : { vachat_api_base_url: apiBaseUrl };
+  if (typeof body.supportEnabled === "boolean") patch.vachat_support_enabled = body.supportEnabled;
   if (typeof body.enabled === "boolean") patch.vachat_enabled = body.enabled;
   else if (!current.flagEnabled && incomingKey) patch.vachat_enabled = true;
   if (body.clearKey) {
@@ -168,6 +198,20 @@ export async function savePlatformVachatSettings(
   }
   if (typeof body.lastTestPhone === "string") {
     patch.vachat_last_test_phone = body.lastTestPhone.trim() || null;
+  }
+  if (typeof body.signupWelcomeEnabled === "boolean") {
+    patch.vachat_signup_welcome_enabled = body.signupWelcomeEnabled;
+  }
+  const signupTemplateName = body.templates?.signup_welcome_template_name;
+  if (signupTemplateName !== undefined) {
+    patch.vachat_signup_welcome_template_name = signupTemplateName?.trim() || null;
+  }
+  if (typeof body.abandonedSignupEnabled === "boolean") {
+    patch.vachat_abandoned_signup_enabled = body.abandonedSignupEnabled;
+  }
+  const abandonedTemplateName = body.templates?.abandoned_signup_template_name;
+  if (abandonedTemplateName !== undefined) {
+    patch.vachat_abandoned_signup_template_name = abandonedTemplateName?.trim() || null;
   }
   const { error } = await supabase.from("platform_settings").update(patch).eq("id", 1);
   if (error) {
@@ -220,6 +264,7 @@ export async function savePlatformVachatSettings(
       keyUpdated: Boolean(incomingKey && !/^•+$/.test(incomingKey)),
       keyCleared: Boolean(body.clearKey),
       enabled: patch.vachat_enabled ?? current.flagEnabled,
+      supportEnabled: patch.vachat_support_enabled ?? current.supportEnabled,
       eventsUpdated: Boolean(body.eventSettings),
       templatesUpdated: Boolean(body.templates),
       templateSyncError,
@@ -396,4 +441,37 @@ export async function loadPlatformVachatLogs(
     organizationId,
     limit: Number.isFinite(limit) ? limit : 50,
   });
+}
+
+export async function loadSupportUnassigned(supabase: ReturnType<typeof createAdminClient>) {
+  const { listUnassignedThreads } = await import("@/modules/support/identify");
+  return listUnassignedThreads(supabase);
+}
+
+export async function assignSupportUnassigned(
+  request: NextRequest,
+  supabase: ReturnType<typeof createAdminClient>,
+  ctx: AdminContext
+) {
+  const body = z
+    .object({
+      threadId: z.string().uuid(),
+      orderId: z.string().uuid(),
+    })
+    .parse(await request.json().catch(() => ({})));
+  const { assignUnassignedThread } = await import("@/modules/support/identify");
+  const result = await assignUnassignedThread(supabase, { ...body, actorId: ctx.userId });
+  if (!result.ok) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, result.error);
+  }
+  await writeBillingAudit(supabase, {
+    actorId: ctx.userId,
+    actorType: "SUPER_ADMIN",
+    action: "support.unassigned.assigned",
+    targetType: "support_unassigned_thread",
+    targetId: body.threadId,
+    ip: ip(request),
+    metadata: { orderId: result.orderId, organizationId: result.organizationId },
+  });
+  return result;
 }

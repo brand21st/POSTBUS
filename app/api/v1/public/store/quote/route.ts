@@ -16,5 +16,5 @@ export const POST = apiRouteWithContext(async (request: NextRequest) => {
   const supabase = publicStoreClient();
   const organizationId = await organizationFromLink(supabase, storeLinkRef(body));
   await assertStorePublished(supabase, organizationId);
-  return ok(await quotePublicStorePayment(supabase, organizationId, body.items, body.paymentPreference));
+  return ok(await quotePublicStorePayment(supabase, organizationId, body.items, body.paymentPreference, body.bundles));
 });

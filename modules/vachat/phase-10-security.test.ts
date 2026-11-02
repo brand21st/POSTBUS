@@ -168,6 +168,7 @@ function fakeSupabase(db: Db) {
     shipments: db.shipments,
     tracking_events: db.tracking_events,
     vachat_connections: db.vachat_connections,
+    support_global_binds: [],
   };
   const run = (table: string, filters: Record<string, unknown>) => {
     let rows = [...(tables[table] ?? [])];
@@ -182,6 +183,10 @@ function fakeSupabase(db: Db) {
     if (filters.like) {
       const [, pattern] = filters.like as [string, string];
       rows = rows.filter((row) => String(row.phone ?? "").includes(String(pattern).replace(/%/g, "")));
+    }
+    if (filters.gt) {
+      const [col, val] = filters.gt as [string, string];
+      rows = rows.filter((row) => String(row[col] ?? "") > String(val));
     }
     if (typeof filters.or === "string") {
       const customerIds = idsFromIn(filters.or, "customer_id");
@@ -209,6 +214,9 @@ function fakeSupabase(db: Db) {
     },
     like(column: string, value: string) {
       return builder(table, { ...filters, like: [column, value] });
+    },
+    gt(column: string, value: string) {
+      return builder(table, { ...filters, gt: [column, value] });
     },
     in(column: string, ids: string[]) {
       return builder(table, { ...filters, in: [column, ids] });
@@ -299,8 +307,11 @@ const knowledge: MerchantKnowledge = {
 
 describe("Phase 10 security matrix", () => {
   it("TEST 1 Customer A cannot access Customer B order", async () => {
-    const listed = await listEligibleOrders(fakeSupabase(sampleDb()) as never, { phone: PHONE_A, now: NOW });
-    expect(listed.choices.map((row) => row.order_ref)).toEqual(expect.arrayContaining(["PB-A1", "PB-B1"]));
+    const listed = await listEligibleOrders(fakeSupabase(sampleDb()) as never, {
+      session: session({ state: "IDENTIFY", selected_order_id: null, selected_organization_id: "org-a" }),
+      now: NOW,
+    });
+    expect(listed.choices.map((row) => row.order_ref)).toEqual(["PB-A1"]);
     expect(listed.choices.some((row) => row.order_ref === "PB-C1")).toBe(false);
   });
 
@@ -318,10 +329,15 @@ describe("Phase 10 security matrix", () => {
     expect(result.order.order_ref).not.toBe("PB-C1");
   });
 
-  it("TEST 3–4 Customer A can access own eligible orders across Merchant A and B", async () => {
+  it("TEST 3–4 phone matching alone does not list Merchant A and B together", async () => {
     const listed = await listEligibleOrders(fakeSupabase(sampleDb()) as never, { phone: PHONE_A, now: NOW });
-    expect(listed.choices.some((row) => row.merchant_name === "Merchant A" && row.order_ref === "PB-A1")).toBe(true);
-    expect(listed.choices.some((row) => row.merchant_name === "Merchant B" && row.order_ref === "PB-B1")).toBe(true);
+    expect(listed.choices).toEqual([]);
+    const merchantA = await listEligibleOrders(fakeSupabase(sampleDb()) as never, {
+      session: session({ state: "IDENTIFY", selected_order_id: null, selected_organization_id: "org-a" }),
+      now: NOW,
+    });
+    expect(merchantA.choices.some((row) => row.merchant_name === "Merchant A" && row.order_ref === "PB-A1")).toBe(true);
+    expect(merchantA.choices.some((row) => row.merchant_name === "Merchant B")).toBe(false);
   });
 
   it("TEST 5–8 AI identity fields cannot impersonate or authorize", async () => {
@@ -392,9 +408,12 @@ describe("Phase 10 security matrix", () => {
   it("TEST 14 expired delivered order is not listed", async () => {
     const db = sampleDb();
     db.shipments[0].delivered_at = "2026-09-15T12:00:00.000Z";
-    const listed = await listEligibleOrders(fakeSupabase(db) as never, { phone: PHONE_A, now: NOW });
+    const listed = await listEligibleOrders(fakeSupabase(db) as never, {
+      session: session({ state: "IDENTIFY", selected_order_id: null, selected_organization_id: "org-a" }),
+      now: NOW,
+    });
     expect(listed.choices.some((row) => row.order_ref === "PB-A1")).toBe(false);
-    expect(listed.choices.some((row) => row.order_ref === "PB-B1")).toBe(true);
+    expect(listed.choices.some((row) => row.order_ref === "PB-B1")).toBe(false);
   });
 
   it("TEST 15 expired delivered order cannot bind", async () => {

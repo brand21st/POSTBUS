@@ -1,29 +1,39 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { classifyProviderError, delayForAttempt, MAX_ATTEMPTS } from "@/lib/jobs/retry";
-import { bookingFailureShipmentUpdate } from "@/modules/india-post/booking-failure-state";
+import { bookingFailureShipmentUpdate, isAmbiguousCeptOutcome, shouldApplyBookingFailureUpdate } from "@/modules/india-post/booking-failure-state";
 import { logError, logInfo } from "@/lib/logger";
 import {
   AUTOMATION_DEFAULTS,
   getAutomationSettings,
   isAutoShopifySyncEnabled,
+  isAutoWooCommerceSyncEnabled,
   mapAutomationSettings,
 } from "@/modules/automation/service";
-import { indiaPostFromRow } from "@/modules/india-post/provider";
 import {
   ingestBulkTrackingArticle,
+  matchingBulkTrackingArticle,
   snapshotFromShipmentRow,
   TRACKING_POLL_STATUSES,
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
+import { tagTrackingLoginAuthFailure } from "@/modules/india-post/login-auth";
+import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
+import {
+  enqueueOrgTrackingSyncIfIdle,
+  trackingSyncDueFilter,
+  trackingSyncPageSize,
+} from "@/modules/india-post/tracking-sync";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
+import { assertIndiaPostBulkPostAllowed } from "@/modules/india-post/bulk-run";
+import { loadBulkBatchByJobId } from "@/modules/india-post/bulk-store";
+import { runIndiaPostBulkWorkerAttempt } from "@/modules/india-post/bulk-worker";
 import { fetchOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
 import { persistLabelPdf } from "@/modules/labels/persist";
 import { findReadyIndiaPostLabel } from "@/modules/labels/ready";
 import { runPool } from "@/lib/async/pool";
 import { inlineLabelTimeoutMs } from "@/modules/india-post/http";
-import { PDFDocument, StandardFonts } from "pdf-lib";
 import type { JobPayload } from "@/lib/queue/queues";
 import type { AutomationSettings } from "@/types/api";
 
@@ -42,6 +52,30 @@ export async function processJob(queue: string, payload: JobPayload) {
   };
   logInfo("job.started", timing);
 
+  if (queue === "shipment-booking") {
+    const { isParkedHistoricalBookingJob, reparkHistoricalBookingJob, HISTORICAL_JOB_HOLD_AT } = await import(
+      "@/modules/india-post/smart-auto-retry"
+    );
+    const { data: existingJob } = await supabase
+      .from("background_jobs")
+      .select("id, status, next_attempt_at, attempt_count, last_error_code, organization_id")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (isParkedHistoricalBookingJob(existingJob)) {
+      await reparkHistoricalBookingJob(supabase, {
+        jobId,
+        organizationId: payload.organizationId,
+        job: existingJob,
+      });
+      logInfo("smart_auto_retry.historical_job_reparked", {
+        ...timing,
+        nextAttemptAt: existingJob?.next_attempt_at ?? HISTORICAL_JOB_HOLD_AT,
+        previousStatus: existingJob?.status ?? null,
+      });
+      return;
+    }
+  }
+
   await supabase
     .from("background_jobs")
     .update({ status: "RUNNING", started_at: new Date().toISOString() })
@@ -49,13 +83,45 @@ export async function processJob(queue: string, payload: JobPayload) {
 
   try {
     if (queue === "shipment-booking") await bookShipment(supabase, payload);
+    else if (queue === "bulk-excel-import") {
+      const { bulkExcelBookingEnabled } = await import("@/modules/india-post/booking-recovery");
+      if (!bulkExcelBookingEnabled()) {
+        logInfo("bulk_excel.disabled", {
+          organizationId: payload.organizationId,
+          jobId,
+          entityId: payload.entityId,
+        });
+        return;
+      }
+      const { materializeBulkExcelImport } = await import("@/modules/india-post/bulk-excel-import");
+      if (!payload.entityId) {
+        throw Object.assign(new Error("Excel import batch is missing."), { code: "VALIDATION_ERROR" });
+      }
+      await materializeBulkExcelImport(supabase, payload.organizationId, payload.entityId, jobId);
+    }
     else if (queue === "label-generation") await generateLabel(supabase, payload);
     else if (queue === "invoice-generation") await generateInvoice(supabase, payload);
+    else if (queue === "sales-invoice-issue") await issueSalesInvoiceJob(supabase, payload);
     else if (queue === "manifest-generation") await generateManifest(supabase, payload);
     else if (queue === "tracking-sync") await syncTracking(supabase, payload);
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
+    else if (queue === "woocommerce-sync") await wooCommerceSync(supabase, payload);
+    else if (queue === "woocommerce-tracking") await wooCommerceTracking(supabase, payload);
     else if (queue === "shopify-fulfillment") await shopifyFulfillment(supabase, payload);
     else if (queue === "webhook-processing") await deliverWebhooks(supabase, payload);
+    else if (queue === "support-ingest") {
+      const { data: job } = await supabase
+        .from("background_jobs")
+        .select("progress")
+        .eq("id", jobId)
+        .maybeSingle();
+      const { processSupportIngestJob } = await import("@/modules/support/ingest");
+      await processSupportIngestJob(
+        supabase,
+        payload.organizationId,
+        (job?.progress ?? {}) as Record<string, unknown>
+      );
+    }
     else if (queue === "wati-notify") {
       const { sendWatiNotice, watiEventFromJobProgress, watiIdsFromJob } = await import("@/modules/wati/send");
       const { data: job } = await supabase
@@ -80,6 +146,7 @@ export async function processJob(queue: string, payload: JobPayload) {
       const { sendVachatNotice, sendVachatSessionText, vachatEventFromJobProgress, vachatIdsFromJob } = await import(
         "@/modules/vachat/send"
       );
+      const { vachatNotifyJobKind } = await import("@/modules/vachat/notify-job");
       const { data: job } = await supabase
         .from("background_jobs")
         .select("progress")
@@ -87,11 +154,24 @@ export async function processJob(queue: string, payload: JobPayload) {
         .maybeSingle();
       const progress = (job?.progress ?? {}) as {
         kind?: string;
+        source?: string;
         to?: string;
         text?: string;
+        supportMessageId?: string;
+        templateName?: string;
+        language?: string;
+        variables?: string[];
+        userId?: string;
         extras?: { interactive_payload?: Record<string, unknown>; image_url?: string };
       };
-      if (progress.kind === "session_text") {
+      const jobKind = vachatNotifyJobKind(progress);
+      if (jobKind === "support") {
+        const { deliverQueuedSupportMessage } = await import("@/modules/support/send");
+        await deliverQueuedSupportMessage(supabase, payload.organizationId, progress);
+      } else if (jobKind === "signup_welcome") {
+        const { deliverSignupWelcome } = await import("@/modules/vachat/signup-welcome");
+        await deliverSignupWelcome(supabase, payload.organizationId, progress);
+      } else if (jobKind === "session_text") {
         await sendVachatSessionText(String(progress.to ?? ""), String(progress.text ?? ""));
       } else {
         const ids = vachatIdsFromJob(job?.progress, payload.entityId);
@@ -107,6 +187,48 @@ export async function processJob(queue: string, payload: JobPayload) {
           ids
         );
       }
+    }
+    else if (queue === "ai-image") {
+      const { data: job } = await supabase
+        .from("background_jobs")
+        .select("progress, entity_id")
+        .eq("id", jobId)
+        .maybeSingle();
+      const aiImageJobId = String(
+        (job?.progress as { aiImageJobId?: string } | null)?.aiImageJobId || job?.entity_id || payload.entityId || ""
+      );
+      if (!aiImageJobId) {
+        throw Object.assign(new Error("AI image job id is missing."), { code: "VALIDATION_ERROR" });
+      }
+      const { processAiImageJob } = await import("@/modules/ai-image/process");
+      await processAiImageJob(supabase, payload.organizationId, aiImageJobId);
+    }
+    else if (queue === "gst-draft") {
+      const { data: job } = await supabase.from("background_jobs").select("progress").eq("id", jobId).maybeSingle();
+      const progress = (job?.progress ?? {}) as { type?: "GSTR1" | "GSTR3B"; month?: number; year?: number };
+      if (!progress.type || !progress.month || !progress.year) {
+        throw Object.assign(new Error("GST draft period is missing."), { code: "VALIDATION_ERROR" });
+      }
+      const { prepareGstReturn } = await import("@/modules/ai-accountant/gst-service");
+      await prepareGstReturn(supabase, payload.organizationId, {
+        type: progress.type,
+        month: progress.month,
+        year: progress.year,
+      });
+    }
+    else if (queue === "accounting-rebuild") {
+      const { data: job } = await supabase.from("background_jobs").select("progress").eq("id", jobId).maybeSingle();
+      const progress = (job?.progress ?? {}) as { from?: string; to?: string };
+      const { syncLedger } = await import("@/modules/ai-accountant/ledger/post");
+      const { fiscalYearPeriod, istDate, isIsoDate } = await import("@/modules/ai-accountant/period");
+      const today = istDate();
+      await syncLedger(supabase, payload.organizationId, {
+        from: isIsoDate(progress.from) ? progress.from : fiscalYearPeriod(today).from,
+        to: isIsoDate(progress.to) ? progress.to : today,
+      });
+    }
+    else if (queue === "cod-report-extract") {
+      // COD ingest currently runs inline; this lane keeps PDF extraction off the booking worker.
     }
     else if (queue === "india-post-events") {
       const { processIndiaPostInboxEvent } = await import("@/modules/india-post/webhook");
@@ -137,12 +259,79 @@ export async function processJob(queue: string, payload: JobPayload) {
     });
     const { data: job } = await supabase
       .from("background_jobs")
-      .select("attempt_count, max_attempts")
+      .select("id, attempt_count, max_attempts, next_attempt_at, status")
       .eq("id", jobId)
       .single();
     const attempt = (job?.attempt_count ?? 0) + 1;
-    const retryable = classified.retryable && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
-    const retryDelayMs = retryable ? delayForAttempt(attempt) : 0;
+    const postSubmitUncertain = queue === "shipment-booking" && isAmbiguousCeptOutcome(classified);
+    let retryable =
+      classified.retryable && !postSubmitUncertain && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
+    const retryAfterMs = Number((error as { retryAfterMs?: number })?.retryAfterMs);
+    let retryDelayMs = retryable
+      ? Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+        ? retryAfterMs
+        : delayForAttempt(attempt)
+      : 0;
+    let parkedHistoricalJob = false;
+    if (queue === "shipment-booking") {
+      const {
+        decideSmartAutoRetry,
+        isParkedHistoricalBookingJob,
+        persistSmartAutoRetrySnapshot,
+        smartAutoBookingRetryEnabled,
+      } = await import("@/modules/india-post/smart-auto-retry");
+      parkedHistoricalJob = isParkedHistoricalBookingJob(job);
+      if (parkedHistoricalJob) {
+        retryable = false;
+        retryDelayMs = 0;
+      } else if (smartAutoBookingRetryEnabled()) {
+        const shipmentId = payload.entityType === "shipment" ? payload.entityId : payload.shipmentIds?.[0];
+        let shipment: Record<string, unknown> | null = null;
+        if (shipmentId) {
+          const loaded = await supabase
+            .from("shipments")
+            .select(
+              "id, status, booked_at, barcode, tracking_number, provider_ref, last_error, last_error_code, metadata, created_at, updated_at"
+            )
+            .eq("id", shipmentId)
+            .eq("organization_id", payload.organizationId)
+            .maybeSingle();
+          shipment = loaded.data;
+        }
+        const decision = decideSmartAutoRetry({
+          classified,
+          error,
+          shipment,
+          job,
+          attempt,
+        });
+        retryable = decision.shouldRetry;
+        retryDelayMs = decision.shouldRetry ? decision.retryDelayMs : 0;
+        if (shipmentId && shipment) {
+          await persistSmartAutoRetrySnapshot(supabase, {
+            organizationId: payload.organizationId,
+            shipmentId,
+            metadata: shipment.metadata,
+            snapshot: {
+              class: decision.retryClass,
+              merchantState: decision.merchantState,
+              attemptCount: attempt,
+              maxAttempts: job?.max_attempts ?? MAX_ATTEMPTS,
+              nextAttemptAt: retryable ? new Date(Date.now() + retryDelayMs).toISOString() : null,
+              reason: decision.reason,
+              errorCode: classified.code,
+              correctionKind: decision.merchantState.includes("ADDRESS")
+                ? "address"
+                : decision.merchantState.includes("WEIGHT")
+                  ? "weight"
+                  : null,
+              canEditShipment: decision.retryClass === "VALIDATION_FAILURE",
+              updatedAt: new Date().toISOString(),
+            },
+          });
+        }
+      }
+    }
     logInfo("job.retry_decision", {
       ...timing,
       attempt,
@@ -163,37 +352,41 @@ export async function processJob(queue: string, payload: JobPayload) {
       retryable,
       finished_at: new Date().toISOString(),
     });
-    await supabase
-      .from("background_jobs")
-      .update({
-        status: retryable ? "RETRYING" : "FAILED",
-        attempt_count: attempt,
-        last_error: classified.message,
-        last_error_code: classified.code,
-        next_attempt_at: retryable ? new Date(Date.now() + retryDelayMs).toISOString() : null,
-      })
-      .eq("id", jobId);
+    if (!parkedHistoricalJob) {
+      await supabase
+        .from("background_jobs")
+        .update({
+          status: retryable ? "RETRYING" : "FAILED",
+          attempt_count: attempt,
+          last_error: classified.message,
+          last_error_code: classified.code,
+          next_attempt_at: retryable ? new Date(Date.now() + retryDelayMs).toISOString() : null,
+        })
+        .eq("id", jobId);
+    }
 
-    if (
-      queue !== "invoice-generation" &&
-      queue !== "label-generation" &&
-      queue !== "tracking-sync" &&
-      queue !== "wati-notify" &&
-      queue !== "vachat-notify" &&
-      payload.entityType === "shipment" &&
-      payload.entityId
-    ) {
-    const shipmentPatch = bookingFailureShipmentUpdate(classified, retryable);
-    await supabase
-      .from("shipments")
-      .update({
-        status: shipmentPatch.status,
-        last_error: classified.message,
-        last_error_code: classified.code,
-      })
-      .eq("id", payload.entityId)
-      .is("booked_at", null)
-      .in("status", [...shipmentPatch.allowedStatuses]);
+    const failureShipmentIds = [
+      ...new Set(
+        [
+          ...((error as { shipmentIds?: string[] }).shipmentIds ?? []),
+          ...(payload.shipmentIds ?? []),
+          payload.entityType === "shipment" ? payload.entityId : undefined,
+        ].filter((id): id is string => Boolean(id))
+      ),
+    ];
+    if (!parkedHistoricalJob && shouldApplyBookingFailureUpdate(queue) && failureShipmentIds.length) {
+      const shipmentPatch = bookingFailureShipmentUpdate(classified, retryable);
+      await supabase
+        .from("shipments")
+        .update({
+          status: shipmentPatch.status,
+          last_error: classified.message,
+          last_error_code: classified.code,
+        })
+        .eq("organization_id", payload.organizationId)
+        .in("id", failureShipmentIds)
+        .is("booked_at", null)
+        .in("status", [...shipmentPatch.allowedStatuses]);
       await supabase.from("notifications").insert({
         organization_id: payload.organizationId,
         type: retryable ? "shipment.retrying" : "shipment.failed",
@@ -233,10 +426,22 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
   }
 
   const bookingStarted = Date.now();
-  const outcome = await runIndiaPostBooking(supabase, {
+  assertIndiaPostBulkPostAllowed(shipmentIds.length);
+  const bulkBatch = payload.jobId && shipmentIds.length > 1 ? await loadBulkBatchByJobId(supabase, payload.jobId) : null;
+  if (shipmentIds.length > 1 && !bulkBatch) {
+    throw Object.assign(new Error("Multi-article booking requires a durable bulk batch."), { code: "VALIDATION_ERROR" });
+  }
+  const outcome = await runIndiaPostBulkWorkerAttempt({
+    supabase,
     organizationId: payload.organizationId,
     shipmentIds,
-    jobId: payload.jobId,
+    bulkBatch,
+    post: () =>
+      runIndiaPostBooking(supabase, {
+        organizationId: payload.organizationId,
+        shipmentIds,
+        jobId: payload.jobId,
+      }),
   });
   logInfo("booking.completed", {
     organizationId: payload.organizationId,
@@ -353,13 +558,33 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         entityId: shipment.id,
       });
     }
+    if (automation.autoWooCommerceTracking) {
+      const { data: bookedShipments } = await supabase
+        .from("shipments")
+        .select("order_id")
+        .eq("organization_id", payload.organizationId)
+        .eq("id", shipment.id);
+      const orderIds = [...new Set((bookedShipments ?? []).map((row) => row.order_id).filter(Boolean))];
+      if (orderIds.length) {
+        const { data: wooOrders } = await supabase
+          .from("orders")
+          .select("id")
+          .eq("organization_id", payload.organizationId)
+          .eq("source", "WOOCOMMERCE")
+          .in("id", orderIds);
+        for (const order of wooOrders ?? []) {
+          await createBackgroundJob(supabase, {
+            organizationId: payload.organizationId,
+            jobType: "woocommerce-tracking",
+            entityType: "order",
+            entityId: order.id,
+            progress: { stage: "booked" },
+          });
+        }
+      }
+    }
     if (automation.autoTrackingSync) {
-      await createBackgroundJob(supabase, {
-        organizationId: payload.organizationId,
-        jobType: "tracking-sync",
-        entityType: "shipment",
-        entityId: shipment.id,
-      });
+      await enqueueOrgTrackingSyncIfIdle(supabase, payload.organizationId);
     }
   });
 }
@@ -419,6 +644,14 @@ async function generateInvoice(supabase: ReturnType<typeof createAdminClient>, p
   }
   const { generateShippingInvoice } = await import("@/modules/invoices/service");
   await generateShippingInvoice(supabase, payload.organizationId, payload.entityId);
+}
+
+async function issueSalesInvoiceJob(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  if (!payload.entityId) {
+    throw Object.assign(new Error("Order is missing."), { code: "VALIDATION_ERROR" });
+  }
+  const { runAutoSalesInvoice } = await import("@/modules/sales-invoices/auto");
+  await runAutoSalesInvoice(supabase, payload.organizationId, payload.entityId, payload.userId);
 }
 
 async function generateLabel(
@@ -501,122 +734,31 @@ async function generateLabel(
 }
 
 async function generateManifest(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
-  const day = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-  const name = `Manifest ${day}`;
-  const dayStart = `${day}T00:00:00+05:30`;
-
-  const { data: shipments } = await supabase
-    .from("shipments")
-    .select("id, barcode, tracking_number, service_code, tariff_amount, orders(order_number)")
-    .eq("organization_id", payload.organizationId)
-    .not("barcode", "is", null)
-    .not("booked_at", "is", null)
-    .gte("booked_at", dayStart)
-    .in("status", ["BOOKED", "LABEL_PENDING", "LABEL_READY", "MANIFEST_PENDING", "MANIFEST_READY"])
-    .order("booked_at", { ascending: true });
-
-  if (!shipments?.length) {
-    return;
-  }
-
-  const pdf = await PDFDocument.create();
-  const page = pdf.addPage([595, 842]);
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  page.drawText(`PostBus pickup manifest  ${day}`, { x: 40, y: 800, size: 16, font });
-  page.drawText("Kolenchery SO drop-off  |  India Post", { x: 40, y: 780, size: 10, font });
-  shipments.forEach((item, index) => {
-    const order = item.orders as { order_number?: string } | null;
-    page.drawText(
-      `${index + 1}. ${item.barcode ?? ""}  ${order?.order_number ?? ""}  ${item.service_code ?? ""}`,
-      { x: 40, y: 750 - index * 16, size: 10, font }
-    );
-  });
-  const bytes = await pdf.save();
-
-  const { data: existing } = await supabase
-    .from("manifests")
-    .select("id")
-    .eq("organization_id", payload.organizationId)
-    .eq("name", name)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const path = `${payload.organizationId}/manifest-${day}.pdf`;
-  await supabase.storage.from("manifests").upload(path, bytes, {
-    contentType: "application/pdf",
-    upsert: true,
-  });
-  const { data: signed } = await supabase.storage
-    .from("manifests")
-    .createSignedUrl(path, 60 * 60 * 24 * 7);
-
-  const fields = {
-    status: "READY",
-    file_path: path,
-    file_url: signed?.signedUrl ?? null,
-    shipment_count: shipments.length,
-    updated_at: new Date().toISOString(),
-  };
-
-  const manifest = existing
-    ? (
-        await supabase.from("manifests").update(fields).eq("id", existing.id).select().single()
-      ).data
-    : (
-        await supabase
-          .from("manifests")
-          .insert({
-            organization_id: payload.organizationId,
-            name,
-            ...fields,
-          })
-          .select()
-          .single()
-      ).data;
-
-  if (!manifest) {
-    throw Object.assign(new Error("Could not save the pickup manifest."), {
-      code: "PROVIDER_ERROR",
-    });
-  }
-
-  await supabase.from("manifest_shipments").delete().eq("manifest_id", manifest.id);
-  await supabase.from("manifest_shipments").insert(
-    shipments.map((item) => ({
-      organization_id: payload.organizationId,
-      manifest_id: manifest.id,
-      shipment_id: item.id,
-    }))
-  );
-  await supabase
-    .from("shipments")
-    .update({ status: "MANIFEST_READY" })
-    .in(
-      "id",
-      shipments.map((item) => item.id)
-    );
+  const { assignToDraft, sweepEligible } = await import("@/modules/manifests/service");
+  // Label jobs enqueue one shipment; "Add ready shipments" and legacy jobs sweep the workspace.
+  const { added } =
+    payload.entityType === "shipment" && payload.entityId
+      ? await assignToDraft(supabase, payload.organizationId, [payload.entityId])
+      : await sweepEligible(supabase, payload.organizationId, { userId: payload.userId ?? null });
+  if (!added.length) return;
 
   const automation = await loadAutomation(supabase, payload.organizationId);
   if (automation.autoShopifyFulfillment) {
     const { createBackgroundJob } = await import("@/modules/jobs/service");
-    for (const item of shipments) {
+    // Only newly manifested shipments: re-runs must not fan out fulfillment again.
+    for (const shipmentId of added) {
       await createBackgroundJob(supabase, {
         organizationId: payload.organizationId,
         jobType: "shopify-fulfillment",
         entityType: "shipment",
-        entityId: item.id,
+        entityId: shipmentId,
       });
     }
   }
 }
 
 async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const started = Date.now();
   const automation = await loadAutomation(supabase, payload.organizationId);
   if (!automation.autoTrackingSync) {
     return;
@@ -629,40 +771,202 @@ async function syncTracking(supabase: ReturnType<typeof createAdminClient>, payl
   if (!connection) {
     throw Object.assign(new Error("India Post is not connected."), { code: "PERMANENT_AUTH_ERROR" });
   }
-  const { data: shipments } = await supabase
-    .from("shipments")
-    .select(
-      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
-    )
-    .eq("organization_id", payload.organizationId)
-    .not("barcode", "is", null)
-    .in("status", [...TRACKING_POLL_STATUSES])
-    .or("operational_status.is.null,operational_status.neq.RTO_DELIVERED");
-  const barcodes = (shipments ?? []).map((item) => item.barcode).filter(Boolean) as string[];
-  if (!barcodes.length) return;
-  const provider = indiaPostFromRow(connection);
-  const result = (await provider.trackShipment(barcodes)) as {
-    data?: BulkTrackingArticle[];
-  };
-  for (const article of result.data ?? []) {
-    const barcode = article.booking_details?.article_number;
-    const shipment = shipments?.find((item) => item.barcode === barcode);
-    if (!shipment) continue;
-    const ingested = await ingestBulkTrackingArticle(supabase, {
-      organizationId: payload.organizationId,
-      shipment: snapshotFromShipmentRow(shipment, payload.organizationId),
-      article,
-    });
-    if (ingested.whatsappEvents.length || ingested.orderStatus) {
-      await enqueueTrackingStageSideEffects(supabase, {
+  try {
+  const provider = await ensurePersistedIndiaPostSession(supabase, connection);
+  const pageSize = trackingSyncPageSize();
+  const dueFilter = trackingSyncDueFilter();
+  const maxPages = 4;
+  let page = 0;
+  let lastPageFull = false;
+  let barcodesSynced = 0;
+  while (page < maxPages) {
+    const { data: shipments } = await supabase
+      .from("shipments")
+      .select(
+        "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at"
+      )
+      .eq("organization_id", payload.organizationId)
+      .not("barcode", "is", null)
+      .in("status", [...TRACKING_POLL_STATUSES])
+      .or("operational_status.is.null,operational_status.neq.RTO_DELIVERED")
+      .or(dueFilter)
+      .order("last_tracked_at", { ascending: true, nullsFirst: true })
+      .limit(pageSize);
+    const rows = shipments ?? [];
+    lastPageFull = rows.length === pageSize;
+    const barcodes = rows.map((item) => item.barcode).filter(Boolean) as string[];
+    if (!barcodes.length) break;
+    barcodesSynced += barcodes.length;
+    const result = (await provider.trackShipment(barcodes)) as {
+      data?: BulkTrackingArticle[];
+    };
+    for (const shipment of rows) {
+      if (!shipment.barcode) continue;
+      const article = matchingBulkTrackingArticle(result.data, shipment.barcode);
+      if (!article) {
+        await supabase
+          .from("shipments")
+          .update({ last_tracked_at: new Date().toISOString() })
+          .eq("id", shipment.id)
+          .eq("organization_id", payload.organizationId);
+        continue;
+      }
+      const ingested = await ingestBulkTrackingArticle(supabase, {
         organizationId: payload.organizationId,
-        shipmentId: shipment.id,
-        orderId: shipment.order_id,
-        orderStatus: ingested.orderStatus,
-        events: ingested.whatsappEvents,
+        shipment: snapshotFromShipmentRow(shipment, payload.organizationId),
+        article,
+        source: "bulk",
       });
+      if (ingested.whatsappEvents.length || ingested.orderStatus) {
+        await enqueueTrackingStageSideEffects(supabase, {
+          organizationId: payload.organizationId,
+          shipmentId: shipment.id,
+          orderId: shipment.order_id,
+          orderStatus: ingested.orderStatus,
+          events: ingested.whatsappEvents,
+          notices: ingested.notices,
+        });
+      }
     }
+    page += 1;
+    if (rows.length < pageSize) break;
   }
+  if (lastPageFull && page >= maxPages) {
+    const { createBackgroundJob } = await import("@/modules/jobs/service");
+    await createBackgroundJob(supabase, {
+      organizationId: payload.organizationId,
+      jobType: "tracking-sync",
+      entityType: "organization",
+      entityId: payload.organizationId,
+    });
+  }
+  logInfo("india_post.tracking.sync_ok", {
+    organizationId: payload.organizationId,
+    jobId: payload.jobId,
+    durationMs: Date.now() - started,
+    pages: page,
+    barcodesSynced,
+  });
+  } catch (error) {
+    const tagged = tagTrackingLoginAuthFailure(error);
+    const taggedError = tagged as { code?: string; status?: number };
+    logError("india_post.tracking.sync_fail", {
+      organizationId: payload.organizationId,
+      jobId: payload.jobId,
+      durationMs: Date.now() - started,
+      errorCode: taggedError.code,
+      httpStatus: taggedError.status,
+      message: tagged instanceof Error ? tagged.message : "tracking sync failed",
+    });
+    throw tagged;
+  }
+}
+
+async function wooCommerceSync(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  const { data: job } = await supabase
+    .from("background_jobs")
+    .select("progress")
+    .eq("id", payload.jobId)
+    .maybeSingle();
+  const progress =
+    job?.progress && typeof job.progress === "object"
+      ? (job.progress as {
+          mode?: string;
+          force?: boolean;
+          page?: number;
+          imported?: number;
+          updated?: number;
+          skipped?: number;
+          topic?: string;
+          orderId?: string;
+          deliveryId?: string;
+        })
+      : {};
+  if (progress.mode === "webhook") {
+    const { processWooWebhookJob } = await import("@/modules/woocommerce/webhooks");
+    await processWooWebhookJob(supabase, {
+      organizationId: payload.organizationId,
+      connectionId: payload.entityId || "",
+      topic: progress.topic || "",
+      orderId: progress.orderId || "",
+      deliveryId: progress.deliveryId,
+    });
+    return;
+  }
+  if (!progress.force && !(await isAutoWooCommerceSyncEnabled(supabase, payload.organizationId))) return;
+  const { credentialsFromConnection, loadWooConnection } = await import("@/modules/woocommerce/connect");
+  const { syncWooCommercePage } = await import("@/modules/woocommerce/orders");
+  const { enqueueWooCommerceSync } = await import("@/modules/woocommerce/sync-job");
+  const connection = await loadWooConnection(supabase, payload.organizationId);
+  const credentials = credentialsFromConnection(connection);
+  if (!connection || connection.status !== "CONNECTED" || !credentials) {
+    throw Object.assign(new Error("WooCommerce is not connected."), { code: "PERMANENT_AUTH_ERROR" });
+  }
+  let result: Awaited<ReturnType<typeof syncWooCommercePage>>;
+  try {
+    result = await syncWooCommercePage(supabase, {
+      connection,
+      credentials,
+      userId: payload.userId,
+      page: progress.page ?? 1,
+      force: progress.force,
+    });
+  } catch (error) {
+    const { redactWooText } = await import("@/modules/woocommerce/sync-window");
+    const message = redactWooText(error instanceof Error ? error.message : "WooCommerce sync failed.");
+    logError("woocommerce.sync_failed", {
+      organizationId: payload.organizationId,
+      jobId: payload.jobId,
+      page: progress.page ?? 1,
+      force: Boolean(progress.force),
+      message,
+    });
+    await supabase
+      .from("woocommerce_connections")
+      .update({ last_error: message.slice(0, 500) })
+      .eq("id", connection.id);
+    throw error;
+  }
+  const imported = (progress.imported ?? 0) + result.imported;
+  const updated = (progress.updated ?? 0) + result.updated;
+  const skipped = (progress.skipped ?? 0) + result.skipped;
+  await supabase
+    .from("background_jobs")
+    .update({ progress: { ...progress, imported, updated, skipped, hasMore: result.hasMore, page: result.nextPage } })
+    .eq("id", payload.jobId);
+  await supabase
+    .from("woocommerce_connections")
+    .update({
+      last_sync_at: new Date().toISOString(),
+      last_error: null,
+      ...(result.hasMore ? {} : { last_successful_sync_at: new Date().toISOString() }),
+    })
+    .eq("id", connection.id);
+  if (result.hasMore && result.nextPage) {
+    await enqueueWooCommerceSync(supabase, {
+      organizationId: payload.organizationId,
+      userId: payload.userId,
+      // Keep the same window: a scheduled incremental run must not widen to the full import on page 2.
+      force: Boolean(progress.force),
+      page: result.nextPage,
+      imported,
+      updated,
+      skipped,
+    });
+  }
+}
+
+async function wooCommerceTracking(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  if (!payload.entityId) return;
+  const { data: job } = await supabase.from("background_jobs").select("progress").eq("id", payload.jobId).maybeSingle();
+  const stage =
+    job?.progress && typeof job.progress === "object" ? (job.progress as { stage?: string }).stage : undefined;
+  const { syncWooCommerceTracking } = await import("@/modules/woocommerce/tracking");
+  await syncWooCommerceTracking(supabase, {
+    organizationId: payload.organizationId,
+    orderId: payload.entityId,
+    stage,
+  });
 }
 
 async function shopifySync(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
@@ -808,66 +1112,6 @@ async function shopifyFulfillment(
 }
 
 async function deliverWebhooks(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
-  const { data: deliveries } = await supabase
-    .from("webhook_deliveries")
-    .select("*, webhook_endpoints(*)")
-    .eq("organization_id", payload.organizationId)
-    .eq("status", "PENDING")
-    .limit(20);
-
-  for (const delivery of deliveries ?? []) {
-    const endpoint = delivery.webhook_endpoints as {
-      url?: string;
-      encrypted_secret?: string | null;
-    } | null;
-    if (!endpoint?.url) continue;
-    const timestamp = String(Date.now());
-    const body = JSON.stringify(delivery.payload);
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "X-PostBus-Timestamp": timestamp,
-    };
-    if (endpoint.encrypted_secret) {
-      try {
-        const { decryptSecret } = await import("@/lib/security/crypto");
-        const { signWebhook } = await import("@/modules/webhooks/outgoing");
-        const secret = decryptSecret(endpoint.encrypted_secret);
-        headers["X-PostBus-Signature"] = signWebhook(secret, timestamp, body);
-      } catch (error) {
-        await supabase
-          .from("webhook_deliveries")
-          .update({
-            status: "FAILED",
-            last_error: error instanceof Error ? error.message : "Could not sign webhook payload.",
-            attempt_count: delivery.attempt_count + 1,
-          })
-          .eq("id", delivery.id);
-        continue;
-      }
-    }
-    try {
-      const response = await fetch(endpoint.url, {
-        method: "POST",
-        headers,
-        body,
-      });
-      await supabase
-        .from("webhook_deliveries")
-        .update({
-          status: response.ok ? "DELIVERED" : "FAILED",
-          response_code: response.status,
-          attempt_count: delivery.attempt_count + 1,
-        })
-        .eq("id", delivery.id);
-    } catch (error) {
-      await supabase
-        .from("webhook_deliveries")
-        .update({
-          status: "FAILED",
-          last_error: error instanceof Error ? error.message : "delivery failed",
-          attempt_count: delivery.attempt_count + 1,
-        })
-        .eq("id", delivery.id);
-    }
-  }
+  const { runWebhookProcessing } = await import("@/modules/webhooks/deliver");
+  await runWebhookProcessing(supabase, payload.organizationId);
 }

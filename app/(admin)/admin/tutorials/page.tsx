@@ -32,7 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/format";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
-import { parseYoutubeUrl, YOUTUBE_URL_ERROR } from "@/modules/tutorials/youtube";
+import { parseTutorialVideo, TUTORIAL_VIDEO_URL_ERROR } from "@/modules/tutorials/video";
 import type { AdminTutorial, AdminTutorialCategory, Paginated } from "@/types/api";
 
 type TutorialRow = AdminTutorial & Record<string, unknown>;
@@ -115,8 +115,8 @@ export default function AdminTutorialsPage() {
 
   const categories = categoriesQuery.data?.categories ?? [];
   const items = (tutorialsQuery.data?.items ?? []) as TutorialRow[];
-  const youtubePreview = parseYoutubeUrl(tutorialForm.youtubeUrl);
-  const youtubeInvalid = tutorialForm.youtubeUrl.trim().length > 0 && !youtubePreview;
+  const videoPreview = parseTutorialVideo(tutorialForm.youtubeUrl);
+  const videoInvalid = tutorialForm.youtubeUrl.trim().length > 0 && !videoPreview;
 
   const saveTutorial = useMutation({
     mutationFn: (input: { id?: string; body: Record<string, unknown> }) =>
@@ -228,8 +228,8 @@ export default function AdminTutorialsPage() {
   }
 
   function submitTutorial() {
-    if (!youtubePreview) {
-      toast.error(YOUTUBE_URL_ERROR);
+    if (!videoPreview) {
+      toast.error(TUTORIAL_VIDEO_URL_ERROR);
       return;
     }
     saveTutorial.mutate({
@@ -340,7 +340,7 @@ export default function AdminTutorialsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Tutorials"
-        description="Paste a YouTube link, pick a category, and publish guides for merchants."
+        description="Paste a YouTube, Vimeo, Facebook, or Instagram video link, pick a category, and publish guides for merchants."
         actions={
           tab === "tutorials" ? (
             <Button size="sm" onClick={openCreateTutorial} disabled={categories.length === 0}>
@@ -430,7 +430,7 @@ export default function AdminTutorialsPage() {
                 loading={tutorialsQuery.isLoading}
                 error={tutorialsQuery.error instanceof Error ? tutorialsQuery.error : null}
                 emptyTitle="No tutorials yet"
-                emptyDescription="Create a tutorial by pasting a YouTube URL."
+                emptyDescription="Create a tutorial by pasting a YouTube, Vimeo, Facebook, or Instagram URL."
                 page={page}
                 pageSize={20}
                 total={tutorialsQuery.data?.total ?? 0}
@@ -529,7 +529,9 @@ export default function AdminTutorialsPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{tutorialDialog === "edit" ? "Edit tutorial" : "Create tutorial"}</DialogTitle>
-            <DialogDescription>Paste a YouTube link. The thumbnail loads automatically.</DialogDescription>
+            <DialogDescription>
+              Paste a YouTube, Vimeo, Facebook, or Instagram video link. YouTube thumbnails load automatically.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <Field label="Title">
@@ -538,17 +540,17 @@ export default function AdminTutorialsPage() {
                 onChange={(event) => setTutorialForm((form) => ({ ...form, title: event.target.value }))}
               />
             </Field>
-            <Field label="YouTube Video Link">
+            <Field label="Video link">
               <Input
                 value={tutorialForm.youtubeUrl}
                 onChange={(event) => setTutorialForm((form) => ({ ...form, youtubeUrl: event.target.value }))}
-                placeholder="https://www.youtube.com/watch?v=XXXXXXXX"
+                placeholder="https://vimeo.com/123456789"
               />
-              {youtubeInvalid ? <p className="text-sm text-error">{YOUTUBE_URL_ERROR}</p> : null}
-              {youtubePreview ? (
+              {videoInvalid ? <p className="text-sm text-error">{TUTORIAL_VIDEO_URL_ERROR}</p> : null}
+              {videoPreview ? (
                 <TutorialThumbnail
-                  src={youtubePreview.thumbnailUrl}
-                  alt="YouTube thumbnail preview"
+                  src={videoPreview.thumbnailUrl}
+                  alt="Video thumbnail preview"
                   className="mt-2 aspect-video w-full rounded-xl"
                 />
               ) : null}
@@ -614,7 +616,7 @@ export default function AdminTutorialsPage() {
                 saveTutorial.isPending ||
                 !tutorialForm.title.trim() ||
                 !tutorialForm.categoryId ||
-                !youtubePreview
+                !videoPreview
               }
             >
               {saveTutorial.isPending ? "Saving…" : "Save"}

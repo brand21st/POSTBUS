@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { hasPermission, permissionsFor } from "@/lib/permissions/rbac";
 
 describe("rbac", () => {
@@ -12,10 +13,26 @@ describe("rbac", () => {
     expect(hasPermission("MANAGER", "products.write")).toBe(true);
     expect(hasPermission("VIEWER", "products.write")).toBe(false);
     expect(hasPermission("VIEWER", "products.read")).toBe(true);
+    expect(hasPermission("VIEWER", "support.read")).toBe(true);
+    expect(hasPermission("VIEWER", "support.settings")).toBe(false);
+    expect(hasPermission("VIEWER", "support.reply")).toBe(false);
+    expect(hasPermission("OPERATOR", "support.reply")).toBe(true);
+    expect(hasPermission("OPERATOR", "support.assign")).toBe(false);
+    expect(hasPermission("MANAGER", "support.assign")).toBe(true);
+    expect(hasPermission("MANAGER", "support.settings")).toBe(false);
+    expect(hasPermission("ADMIN", "support.settings")).toBe(true);
   });
 
   it("lists permissions for a role", () => {
     expect(permissionsFor("VIEWER")).not.toContain("orders.write");
+    expect(permissionsFor("VIEWER")).not.toContain("labels.write");
+    expect(hasPermission("VIEWER", permissionForTenantRoute("POST", "labels/bulk-print", ["labels", "bulk-print"])!)).toBe(
+      false
+    );
+    expect(hasPermission("OPERATOR", "labels.write")).toBe(true);
+    expect(hasPermission("OPERATOR", "manifests.write")).toBe(true);
+    expect(hasPermission("VIEWER", "manifests.read")).toBe(true);
+    expect(hasPermission("VIEWER", "manifests.write")).toBe(false);
     expect(permissionsFor("OWNER")).toContain("org.billing");
   });
 });

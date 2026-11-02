@@ -1,5 +1,11 @@
 import { LABELS_READY_NOTIFICATION } from "@/lib/notifications/labels-ready";
+import {
+  orderStageNotificationBody,
+  orderStageNotificationTitle,
+  orderStageNotificationType,
+} from "@/lib/notifications/order-stage";
 import { TRACKING_HOST_LIVE_NOTIFICATION } from "@/lib/notifications/tracking-host";
+import type { NotificationRecord } from "@/types/api";
 
 export const WHATSAPP_ORDER_NOTIFICATION = "whatsapp.order_created";
 export const SHOPIFY_ORDER_NOTIFICATION = "shopify.order_imported";
@@ -28,17 +34,66 @@ export function isDashboardAlertNotification(type?: string | null) {
   return Boolean(type && DASHBOARD_ALERT_TYPES.has(type));
 }
 
+export const DASHBOARD_ALERT_EVENT = "postbus:new-shopify-orders";
+
+export function dashboardAlertDedupeKeys(item: {
+  id: string;
+  type?: string | null;
+  entityId?: string | null;
+  entity_id?: string | null;
+}) {
+  const keys = [item.id];
+  const entity = item.entityId ?? item.entity_id;
+  if (item.type && entity) keys.push(`${item.type}:${entity}`);
+  return keys;
+}
+
+export function rememberDashboardAlerts<
+  T extends { id: string; type?: string | null; entityId?: string | null; entity_id?: string | null },
+>(seen: Set<string>, items: T[]) {
+  for (const item of items) {
+    for (const key of dashboardAlertDedupeKeys(item)) seen.add(key);
+  }
+}
+
+export function emitDashboardAlerts(items: NotificationRecord[]) {
+  if (typeof window === "undefined" || !items.length) return;
+  window.dispatchEvent(new CustomEvent(DASHBOARD_ALERT_EVENT, { detail: items }));
+}
+
+export function localShipmentBookedAlert(input: { orderId: string; orderNumber?: string | null }): NotificationRecord {
+  const orderNumber = input.orderNumber?.trim() || input.orderId.slice(0, 8);
+  return {
+    id: `local-booked:${input.orderId}`,
+    type: orderStageNotificationType("booked"),
+    title: orderStageNotificationTitle("booked"),
+    body: orderStageNotificationBody("booked", orderNumber),
+    entityType: "order",
+    entity_id: input.orderId,
+    entityId: input.orderId,
+    href: `/dashboard/orders/${input.orderId}`,
+  };
+}
+
 export function collectDashboardAlerts<
-  T extends { id: string; type?: string | null; createdAt?: string | null; created_at?: string | null },
+  T extends {
+    id: string;
+    type?: string | null;
+    createdAt?: string | null;
+    created_at?: string | null;
+    entityId?: string | null;
+    entity_id?: string | null;
+  },
 >(items: T[], seen: Set<string>, startedAt: number) {
   const incoming = items.filter((item) => {
-    if (!isDashboardAlertNotification(item.type) || seen.has(item.id)) return false;
+    if (!isDashboardAlertNotification(item.type)) return false;
+    if (dashboardAlertDedupeKeys(item).some((key) => seen.has(key))) return false;
     if (startedAt <= 0) return true;
     const created = Date.parse(String(item.createdAt ?? item.created_at ?? ""));
     if (!Number.isFinite(created)) return true;
     return created > startedAt;
   });
-  for (const item of items) seen.add(item.id);
+  rememberDashboardAlerts(seen, items);
   return incoming;
 }
 

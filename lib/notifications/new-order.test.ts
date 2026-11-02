@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   collectDashboardAlerts,
   collectNewShopifyOrderAlerts,
+  dashboardAlertDedupeKeys,
   isDashboardAlertNotification,
   isNewOrderCreatedNotification,
   isShopifyOrderNotification,
+  localShipmentBookedAlert,
+  rememberDashboardAlerts,
   SHOPIFY_ORDER_NOTIFICATION,
   WHATSAPP_ORDER_NOTIFICATION,
   LABELS_READY_NOTIFICATION,
@@ -89,6 +92,21 @@ describe("order stage dashboard alerts", () => {
     expect(seen.has("tracking")).toBe(true);
   });
 
+  it("alerts a new Shopify order that arrived after the dashboard tab opened", () => {
+    const startedAt = Date.parse("2026-10-10T16:00:00.000Z");
+    const seen = new Set<string>();
+    const incoming = collectDashboardAlerts(
+      [
+        { id: "old", type: SHOPIFY_ORDER_NOTIFICATION, createdAt: "2026-10-10T15:59:00.000Z" },
+        { id: "live", type: SHOPIFY_ORDER_NOTIFICATION, createdAt: "2026-10-10T16:00:01.000Z" },
+      ],
+      seen,
+      startedAt
+    );
+    expect(incoming.map((item) => item.id)).toEqual(["live"]);
+    expect(seen.has("old")).toBe(true);
+  });
+
   it("alerts on unseen labels-ready items after the listener is primed", () => {
     const seen = new Set<string>(["old"]);
     const incoming = collectDashboardAlerts(
@@ -111,5 +129,33 @@ describe("order stage dashboard alerts", () => {
 
   it("plays the PostBus order MP3 for new-order alerts", () => {
     expect(NEW_ORDER_SOUND_SRC).toBe("/sounds/postbus-order-notification.mp3");
+  });
+
+  it("builds a local booked alert that matches order-stage copy", () => {
+    const alert = localShipmentBookedAlert({ orderId: "order-1", orderNumber: "1001" });
+    expect(alert).toMatchObject({
+      id: "local-booked:order-1",
+      type: "shipment.booked",
+      title: "Order fulfilled",
+      body: "1001 · booked",
+      entityId: "order-1",
+      entity_id: "order-1",
+      href: "/dashboard/orders/order-1",
+    });
+  });
+
+  it("skips a server booked row after a local Book now alert was remembered", () => {
+    const seen = new Set<string>();
+    const local = localShipmentBookedAlert({ orderId: "order-1", orderNumber: "1001" });
+    rememberDashboardAlerts(seen, [local]);
+    expect(dashboardAlertDedupeKeys(local)).toEqual(["local-booked:order-1", "shipment.booked:order-1"]);
+
+    const incoming = collectDashboardAlerts(
+      [{ id: "db-booked", type: "shipment.booked", entity_id: "order-1", createdAt: "2026-09-20T12:01:00.000Z" }],
+      seen,
+      0
+    );
+    expect(incoming).toEqual([]);
+    expect(seen.has("db-booked")).toBe(true);
   });
 });

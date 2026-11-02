@@ -1,15 +1,27 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
+import { hasPermission } from "@/lib/permissions/rbac";
+import { assertBrowserOrigin } from "@/lib/security/origin";
+import {
+  parseBulkPrintIds,
+  prepareBulkShippingSlips,
+  printBulkShippingSlips,
+} from "@/modules/labels/bulk-slip-print";
+import {
+  claimManualPrintKey,
+  printRequestFingerprint,
+  releaseManualPrintKey,
+  requirePrintIdempotencyKey,
+  storeManualPrintKey,
+} from "@/modules/print/manual-idempotency";
 import { orIlike } from "@/lib/api/filters";
 import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
-import { createBackgroundJob } from "@/modules/jobs/service";
 import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
-import { bulkOrderStatusSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import { bulkOrderStatusSchema, confirmShopifyPaymentSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import {
   confirmCustomerOrderLinkSchema,
 } from "@/modules/customer-order-links/schema";
@@ -20,7 +32,7 @@ import {
   listLegacySubmissions,
   listWhatsAppPendingOrders,
 } from "@/modules/customer-order-links/service";
-import { createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
+import { confirmShopifyPayment, createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { renderCustomShippingLabel } from "@/modules/labels/custom-label-service";
@@ -29,7 +41,7 @@ import {
   indiaPostLabelRequestError,
 } from "@/modules/labels/official-fetch";
 import { fetchReceiptPdf } from "@/modules/labels/receipt";
-import { listGroupedLabels } from "@/modules/labels/list";
+import { getLabelDashboardCounts, listGroupedLabels } from "@/modules/labels/list";
 import { getLabelTemplate } from "@/modules/labels/template-service";
 import { defaultLabelTemplateId } from "@/modules/labels/template-schema";
 import {
@@ -41,8 +53,8 @@ import {
   updateShipmentDimensions,
   updateShipmentDimensionsSchema,
 } from "@/modules/shipments/service";
-import { ndrListQuery } from "@/modules/ndr-rto/schema";
-import { getNdrSummary, listNdrShipments, syncNdrShipment } from "@/modules/ndr-rto/service";
+import { ndrListQuery, ndrVisibleSyncBody } from "@/modules/ndr-rto/schema";
+import { getNdrSummary, listNdrShipments, syncNdrShipment, syncNdrVisibleShipments } from "@/modules/ndr-rto/service";
 import {
   queueExcelBuffer,
   queueValidatedOrders,
@@ -50,6 +62,7 @@ import {
   validateExcelBuffer,
   validateOrdersForBooking,
 } from "@/modules/india-post/bulk-booking";
+import { handleBulkExcelRoutes } from "@/modules/india-post/bulk-excel-routes";
 import { logError } from "@/lib/logger";
 import { backfillMissingShopifyLineItemImages } from "@/modules/shopify/orders";
 
@@ -161,6 +174,11 @@ export async function handleCommerceRoutes(
     return confirmWhatsAppCollectionOrder(supabase, ctx, slugs[1], body);
   }
 
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "shopify-payment") {
+    const body = confirmShopifyPaymentSchema.parse(await request.json());
+    return confirmShopifyPayment(supabase, ctx, slugs[1], body.paymentType);
+  }
+
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "service") {
     const body = await request.json();
     return setOrderBookingService(supabase, ctx, slugs[1], String(body.service ?? ""));
@@ -218,17 +236,25 @@ export async function handleCommerceRoutes(
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "WhatsApp orders must be created from the storefront.");
     }
     const order = await createManualOrder(supabase, ctx, body);
-    if (body.createShipment) {
-      try {
-        await createShipmentsForOrders(supabase, ctx, [order.id], body.shipment);
-      } catch (error) {
-        logError("orders.create_shipment_failed", {
-          orderId: order.id,
-          message: error instanceof Error ? error.message : "unknown",
-        });
-      }
+    if (!body.createShipment) return order;
+    try {
+      await createShipmentsForOrders(supabase, ctx, [order.id], body.shipment);
+    } catch (error) {
+      logError("orders.create_shipment_failed", {
+        orderId: order.id,
+        message: error instanceof Error ? error.message : "unknown",
+      });
     }
-    return order;
+    const { data: shipment } = await supabase
+      .from("shipments")
+      .select("id, order_id, status, barcode, booked_at, last_error")
+      .eq("organization_id", ctx.organizationId)
+      .eq("order_id", order.id)
+      .not("status", "eq", "CANCELLED")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return { ...order, shipment: shipment ?? null };
   }
 
   if (key === "POST orders/bulk/status") {
@@ -256,6 +282,11 @@ export async function handleCommerceRoutes(
     return summarizeBulkBookings(supabase, ctx, orderIds);
   }
 
+  if (slugs[0] === "bookings" && (slugs[1] === "excel-imports" || slugs[1] === "excel-template" || slugs[1] === "excel-import-profiles")) {
+    const bulkExcel = await handleBulkExcelRoutes(request, supabase, ctx, method, slugs);
+    if (bulkExcel !== null) return bulkExcel;
+  }
+
   if (key === "POST bookings/excel") {
     const form = await request.formData();
     const file = form.get("file");
@@ -274,6 +305,11 @@ export async function handleCommerceRoutes(
   if (key === "GET ndr-rto") {
     const parsed = ndrListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
     return listNdrShipments(supabase, ctx, parsed);
+  }
+
+  if (method === "POST" && slugs[0] === "ndr-rto" && slugs[1] === "sync-visible") {
+    const body = ndrVisibleSyncBody.parse(await request.json());
+    return syncNdrVisibleShipments(supabase, ctx, body.shipmentIds);
   }
 
   if (method === "POST" && slugs[0] === "ndr-rto" && slugs[1] && slugs[2] === "sync") {
@@ -322,11 +358,27 @@ export async function handleCommerceRoutes(
     return updateShipmentDimensions(supabase, ctx, slugs[1], body);
   }
 
+  if (key === "GET labels/summary") {
+    return getLabelDashboardCounts(supabase, ctx);
+  }
+
   if (key === "GET labels") {
-    const page = Number(request.nextUrl.searchParams.get("page") || 1);
-    const pageSize = Number(request.nextUrl.searchParams.get("pageSize") || 20);
-    const kind = request.nextUrl.searchParams.get("kind");
-    return listGroupedLabels(supabase, ctx, { page, pageSize, kind });
+    const params = request.nextUrl.searchParams;
+    const page = Number(params.get("page") || 1);
+    const pageSize = Number(params.get("pageSize") || 20);
+    const kind = params.get("kind");
+    const q = params.get("q");
+    return listGroupedLabels(supabase, ctx, {
+      page,
+      pageSize,
+      kind,
+      q,
+      sort: params.get("sort"),
+      date: params.get("date"),
+      on: params.get("on"),
+      from: params.get("from"),
+      to: params.get("to"),
+    });
   }
 
   if (method === "GET" && slugs[0] === "labels" && slugs[2] === "download") {
@@ -436,73 +488,43 @@ export async function handleCommerceRoutes(
   }
 
   if (key === "POST labels/bulk-download") {
-    const body = await request.json();
-    const ids: string[] = body.ids ?? [];
-    const { data: selected } = await supabase
-      .from("labels")
-      .select("id, shipment_id")
-      .eq("organization_id", ctx.organizationId)
-      .in("id", ids);
-    const shipmentIds = [
-      ...new Set((selected ?? []).map((row) => String(row.shipment_id || "")).filter(Boolean)),
-    ];
-    const { data } = shipmentIds.length
-      ? await supabase
-          .from("labels")
-          .select("*")
-          .eq("organization_id", ctx.organizationId)
-          .eq("status", "READY")
-          .in("shipment_id", shipmentIds)
-          .in("kind", ["INDIA_POST", "MERCHANT"])
-      : { data: [] as Record<string, unknown>[] };
-    const zip = new JSZip();
-    for (const label of data ?? []) {
-      if (!label.file_path && !label.file_url) continue;
-      try {
-        const bytes = await loadLabelPdfBytes(supabase, ctx.organizationId, {
-          id: String(label.id),
-          file_path: label.file_path || "",
-          file_url: label.file_url,
-          shipment_id: label.shipment_id,
-        });
-        const kind = String(label.kind || "INDIA_POST").toUpperCase();
-        const prefix = kind === "MERCHANT" ? "packing-slip" : "barcode";
-        zip.file(`${prefix}-${label.shipment_id || label.id}.pdf`, bytes);
-      } catch {
-        continue;
-      }
+    const body = await request.json().catch(() => ({}));
+    const ids = parseBulkPrintIds((body as { ids?: unknown }).ids);
+    const prepared = await prepareBulkShippingSlips(supabase, ctx, ids);
+    return labelPdfFileResponse(prepared.merged.pdf, "shipping-slips.pdf", "attachment");
+  }
+
+  if (key === "POST labels/bulk-print") {
+    assertBrowserOrigin(request, true);
+    if (!hasPermission(ctx.role, "labels.write")) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "You do not have permission to print labels.");
     }
-    const bytes = await zip.generateAsync({ type: "uint8array" });
-    return new NextResponse(Buffer.from(bytes), {
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": "attachment; filename=labels.zip",
-      },
+    const body = await request.json().catch(() => ({}));
+    const ids = parseBulkPrintIds((body as { ids?: unknown }).ids);
+    const rawKey = requirePrintIdempotencyKey(request.headers.get("idempotency-key"));
+    const fingerprint = printRequestFingerprint({
+      action: "bulk-slip-print",
+      ids: [...ids].sort(),
     });
-  }
-
-  if (key === "GET manifests") {
-    const page = Number(request.nextUrl.searchParams.get("page") || 1);
-    const pageSize = 20;
-    const from = (page - 1) * pageSize;
-    const { data, count } = await supabase
-      .from("manifests")
-      .select("*", { count: "exact" })
-      .eq("organization_id", ctx.organizationId)
-      .order("created_at", { ascending: false })
-      .range(from, from + pageSize - 1);
-    return { items: data ?? [], page, pageSize, total: count ?? 0 };
-  }
-
-  if (key === "POST manifests") {
-    const job = await createBackgroundJob(supabase, {
-      organizationId: ctx.organizationId,
-      jobType: "manifest-generation",
-      entityType: "organization",
-      entityId: ctx.organizationId,
-      userId: ctx.userId,
-    });
-    return { queued: true, jobId: job.id };
+    const claimed = await claimManualPrintKey(supabase, ctx.organizationId, rawKey, fingerprint);
+    if (claimed.cached) return claimed.cached;
+    try {
+      const printed = await printBulkShippingSlips(supabase, ctx, ids, { idempotencyKey: claimed.key });
+      const result = {
+        labelId: printed.labelId,
+        pageCount: printed.pageCount,
+        slipCount: printed.slipCount,
+        job: printed.job,
+        connected: printed.connected,
+        downloadPath: printed.downloadPath,
+        message: printed.message,
+      };
+      await storeManualPrintKey(supabase, ctx.organizationId, claimed.key, result);
+      return result;
+    } catch (error) {
+      await releaseManualPrintKey(supabase, ctx.organizationId, claimed.key);
+      throw error;
+    }
   }
 
   if (key === "GET tracking") {

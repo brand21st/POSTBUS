@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,16 +9,27 @@ import { ArrowLeft, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
+import { TariffEstimateCard } from "@/components/orders/tariff-estimate-card";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
 import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
-import { StatusBadge } from "@/components/dashboard/status-badge";
+import { orderStatusBadgeValue, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { addressLine, customerName, lineItemImageUrl, lineItems, orderNumber } from "@/lib/dashboard/records";
+import {
+  addressLine,
+  canFulfillOrder,
+  customerName,
+  customerPhone,
+  lineItemImageUrl,
+  lineItems,
+  orderNumber,
+  shopifyPendingBookingBlocked,
+} from "@/lib/dashboard/records";
 import { formatCurrency, formatDate, formatWeightGrams } from "@/lib/format";
+import { savedOrderCodBreakdown } from "@/modules/orders/extra-cod";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { EditShippingAddressDialog } from "@/components/orders/edit-shipping-address-dialog";
@@ -30,6 +41,51 @@ import type { LineItem, OrderRecord, ShipmentRecord } from "@/types/api";
 
 const WEIGHT_EDIT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
+function positiveNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+/** Fields that should recalculate the tariff. Estimate timestamps are excluded so a saved quote cannot restart itself. */
+function tariffOrderRevision(record: OrderRecord) {
+  const shipments = (record as OrderRecord & { shipments?: Array<Record<string, unknown>> }).shipments ?? [];
+  return JSON.stringify({
+    pincode: record.shippingAddress?.pincode ?? null,
+    service: record.indiaPostService ?? record.india_post_service ?? null,
+    payment: record.paymentStatus ?? record.payment_status ?? null,
+    cod: record.codAmount ?? record.cod_amount ?? null,
+    parcelMode: record.parcelWeightMode ?? record.parcel_weight_mode ?? null,
+    parcelGrams: record.parcelWeightGrams ?? record.parcel_weight_grams ?? null,
+    lines: lineItems(record).map((item, index) => [
+      item.id ?? index,
+      item.quantity,
+      item.weightGrams ?? item.weight_grams ?? null,
+      Boolean(item.weight_edited),
+    ]),
+    parcels: shipments.map((row) => [
+      row.id ?? null,
+      row.weight_grams ?? null,
+      row.length_cm ?? null,
+      row.width_cm ?? null,
+      row.height_cm ?? null,
+      row.service_code ?? null,
+    ]),
+  });
+}
+
+function savedWeightKey(record: OrderRecord | undefined) {
+  if (!record) return "";
+  return JSON.stringify({
+    mode: record.parcelWeightMode ?? record.parcel_weight_mode ?? null,
+    grams: record.parcelWeightGrams ?? record.parcel_weight_grams ?? null,
+    lines: lineItems(record).map((item, index) => [
+      item.id ?? index,
+      item.weightGrams ?? item.weight_grams ?? null,
+      Boolean(item.weight_edited),
+    ]),
+  });
+}
+
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const queryClient = useQueryClient();
@@ -40,6 +96,7 @@ export default function OrderDetailPage() {
   const [draftWeights, setDraftWeights] = useState<Record<string, string>>({});
   const [manualBox, setManualBox] = useState("");
   const [addressOpen, setAddressOpen] = useState(false);
+  const orderRecord = useRef<OrderRecord | undefined>(undefined);
 
   const order = useQuery({
     queryKey: ["order", params.id],
@@ -64,6 +121,20 @@ export default function OrderDetailPage() {
     },
   });
 
+  const confirmShopify = useMutation({
+    mutationFn: (paymentType: "PREPAID" | "COD") =>
+      api(`/api/v1/orders/${params.id}/shopify-payment`, {
+        method: "POST",
+        body: JSON.stringify({ paymentType }),
+      }),
+    onSuccess: () => {
+      toast.success("Shopify payment confirmed.");
+      queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const ship = useMutation({
     mutationFn: () =>
       api("/api/v1/shipments", {
@@ -79,9 +150,12 @@ export default function OrderDetailPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  orderRecord.current = order.data;
+  const weightKey = savedWeightKey(order.data);
+
   useEffect(() => {
-    const record = order.data;
-    if (!record) return;
+    const record = orderRecord.current;
+    if (!record || !weightKey) return;
     const timer = window.setTimeout(() => {
       const next: Record<string, string> = {};
       const modes: Record<string, "auto" | "manual"> = {};
@@ -99,7 +173,7 @@ export default function OrderDetailPage() {
       setManualBox(Number.isFinite(box) && box > 0 ? String(Math.round(box)) : "");
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [order.data]);
+  }, [weightKey]);
 
   const saveWeights = useMutation({
     mutationFn: (body: {
@@ -152,6 +226,9 @@ export default function OrderDetailPage() {
   }
 
   const record = order.data;
+  const codBreakdown = savedOrderCodBreakdown(record);
+  const showExtraCod = codBreakdown.extraCodCharge > 0;
+  const shopifyNeedsPayment = shopifyPendingBookingBlocked(record);
   const items = lineItems(record);
   const related = shipments.data?.items ?? [];
   const weightsLocked = related.some(
@@ -184,7 +261,12 @@ export default function OrderDetailPage() {
             </Link>
           }
           actions={
-            <Button type="button" size="sm" onClick={() => ship.mutate()} disabled={ship.isPending}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => ship.mutate()}
+              disabled={ship.isPending || !canFulfillOrder(record) || shopifyNeedsPayment}
+            >
               <Truck className="size-4" />
               Ship order
             </Button>
@@ -198,8 +280,41 @@ export default function OrderDetailPage() {
             <CardTitle>Status</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 p-4 pt-0 text-sm">
-            <Row label="Order" value={<StatusBadge value={record.status} />} />
-            <Row label="Payment" value={<StatusBadge value={record.paymentStatus ?? record.payment_status} />} />
+            <Row label="Order" value={<StatusBadge value={orderStatusBadgeValue(record.status)} />} />
+            <Row
+              label="Payment"
+              value={
+                <div className="flex flex-col items-end gap-2">
+                  <StatusBadge value={record.paymentStatus ?? record.payment_status} />
+                  {shopifyNeedsPayment ? (
+                    <div className="flex flex-wrap justify-end gap-1">
+                      <p className="w-full text-right text-xs text-muted">
+                        Confirm India Post collection: Prepaid means no COD
+                        collect on delivery (not proof Shopify captured funds).
+                        COD means India Post collects the order total.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={confirmShopify.isPending}
+                        onClick={() => confirmShopify.mutate("PREPAID")}
+                      >
+                        Confirm prepaid
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={confirmShopify.isPending}
+                        onClick={() => confirmShopify.mutate("COD")}
+                      >
+                        Confirm COD
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              }
+            />
             <Row
               label="Fulfillment"
               value={<StatusBadge value={record.fulfillmentStatus ?? record.fulfillment_status} />}
@@ -218,24 +333,22 @@ export default function OrderDetailPage() {
               }
             />
             <Row
-              label="Total"
-              value={formatCurrency(record.totalAmount ?? record.total_amount, record.currency)}
+              label={showExtraCod ? "Product / base amount" : "Total"}
+              value={formatCurrency(codBreakdown.baseOrderAmount, record.currency)}
             />
             <Row
               label="Amount received"
               value={formatCurrency(record.amountPaid ?? record.amount_paid, record.currency)}
             />
+            {showExtraCod ? (
+              <Row
+                label="Extra COD charge"
+                value={formatCurrency(codBreakdown.extraCodCharge, record.currency)}
+              />
+            ) : null}
             <Row
-              label="Remaining / COD"
-              value={formatCurrency(
-                Number(record.codAmount ?? record.cod_amount) ||
-                  Math.max(
-                    0,
-                    Number(record.totalAmount ?? record.total_amount ?? 0) -
-                      Number(record.amountPaid ?? record.amount_paid ?? 0)
-                  ),
-                record.currency
-              )}
+              label={showExtraCod ? "Final COD amount" : "Remaining / COD"}
+              value={formatCurrency(codBreakdown.finalCodAmount, record.currency)}
             />
           </CardContent>
         </Card>
@@ -246,7 +359,7 @@ export default function OrderDetailPage() {
           </CardHeader>
           <CardContent className="space-y-1.5 p-4 pt-0 text-sm">
             <p className="font-medium text-ink">{customerName(record)}</p>
-            <p className="text-muted">{record.customer?.phone ?? "—"}</p>
+            <p className="text-muted">{customerPhone(record) || "—"}</p>
             <p className="text-muted">{record.customer?.email ?? "—"}</p>
           </CardContent>
         </Card>
@@ -281,6 +394,7 @@ export default function OrderDetailPage() {
         address={record.shippingAddress}
         onSaved={() => {
           queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+          queryClient.invalidateQueries({ queryKey: ["orders"] });
         }}
       />
 
@@ -479,6 +593,7 @@ export default function OrderDetailPage() {
               ) : null}
             </div>
           )}
+          <TariffEstimateCard orderId={params.id} revision={tariffOrderRevision(record)} draftRevision={JSON.stringify([draftWeights, manualBox, weightMode, itemModes])} draft={{ weightGrams: weightMode === "manual" ? positiveNumber(manualBox) : items.length && items.every((item, index) => draftItemGrams(item, index) > 0) ? positiveNumber(autoBoxWeight) : undefined }} />
         </CardContent>
       </Card>
 

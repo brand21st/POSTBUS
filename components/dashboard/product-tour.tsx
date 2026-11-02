@@ -3,12 +3,14 @@
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { destroyDashboardTour, startDashboardTour } from "@/lib/dashboard/product-tour";
+import { useIndiaPostOnboarding } from "@/lib/hooks/use-india-post-onboarding";
 
 export function ProductTour({ userId }: { userId?: string | null }) {
   const pathname = usePathname();
+  const { showModal } = useIndiaPostOnboarding();
 
   useEffect(() => {
-    if (pathname !== "/dashboard" || !userId) {
+    if (showModal || pathname !== "/dashboard" || !userId) {
       destroyDashboardTour();
       return;
     }
@@ -22,7 +24,7 @@ export function ProductTour({ userId }: { userId?: string | null }) {
       window.clearTimeout(timer);
       destroyDashboardTour();
     };
-  }, [pathname, userId]);
+  }, [pathname, showModal, userId]);
 
   return null;
 }

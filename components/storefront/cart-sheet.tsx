@@ -1,10 +1,11 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, Minus, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import { StoreImage } from "@/components/storefront/store-image";
 import type { CartLine, StoreProduct } from "@/components/storefront/store-types";
 import { formatStorePrice } from "@/modules/storefront/pricing";
+import { formatOrderWindow, orderWindowRemaining } from "@/modules/storefront/trending";
 
 export function CartSheet({
   cart,
@@ -12,6 +13,7 @@ export function CartSheet({
   checkout,
   checkoutStep = "details",
   recommendations,
+  suggestions = [],
   checkoutForm,
   onClose,
   onCheckout,
@@ -19,12 +21,14 @@ export function CartSheet({
   onAdd,
   onDecrease,
   onRemove,
+  onUngroup,
 }: {
   cart: CartLine[];
   accent: string;
   checkout: boolean;
   checkoutStep?: "details" | "summary";
   recommendations: StoreProduct[];
+  suggestions?: StoreProduct[];
   checkoutForm: ReactNode;
   onClose: () => void;
   onCheckout: () => void;
@@ -32,7 +36,15 @@ export function CartSheet({
   onAdd: (product: StoreProduct) => void;
   onDecrease: (productId: string) => void;
   onRemove: (productId: string) => void;
+  onUngroup?: (productId: string) => void;
 }) {
+  const [windowLeft, setWindowLeft] = useState<number | null>(null);
+  useEffect(() => {
+    const tick = () => setWindowLeft(orderWindowRemaining());
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const subtotal = cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0);
   const compareTotal = cart.reduce(
     (sum, line) => sum + (line.product.compareAtPrice ?? line.product.price) * line.quantity,
@@ -99,10 +111,23 @@ export function CartSheet({
                 <ShoppingBag className="size-7" />
               </span>
               <p className="mt-4 font-bold">Your cart is empty</p>
-              <p className="mt-1 max-w-56 text-sm text-zinc-500">Add products you love and they’ll appear here.</p>
-              <button type="button" className="mt-5 h-11 rounded-2xl px-6 text-sm font-bold text-white" style={{ backgroundColor: accent }} onClick={onClose}>
-                Continue shopping
-              </button>
+              <p className="mt-1 max-w-56 text-sm text-zinc-500">Add a trending product to start your order.</p>
+              {suggestions.length ? (
+                <div className="mt-5 w-full space-y-2 text-left">
+                  {suggestions.slice(0, 3).map((product) => (
+                    <div key={product.id} className="flex items-center gap-3 rounded-2xl bg-zinc-50 p-2">
+                      <div className="relative size-12 shrink-0 overflow-hidden rounded-xl bg-zinc-100"><StoreImage src={product.imageUrls[0]} alt="" sizes="48px" /></div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">{product.name}</p>
+                        <p className="text-xs font-bold">{formatStorePrice(product.price)}</p>
+                      </div>
+                      <button type="button" className="h-10 rounded-xl px-3 text-xs font-bold text-white" style={{ backgroundColor: accent }} onClick={() => onAdd(product)}>Add</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <button type="button" className="mt-5 h-11 rounded-2xl px-6 text-sm font-bold text-white" style={{ backgroundColor: accent }} onClick={onClose}>Continue shopping</button>
+              )}
             </div>
           ) : (
             <>
@@ -116,7 +141,9 @@ export function CartSheet({
                       <div className="flex items-start gap-2">
                         <div className="min-w-0 flex-1">
                           <h3 className="line-clamp-2 text-sm font-semibold">{line.product.name}</h3>
+                          {line.bundle ? <div className="my-1 text-xs text-zinc-500"><p>{line.bundle.components.map((item) => `${item.quantity} x ${item.product.name}`).join(" + ")}</p><button className="mt-1 underline" onClick={() => onUngroup?.(line.product.id)}>Edit items (removes bundle discount)</button></div> : null}
                           <p className="mt-1 text-sm font-bold">{formatStorePrice(line.product.price)}</p>
+                          {line.product.onHand > 0 && line.product.onHand <= (line.product.lowStockThreshold ?? 5) ? <p className="text-xs font-medium text-amber-700">Only {line.product.onHand} left</p> : null}
                         </div>
                         {!checkout ? (
                           <button type="button" className="flex size-9 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-red-600" onClick={() => onRemove(line.product.id)} aria-label={`Remove ${line.product.name}`}>
@@ -147,7 +174,8 @@ export function CartSheet({
 
               {!checkout && recommendations.length ? (
                 <section className="mt-6">
-                  <h3 className="font-bold">You may also like</h3>
+                  <h3 className="font-bold">Customers also add</h3>
+                  <p className="mt-0.5 text-xs text-zinc-500">Cross-sells at their current price.</p>
                   <div className="mt-3 space-y-2">
                     {recommendations.slice(0, 3).map((product) => (
                       <div key={product.id} className="flex items-center gap-3 rounded-2xl bg-zinc-50 p-2">
@@ -208,6 +236,7 @@ export function CartSheet({
 
         {cart.length ? (
           <footer className="shrink-0 border-t border-zinc-100 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            {windowLeft ? <p className="mb-2 text-center text-xs font-semibold text-zinc-700">Today&apos;s order window closes in {formatOrderWindow(windowLeft)}</p> : <p className="mb-2 text-center text-xs text-zinc-500">Orders after 6:00 pm IST are queued for the next day.</p>}
             <button
               type="button"
               className="h-12 w-full rounded-2xl text-sm font-bold text-white shadow-sm transition active:scale-[0.99]"

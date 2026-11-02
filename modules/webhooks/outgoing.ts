@@ -1,6 +1,6 @@
-import { createHmac } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createBackgroundJob } from "@/modules/jobs/service";
+import { signWebhook as signWebhookBody } from "@/modules/webhooks/sign";
 
 export async function emitWebhook(
   supabase: SupabaseClient,
@@ -33,6 +33,6 @@ export async function emitWebhook(
   }
 }
 
-export function signWebhook(secret: string, timestamp: string, body: string) {
-  return createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+export function signWebhook(secret: string, timestamp: string, eventId: string, body: string) {
+  return signWebhookBody(secret, timestamp, eventId, body);
 }

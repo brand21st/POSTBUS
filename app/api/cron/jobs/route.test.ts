@@ -21,6 +21,17 @@ vi.mock("@/lib/logger", () => ({
   logInfo: vi.fn(),
 }));
 
+vi.mock("@/lib/supabase/admin", () => ({
+  hasAdminClient: () => false,
+  createAdminClient: () => {
+    throw new Error("admin unused");
+  },
+}));
+
+vi.mock("@/modules/india-post/tracking-sync", () => ({
+  enqueueDueTrackingSyncJobs: vi.fn(async () => ({ enqueued: 0, considered: 0 })),
+}));
+
 import { POST } from "@/app/api/cron/jobs/route";
 
 describe("POST /api/cron/jobs types", () => {

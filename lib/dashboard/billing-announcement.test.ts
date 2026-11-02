@@ -8,6 +8,7 @@ import {
   BILLING_START_IST_DATE,
   billingAnnouncementPhase,
   formatAnnouncementPlans,
+  hideBillingAnnouncementForPaidPlan,
   istCalendarDate,
 } from "@/lib/dashboard/billing-announcement";
 
@@ -51,6 +52,16 @@ describe("billing announcement copy", () => {
 
   it("does not hardcode rupee amounts in the helper", () => {
     expect(helperSource).not.toMatch(/499|1499|3500|5500/);
+  });
+});
+
+describe("hideBillingAnnouncementForPaidPlan", () => {
+  it("hides the banner for paid coverage and keeps it for trial or ended access", () => {
+    expect(hideBillingAnnouncementForPaidPlan("ACTIVE")).toBe(true);
+    expect(hideBillingAnnouncementForPaidPlan("PAST_DUE")).toBe(true);
+    expect(hideBillingAnnouncementForPaidPlan("TRIAL")).toBe(false);
+    expect(hideBillingAnnouncementForPaidPlan("PERIOD_ENDED")).toBe(false);
+    expect(hideBillingAnnouncementForPaidPlan("NONE")).toBe(false);
   });
 });
 

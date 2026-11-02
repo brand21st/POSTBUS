@@ -1,12 +1,15 @@
+import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
-import { whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { commercePendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapExcelRowToArticle, mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import type { DraftArticle, DraftPickup, ValidationIssue } from "@/modules/india-post/article-types";
 import { isValidIndiaPostBarcode, validateIndiaPostArticle } from "@/modules/india-post/article-validator";
-import { chunkIds, indiaPostBookingBatchSize } from "@/modules/india-post/booking-batch";
+import { effectiveIndiaPostBookingBatchSize } from "@/modules/india-post/bulk-config";
+import { candidatesFromQueuedShipments, enqueueIndiaPostBulkPlan, planIndiaPostBulkWork } from "@/modules/india-post/bulk-engine";
 import { parseIndiaPostBookingWorkbook } from "@/modules/india-post/excel-ingest";
 import { indiaPostMobile } from "@/modules/india-post/endpoints";
 import { resolveIndiaPostOrigin } from "@/modules/india-post/origin";
@@ -18,9 +21,11 @@ import { createManualOrder } from "@/modules/orders/service";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
 import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/modules/india-post/parcel-defaults";
+import { isStrictParcelDimensionsOrg } from "@/modules/shopify/strict-parcel-dimensions";
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import { duplicateBarcodeBookingBlock, metadataWithFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
 import { indiaPostRequiresOtp } from "@/modules/india-post/spec";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
 
@@ -205,12 +210,16 @@ export async function validateOrdersForBooking(
   for (const order of orders ?? []) {
     const address = order.shipping_address as {
       name?: string;
+      company_name?: string | null;
       line1?: string;
       line2?: string;
+      line3?: string;
       city?: string;
       state?: string;
       pincode?: string;
       phone?: string;
+      address_validation_status?: string | null;
+      address_validation_errors?: unknown;
     } | null;
     if (
       whatsappShipmentBlocked({
@@ -226,6 +235,29 @@ export async function validateOrdersForBooking(
         field: "order",
         value: order.order_number,
         error: "WhatsApp orders cannot be booked until they are READY.",
+        status: "Failed",
+        category: "BOOKING",
+      };
+      issues.push(issue);
+      rows.push({
+        orderId: order.id,
+        orderNumber: order.order_number,
+        shipmentId: "",
+        barcode: "",
+        valid: false,
+        issues: [issue],
+        status: String((order as { status?: string }).status ?? ""),
+      });
+      continue;
+    }
+    if (commercePendingBookingBlocked(order)) {
+      const issue: ValidationIssue = {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        barcode: "",
+        field: "payment_status",
+        value: String((order as { payment_status?: string }).payment_status ?? ""),
+        error: "Shopify payment is pending. Confirm Prepaid or COD before India Post booking.",
         status: "Failed",
         category: "BOOKING",
       };
@@ -263,6 +295,30 @@ export async function validateOrdersForBooking(
         valid: false,
         issues: [issue],
         status: existingStatus,
+      });
+      continue;
+    }
+    const addressBlock = shippingAddressBookingBlock(address);
+    if (addressBlock) {
+      const issue: ValidationIssue = {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        barcode: "",
+        field: "shipping_address",
+        value: String(address?.address_validation_status ?? ""),
+        error: addressBlock,
+        status: "Failed",
+        category: "BOOKING",
+      };
+      issues.push(issue);
+      rows.push({
+        orderId: order.id,
+        orderNumber: order.order_number,
+        shipmentId: "",
+        barcode: "",
+        valid: false,
+        issues: [issue],
+        status: String((order as { status?: string }).status ?? ""),
       });
       continue;
     }
@@ -311,9 +367,10 @@ export async function validateOrdersForBooking(
       senderPin: origin.pincode,
       senderMobile: indiaPostMobile(sender.phone) || "",
       receiverName: address?.name ?? "",
-      receiverCompany: address?.name ?? "",
+      receiverCompany: address?.company_name || address?.name || "",
       receiverLine1: address?.line1 ?? "",
       receiverLine2: address?.line2 ?? "",
+      receiverLine3: address?.line3 ?? "",
       receiverCity: address?.city ?? "",
       receiverState: address?.state ?? "",
       receiverPin: address?.pincode ?? "",
@@ -323,7 +380,8 @@ export async function validateOrdersForBooking(
       strictWeight: true,
       strictDimensions: true,
     }),
-      parcelDefaultsFromConnection(store.connection)
+      parcelDefaultsFromConnection(store.connection),
+      { syntheticDimensions: !isStrictParcelDimensionsOrg(ctx.organizationId) }
     );
     const rowIssues = validateIndiaPostArticle(draft);
     if (draft.barcode) {
@@ -374,46 +432,55 @@ export async function queueValidatedOrders(
   if (!validIds.length) {
     return { ...validation, queued: 0 };
   }
-  if (indiaPostBookingBatchSize() === 1) {
+  if (effectiveIndiaPostBookingBatchSize() === 1) {
     const created = await createShipmentsForOrders(supabase, ctx, validIds, { enqueueBooking: true });
     return { ...validation, queued: created.queued };
   }
   const created = await createShipmentsForOrders(supabase, ctx, validIds, { enqueueBooking: false });
   const shipmentIds = created.shipments.map((row: { id: string }) => row.id);
-  const batches = chunkIds(shipmentIds, indiaPostBookingBatchSize());
-  const bookingJobs = [];
-  for (const batch of batches) {
-    if (batch.length === 1) {
-      bookingJobs.push(
-        await createBackgroundJob(supabase, {
-          organizationId: ctx.organizationId,
-          jobType: "shipment-booking",
-          entityType: "shipment",
-          entityId: batch[0],
-          userId: ctx.userId,
-        })
-      );
-    } else {
-      bookingJobs.push(
-        await createBackgroundJob(supabase, {
-          organizationId: ctx.organizationId,
-          jobType: "shipment-booking",
-          entityType: "shipment",
-          entityId: batch[0],
-          shipmentIds: batch,
-          userId: ctx.userId,
-        })
-      );
-    }
-    await supabase
-      .from("shipments")
-      .update({ status: "QUEUED", last_error: null, last_error_code: null })
-      .eq("organization_id", ctx.organizationId)
-      .in("id", batch);
-  }
+  const bookingJobs = await enqueueQueuedShipmentsAsBulkOrSingle(supabase, ctx, shipmentIds);
   const { claimedJobFromRow, startQueuedBookingJobs } = await import("@/lib/jobs/drain");
   await startQueuedBookingJobs(bookingJobs.map(claimedJobFromRow));
   return { ...validation, queued: shipmentIds.length };
+}
+
+async function enqueueQueuedShipmentsAsBulkOrSingle(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentIds: string[]
+) {
+  if (!shipmentIds.length) return [];
+  const store = await loadStoreContext(supabase, ctx.organizationId);
+  const { data: memberRows } = await supabase
+    .from("shipments")
+    .select("id, organization_id, barcode, service_code, status, created_at, length_cm, width_cm, height_cm, weight_grams")
+    .eq("organization_id", ctx.organizationId)
+    .in("id", shipmentIds);
+  const { data: contracts } = await supabase
+    .from("india_post_contracts")
+    .select("service_code, contract_id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("is_active", true);
+  const contractByService = Object.fromEntries(
+    (contracts ?? []).map((row) => [String(row.service_code), String(row.contract_id)])
+  );
+  const { data: activeMembers } = await supabase
+    .from("india_post_bulk_batch_articles")
+    .select("shipment_id")
+    .in("shipment_id", shipmentIds)
+    .in("article_result", ["PENDING", "SUBMITTED", "SUCCEEDED", "RECOVERY_REQUIRED"]);
+  const plan = memberRows?.length
+    ? planIndiaPostBulkWork(
+        candidatesFromQueuedShipments(memberRows, store.connection ?? {}, contractByService),
+        { activeShipmentIds: new Set((activeMembers ?? []).map((row) => String(row.shipment_id))) }
+      )
+    : { batches: [], leftoverShipmentIds: shipmentIds };
+  await supabase
+    .from("shipments")
+    .update({ status: "QUEUED", last_error: null, last_error_code: null })
+    .eq("organization_id", ctx.organizationId)
+    .in("id", shipmentIds);
+  return enqueueIndiaPostBulkPlan(supabase, ctx, plan);
 }
 
 function pickupFromExcel(row?: Record<string, string> | null): DraftPickup | null {
@@ -526,7 +593,8 @@ export async function validateExcelBuffer(
         };
       })(),
     }),
-      parcelDefaultsFromConnection(store.connection)
+      parcelDefaultsFromConnection(store.connection),
+      { syntheticDimensions: !isStrictParcelDimensionsOrg(ctx.organizationId) }
     );
     if (indiaPostRequiresOtp(serviceCode)) {
       if (article.otp && ["0", "FALSE", "false", ""].includes(article.otp)) {
@@ -659,9 +727,24 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
         environment: store.connection?.environment,
       });
     }
+    const { data: existingBarcode, error: existingBarcodeError } = await supabase
+      .from("shipments")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("barcode", barcode)
+      .limit(1)
+      .maybeSingle();
+    if (existingBarcodeError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, existingBarcodeError.message);
+    const duplicateBarcode = duplicateBarcodeBookingBlock(existingBarcode);
+    if (duplicateBarcode) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, duplicateBarcode);
+    }
+    const shipmentId = randomUUID();
+    const issuedAt = new Date().toISOString();
     const { data: shipment, error } = await supabase
       .from("shipments")
       .insert({
+        id: shipmentId,
         organization_id: ctx.organizationId,
         order_id: order.id,
         customer_id: order.customer_id,
@@ -674,6 +757,13 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
         width_cm: Number(article.breadth_diameter) || null,
         height_cm: Number(article.height) || null,
         barcode,
+        created_at: issuedAt,
+        metadata: metadataWithFirstBarcodeProof(null, {
+          shipmentId,
+          organizationId: ctx.organizationId,
+          barcode,
+          issuedAt,
+        }),
         status: "QUEUED",
       })
       .select("id")
@@ -684,21 +774,32 @@ export async function queueExcelBuffer(supabase: SupabaseClient, ctx: TenantCont
     createdIds.push(shipment.id);
   }
 
-  const batches = chunkIds(createdIds, indiaPostBookingBatchSize());
-  const bookingJobs = [];
-  for (const batch of batches) {
-    bookingJobs.push(
-      await createBackgroundJob(supabase, {
-        organizationId: ctx.organizationId,
-        jobType: "shipment-booking",
-        entityType: "shipment",
-        entityId: batch[0],
-        shipmentIds: batch.length > 1 ? batch : undefined,
-        userId: ctx.userId,
-      })
-    );
-  }
+  await startBookingForShipmentIds(supabase, ctx, createdIds);
+  return { ...validation, queued: createdIds.length };
+}
+
+/** Queues the existing shipment-booking jobs. Does not call India Post itself. */
+export async function startBookingForShipmentIds(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentIds: string[]
+) {
+  if (!shipmentIds.length) return [];
+  const bookingJobs =
+    effectiveIndiaPostBookingBatchSize() === 1
+      ? await Promise.all(
+          shipmentIds.map((entityId) =>
+            createBackgroundJob(supabase, {
+              organizationId: ctx.organizationId,
+              jobType: "shipment-booking",
+              entityType: "shipment",
+              entityId,
+              userId: ctx.userId,
+            })
+          )
+        )
+      : await enqueueQueuedShipmentsAsBulkOrSingle(supabase, ctx, shipmentIds);
   const { claimedJobFromRow, startQueuedBookingJobs } = await import("@/lib/jobs/drain");
   await startQueuedBookingJobs(bookingJobs.map(claimedJobFromRow));
-  return { ...validation, queued: createdIds.length };
+  return bookingJobs;
 }

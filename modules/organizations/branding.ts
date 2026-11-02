@@ -84,3 +84,14 @@ export async function uploadOrganizationLogo(
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   return path;
 }
+
+export async function removeOrganizationLogo(
+  supabase: SupabaseClient,
+  organizationId: string,
+  currentPath: string | null | undefined
+) {
+  const storagePath = organizationLogoStoragePath(currentPath);
+  if (!storagePath || !storagePath.startsWith(`${organizationId}/`)) return;
+  const { error } = await supabase.storage.from(BUCKET).remove([storagePath]);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+}

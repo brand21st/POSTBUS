@@ -39,6 +39,7 @@ type VachatEventKey = (typeof VACHAT_LIVE_EVENTS)[number];
 
 type VachatSettings = {
   enabled: boolean;
+  supportEnabled?: boolean;
   connected: boolean;
   status: string;
   apiBaseUrl: string;
@@ -54,6 +55,8 @@ type VachatSettings = {
   lastError: string | null;
     lastTestPhone: string | null;
     eventSettings: Record<VachatEventKey, boolean>;
+    signupWelcomeEnabled?: boolean;
+    abandonedSignupEnabled?: boolean;
     source: string;
     templateSyncError?: string | null;
   identity?: {
@@ -68,6 +71,8 @@ type VachatSettings = {
       in_transit_template_name?: string | null;
       shipment_delayed_template_name?: string | null;
       delivered_template_name?: string | null;
+      signup_welcome_template_name?: string | null;
+      abandoned_signup_template_name?: string | null;
       approved_templates?: Array<{ name: string; language: string }>;
     } | null;
     templatesLoadError?: string | null;
@@ -89,17 +94,32 @@ type OpenRouterSettings = {
   packSize?: number;
   packPaise?: number;
   models?: Array<{ id: string; name: string }>;
+  imageStudioEnabled?: boolean;
+  imageModel?: string;
+  imageCreditCost?: number;
+  coverCreditCost?: number;
+  imageMaxVariations?: number;
+  imageModels?: Array<{ id: string; name: string }>;
 };
 
 type VachatLogRow = {
   id: string;
-  organization_id: string;
+  organization_id: string | null;
   event: string;
   phone: string | null;
   external_ref: string;
   status: string;
   error: string | null;
   created_at: string;
+};
+
+type UnassignedThread = {
+  id: string;
+  phone_digits: string;
+  last_message_preview: string | null;
+  last_message_at: string | null;
+  status: string;
+  resolution_state?: string;
 };
 
 export default function AdminSettingsPage() {
@@ -131,6 +151,13 @@ export default function AdminSettingsPage() {
     queryKey: ["admin", "settings", "vachat", "logs"],
     queryFn: () => api<VachatLogRow[]>("/api/admin/settings/vachat/logs?limit=40"),
   });
+  const unassignedQuery = useQuery({
+    queryKey: ["admin", "settings", "vachat", "unassigned"],
+    queryFn: () =>
+      api<{ items: UnassignedThread[]; count: number; counts?: Record<string, number> }>(
+        "/api/admin/settings/vachat/unassigned"
+      ),
+  });
   const data = query.data;
   const vachat = vachatQuery.data;
   const openrouter = openrouterQuery.data;
@@ -140,17 +167,32 @@ export default function AdminSettingsPage() {
   const [openrouterKey, setOpenrouterKey] = useState("");
   const [openrouterModel, setOpenrouterModel] = useState("");
   const [openrouterEnabled, setOpenrouterEnabled] = useState<boolean | null>(null);
+  const [imageStudioEnabled, setImageStudioEnabled] = useState<boolean | null>(null);
+  const [imageModel, setImageModel] = useState("");
+  const [imageCreditCost, setImageCreditCost] = useState("");
+  const [coverCreditCost, setCoverCreditCost] = useState("");
   const [vachatKey, setVachatKey] = useState("");
   const [vachatUrl, setVachatUrl] = useState("");
   const [vachatEnabled, setVachatEnabled] = useState<boolean | null>(null);
+  const [assignOrderId, setAssignOrderId] = useState("");
   const [vachatTestPhone, setVachatTestPhone] = useState("");
-  const [eventDraft, setEventDraft] = useState<Partial<Record<VachatEventKey, boolean>>>({});
+  const [eventDraft, setEventDraft] = useState<
+    Partial<Record<VachatEventKey | "signup_welcome" | "abandoned_signup", boolean>>
+  >({});
   const [templateDraft, setTemplateDraft] = useState<Partial<Record<string, string>>>({});
   const resolvedKeyId = keyId || data?.keyId || "";
   const resolvedVachatUrl = vachatUrl || vachat?.apiBaseUrl || "https://cloud.vachat.in";
   const resolvedOpenrouterEnabled = openrouterEnabled ?? openrouter?.enabled ?? false;
-  const chatgptModels = openrouterModelsQuery.data?.models ?? openrouter?.models ?? [];
+  const chatgptModels = Array.isArray(openrouterModelsQuery.data?.models)
+    ? openrouterModelsQuery.data.models
+    : Array.isArray(openrouter?.models)
+      ? openrouter.models
+      : [];
   const resolvedOpenrouterModel = openrouterModel || openrouter?.model || "openai/gpt-4o-mini";
+  const resolvedImageStudioEnabled = imageStudioEnabled ?? openrouter?.imageStudioEnabled ?? false;
+  const resolvedImageModel = imageModel || openrouter?.imageModel || "google/gemini-2.5-flash-image";
+  const resolvedImageCreditCost = imageCreditCost || String(openrouter?.imageCreditCost ?? 10);
+  const resolvedCoverCreditCost = coverCreditCost || String(openrouter?.coverCreditCost ?? openrouter?.imageCreditCost ?? 10);
   const resolvedVachatEnabled = vachatEnabled ?? vachat?.enabled ?? false;
   const resolvedTestPhone = vachatTestPhone || vachat?.lastTestPhone || "";
   const templateCol: Record<VachatEventKey, string> = {
@@ -217,6 +259,10 @@ export default function AdminSettingsPage() {
           enabled: resolvedOpenrouterEnabled,
           model: resolvedOpenrouterModel,
           apiKey: openrouterKey || undefined,
+          imageStudioEnabled: resolvedImageStudioEnabled,
+          imageModel: resolvedImageModel,
+          imageCreditCost: Number(resolvedImageCreditCost) || 10,
+          coverCreditCost: Number(resolvedCoverCreditCost) || 10,
         }),
       }),
     onSuccess: () => {
@@ -287,7 +333,27 @@ export default function AdminSettingsPage() {
               null,
             delivered_template_name:
               templateDraft.delivered_template_name ?? vachat?.templates?.delivered_template_name ?? null,
+            signup_welcome_template_name:
+              templateDraft.signup_welcome_template_name ??
+              vachat?.templates?.signup_welcome_template_name ??
+              null,
+            abandoned_signup_template_name:
+              templateDraft.abandoned_signup_template_name ??
+              vachat?.templates?.abandoned_signup_template_name ??
+              null,
           },
+          signupWelcomeEnabled:
+            eventDraft.signup_welcome ??
+            vachat?.signupWelcomeEnabled ??
+            Boolean(
+              templateDraft.signup_welcome_template_name ?? vachat?.templates?.signup_welcome_template_name
+            ),
+          abandonedSignupEnabled:
+            eventDraft.abandoned_signup ??
+            vachat?.abandonedSignupEnabled ??
+            Boolean(
+              templateDraft.abandoned_signup_template_name ?? vachat?.templates?.abandoned_signup_template_name
+            ),
           lastTestPhone: resolvedTestPhone || null,
         }),
       }),
@@ -350,6 +416,37 @@ export default function AdminSettingsPage() {
       toast.success("Global VaChat disabled. Merchant WhatsApp is unchanged.");
       setVachatEnabled(false);
       client.invalidateQueries({ queryKey: ["admin", "settings", "vachat"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const saveSupportEnabled = useMutation({
+    mutationFn: (supportEnabled: boolean) =>
+      api<VachatSettings>("/api/admin/settings/vachat", {
+        method: "PATCH",
+        body: JSON.stringify({ supportEnabled }),
+      }),
+    onSuccess: (result) => {
+      toast.success(
+        result.supportEnabled
+          ? "Support Center can use PostBus WhatsApp."
+          : "Support Center PostBus WhatsApp is off. Shipping notices are unchanged."
+      );
+      client.invalidateQueries({ queryKey: ["admin", "settings", "vachat"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const assignUnassigned = useMutation({
+    mutationFn: (threadId: string) =>
+      api("/api/admin/settings/vachat/unassigned/assign", {
+        method: "POST",
+        body: JSON.stringify({ threadId, orderId: assignOrderId.trim() }),
+      }),
+    onSuccess: () => {
+      toast.success("Thread assigned from the verified order.");
+      setAssignOrderId("");
+      client.invalidateQueries({ queryKey: ["admin", "settings", "vachat", "unassigned"] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -475,6 +572,50 @@ export default function AdminSettingsPage() {
             />
             <p className="text-xs text-muted">OpenAI ChatGPT models via OpenRouter. Save after changing the model.</p>
           </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="image-studio-enabled"
+              type="checkbox"
+              checked={resolvedImageStudioEnabled}
+              onChange={(event) => setImageStudioEnabled(event.target.checked)}
+            />
+            <Label htmlFor="image-studio-enabled">Enable AI Image Studio on Add / Edit product</Label>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="openrouter-image-model">Image model</Label>
+            <Combobox
+              id="openrouter-image-model"
+              placeholder="Select an image model"
+              emptyText="No image models"
+              value={resolvedImageModel}
+              onChange={(value) => setImageModel(value)}
+              options={(openrouter?.imageModels ?? [{ id: resolvedImageModel, name: resolvedImageModel }]).map(
+                (item) => ({ value: item.id, label: `${item.name} · ${item.id}` })
+              )}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="image-credit-cost">Credits per product variation</Label>
+            <Input
+              id="image-credit-cost"
+              type="number"
+              min={1}
+              max={500}
+              value={resolvedImageCreditCost}
+              onChange={(event) => setImageCreditCost(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="cover-credit-cost">Credits per cover variation</Label>
+            <Input
+              id="cover-credit-cost"
+              type="number"
+              min={1}
+              max={500}
+              value={resolvedCoverCreditCost}
+              onChange={(event) => setCoverCreditCost(event.target.value)}
+            />
+          </div>
           <p className="text-xs text-muted">
             Package prices live on{" "}
             <a href="/admin/ai-credits" className="font-medium text-brand underline-offset-2 hover:underline">
@@ -552,6 +693,59 @@ export default function AdminSettingsPage() {
               onChange={(event) => setVachatEnabled(event.target.checked)}
             />
             <Label htmlFor="vachat-enabled">Enable PostBus WhatsApp Notifications for merchants without Vachat</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="vachat-support-enabled"
+              type="checkbox"
+              checked={Boolean(vachat?.supportEnabled)}
+              disabled={saveSupportEnabled.isPending || !vachat?.connected}
+              onChange={(event) => saveSupportEnabled.mutate(event.target.checked)}
+            />
+            <Label htmlFor="vachat-support-enabled">
+              Support Center on PostBus WhatsApp (does not change shipping templates)
+            </Label>
+          </div>
+          <p className="text-xs text-muted">
+            Health: shipping {vachat?.connected ? "connected" : "off"} · support messaging{" "}
+            {vachat?.supportEnabled ? "on" : "off"} · unassigned {unassignedQuery.data?.count ?? 0}
+          </p>
+          <div className="space-y-2 rounded-lg border p-3">
+            <h3 className="text-sm font-medium">Unassigned Support Center chats</h3>
+            <p className="text-xs text-muted">
+              Verified {unassignedQuery.data?.counts?.VERIFIED ?? 0} · Pending{" "}
+              {unassignedQuery.data?.counts?.VERIFICATION_REQUIRED ?? 0} · Ambiguous{" "}
+              {(unassignedQuery.data?.counts?.AMBIGUOUS ?? 0) + (unassignedQuery.data?.counts?.MULTIPLE_MATCHES ?? 0)}{" "}
+              · Not found{" "}
+              {(unassignedQuery.data?.counts?.NOT_FOUND ?? 0) + (unassignedQuery.data?.counts?.ORDER_NOT_FOUND ?? 0)}.
+              Assign only with a verified order id that matches this WhatsApp number.
+            </p>
+            <Input
+              placeholder="Order UUID"
+              value={assignOrderId}
+              onChange={(event) => setAssignOrderId(event.target.value)}
+            />
+            {(Array.isArray(unassignedQuery.data?.items) ? unassignedQuery.data.items : []).map((row) => (
+              <div key={row.id} className="flex items-center justify-between gap-2 text-sm">
+                <div>
+                  <p className="font-medium">+91 {row.phone_digits}</p>
+                  <p className="text-xs text-muted">
+                    {row.resolution_state ?? "VERIFICATION_REQUIRED"} · {row.last_message_preview || "No preview"}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={!assignOrderId.trim() || assignUnassigned.isPending}
+                  onClick={() => assignUnassigned.mutate(row.id)}
+                >
+                  Assign
+                </Button>
+              </div>
+            ))}
+            {!unassignedQuery.data?.items?.length ? (
+              <p className="text-xs text-muted">No unassigned threads.</p>
+            ) : null}
           </div>
           <div className="space-y-2">
             <Label htmlFor="vachat-url">VaChat base URL</Label>
@@ -655,6 +849,96 @@ export default function AdminSettingsPage() {
                 </div>
               );
             })}
+            {(() => {
+              const approved: Array<{ name: string; language: string }> =
+                vachat?.templates?.approved_templates ?? [];
+              const value =
+                templateDraft.signup_welcome_template_name ??
+                vachat?.templates?.signup_welcome_template_name ??
+                "";
+              const options = approved.map((tpl) => ({
+                value: tpl.name,
+                label: `${tpl.name} (${tpl.language})`,
+              }));
+              if (value && !options.some((opt) => opt.value === value)) {
+                options.unshift({ value, label: value });
+              }
+              const checked =
+                eventDraft.signup_welcome ??
+                vachat?.signupWelcomeEnabled ??
+                Boolean(value);
+              return (
+                <div className="space-y-2 rounded-md border px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="vachat-ev-signup_welcome" className="text-sm">
+                      Signup Welcome
+                    </Label>
+                    <input
+                      id="vachat-ev-signup_welcome"
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(change) =>
+                        setEventDraft((prev) => ({ ...prev, signup_welcome: change.target.checked }))
+                      }
+                    />
+                  </div>
+                  <Combobox
+                    id="vachat-tpl-signup_welcome"
+                    options={options}
+                    value={value}
+                    onChange={(next) =>
+                      setTemplateDraft((prev) => ({ ...prev, signup_welcome_template_name: next }))
+                    }
+                    placeholder="Select an approved template"
+                    emptyText={approved.length ? "No matching template" : "No approved templates loaded"}
+                  />
+                </div>
+              );
+            })()}
+            {(() => {
+              const approved: Array<{ name: string; language: string }> =
+                vachat?.templates?.approved_templates ?? [];
+              const value =
+                templateDraft.abandoned_signup_template_name ??
+                vachat?.templates?.abandoned_signup_template_name ??
+                "";
+              const options = approved.map((tpl) => ({
+                value: tpl.name,
+                label: `${tpl.name} (${tpl.language})`,
+              }));
+              if (value && !options.some((opt) => opt.value === value)) {
+                options.unshift({ value, label: value });
+              }
+              const checked =
+                eventDraft.abandoned_signup ?? vachat?.abandonedSignupEnabled ?? Boolean(value);
+              return (
+                <div className="space-y-2 rounded-md border px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="vachat-ev-abandoned_signup" className="text-sm">
+                      Abandoned Signup
+                    </Label>
+                    <input
+                      id="vachat-ev-abandoned_signup"
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(change) =>
+                        setEventDraft((prev) => ({ ...prev, abandoned_signup: change.target.checked }))
+                      }
+                    />
+                  </div>
+                  <Combobox
+                    id="vachat-tpl-abandoned_signup"
+                    options={options}
+                    value={value}
+                    onChange={(next) =>
+                      setTemplateDraft((prev) => ({ ...prev, abandoned_signup_template_name: next }))
+                    }
+                    placeholder="Select an approved template"
+                    emptyText={approved.length ? "No matching template" : "No approved templates loaded"}
+                  />
+                </div>
+              );
+            })()}
           </div>
           <div className="space-y-2">
             <Label htmlFor="vachat-test-phone">TEST WhatsApp number</Label>
@@ -709,10 +993,10 @@ export default function AdminSettingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(vachatLogsQuery.data ?? []).map((row) => (
+                  {(Array.isArray(vachatLogsQuery.data) ? vachatLogsQuery.data : []).map((row) => (
                     <tr key={row.id} className="border-b last:border-0">
                       <td className="p-2 whitespace-nowrap">{new Date(row.created_at).toLocaleString()}</td>
-                      <td className="p-2 font-mono">{row.organization_id.slice(0, 8)}</td>
+                      <td className="p-2 font-mono">{row.organization_id ? row.organization_id.slice(0, 8) : "platform"}</td>
                       <td className="p-2">{row.event}</td>
                       <td className="p-2">
                         <div>{row.status}</div>

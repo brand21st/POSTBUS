@@ -5,10 +5,14 @@ import {
   getLiveSubscription,
   mapPlan,
   type PlanRow,
+  type SubscriptionRow,
 } from "@/modules/billing/subscriptions";
+import { trialIsLive } from "@/modules/billing/trial-policy";
+import { decideBillingAccess, type BillingAccessState } from "@/modules/billing/access";
 
 export const FEATURE = {
   shopify: "Shopify order sync",
+  woocommerce: "WooCommerce order sync",
   shipments: "Shipment workspace",
   labels: "Label and barcode workflows",
   starterBundle: "Everything in Starter",
@@ -29,6 +33,7 @@ export type PlanFeatureName = (typeof PLAN_FEATURE_OPTIONS)[number];
 
 export const STARTER_FEATURES: PlanFeatureName[] = [
   FEATURE.shopify,
+  FEATURE.woocommerce,
   FEATURE.shipments,
   FEATURE.labels,
   FEATURE.indiaPost,
@@ -61,9 +66,11 @@ const NAV_FEATURES: Array<{ href: string; feature: string }> = [
   { href: "/dashboard/labels/customize", feature: FEATURE.packing },
   { href: "/dashboard/labels/templates", feature: FEATURE.packing },
   { href: "/dashboard/labels/multi-print", feature: FEATURE.packing },
+  { href: "/dashboard/orders/bulk-excel", feature: FEATURE.bulk },
   { href: "/dashboard/integrations/wati", feature: FEATURE.wati },
   { href: "/dashboard/integrations/india-post", feature: FEATURE.indiaPost },
   { href: "/dashboard/integrations/shopify", feature: FEATURE.shopify },
+  { href: "/dashboard/integrations/woocommerce", feature: FEATURE.woocommerce },
 ];
 
 function asPlan(value: PlanRow | PlanRow[] | null | undefined): PlanRow | null {
@@ -98,15 +105,30 @@ export function hasPlanFeature(features: string[] | null | undefined, feature: s
   return (features ?? []).includes(feature);
 }
 
+/** Official India Post Label / Download Label PDF is Starter-only (hidden on Pro and Business). */
+export function showsStarterOfficialIndiaPostLabel(input?: { slug?: string | null; trial?: boolean }) {
+  if (input?.trial) return false;
+  return (input?.slug ?? "").toLowerCase() === "starter";
+}
+
 export function automationToggleLock(camel: string, allows: (feature: string) => boolean): string | null {
   if (!allows(FEATURE.automation)) return FEATURE.automation;
   if (camel.startsWith("autoWati") && !allows(FEATURE.wati)) return FEATURE.wati;
   if (camel === "autoManifest" && !allows(FEATURE.manifests)) return FEATURE.manifests;
   if (
-    (camel === "autoShopifySync" || camel === "autoShopifyFulfillment" || camel === "autoShopifyProcessing") &&
+    (camel === "autoShopifySync" ||
+      camel === "autoShopifyFulfillment" ||
+      camel === "autoShopifyProcessing" ||
+      camel === "autoPackageSelection") &&
     !allows(FEATURE.shopify)
   ) {
     return FEATURE.shopify;
+  }
+  if (
+    (camel === "autoWooCommerceSync" || camel === "autoWooCommerceTracking") &&
+    !allows(FEATURE.woocommerce)
+  ) {
+    return FEATURE.woocommerce;
   }
   if (
     (camel === "autoBooking" || camel === "autoTrackingSync" || camel === "autoLabelGeneration") &&
@@ -125,19 +147,27 @@ export function lockedFeatureForPath(pathname: string): string | null {
 }
 
 export function lockedFeatureForApi(method: string, path: string, slugs: string[]): string | null {
+  if (method === "POST" && (path === "india-post/tariff-quotes" || /^orders\/[^/]+\/tariff-quote$/.test(path))) return FEATURE.indiaPost;
   if (path === "dashboard/analytics" || (slugs[0] === "dashboard" && slugs[1] === "analytics")) {
     return FEATURE.analytics;
   }
-  if (slugs[0] === "invoices" || slugs[0] === "invoice-template") return FEATURE.invoices;
+  if (slugs[0] === "invoices" || slugs[0] === "invoice-template" || slugs[0] === "sales-invoices" || slugs[0] === "sales-invoice-settings") return FEATURE.invoices;
   if (slugs[0] === "tracking" || slugs[0] === "tracking-pages") return FEATURE.trackingPage;
   if (slugs[0] === "automation" && method !== "GET") return FEATURE.automation;
   if (slugs[0] === "manifests" && method !== "GET") return FEATURE.manifests;
   if (slugs[0] === "label-template" && method !== "GET") return FEATURE.packing;
-  if (path === "labels/bulk-download" || (slugs[0] === "labels" && slugs[1] === "bulk-download")) return FEATURE.bulk;
+  if (
+    path === "labels/bulk-download" ||
+    path === "labels/bulk-print" ||
+    (slugs[0] === "labels" && (slugs[1] === "bulk-download" || slugs[1] === "bulk-print"))
+  ) {
+    return FEATURE.bulk;
+  }
   if (path === "orders/bulk/status") return FEATURE.bulk;
   if (slugs[0] === "bookings") return FEATURE.bulk;
   if (slugs[0] === "integrations") {
     if (slugs[1] === "shopify" && method !== "GET") return FEATURE.shopify;
+    if (slugs[1] === "woocommerce" && method !== "GET") return FEATURE.woocommerce;
     if (slugs[1] === "wati" && method !== "GET") return FEATURE.wati;
     if (slugs[1] === "india-post" && method !== "GET") return FEATURE.indiaPost;
   }
@@ -145,39 +175,105 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
 }
 
 export type PlanEntitlements = {
+  /** Features usable now. Empty when the trial or paid period has ended. */
   features: string[];
+  /** Plan features whose own history stays readable (GET) after coverage ends. */
+  historyFeatures: string[];
+  /** Server decision: may run paid operations. */
+  entitled: boolean;
+  accessState: BillingAccessState;
   trial: boolean;
   planName: string | null;
   planSlug: string | null;
   status: string | null;
+  trialEnd: string | null;
+  coverageEnded: boolean;
 };
+
+export const SUBSCRIPTION_REQUIRED_MESSAGE =
+  "Your trial or subscription has ended. Upgrade your plan to continue using this feature.";
+
+/**
+ * Features whose existing records stay readable after coverage ends, so merchants
+ * keep their invoices, manifests, and tracking-page settings. Writes still need
+ * an active trial or paid period.
+ */
+export const READ_ONLY_HISTORY_FEATURES = new Set<string>([
+  FEATURE.invoices,
+  FEATURE.manifests,
+  FEATURE.trackingPage,
+  FEATURE.packing,
+]);
+
+async function loadEntitlementSubscription(supabase: SupabaseClient, organizationId: string) {
+  const live = await getLiveSubscription(supabase, organizationId);
+  if (live) return live;
+  const { data } = await supabase
+    .from("subscriptions")
+    .select("*, plans!plan_id(*)")
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as SubscriptionRow | null) ?? null;
+}
+
+export function entitlementsForSubscription(
+  live: SubscriptionRow | null,
+  now = Date.now()
+): PlanEntitlements {
+  const plan = asPlan(live?.plans);
+  const mapped = plan ? mapPlan(plan) : null;
+  const access = decideBillingAccess(live, now);
+  const trial = access.state === "TRIAL";
+  const planFeatures = expandPlanFeatures(mapped?.features ?? [], {
+    trial: live ? trialIsLive(live, now) : false,
+    slug: mapped?.slug,
+  });
+  // An ended trial still has the Business plan_id; history follows what the plan covered.
+  const historySource = live && (live.status ?? "").toUpperCase() === "TRIAL" ? [...BUSINESS_FEATURES] : planFeatures;
+  return {
+    features: access.operational ? planFeatures : [],
+    historyFeatures: historySource.filter((feature) => READ_ONLY_HISTORY_FEATURES.has(feature)),
+    entitled: access.operational,
+    accessState: access.state,
+    trial,
+    planName: mapped?.name ?? null,
+    planSlug: mapped?.slug ?? null,
+    status: live?.status ?? null,
+    trialEnd: live?.trial_end ?? live?.current_period_end ?? null,
+    coverageEnded: access.coverageEnded,
+  };
+}
 
 export async function getOrganizationEntitlements(
   supabase: SupabaseClient,
   organizationId: string
 ): Promise<PlanEntitlements> {
-  const live = await getLiveSubscription(supabase, organizationId);
-  const plan = asPlan(live?.plans);
-  const mapped = plan ? mapPlan(plan) : null;
-  const trial = live?.status === "TRIAL";
-  return {
-    features: expandPlanFeatures(mapped?.features ?? [], {
-      trial,
-      slug: mapped?.slug,
-    }),
-    trial,
-    planName: mapped?.name ?? null,
-    planSlug: mapped?.slug ?? null,
-    status: live?.status ?? null,
-  };
+  const live = await loadEntitlementSubscription(supabase, organizationId);
+  return entitlementsForSubscription(live);
 }
 
+/**
+ * Server-side plan gate. Without an active trial or paid period every paid
+ * feature is refused, except GET reads of the merchant's own history for
+ * READ_ONLY_HISTORY_FEATURES that their plan covered.
+ */
 export async function assertPlanFeature(
   supabase: SupabaseClient,
   organizationId: string,
-  feature: string
+  feature: string,
+  options: { method?: string } = {}
 ) {
   const entitlements = await getOrganizationEntitlements(supabase, organizationId);
-  if (hasPlanFeature(entitlements.features, feature)) return entitlements;
-  throw new AppError(ERROR_CODES.FORBIDDEN, UPGRADE_PLAN_MESSAGE, { feature });
+  if (entitlements.entitled) {
+    if (hasPlanFeature(entitlements.features, feature)) return entitlements;
+    throw new AppError(ERROR_CODES.FORBIDDEN, UPGRADE_PLAN_MESSAGE, { feature });
+  }
+  const method = (options.method ?? "").toUpperCase();
+  if (method === "GET" && hasPlanFeature(entitlements.historyFeatures, feature)) return entitlements;
+  throw new AppError(ERROR_CODES.FORBIDDEN, SUBSCRIPTION_REQUIRED_MESSAGE, {
+    feature,
+    billing: entitlements.accessState,
+  });
 }

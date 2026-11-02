@@ -1,11 +1,16 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseIndiaPostBookingWorkbook } from "@/modules/india-post/excel-ingest";
+import { syntheticIndiaPostBookingWorkbook } from "@/modules/india-post/synthetic-india-post-workbook";
+
+const FIXTURE = join(process.cwd(), "fixtures", "india-post-booking-synthetic.xlsx");
 
 describe("India Post Excel ingest", () => {
   it("maps ArticleDetails by header name and joins pickup by serial", async () => {
-    const bytes = readFileSync(join(process.cwd(), "bulkdomesticone_28042026.xlsx"));
+    const bytes = await syntheticIndiaPostBookingWorkbook();
+    mkdirSync(dirname(FIXTURE), { recursive: true });
+    writeFileSync(FIXTURE, bytes);
     const parsed = await parseIndiaPostBookingWorkbook(bytes);
     expect(parsed.issues.filter((issue) => issue.field === "ArticleDetails")).toHaveLength(0);
     expect(parsed.articles.length).toBeGreaterThan(0);

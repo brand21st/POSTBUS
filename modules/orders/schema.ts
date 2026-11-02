@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
+import { tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
 import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES } from "@/types/domain";
 
 const indiaMobile = z
@@ -50,6 +51,7 @@ export const createOrderSchema = z.object({
   billingAddress: addressInput.optional(),
   paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
   amountPaid: z.coerce.number().min(0).optional(),
+  extraCodCharge: z.unknown().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   lineItems: z
     .array(
@@ -71,6 +73,7 @@ export const createOrderSchema = z.object({
       widthCm: optionalDimensionCm,
       heightCm: optionalDimensionCm,
       serviceCode: z.string().optional(),
+      action: z.literal("processing").optional(),
     })
     .optional(),
 }).superRefine((value, ctx) => {
@@ -83,6 +86,16 @@ export const createOrderSchema = z.object({
       });
     }
   });
+  if (value.paymentStatus === "COD") {
+    const extra = tryParseExtraCodCharge(value.extraCodCharge);
+    if (!extra.ok) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["extraCodCharge"],
+        message: extra.message,
+      });
+    }
+  }
   if (value.paymentStatus !== "PARTIAL") return;
   if (value.lineItems.some((item) => item.productId)) return;
   const total = value.lineItems.reduce((sum, item) => sum + (item.unitPrice ?? 0) * item.quantity, 0);
@@ -126,6 +139,9 @@ export const updateOrderWeightsSchema = z
     }
   });
 
+export const ORDER_LIST_SORTS = ["created_at", "-created_at", "order_number", "-order_number"] as const;
+export type OrderListSort = (typeof ORDER_LIST_SORTS)[number];
+
 export const orderListQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
@@ -135,7 +151,7 @@ export const orderListQuery = z.object({
   paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
   from: z.string().optional(),
   to: z.string().optional(),
-  sort: z.string().optional(),
+  sort: z.enum(ORDER_LIST_SORTS).optional(),
   includeCounts: z.string().optional(),
   todayFrom: z.string().optional(),
   todayTo: z.string().optional(),
@@ -146,4 +162,8 @@ export const orderListQuery = z.object({
 export const bulkOrderStatusSchema = z.object({
   orderIds: z.array(z.string().min(1)).min(1).max(100),
   action: z.literal("fulfill"),
+});
+
+export const confirmShopifyPaymentSchema = z.object({
+  paymentType: z.enum(["PREPAID", "COD"]),
 });

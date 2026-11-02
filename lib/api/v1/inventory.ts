@@ -1,4 +1,7 @@
 import type { NextRequest } from "next/server";
+import { z } from "zod";
+import { bundleInputSchema } from "@/modules/storefront/bundle-pricing";
+import { listStoreBundles, saveStoreBundle } from "@/modules/storefront/bundles";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
@@ -32,6 +35,7 @@ import {
   adjustProductStock,
   bulkUpdateProducts,
   createProduct,
+  deleteProduct,
   duplicateProduct,
   getProduct,
   listInventoryMovements,
@@ -56,9 +60,70 @@ export async function handleInventoryRoutes(
   method: string,
   slugs: string[]
 ) {
+  if (key === "GET inventory/bundles") return listStoreBundles(supabase, ctx.organizationId);
+  if (key === "POST inventory/bundles") return saveStoreBundle(supabase, ctx, null, bundleInputSchema.parse(await request.json()));
+  if (slugs[0] === "inventory" && slugs[1] === "bundles" && slugs[2] && slugs.length === 3) {
+    const id = z.string().uuid().parse(slugs[2]);
+    if (method === "PATCH") return saveStoreBundle(supabase, ctx, id, bundleInputSchema.parse(await request.json()));
+    if (method === "DELETE") {
+      const { error } = await supabase.from("storefront_bundles").delete().eq("organization_id", ctx.organizationId).eq("id", id);
+      if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Could not delete bundle.");
+      return { deleted: true };
+    }
+  }
   if (key === "GET products") {
     const parsed = productListQuery.parse(Object.fromEntries(request.nextUrl.searchParams));
     return listProducts(supabase, ctx, parsed);
+  }
+
+  if (slugs[0] === "products" && slugs[1] === "ai-image") {
+    const studio = await import("@/modules/ai-image/service");
+    if (key === "GET products/ai-image/quote") return studio.quoteImageStudio();
+    if (key === "POST products/ai-image/sessions") {
+      const body = studio.createSessionSchema.parse(await request.json().catch(() => ({})));
+      return studio.createImageStudioSession(supabase, ctx, body.productId);
+    }
+    if (method === "POST" && slugs[2] === "sessions" && slugs[3] && slugs[4] === "source") {
+      const form = await request.formData();
+      const file = form.get("image") ?? form.get("file");
+      if (!(file instanceof File) || file.size === 0) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose a product photo to enhance.");
+      }
+      return studio.uploadStudioSource(supabase, ctx, slugs[3], file);
+    }
+    if (method === "GET" && slugs[2] === "sessions" && slugs[3] && !slugs[4]) {
+      return studio.listStudioSession(supabase, ctx, slugs[3]);
+    }
+    if (key === "POST products/ai-image/enhance-prompt") {
+      const enhance = await import("@/modules/ai-image/enhance-prompt");
+      return enhance.enhanceStudioPrompt(enhance.enhanceStudioPromptSchema.parse(await request.json()), {
+        organizationId: ctx.organizationId,
+        supabase,
+      });
+    }
+    if (key === "POST products/ai-image/jobs") {
+      return studio.enqueueImageStudioJob(supabase, ctx, studio.createJobSchema.parse(await request.json()));
+    }
+    if (key === "POST products/ai-image/cover-jobs") {
+      return studio.enqueueCoverJob(supabase, ctx, studio.createCoverJobSchema.parse(await request.json()));
+    }
+    if (method === "GET" && slugs[2] === "jobs" && slugs[3] && !slugs[4]) {
+      return studio.getImageStudioJob(supabase, ctx, slugs[3]);
+    }
+    if (method === "POST" && slugs[2] === "jobs" && slugs[3] && slugs[4] === "select") {
+      const body = studio.selectSchema.parse(await request.json());
+      return studio.selectGeneratedAssets(supabase, ctx, slugs[3], body.assetIds);
+    }
+    if (key === "POST products/ai-image/attach") {
+      return studio.attachSelectedToProduct(supabase, ctx, studio.attachSchema.parse(await request.json()));
+    }
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Unknown image studio route.");
+  }
+
+  if (key === "POST products/ai-copy") {
+    const { generateProductCopy, productAiCopySchema } = await import("@/modules/openrouter/product-copy");
+    const body = productAiCopySchema.parse(await request.json());
+    return generateProductCopy(body, { organizationId: ctx.organizationId, supabase });
   }
 
   if (key === "POST products") {
@@ -78,6 +143,10 @@ export async function handleInventoryRoutes(
   if (method === "PATCH" && slugs[0] === "products" && slugs[1] && !slugs[2]) {
     const body = updateProductSchema.parse(await request.json());
     return updateProduct(supabase, ctx, slugs[1], body);
+  }
+
+  if (method === "DELETE" && slugs[0] === "products" && slugs[1] && !slugs[2]) {
+    return deleteProduct(supabase, ctx, slugs[1]);
   }
 
   if (method === "POST" && slugs[0] === "products" && slugs[1] && slugs[2] === "images") {
@@ -188,6 +257,82 @@ export async function handleInventoryRoutes(
 
   if (method === "DELETE" && slugs[0] === "inventory" && slugs[1] === "categories" && slugs[2]) {
     return deleteCategory(supabase, ctx, slugs[2]);
+  }
+
+  if (slugs[0] === "inventory" && slugs[1] === "covers") {
+    const covers = await import("@/modules/storefront/covers");
+    const { storefrontCoverSchema } = await import("@/modules/storefront/schema");
+    if (key === "GET inventory/covers") return covers.listCovers(supabase, ctx);
+    if (key === "GET inventory/covers/analytics") {
+      const days = Number(request.nextUrl.searchParams.get("days") ?? 7);
+      return covers.coverAnalytics(supabase, ctx, Number.isFinite(days) ? Math.min(90, Math.max(1, days)) : 7);
+    }
+    if (key === "POST inventory/covers/ai-copy") {
+      const copy = await import("@/modules/openrouter/cover-copy");
+      return copy.generateCoverCopy(copy.coverCopySchema.parse(await request.json()), {
+        organizationId: ctx.organizationId,
+        supabase,
+      });
+    }
+    if (key === "POST inventory/covers/jobs") {
+      const studio = await import("@/modules/ai-image/service");
+      return studio.enqueueCoverJob(supabase, ctx, studio.createCoverJobSchema.parse(await request.json()));
+    }
+    if (key === "POST inventory/covers" && method === "POST" && slugs.length === 2) {
+      const formType = request.headers.get("content-type") ?? "";
+      if (formType.includes("multipart/form-data")) {
+        const form = await request.formData();
+        const file = form.get("image") ?? form.get("file");
+        if (!(file instanceof File) || file.size === 0) {
+          throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose a cover image to upload.");
+        }
+        const kind = form.get("kind") === "mobile" ? "mobile" : "desktop";
+        return covers.uploadCoverImage(supabase, ctx, file, kind);
+      }
+      const body = storefrontCoverSchema.parse(await request.json());
+      if (!body.desktopImagePath) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Upload a cover image first.");
+      }
+      return covers.createCover(supabase, ctx, { ...body, imagePath: body.desktopImagePath });
+    }
+    if (slugs[2] && slugs.length === 3 && method === "GET") return covers.getCover(supabase, ctx, slugs[2]);
+    if (slugs[2] && slugs.length === 3 && method === "PATCH") {
+      return covers.updateCover(supabase, ctx, slugs[2], storefrontCoverSchema.parse(await request.json()));
+    }
+    if (slugs[2] && slugs[3] === "duplicate" && method === "POST") {
+      return covers.duplicateCover(supabase, ctx, slugs[2]);
+    }
+    if (slugs[2] && slugs[3] === "archive" && method === "POST") {
+      return covers.archiveCover(supabase, ctx, slugs[2]);
+    }
+    if (slugs[2] && slugs[3] === "image" && method === "POST") {
+      const form = await request.formData();
+      const file = form.get("image") ?? form.get("file");
+      if (!(file instanceof File) || file.size === 0) {
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose a cover image to upload.");
+      }
+      const kind = form.get("kind") === "mobile" ? "mobile" : "desktop";
+      return covers.uploadCoverImage(supabase, ctx, file, kind, slugs[2]);
+    }
+    if (slugs[2] && slugs[3] === "apply" && method === "POST") {
+      const body = z
+        .object({
+          desktopPath: z.string().optional(),
+          mobilePath: z.string().optional(),
+          desktopImagePath: z.string().optional(),
+          mobileImagePath: z.string().optional(),
+          sourceAssetId: z.string().uuid().optional(),
+          aiAssetId: z.string().uuid().optional(),
+        })
+        .parse(await request.json());
+      return covers.applyGeneratedCoverAsset(supabase, ctx, slugs[2], {
+        desktopPath: body.desktopPath ?? body.desktopImagePath,
+        mobilePath: body.mobilePath ?? body.mobileImagePath,
+        sourceAssetId: body.sourceAssetId,
+        aiAssetId: body.aiAssetId,
+      });
+    }
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Unknown cover route.");
   }
 
   if (key === "GET inventory/storefront") {

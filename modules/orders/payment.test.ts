@@ -3,6 +3,14 @@ import { AppError } from "@/lib/api/errors";
 import { settleOrderPayment, shipmentCollectFromOrder } from "@/modules/orders/payment";
 
 describe("settleOrderPayment", () => {
+  it("does not invent a collectable amount from NaN totals", () => {
+    expect(settleOrderPayment({ paymentStatus: "COD", totalAmount: Number.NaN })).toEqual({
+      paymentStatus: "COD",
+      amountPaid: 0,
+      codAmount: 0,
+    });
+  });
+
   it("treats full COD as collect the order total", () => {
     expect(settleOrderPayment({ paymentStatus: "COD", totalAmount: 499 })).toEqual({
       paymentStatus: "COD",

@@ -1,28 +1,32 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, RotateCcw, Truck } from "lucide-react";
+import { ClipboardList, ExternalLink, RefreshCw, RotateCcw, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { IndiaPostRouting } from "@/components/dashboard/india-post-routing";
+import { buildIndiaPostRoutingView, shipmentNeedsLiveTracking } from "@/lib/dashboard/india-post-routing";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
 import { api } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { FEATURE } from "@/modules/billing/entitlements";
+import { postbusTrackingLink } from "@/modules/tracking-pages/host";
 import { indiaPostServiceLabel, type MemberRole } from "@/types/domain";
-import type { ShipmentRecord, TrackingEvent } from "@/types/api";
+import type { ShipmentManifestLink, ShipmentRecord, TrackingEvent } from "@/types/api";
 
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -34,20 +38,35 @@ export default function ShipmentDetailPage() {
 
   const shipment = useQuery({
     queryKey: ["shipment", params.id],
-    queryFn: () => api<ShipmentRecord & { events?: TrackingEvent[] }>(`/api/v1/shipments/${params.id}`),
+    queryFn: () =>
+      api<ShipmentRecord & { events?: TrackingEvent[]; manifest?: ShipmentManifestLink | null }>(
+        `/api/v1/shipments/${params.id}`
+      ),
     enabled: Boolean(params.id),
+    refetchInterval: (current) => (shipmentNeedsLiveTracking(current.state.data) ? 15_000 : false),
+    refetchIntervalInBackground: true,
   });
 
   const sync = useMutation({
-    mutationFn: () => api(`/api/v1/ndr-rto/${params.id}/sync`, { method: "POST" }),
-    onSuccess: () => {
-      toast.success("Tracking refreshed.");
+    mutationFn: async (silent: boolean) => {
+      const result = await api<{ matched?: boolean }>(`/api/v1/ndr-rto/${params.id}/sync`, { method: "POST" });
+      return { silent, matched: Boolean(result.matched) };
+    },
+    onSuccess: ({ silent, matched }) => {
+      if (!silent) {
+        toast.success(matched ? "Tracking refreshed." : "India Post has no scans for this article yet.");
+      }
       queryClient.invalidateQueries({ queryKey: ["shipment", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
       queryClient.invalidateQueries({ queryKey: ["ndr-rto"] });
       queryClient.invalidateQueries({ queryKey: ["ndr-rto-summary"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, silent) => {
+      if (!silent) toast.error(error.message);
+    },
   });
+  const syncMutate = useRef(sync.mutate);
+  syncMutate.current = sync.mutate;
 
   const retry = useMutation({
     mutationFn: () => api(`/api/v1/shipments/${params.id}/retry`, { method: "POST" }),
@@ -60,17 +79,25 @@ export default function ShipmentDetailPage() {
 
   const openCustomLabel = async (shipmentId: string, mode: "preview" | "download" | "print") => {
     if (mode === "print") {
+      const key = beginClientPrint(`custom-print:${shipmentId}`);
+      if (!key) return;
       try {
         const printed = await api<{ connected?: boolean; downloadPath?: string; message?: string }>(
           "/api/v1/label-template/custom-print",
-          { method: "POST", body: JSON.stringify({ shipmentId }) }
+          {
+            method: "POST",
+            headers: { "Idempotency-Key": key },
+            body: JSON.stringify({ shipmentId }),
+          }
         );
         if (!printed.connected && printed.downloadPath) {
           window.open(printed.downloadPath, "_blank", "noopener,noreferrer");
         }
-        toast.success(printed.message || "Shipping label sent to the printer.");
+        toast.success(printed.message || "Queued for the Print Agent.");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Could not print the shipping label.");
+      } finally {
+        endClientPrint(`custom-print:${shipmentId}`);
       }
       return;
     }
@@ -110,6 +137,28 @@ export default function ShipmentDetailPage() {
     if (!id) return;
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [recordForHash]);
+
+  const liveTracking = shipmentNeedsLiveTracking(shipment.data);
+  useEffect(() => {
+    if (!canSync || !params.id || !liveTracking) return;
+    let stopped = false;
+    const inFlight = { current: false };
+    const pull = () => {
+      if (stopped || inFlight.current) return;
+      inFlight.current = true;
+      syncMutate.current(true, {
+        onSettled: () => {
+          inFlight.current = false;
+        },
+      });
+    };
+    pull();
+    const timer = window.setInterval(pull, 15_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [canSync, params.id, liveTracking]);
 
   if (shipment.isLoading) {
     return (
@@ -174,11 +223,31 @@ export default function ShipmentDetailPage() {
         description={`Created ${formatDate(record.createdAt ?? record.created_at, true)}`}
         actions={
           <div className="flex flex-wrap gap-2">
+            {record.manifest ? (
+              <Link
+                className={buttonVariants({ variant: "secondary" })}
+                href={`/dashboard/manifests/${record.manifest.id}`}
+              >
+                <ClipboardList className="size-4" />
+                {record.manifest.number ?? "Draft manifest"}
+              </Link>
+            ) : null}
             {canSync && article ? (
-              <Button type="button" variant="secondary" onClick={() => sync.mutate()} disabled={sync.isPending}>
+              <Button type="button" variant="secondary" onClick={() => sync.mutate(false)} disabled={sync.isPending}>
                 <RefreshCw className="size-4" />
                 Refresh tracking
               </Button>
+            ) : null}
+            {article ? (
+              <a
+                className={buttonVariants({ variant: "secondary" })}
+                href={postbusTrackingLink(article)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ExternalLink className="size-4" />
+                Customer tracking
+              </a>
             ) : null}
             <Button type="button" variant="secondary" onClick={() => void openCustomLabel(params.id, "preview")}>
               Preview label
@@ -205,8 +274,24 @@ export default function ShipmentDetailPage() {
           <CardContent className="space-y-3 text-sm">
             <StatusBadge value={statusValue} />
             <p className="text-muted">
-              Last synced {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
+              Last scan {formatDate(record.lastEventAt ?? record.last_event_at, true)}
             </p>
+            <p className="text-muted">
+              Last lookup {formatDate(record.lastTrackedAt ?? record.last_tracked_at, true)}
+            </p>
+            {record.smartAutoRetry?.merchantState ? (
+              <p className="font-medium text-ink">
+                {String(record.smartAutoRetry.merchantState).replaceAll("_", " ")}
+              </p>
+            ) : null}
+            {record.smartAutoRetry?.nextAttemptAt ? (
+              <p className="text-muted">Next retry at {formatDate(record.smartAutoRetry.nextAttemptAt, true)}</p>
+            ) : null}
+            {record.smartAutoRetry && (record.smartAutoRetry.attemptCount ?? 0) > 0 ? (
+              <p className="text-muted">
+                Retry attempt {record.smartAutoRetry.attemptCount} of {record.smartAutoRetry.maxAttempts}
+              </p>
+            ) : null}
             {bookedAt && trackingLookupFailed ? (
               <p className="text-muted">
                 Article is booked. India Post tracking often stays empty until the first post-office scan.
@@ -216,6 +301,14 @@ export default function ShipmentDetailPage() {
             ) : (
               <p className="text-muted">No provider error recorded.</p>
             )}
+            {record.smartAutoRetry?.canEditShipment && (record.orderId || record.order_id) ? (
+              <Link
+                href={`/dashboard/orders/${record.orderId ?? record.order_id}`}
+                className="inline-flex text-brand hover:underline"
+              >
+                Edit shipment
+              </Link>
+            ) : null}
           </CardContent>
         </Card>
         <Card>
@@ -341,6 +434,15 @@ export default function ShipmentDetailPage() {
         </Card>
       ) : null}
 
+      <Card id="tracking-timeline">
+        <CardHeader>
+          <CardTitle>Routing Steps</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <IndiaPostRouting view={buildIndiaPostRoutingView(record, events)} />
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Invoice</CardTitle>
@@ -359,34 +461,6 @@ export default function ShipmentDetailPage() {
               }
             />
           </PlanLock>
-        </CardContent>
-      </Card>
-
-      <Card id="tracking-timeline">
-        <CardHeader>
-          <CardTitle>Tracking timeline</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {events.length === 0 ? (
-            <p className="text-sm text-muted">
-              No provider events yet. Tracking only appears after India Post reports a scan.
-            </p>
-          ) : (
-            <ol className="space-y-4">
-              {events.map((event, index) => (
-                <li key={event.id ?? index} className="border-l border-border pl-4">
-                  <p className="text-sm font-medium text-ink">
-                    {event.eventDescription ?? event.event_description ?? event.eventCode ?? event.event_code}
-                  </p>
-                  <p className="text-xs text-muted">
-                    {[event.officeName ?? event.office_name, formatDate(event.occurredAt ?? event.occurred_at, true)]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          )}
         </CardContent>
       </Card>
     </div>

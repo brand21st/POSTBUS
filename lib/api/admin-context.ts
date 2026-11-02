@@ -1,8 +1,9 @@
 import { matchesPlatformAdminEmail } from "@/lib/admin/access";
-import { createServerSupabase } from "@/lib/supabase/server";
+import { isTransientAuthClass } from "@/lib/auth/session/classify";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { env } from "@/lib/env";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
+import { getRequestAuthUser } from "@/lib/supabase/request-auth";
 
 export type AdminContext = {
   userId: string;
@@ -10,10 +11,10 @@ export type AdminContext = {
 };
 
 export async function requirePlatformAdmin(): Promise<AdminContext> {
-  const supabase = await createServerSupabase();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { supabase, user, classification } = await getRequestAuthUser();
+  if (classification && isTransientAuthClass(classification)) {
+    throw new AppError(ERROR_CODES.AUTH_UNAVAILABLE, "Authentication is temporarily unavailable. Try again shortly.");
+  }
   if (!user) {
     throw new AppError(ERROR_CODES.AUTH_REQUIRED, "Please sign in to continue.");
   }

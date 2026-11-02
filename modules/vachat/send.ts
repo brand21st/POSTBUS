@@ -20,6 +20,7 @@ import {
 import { vachatAddressParam, vachatAmountParam, vachatMerchantTemplateFields, vachatSingleLine } from "@/modules/vachat/notice-fields";
 import { readVachatTemplateCatalog } from "@/modules/vachat/templates";
 import { otpTemplateDecision } from "@/lib/auth/otp/template-policy";
+import { platformTemplateDecision } from "@/modules/vachat/platform-template-policy";
 
 export const VACHAT_DEFAULT_TEST_PHONE = "918618456029";
 export const VACHAT_PLATFORM_WEBHOOK_EVENTS = ["message.status_updated", "message.received"] as const;
@@ -27,11 +28,24 @@ export const VACHAT_PLATFORM_WEBHOOK_EVENTS = ["message.status_updated", "messag
 export type VachatNotifyIds = {
   orderId?: string | null;
   shipmentId?: string | null;
+  eventCode?: string | null;
+  occurredAt?: string | null;
 };
 
 export function vachatExternalRef(event: WatiNotifyEvent, ids: VachatNotifyIds) {
   const entity = ids.shipmentId ?? ids.orderId ?? "unknown";
-  return `postbus:${event}:${entity}`;
+  const scan = ids.eventCode && ids.occurredAt ? `:${ids.eventCode}:${ids.occurredAt}` : "";
+  return `postbus:${event}:${entity}${scan}`;
+}
+
+function sameNotifyScan(
+  left: { eventCode?: string | null; occurredAt?: string | null },
+  right: { eventCode?: string | null; occurredAt?: string | null }
+) {
+  const leftScan = left.eventCode && left.occurredAt ? `${left.eventCode}|${left.occurredAt}` : null;
+  const rightScan = right.eventCode && right.occurredAt ? `${right.eventCode}|${right.occurredAt}` : null;
+  if (leftScan && rightScan) return leftScan === rightScan;
+  return !leftScan && !rightScan;
 }
 
 export function vachatRecipientE164(raw?: string | null) {
@@ -338,7 +352,13 @@ export async function enqueueVachatNotify(
     jobType: "vachat-notify",
     entityType: ids.shipmentId ? "shipment" : "order",
     entityId,
-    progress: { event, shipmentId: ids.shipmentId ?? null, orderId: ids.orderId ?? null },
+    progress: {
+      event,
+      shipmentId: ids.shipmentId ?? null,
+      orderId: ids.orderId ?? null,
+      eventCode: ids.eventCode ?? null,
+      occurredAt: ids.occurredAt ?? null,
+    },
   });
 }
 
@@ -351,11 +371,12 @@ export function isDuplicateVachatNotifyJob(
     const progress = job.progress && typeof job.progress === "object" ? (job.progress as { event?: string }) : {};
     if (progress.event !== event) return false;
     const fromJob = vachatIdsFromJob(job.progress, job.entity_id);
-    if (ids.orderId && (fromJob.orderId === ids.orderId || job.entity_id === ids.orderId)) return true;
-    if (ids.shipmentId && (fromJob.shipmentId === ids.shipmentId || job.entity_id === ids.shipmentId)) {
-      return true;
-    }
-    return false;
+    const sameOrder = Boolean(ids.orderId && (fromJob.orderId === ids.orderId || job.entity_id === ids.orderId));
+    const sameShipment = Boolean(
+      ids.shipmentId && (fromJob.shipmentId === ids.shipmentId || job.entity_id === ids.shipmentId)
+    );
+    if (!sameOrder && !sameShipment) return false;
+    return sameNotifyScan(ids, fromJob);
   });
 }
 
@@ -436,6 +457,53 @@ export async function sendVachatAuthenticationTemplate(input: {
   return { sent: true as const, messageId: json?.data?.message_id ?? null };
 }
 
+/**
+ * Platform VaChat UTILITY/MARKETING template. Do not use AUTHENTICATION (OTP) templates.
+ */
+export async function sendVachatPlatformTemplate(input: {
+  to: string;
+  templateName: string;
+  language?: string;
+  bodyParams: string[];
+}) {
+  const platform = await getPlatformVachatConfig();
+  const templateName = input.templateName.trim();
+  if (!isPlatformVachatActive(platform) || !templateName) {
+    logError("vachat.platform_template.unavailable", {
+      reason: isPlatformVachatActive(platform) ? "template_missing" : "platform_inactive",
+    });
+    throw new Error("vachat_platform_unavailable");
+  }
+  const catalog = await loadVachatTemplateCatalog(platform.apiBaseUrl, platform.apiKey);
+  const decision = platformTemplateDecision(templateName, catalog);
+  if (!decision.allow) {
+    logError("vachat.platform_template.rejected", { reason: decision.reason });
+    throw new Error(`vachat_platform_${decision.reason}`);
+  }
+  const recipient = vachatRecipientE164(input.to);
+  const language = (decision.language || input.language || "en").trim() || "en";
+  const res = await fetch(`${platform.apiBaseUrl.replace(/\/$/, "")}/api/v1/messages`, {
+    method: "POST",
+    headers: vachatHeaders(platform.apiKey),
+    body: JSON.stringify({
+      to: recipient,
+      type: "template",
+      template: {
+        name: templateName,
+        language,
+        params: { body: input.bodyParams },
+      },
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    logError("vachat.platform_template.failed", { status: res.status });
+    throw new Error("vachat_platform_send_failed");
+  }
+  const json = (await res.json().catch(() => null)) as { data?: { message_id?: string } } | null;
+  return { sent: true as const, messageId: json?.data?.message_id ?? null };
+}
+
 async function loadVachatTemplateCatalog(apiBaseUrl: string, apiKey: string) {
   try {
     const res = await fetch(`${apiBaseUrl.replace(/\/$/, "")}/api/postbus/templates`, {
@@ -457,5 +525,7 @@ export function vachatIdsFromJob(progress: unknown, fallbackId?: string | null):
   return {
     shipmentId: record.shipmentId ?? (fallbackId && !record.orderId ? fallbackId : null),
     orderId: record.orderId ?? null,
+    eventCode: record.eventCode ?? null,
+    occurredAt: record.occurredAt ?? null,
   };
 }

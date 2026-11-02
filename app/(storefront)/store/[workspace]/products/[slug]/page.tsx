@@ -5,6 +5,7 @@ import type { StorePayload, StoreProduct } from "@/components/storefront/store-t
 import {
   assertStorePublished,
   getPublicProductBySlug,
+  loadPublicProductsByIds,
   loadPublicStorefront,
   organizationFromLink,
   publicStoreClient,
@@ -21,6 +22,15 @@ async function loadProductPage(workspace: string, slug: string) {
     loadPublicStorefront(supabase, ref),
     getPublicProductBySlug(supabase, organizationId, slug),
   ]);
+  const recommendationIds = [...new Set([...(product.upsellIds ?? []), ...(product.crossSellIds ?? [])])];
+  if (recommendationIds.length) {
+    const extra = await loadPublicProductsByIds(supabase, organizationId, recommendationIds);
+    const seen = new Set((store.products.related ?? []).map((item) => item.id));
+    store.products.related = [
+      ...(store.products.related ?? []),
+      ...extra.filter((item) => !seen.has(item.id)).map((item) => ({ ...item, bestSeller: false })),
+    ];
+  }
   return { store: store as StorePayload, product: product as StoreProduct };
 }
 

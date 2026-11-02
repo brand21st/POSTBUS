@@ -4,12 +4,13 @@ import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import {
   ingestBulkTrackingArticle,
+  matchingBulkTrackingArticle,
   snapshotFromShipmentRow,
   type BulkTrackingArticle,
 } from "@/modules/india-post/apply-tracking";
-import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { enqueueTrackingStageSideEffects } from "@/modules/india-post/tracking-effects";
 import type { NdrListQuery } from "@/modules/ndr-rto/schema";
+import { NDR_VISIBLE_SYNC_MAX } from "@/modules/ndr-rto/schema";
 import type { NdrSummary } from "@/types/api";
 
 export const NDR_LIST_STATUSES = [
@@ -73,17 +74,25 @@ async function countOperational(
   return count ?? 0;
 }
 
+async function countUnclassifiedTracked(supabase: SupabaseClient, organizationId: string) {
+  const { count, error } = await tracked(supabase, organizationId).is("operational_status", null);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  return count ?? 0;
+}
+
 export async function getNdrSummary(supabase: SupabaseClient, ctx: TenantContext): Promise<NdrSummary> {
-  const [delivered, outForDelivery, deliveredToday, ndr, rto, rtoInTransit, rtoDelivered] = await Promise.all([
-    countOperational(supabase, ctx.organizationId, "DELIVERED"),
-    countOperational(supabase, ctx.organizationId, "OUT_FOR_DELIVERY"),
-    countOperational(supabase, ctx.organizationId, "DELIVERED", true),
-    countOperational(supabase, ctx.organizationId, "NDR"),
-    countOperational(supabase, ctx.organizationId, "RTO"),
-    countOperational(supabase, ctx.organizationId, "RTO_IN_TRANSIT"),
-    countOperational(supabase, ctx.organizationId, "RTO_DELIVERED"),
-  ]);
-  return { delivered, outForDelivery, deliveredToday, ndr, rto, rtoInTransit, rtoDelivered };
+  const [delivered, outForDelivery, deliveredToday, ndr, rto, rtoInTransit, rtoDelivered, unclassifiedTracked] =
+    await Promise.all([
+      countOperational(supabase, ctx.organizationId, "DELIVERED"),
+      countOperational(supabase, ctx.organizationId, "OUT_FOR_DELIVERY"),
+      countOperational(supabase, ctx.organizationId, "DELIVERED", true),
+      countOperational(supabase, ctx.organizationId, "NDR"),
+      countOperational(supabase, ctx.organizationId, "RTO"),
+      countOperational(supabase, ctx.organizationId, "RTO_IN_TRANSIT"),
+      countOperational(supabase, ctx.organizationId, "RTO_DELIVERED"),
+      countUnclassifiedTracked(supabase, ctx.organizationId),
+    ]);
+  return { delivered, outForDelivery, deliveredToday, ndr, rto, rtoInTransit, rtoDelivered, unclassifiedTracked };
 }
 
 async function matchingIds(
@@ -110,6 +119,59 @@ function nestedOne<T extends Record<string, unknown>>(value: unknown): T | null 
   return null;
 }
 
+type LatestTrackingEvent = {
+  shipment_id: string;
+  event_code: string | null;
+  event_description: string | null;
+  office_name: string | null;
+  occurred_at: string | null;
+  classification: string | null;
+};
+
+function stringField(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+async function latestTrackingByShipment(
+  supabase: SupabaseClient,
+  organizationId: string,
+  shipmentIds: string[]
+) {
+  const latest = new Map<string, LatestTrackingEvent>();
+  if (!shipmentIds.length) return latest;
+  const { data, error } = await supabase
+    .from("tracking_events")
+    .select("shipment_id, event_code, event_description, office_name, occurred_at, classification")
+    .eq("organization_id", organizationId)
+    .in("shipment_id", shipmentIds)
+    .order("occurred_at", { ascending: false });
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  for (const row of (data ?? []) as LatestTrackingEvent[]) {
+    const id = String(row.shipment_id ?? "");
+    if (!id || latest.has(id)) continue;
+    latest.set(id, row);
+  }
+  return latest;
+}
+
+function withLatestTracking(
+  row: ReturnType<typeof mapNdrRow>,
+  event: LatestTrackingEvent | undefined
+) {
+  if (!event) return row;
+  return {
+    ...row,
+    lastEventCode: stringField(row.lastEventCode) ?? stringField(event.event_code),
+    last_event_code: stringField(row.lastEventCode) ?? stringField(event.event_code),
+    lastEventDescription: stringField(row.lastEventDescription) ?? stringField(event.event_description),
+    last_event_description: stringField(row.lastEventDescription) ?? stringField(event.event_description),
+    lastScanOffice: stringField(row.lastScanOffice) ?? stringField(event.office_name),
+    last_scan_office: stringField(row.lastScanOffice) ?? stringField(event.office_name),
+    lastEventAt: stringField(row.lastEventAt) ?? stringField(event.occurred_at),
+    last_event_at: stringField(row.lastEventAt) ?? stringField(event.occurred_at),
+  };
+}
+
 function mapNdrRow(row: Record<string, unknown>) {
   const order = nestedOne<{
     order_number?: string;
@@ -122,6 +184,7 @@ function mapNdrRow(row: Record<string, unknown>) {
   const pickup = nestedOne<{ city?: string }>(row.pickup_locations);
   return {
     ...row,
+    id: String(row.id ?? ""),
     orderId: row.order_id,
     orderNumber: order?.order_number,
     order_number: order?.order_number,
@@ -235,11 +298,106 @@ export async function listNdrShipments(supabase: SupabaseClient, ctx: TenantCont
 
   const { data, error, count } = await builder;
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  const mapped = (data ?? []).map((row) => mapNdrRow(row as Record<string, unknown>));
+  const latest = await latestTrackingByShipment(
+    supabase,
+    organizationId,
+    mapped.map((row) => String(row.id))
+  );
   return {
-    items: (data ?? []).map((row) => mapNdrRow(row as Record<string, unknown>)),
+    items: mapped.map((row) => withLatestTracking(row, latest.get(String(row.id)))),
     page: query.page,
     pageSize: query.pageSize,
     total: count ?? 0,
+  };
+}
+
+type NdrSyncShipment = {
+  id: string;
+  barcode: string | null;
+  status: string | null;
+  order_id: string | null;
+  operational_status: string | null;
+  last_event_at: string | null;
+  ndr_attempt_count: number | null;
+  rto_initiated_at: string | null;
+  organization_id: string;
+};
+
+async function indiaPostConnection(supabase: SupabaseClient, organizationId: string) {
+  const { data: connection, error: connectionError } = await supabase
+    .from("india_post_connections")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (connectionError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, connectionError.message);
+  if (!connection) {
+    throw new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post is not connected.");
+  }
+  return connection;
+}
+
+async function trackArticles(supabase: SupabaseClient, connection: Record<string, unknown>, barcodes: string[]) {
+  const { ensurePersistedIndiaPostTrackingSession } = await import("@/modules/india-post/session");
+  const provider = await ensurePersistedIndiaPostTrackingSession(
+    supabase,
+    connection as Parameters<typeof ensurePersistedIndiaPostTrackingSession>[1]
+  );
+  try {
+    return (await provider.trackShipment(barcodes)) as { data?: BulkTrackingArticle[] };
+  } catch (caught) {
+    if (caught instanceof AppError) throw caught;
+    const message = caught instanceof Error ? caught.message : "Tracking lookup failed.";
+    throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
+  }
+}
+
+async function applyTrackedShipment(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  data: NdrSyncShipment,
+  article: BulkTrackingArticle | null,
+  trackedAt: string
+) {
+  if (!article) {
+    await supabase
+      .from("shipments")
+      .update({ last_tracked_at: trackedAt })
+      .eq("id", data.id)
+      .eq("organization_id", ctx.organizationId);
+    return {
+      shipmentId: data.id,
+      barcode: data.barcode,
+      lastTrackedAt: trackedAt,
+      matched: false,
+      status: data.status,
+      operationalStatus: data.operational_status,
+    };
+  }
+
+  const ingested = await ingestBulkTrackingArticle(supabase, {
+    organizationId: ctx.organizationId,
+    shipment: snapshotFromShipmentRow(data, ctx.organizationId),
+    article,
+    source: "bulk",
+  });
+  if (ingested.whatsappEvents.length || ingested.orderStatus) {
+    await enqueueTrackingStageSideEffects(supabase, {
+      organizationId: ctx.organizationId,
+      shipmentId: data.id,
+      orderId: data.order_id,
+      orderStatus: ingested.orderStatus,
+      events: ingested.whatsappEvents,
+      notices: ingested.notices,
+    });
+  }
+  return {
+    shipmentId: data.id,
+    barcode: data.barcode,
+    lastTrackedAt: trackedAt,
+    matched: true,
+    status: ingested.snapshot.status,
+    operationalStatus: ingested.snapshot.operationalStatus,
   };
 }
 
@@ -258,58 +416,45 @@ export async function syncNdrShipment(supabase: SupabaseClient, ctx: TenantConte
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This shipment has no India Post tracking ID.");
   }
 
-  const { data: connection, error: connectionError } = await supabase
-    .from("india_post_connections")
-    .select("*")
+  const connection = await indiaPostConnection(supabase, ctx.organizationId);
+  const payload = await trackArticles(supabase, connection, [data.barcode]);
+  const article = matchingBulkTrackingArticle(payload.data, data.barcode);
+  return applyTrackedShipment(supabase, ctx, data as NdrSyncShipment, article, new Date().toISOString());
+}
+
+export async function syncNdrVisibleShipments(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentIds: string[]
+) {
+  const ids = [...new Set(shipmentIds)].slice(0, NDR_VISIBLE_SYNC_MAX);
+  const { data, error } = await supabase
+    .from("shipments")
+    .select(
+      "id, barcode, status, order_id, operational_status, last_event_at, ndr_attempt_count, rto_initiated_at, organization_id"
+    )
     .eq("organization_id", ctx.organizationId)
-    .maybeSingle();
-  if (connectionError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, connectionError.message);
+    .in("id", ids)
+    .not("barcode", "is", null);
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
-  const provider = indiaPostFromRow(connection);
-  let payload: { data?: BulkTrackingArticle[] };
-  try {
-    payload = (await provider.trackShipment([data.barcode])) as { data?: BulkTrackingArticle[] };
-  } catch (caught) {
-    if (caught instanceof AppError) throw caught;
-    const message = caught instanceof Error ? caught.message : "Tracking lookup failed.";
-    throw new AppError(ERROR_CODES.PROVIDER_ERROR, message);
+  const shipments = ((data ?? []) as NdrSyncShipment[]).filter((row) => Boolean(row.barcode));
+  if (!shipments.length) {
+    throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "No India Post shipments found to track.");
   }
 
-  const article =
-    payload.data?.find((item) => item.booking_details?.article_number === data.barcode) ?? payload.data?.[0];
+  const connection = await indiaPostConnection(supabase, ctx.organizationId);
+  const barcodes = shipments.map((row) => String(row.barcode));
+  const payload = await trackArticles(supabase, connection, barcodes);
   const trackedAt = new Date().toISOString();
-  if (!article) {
-    await supabase
-      .from("shipments")
-      .update({ last_tracked_at: trackedAt })
-      .eq("id", data.id)
-      .eq("organization_id", ctx.organizationId);
-    return {
-      shipmentId: data.id,
-      lastTrackedAt: trackedAt,
-      status: data.status,
-      operationalStatus: data.operational_status,
-    };
-  }
-
-  const ingested = await ingestBulkTrackingArticle(supabase, {
-    organizationId: ctx.organizationId,
-    shipment: snapshotFromShipmentRow(data, ctx.organizationId),
-    article,
-  });
-  if (ingested.whatsappEvents.length || ingested.orderStatus) {
-    await enqueueTrackingStageSideEffects(supabase, {
-      organizationId: ctx.organizationId,
-      shipmentId: data.id,
-      orderId: data.order_id,
-      orderStatus: ingested.orderStatus,
-      events: ingested.whatsappEvents,
-    });
+  const results = [];
+  for (const shipment of shipments) {
+    const article = matchingBulkTrackingArticle(payload.data, String(shipment.barcode));
+    results.push(await applyTrackedShipment(supabase, ctx, shipment, article, trackedAt));
   }
   return {
-    shipmentId: data.id,
-    lastTrackedAt: trackedAt,
-    status: ingested.snapshot.status,
-    operationalStatus: ingested.snapshot.operationalStatus,
+    tracked: results.length,
+    matched: results.filter((row) => row.matched).length,
+    results,
   };
 }

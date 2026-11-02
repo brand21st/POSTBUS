@@ -26,7 +26,7 @@ describe("CEPT webhook parser", () => {
     expect(parsed.contractId).toBe("40000354");
     expect(parsed.nonDeliveryReason).toBeNull();
     expect(parsed.providerEventId).toBeNull();
-    expect(parsed.eventTimestamp).toBe("2025-11-09T08:37:52.000Z");
+    expect(parsed.eventTimestamp).toBeNull();
   });
 
   it("rejects malformed JSON", () => {
@@ -86,11 +86,27 @@ describe("event mapper", () => {
   });
 
   it("does not map booked or hold events to a new status", () => {
-    for (const eventCode of ["ITEM_BOOKED", "Item Booked", "ITEM_HOLD"]) {
+    for (const eventCode of ["ITEM_BOOKED", "Item Booked", "ITEM_HOLD", "Item Kept on Hold"]) {
       expect(mapIndiaPostEventToShipmentUpdate({ eventCode, eventDescription: null }).shouldUpdateStatus).toBe(
         false
       );
     }
+    expect(
+      mapIndiaPostEventToShipmentUpdate({
+        eventCode: "EVENT",
+        eventDescription: "Item Kept on Hold — Intimation Delivered",
+      }).shouldUpdateStatus
+    ).toBe(false);
+  });
+
+  it("maps rts true to return initiated without treating it as delivered", () => {
+    const mapped = mapIndiaPostEventToShipmentUpdate({
+      eventCode: "EVENT",
+      eventDescription: "Item Dispatched",
+      rts: true,
+    });
+    expect(mapped.operationalStatus).toBe("RTO");
+    expect(mapped.shipmentStatus).toBe("RTO");
   });
 
   it("maps out for delivery without collapsing it to in transit", () => {
@@ -146,8 +162,33 @@ describe("idempotency", () => {
       "events"
     );
     const key = indiaPostWebhookIdempotencyKey(parsed, JSON.stringify(CEPT_SAMPLE_WEBHOOK_PAYLOAD));
-    expect(key.kind).toBe("event");
-    expect(key.key).toBe("AW784699994IN:BAG_CLOSE:2025-11-09T08:37:52.000Z");
+    expect(key.kind).toBe("hash");
+    expect(key.key).toHaveLength(64);
+  });
+
+  it("honors an explicit offset and does not invent IST or UTC for a wall clock", () => {
+    const zoned = parseIndiaPostWebhook(
+      JSON.stringify({
+        article_number: "AW784699994IN",
+        event_code: "BAG_CLOSE",
+        event_date: "2025-11-09",
+        event_time: "08:37:52+05:30",
+      }),
+      "application/json",
+      "events"
+    );
+    expect(zoned.eventTimestamp).toBe("2025-11-09T03:07:52.000Z");
+    const wall = parseIndiaPostWebhook(
+      JSON.stringify({
+        article_number: "AW784699994IN",
+        event_code: "BAG_CLOSE",
+        event_date: "2025-11-09",
+        event_time: "08:37:52",
+      }),
+      "application/json",
+      "events"
+    );
+    expect(wall.eventTimestamp).toBeNull();
   });
 
   it("falls back to payload hash when event identity fields are missing", () => {
@@ -170,6 +211,31 @@ describe("webhook URLs and tenant path", () => {
     );
   });
 
+  it("gives CEPT the public www host instead of apex, aliases, or tracking subdomains", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const local = indiaPostWebhookUrls(id, "http://localhost:3000");
+    expect(local.eventsWebhookUrl.startsWith("http://localhost:3000/")).toBe(true);
+
+    const staging = indiaPostWebhookUrls(id, "https://auth-staging.postbus.in");
+    expect(staging.bookingWebhookUrl.startsWith("https://auth-staging.postbus.in/")).toBe(true);
+
+    for (const appUrl of [
+      "https://postbus.in",
+      "https://www.postbus.in",
+      "https://postbus.vachat.in",
+      "https://evlathholdings.postbus.in",
+      "http://mw9larpomkyonxzy1rk3h6jm.89.116.34.166.sslip.io",
+    ]) {
+      const urls = indiaPostWebhookUrls(id, appUrl);
+      expect(urls.bookingWebhookUrl).toBe(
+        `https://www.postbus.in/api/v1/webhooks/india-post/${id}/booking`
+      );
+      expect(urls.eventsWebhookUrl).toBe(
+        `https://www.postbus.in/api/v1/webhooks/india-post/${id}/events`
+      );
+    }
+  });
+
   it("parses only valid connection-scoped paths", () => {
     expect(
       parseIndiaPostWebhookPath("webhooks/india-post/11111111-1111-4111-8111-111111111111/booking")
@@ -179,6 +245,21 @@ describe("webhook URLs and tenant path", () => {
     });
     expect(parseIndiaPostWebhookPath("webhooks/shopify")).toBeNull();
     expect(parseIndiaPostWebhookPath("webhooks/india-post/not-a-uuid/booking")).toBeNull();
+    expect(parseIndiaPostWebhookPath("webhooks/india-post/1392911671/events")).toEqual({
+      connectionId: "1392911671",
+      channel: "events",
+    });
+  });
+
+  it("prefers the India Post customer ID in public webhook URLs", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const urls = indiaPostWebhookUrls(id, "http://localhost:3000", "1392911671");
+    expect(urls.bookingWebhookUrl).toBe(
+      "http://localhost:3000/api/v1/webhooks/india-post/1392911671/booking"
+    );
+    expect(urls.eventsWebhookUrl).toBe(
+      "http://localhost:3000/api/v1/webhooks/india-post/1392911671/events"
+    );
   });
 });
 
@@ -190,7 +271,12 @@ describe("security helpers", () => {
       cookie: "a=1",
       "content-type": "application/json",
       "x-webhook-secret": "nope",
+      "cf-connecting-ip": "203.0.113.9",
+      "x-forwarded-for": "10.9.8.7",
     });
-    expect(safeWebhookHeaders(headers)).toEqual({ "content-type": "application/json" });
+    expect(safeWebhookHeaders(headers)).toEqual({
+      "content-type": "application/json",
+      "cf-connecting-ip": "203.0.113.9",
+    });
   });
 });

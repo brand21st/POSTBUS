@@ -14,7 +14,7 @@ import {
 export const GET = apiRoute(async () => {
   const ctx = await requireTenant();
   const supabase = await createServerSupabase();
-  await assertTrackingPagePlan(supabase, ctx.organizationId);
+  await assertTrackingPagePlan(supabase, ctx.organizationId, "GET");
   return getTrackingPage(supabase, ctx.organizationId);
 });
 

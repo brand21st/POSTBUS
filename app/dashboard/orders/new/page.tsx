@@ -1,18 +1,26 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef } from "react";
+import type { BaseSyntheticEvent, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Lock, Minus, Plus, Trash2 } from "lucide-react";
 import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
+import { TariffEstimateCard } from "@/components/orders/tariff-estimate-card";
+import type { TariffEstimateStatus } from "@/components/orders/tariff-estimate-card";
 import { WhatsAppPasteParser } from "@/components/orders/whatsapp-paste-parser";
+import {
+  AddressLineInput,
+  clipIndiaPostAddressLine,
+  INDIA_POST_ADDRESS_LINE_TOO_LONG,
+} from "@/components/address/address-line-input";
+import { unsetIfDefault } from "@/lib/parsers/whatsapp-customer-message";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -31,31 +39,53 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, toSearchParams } from "@/lib/hooks/use-api";
+import { useIndiaPost } from "@/lib/hooks/use-india-post";
+import { resolveOrderBookingService } from "@/modules/india-post/booking-service";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DEFAULT_INDIAN_STATE, INDIAN_STATE_OPTIONS, INDIAN_STATES } from "@/lib/indian-states";
+import { indiaPostServiceLabel } from "@/types/domain";
 import type { IndiaPostDirectoryLookup } from "@/lib/india-post/pincode-directory";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { selectableIndiaPostServices } from "@/modules/india-post/contracts";
+import {
+  isIndiaPostAcceptedStatus,
+  isIndiaPostBookingInFlight,
+} from "@/modules/india-post/booking-status";
+import {
+  emitDashboardAlerts,
+  localShipmentBookedAlert,
+  unlockNewOrderSound,
+} from "@/lib/notifications/new-order";
 import { optionalDimensionCm, optionalPositiveInt } from "@/modules/orders/schema";
+import {
+  MANUAL_ORDER_PAYMENT_DEFAULTS,
+  type ManualOrderPaymentDefault,
+  type OrderPaymentDefault,
+} from "@/modules/orders/payment-default";
 import { DEFAULT_INDIA_POST_SERVICE, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
-import type { IndiaPostConfig, Paginated, ProductRecord } from "@/types/api";
+import type { OrderRecord, Paginated, ProductRecord } from "@/types/api";
+import { addRupees, INDIA_POST_COD_MAX_RUPEES, tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
 import { catalogCodAdvancePaid } from "@/modules/products/payment";
+import { INDIA_POST_ADDRESS_LINE_MAX } from "@/modules/india-post/spec";
 
 const addressSchema = z.object({
   name: z.string().min(2, "Customer name is required."),
   phone: z
     .string()
     .refine((value) => extractIndiaMobileDigits(value) !== null, "Enter a 10-digit Indian mobile number."),
-  line1: z.string().min(3, "Address is required."),
-  line2: z.string().optional(),
+  line1: z
+    .string()
+    .min(3, "Address is required.")
+    .max(INDIA_POST_ADDRESS_LINE_MAX, INDIA_POST_ADDRESS_LINE_TOO_LONG),
+  line2: z.string().max(INDIA_POST_ADDRESS_LINE_MAX, INDIA_POST_ADDRESS_LINE_TOO_LONG).optional(),
   city: z.string().min(2, "City is required."),
   state: z.string().min(2, "State is required."),
   pincode: z.string().regex(/^\d{6}$/, "Enter a 6-digit pincode."),
   country: z.string().min(2),
 });
 
-const schema = z.object({
+export const newOrderFormSchema = z.object({
   orderNumber: z.string().optional(),
   customerName: z
     .string()
@@ -74,9 +104,9 @@ const schema = z.object({
   ),
   paymentStatus: z.enum(PAYMENT_STATUSES),
   amountPaid: z.coerce.number().min(0).optional(),
+  extraCodCharge: z.unknown().optional(),
   shippingAddress: addressSchema,
   billingSameAsShipping: z.boolean(),
-  billingAddress: addressSchema.optional(),
   lineItems: z
     .array(
       z.object({
@@ -102,7 +132,43 @@ const schema = z.object({
       serviceCode: z.string().optional(),
     })
     .optional(),
+  // Registered even while the billing card is collapsed. Empty strings must not
+  // fail validation when the order uses the shipping address for billing.
+  billingAddress: z
+    .object({
+      name: z.string().optional(),
+      phone: z.string().optional(),
+      line1: z.string().optional(),
+      line2: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      pincode: z.string().optional(),
+      country: z.string().optional(),
+    })
+    .optional(),
 }).superRefine((value, ctx) => {
+  if (!value.billingSameAsShipping) {
+    const parsed = addressSchema.safeParse(value.billingAddress ?? {});
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["billingAddress", ...issue.path],
+          message: issue.message,
+        });
+      }
+    }
+  }
+  if (value.paymentStatus === "COD") {
+    const extra = tryParseExtraCodCharge(value.extraCodCharge);
+    if (!extra.ok) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["extraCodCharge"],
+        message: extra.message,
+      });
+    }
+  }
   if (value.paymentStatus !== "PARTIAL") return;
   const total = value.lineItems.reduce(
     (sum, item) => sum + Number(item.unitPrice || 0) * Number(item.quantity || 0),
@@ -124,25 +190,59 @@ const schema = z.object({
   }
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormValues = z.infer<typeof newOrderFormSchema>;
+type SubmitAction = "processing" | "book";
+
+function positiveNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function postageAmount(estimatedTotal: number, codCharges: number) {
+  return Math.round((estimatedTotal - codCharges) * 100) / 100;
+}
+
+export function inventorySkuFromName(name: string) {
+  const slug = name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return slug || "ITEM";
+}
+
+function submitActionFromEvent(event?: BaseSyntheticEvent): SubmitAction {
+  const submitter = (event?.nativeEvent as SubmitEvent | undefined)?.submitter;
+  return submitter instanceof HTMLButtonElement && submitter.value === "processing" ? "processing" : "book";
+}
+
+export function newOrderShipmentPayload(shipment: FormValues["shipment"], action: SubmitAction) {
+  return {
+    ...shipment,
+    ...(action === "processing" ? { action: "processing" as const } : {}),
+  };
+}
 
 export default function NewOrderPage() {
   const router = useRouter();
-  const indiaPost = useQuery({
-    queryKey: ["integrations", "india-post"],
-    queryFn: () => api<IndiaPostConfig>("/api/v1/integrations/india-post"),
-  });
+  const queryClient = useQueryClient();
+  const indiaPost = useIndiaPost();
   const catalog = useQuery({
     queryKey: ["products", "order-picker"],
     queryFn: () =>
       api<Paginated<ProductRecord>>(`/api/v1/products?${toSearchParams({ page: 1, pageSize: 100, active: "true" })}`),
+  });
+  const orderDefaults = useQuery({
+    queryKey: ["order-defaults"],
+    queryFn: () => api<OrderPaymentDefault>("/api/v1/order-defaults"),
   });
   const serviceOptions = useMemo(
     () => selectableIndiaPostServices(indiaPost.data),
     [indiaPost.data]
   );
   const form = useForm<FormValues>({
-    resolver: zodResolver(schema) as never,
+    resolver: zodResolver(newOrderFormSchema) as never,
     defaultValues: {
       orderNumber: "",
       customerName: "",
@@ -150,6 +250,7 @@ export default function NewOrderPage() {
       customerEmail: "",
       paymentStatus: "PAID",
       amountPaid: 0,
+      extraCodCharge: 0,
       billingSameAsShipping: true,
       shippingAddress: {
         name: "",
@@ -168,6 +269,8 @@ export default function NewOrderPage() {
   });
 
   const serviceTouched = useRef(false);
+  const paymentDefaultApplied = useRef(false);
+  const pendingProductFocus = useRef(false);
   const customerPanel = useRef<HTMLDetailsElement>(null);
   const items = useFieldArray({ control: form.control, name: "lineItems" });
   // React Hook Form watch() is incompatible with the compiler memoization pass.
@@ -175,13 +278,71 @@ export default function NewOrderPage() {
   const billingSame = form.watch("billingSameAsShipping");
   const createShipment = form.watch("createShipment");
   const paymentStatus = form.watch("paymentStatus");
+  const savedPaymentDefault = orderDefaults.data?.paymentStatus ?? null;
+  const savedExtraCodCharge = orderDefaults.data?.extraCodCharge ?? null;
+  const [extraCodClosed, setExtraCodClosed] = useState(false);
+
+  useEffect(() => {
+    if (paymentDefaultApplied.current || !orderDefaults.isSuccess) return;
+    paymentDefaultApplied.current = true;
+    const saved = orderDefaults.data.paymentStatus;
+    const paymentDirty = form.getFieldState("paymentStatus").isDirty;
+    if (saved && !paymentDirty) form.setValue("paymentStatus", saved);
+    const payment = saved && !paymentDirty ? saved : form.getValues("paymentStatus");
+    const extra = orderDefaults.data.extraCodCharge;
+    if (payment === "COD" && extra != null && !form.getFieldState("extraCodCharge").isDirty) {
+      form.setValue("extraCodCharge", extra);
+    } else if (payment !== "COD") {
+      form.setValue("extraCodCharge", 0);
+    }
+  }, [form, orderDefaults.data, orderDefaults.isSuccess]);
+
+  const savePaymentDefault = useMutation({
+    mutationFn: (status: ManualOrderPaymentDefault) =>
+      api<{ paymentStatus: ManualOrderPaymentDefault }>("/api/v1/order-defaults", {
+        method: "PUT",
+        body: JSON.stringify({ paymentStatus: status }),
+      }),
+    onSuccess: () => {
+      toast.success("Payment default saved.");
+      queryClient.invalidateQueries({ queryKey: ["order-defaults"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const saveExtraCodDefault = useMutation({
+    mutationFn: (amount: number) =>
+      api<OrderPaymentDefault>("/api/v1/order-defaults", {
+        method: "PUT",
+        body: JSON.stringify({ extraCodCharge: amount }),
+      }),
+    onSuccess: () => {
+      toast.success("Extra COD charge default saved.");
+      queryClient.invalidateQueries({ queryKey: ["order-defaults"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
   const amountPaid = Number(form.watch("amountPaid") || 0);
+  const extraCodRaw = form.watch("extraCodCharge");
+  const submitLock = useRef(false);
+  const [activeSubmitAction, setActiveSubmitAction] = useState<SubmitAction | null>(null);
+  const [tariffEstimate, setTariffEstimate] = useState<TariffEstimateStatus>({ visible: false, text: "—", codCharges: null, estimatedTotal: null });
+  const updateTariffEstimate = useCallback((status: TariffEstimateStatus) => {
+    setTariffEstimate((current) =>
+      current.visible === status.visible &&
+      current.text === status.text &&
+      current.codCharges === status.codCharges &&
+      current.estimatedTotal === status.estimatedTotal
+        ? current
+        : status
+    );
+  }, []);
   const lineItemValues = form.watch("lineItems");
   const selectedService = form.watch("shipment.serviceCode");
   const shipmentWeight = form.watch("shipment.weightGrams");
   const shipmentLength = form.watch("shipment.lengthCm");
   const shipmentWidth = form.watch("shipment.widthCm");
   const shipmentHeight = form.watch("shipment.heightCm");
+  const tariffDestinationPincode = form.watch("shippingAddress.pincode");
   const catalogItems = catalog.data?.items ?? [];
   const catalogById = useMemo(
     () => new Map(catalogItems.map((item) => [item.id, item])),
@@ -203,10 +364,28 @@ export default function NewOrderPage() {
   }
 
   function addLineItem() {
+    const index = items.fields.length;
+    if (catalogItems.length) pendingProductFocus.current = true;
     items.append(
       { title: "", sku: "", quantity: 1, unitPrice: 0, weightGrams: 0, productId: undefined },
-      { shouldFocus: true, focusName: `lineItems.${items.fields.length}.title` }
+      { shouldFocus: catalogItems.length === 0, focusName: `lineItems.${index}.title` }
     );
+  }
+
+  useEffect(() => {
+    if (!pendingProductFocus.current) return;
+    pendingProductFocus.current = false;
+    const field = items.fields[items.fields.length - 1];
+    if (!field) return;
+    document.getElementById(`item-${field.id}-product`)?.focus();
+  }, [items.fields]);
+
+  function applyProductRecord(index: number, product: Pick<ProductRecord, "id" | "name" | "sku" | "price" | "weightGrams">) {
+    form.setValue(`lineItems.${index}.productId`, product.id, { shouldDirty: true, shouldValidate: true });
+    form.setValue(`lineItems.${index}.title`, product.name, { shouldDirty: true, shouldValidate: true });
+    form.setValue(`lineItems.${index}.sku`, product.sku, { shouldDirty: true });
+    form.setValue(`lineItems.${index}.unitPrice`, product.price, { shouldDirty: true });
+    form.setValue(`lineItems.${index}.weightGrams`, product.weightGrams, { shouldDirty: true });
   }
 
   function applyCatalogProduct(index: number, productId: string) {
@@ -216,12 +395,54 @@ export default function NewOrderPage() {
     }
     const product = catalogById.get(productId);
     if (!product) return;
-    form.setValue(`lineItems.${index}.productId`, product.id, { shouldDirty: true });
-    form.setValue(`lineItems.${index}.title`, product.name, { shouldDirty: true });
-    form.setValue(`lineItems.${index}.sku`, product.sku, { shouldDirty: true });
-    form.setValue(`lineItems.${index}.unitPrice`, product.price, { shouldDirty: true });
-    form.setValue(`lineItems.${index}.weightGrams`, product.weightGrams, { shouldDirty: true });
+    applyProductRecord(index, product);
   }
+
+  function setCustomProductName(index: number, name: string) {
+    form.setValue(`lineItems.${index}.title`, name, { shouldDirty: true, shouldValidate: true });
+    if (form.getValues(`lineItems.${index}.productId`)) {
+      form.setValue(`lineItems.${index}.productId`, undefined, { shouldDirty: true });
+    }
+  }
+
+  const saveInventory = useMutation({
+    mutationFn: async (index: number) => {
+      const row = form.getValues(`lineItems.${index}`);
+      const name = row.title.trim();
+      if (!name) throw new Error("Enter a product name.");
+      const sku = row.sku?.trim() || inventorySkuFromName(name);
+      return api<ProductRecord>("/api/v1/products", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          sku,
+          price: Number(row.unitPrice || 0),
+          weightGrams: Math.max(0, Math.round(Number(row.weightGrams || 0))),
+          openingStock: 0,
+          prepaidEnabled: true,
+          codEnabled: true,
+          returnAvailable: true,
+          storeVisible: false,
+        }),
+      });
+    },
+    onSuccess: (product, index) => {
+      queryClient.setQueryData<Paginated<ProductRecord>>(["products", "order-picker"], (current) => {
+        const items = current?.items ?? [];
+        if (items.some((item) => item.id === product.id)) return current;
+        return {
+          page: current?.page ?? 1,
+          pageSize: current?.pageSize ?? 100,
+          total: (current?.total ?? items.length) + 1,
+          items: [product, ...items],
+        };
+      });
+      applyProductRecord(index, product);
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
+      toast.success("Saved to inventory.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const catalogCodPreview = catalogCodAdvancePaid(
     (lineItemValues ?? []).map((item) => {
@@ -248,14 +469,39 @@ export default function NewOrderPage() {
       : paymentStatus === "PARTIAL"
         ? Math.max(0, orderTotal - amountPaid)
         : 0;
+  const extraCodParsed = paymentStatus === "COD" ? tryParseExtraCodCharge(extraCodRaw) : { ok: true as const, amount: 0 };
+  const extraCodCharge = extraCodParsed.ok ? extraCodParsed.amount : 0;
+  let finalCodAmount = 0;
+  let finalCodLimitMessage: string | undefined;
+  if (paymentStatus === "COD" && extraCodParsed.ok && Number.isFinite(collectOnDelivery)) {
+    try {
+      finalCodAmount = addRupees(collectOnDelivery, extraCodCharge);
+      if (finalCodAmount > INDIA_POST_COD_MAX_RUPEES) {
+        finalCodLimitMessage = "Final COD amount exceeds the India Post collection limit.";
+      }
+    } catch (error) {
+      finalCodLimitMessage = error instanceof Error ? error.message : "Enter a valid extra COD charge.";
+    }
+  }
+  const extraCodFieldError = extraCodParsed.ok
+    ? finalCodLimitMessage ?? form.formState.errors.extraCodCharge?.message
+    : extraCodParsed.message;
+  const extraCodDefaultSaved =
+    extraCodParsed.ok && savedExtraCodCharge != null && Math.abs(savedExtraCodCharge - extraCodCharge) < 0.001;
+  const codAdvance = paymentStatus === "COD" && Number.isFinite(orderTotal) ? Math.max(0, orderTotal - collectOnDelivery) : 0;
+
+  const bookingService = resolveOrderBookingService({
+    workspaceOverride: indiaPost.data?.bookingServiceOverride,
+    defaultService: indiaPost.data?.defaultServiceCode,
+    allowedServices: serviceOptions.map((item) => item.code),
+  });
 
   useEffect(() => {
     if (!serviceOptions.length || serviceTouched.current) return;
-    const preferred = serviceOptions.find((item) => item.isDefault)?.code ?? serviceOptions[0]?.code;
-    if (preferred && form.getValues("shipment.serviceCode") !== preferred) {
-      form.setValue("shipment.serviceCode", preferred);
+    if (bookingService && form.getValues("shipment.serviceCode") !== bookingService) {
+      form.setValue("shipment.serviceCode", bookingService);
     }
-  }, [form, serviceOptions]);
+  }, [bookingService, form, serviceOptions.length]);
 
   const customerFieldError =
     form.formState.errors.customerName ||
@@ -265,9 +511,18 @@ export default function NewOrderPage() {
     if (customerFieldError && customerPanel.current) customerPanel.current.open = true;
   }, [customerFieldError]);
 
-  async function onSubmit(values: FormValues) {
+  async function onSubmit(values: FormValues, action: SubmitAction) {
+    if (submitLock.current) return;
+    submitLock.current = true;
+    if (finalCodLimitMessage) {
+      submitLock.current = false;
+      toast.error(finalCodLimitMessage);
+      return;
+    }
+    setActiveSubmitAction(action);
+    unlockNewOrderSound();
     try {
-      const created = await api<{ id: string }>("/api/v1/orders", {
+      const created = await api<OrderRecord>("/api/v1/orders", {
         method: "POST",
         body: JSON.stringify({
           orderNumber: undefined,
@@ -298,6 +553,7 @@ export default function NewOrderPage() {
             values.paymentStatus === "PARTIAL"
               ? Number(values.amountPaid || 0)
               : undefined,
+          extraCodCharge: values.paymentStatus === "COD" ? values.extraCodCharge ?? 0 : undefined,
           lineItems: values.lineItems.map((item) =>
             item.productId
               ? { productId: item.productId, quantity: item.quantity }
@@ -310,80 +566,120 @@ export default function NewOrderPage() {
                 }
           ),
           createShipment: true,
-          shipment: values.shipment,
+          shipment: newOrderShipmentPayload(values.shipment, action),
         }),
       });
-      toast.success("Order saved. India Post booking started.");
+      const shipment = created.shipment;
+      const orderNumber = created.orderNumber ?? created.order_number ?? created.id.slice(0, 8);
+      if (action === "processing") {
+        toast.success("Order marked processing.");
+      } else if (isIndiaPostAcceptedStatus(shipment?.status)) {
+        emitDashboardAlerts([localShipmentBookedAlert({ orderId: created.id, orderNumber })]);
+        toast.success("India Post booked.");
+      } else if (isIndiaPostBookingInFlight(shipment?.status)) {
+        toast.success("Order saved. India Post booking started.");
+      } else {
+        toast.error(
+          shipment?.lastError ||
+            shipment?.last_error ||
+            (shipment ? "India Post booking failed." : "Order saved, but India Post booking did not start.")
+        );
+      }
+      void api(`/api/v1/orders/${encodeURIComponent(created.id)}/tariff-quote`, {
+        method: "POST",
+        body: JSON.stringify({
+          service: values.shipment?.serviceCode,
+          weightGrams: positiveNumber(values.shipment?.weightGrams),
+          lengthCm: positiveNumber(values.shipment?.lengthCm),
+          widthCm: positiveNumber(values.shipment?.widthCm),
+          heightCm: positiveNumber(values.shipment?.heightCm),
+        }),
+      }).catch(() => undefined);
       router.push(`/dashboard/orders/${created.id}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create the order.");
+    } finally {
+      submitLock.current = false;
+      setActiveSubmitAction(null);
     }
   }
 
   return (
     <form
-      className="space-y-4 pb-20 xl:pb-0"
-      onSubmit={form.handleSubmit(onSubmit, () => {
-        toast.error("Please check the highlighted fields.");
+      className="space-y-3 pb-16 xl:pb-0"
+      onSubmit={form.handleSubmit((values, event) => onSubmit(values, submitActionFromEvent(event)), (errors) => {
+        toast.error(firstFormError(errors) ?? "Please check the highlighted fields.");
       })}
     >
       <PageHeader
         title="Add order"
-        description="Create a manual order with customer, address, and line items."
+        description="Customer, address, items, then book."
         actions={
-          <Button type="submit" size="sm" className="hidden xl:inline-flex" disabled={form.formState.isSubmitting}>
-            {form.formState.isSubmitting ? "Booking…" : "Book now"}
-          </Button>
+          <div className="hidden items-center gap-1.5 xl:flex">
+            <Button type="submit" name="submitAction" value="processing" variant="secondary" size="xs" disabled={form.formState.isSubmitting}>
+              {form.formState.isSubmitting && activeSubmitAction === "processing" ? "Saving…" : "Processing"}
+            </Button>
+            <Button type="submit" name="submitAction" value="book" size="xs" disabled={form.formState.isSubmitting}>
+              {form.formState.isSubmitting && activeSubmitAction === "book" ? "Booking…" : "Book now"}
+            </Button>
+          </div>
         }
       />
 
       <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_17rem] xl:items-start xl:gap-6">
-      <div className="space-y-4">
+      <div className="space-y-3">
 
       <WhatsAppPasteParser
-        getCurrent={() => ({
-          name: form.getValues("customerName"),
-          phone: form.getValues("customerPhone"),
-          email: form.getValues("customerEmail"),
-          line1: form.getValues("shippingAddress.line1"),
-          line2: form.getValues("shippingAddress.line2"),
-          city: form.getValues("shippingAddress.city"),
-          state: form.getValues("shippingAddress.state"),
-          pincode: form.getValues("shippingAddress.pincode"),
-        })}
+        overwrite
+        getCurrent={() => {
+          const shipping = form.getValues("shippingAddress");
+          return {
+            name: shipping.name || form.getValues("customerName"),
+            phone: shipping.phone || form.getValues("customerPhone"),
+            email: form.getValues("customerEmail"),
+            line1: shipping.line1,
+            line2: shipping.line2,
+            city: shipping.city,
+            state: unsetIfDefault(
+              shipping.state,
+              form.getFieldState("shippingAddress.state").isDirty,
+              DEFAULT_INDIAN_STATE
+            ),
+            pincode: shipping.pincode,
+          };
+        }}
         onApply={(fields) => {
-          if (fields.name) {
-            form.setValue("customerName", fields.name, { shouldDirty: true });
-            if (!form.getValues("shippingAddress.name")) {
-              form.setValue("shippingAddress.name", fields.name, { shouldDirty: true });
-            }
-          }
-          if (fields.phone) {
-            form.setValue("customerPhone", fields.phone, { shouldDirty: true });
-            if (!form.getValues("shippingAddress.phone")) {
-              form.setValue("shippingAddress.phone", fields.phone, { shouldDirty: true });
-            }
-          }
-          if (fields.email && !String(form.getValues("customerEmail") ?? "").trim()) {
-            form.setValue("customerEmail", fields.email, { shouldDirty: true });
-          }
-          if (fields.line1) form.setValue("shippingAddress.line1", fields.line1, { shouldDirty: true });
-          if (fields.line2) form.setValue("shippingAddress.line2", fields.line2, { shouldDirty: true });
-          if (fields.city) form.setValue("shippingAddress.city", fields.city, { shouldDirty: true });
-          if (fields.state) form.setValue("shippingAddress.state", fields.state, { shouldDirty: true });
-          if (fields.pincode) form.setValue("shippingAddress.pincode", fields.pincode, { shouldDirty: true });
+          const name = (fields.name ?? "").trim();
+          const phone = (fields.phone ?? "").trim();
+          const email = (fields.email ?? "").trim();
+          const line1 = clipIndiaPostAddressLine(fields.line1 ?? "");
+          const line2 = clipIndiaPostAddressLine(fields.line2 ?? "");
+          const city = (fields.city ?? "").trim();
+          const state = (fields.state ?? "").trim() || DEFAULT_INDIAN_STATE;
+          const pincode = (fields.pincode ?? "").trim();
+          const write = { shouldDirty: true, shouldValidate: true } as const;
+          form.setValue("customerName", name, write);
+          form.setValue("customerPhone", phone, write);
+          form.setValue("customerEmail", email, write);
+          form.setValue("shippingAddress.name", name, write);
+          form.setValue("shippingAddress.phone", phone, write);
+          form.setValue("shippingAddress.line1", line1, write);
+          form.setValue("shippingAddress.line2", line2, write);
+          form.setValue("shippingAddress.city", city, write);
+          form.setValue("shippingAddress.state", state, write);
+          form.setValue("shippingAddress.pincode", pincode, write);
         }}
       />
 
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader className="p-3">
           <CardTitle>Order</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
+        <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
           <Field label="Order number" hint="A unique PB number is assigned when you book.">
             <div className="relative">
               <Input
-                className="h-9 cursor-not-allowed bg-surface-soft pr-9"
+                className="h-8 cursor-not-allowed bg-surface-soft pr-9"
                 value=""
                 readOnly
                 disabled
@@ -396,18 +692,44 @@ export default function NewOrderPage() {
             </div>
           </Field>
           <div className="space-y-2">
-            <Label>Payment</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label>Payment</Label>
+              <button
+                type="button"
+                className="text-xs font-medium text-brand underline-offset-2 hover:underline disabled:cursor-default disabled:text-muted disabled:no-underline"
+                disabled={
+                  savePaymentDefault.isPending ||
+                  savedPaymentDefault === paymentStatus ||
+                  !MANUAL_ORDER_PAYMENT_DEFAULTS.includes(paymentStatus as ManualOrderPaymentDefault)
+                }
+                onClick={() => {
+                  if (!MANUAL_ORDER_PAYMENT_DEFAULTS.includes(paymentStatus as ManualOrderPaymentDefault)) return;
+                  savePaymentDefault.mutate(paymentStatus as ManualOrderPaymentDefault);
+                }}
+              >
+                {savePaymentDefault.isPending
+                  ? "Saving…"
+                  : savedPaymentDefault === paymentStatus
+                    ? "Default"
+                    : "Save as default"}
+              </button>
+            </div>
             <Select
               value={paymentStatus}
-              onValueChange={(value) =>
-                form.setValue("paymentStatus", value as FormValues["paymentStatus"])
-              }
+              onValueChange={(value) => {
+                form.setValue("paymentStatus", value as FormValues["paymentStatus"], { shouldDirty: true });
+                if (value !== "COD") {
+                  form.setValue("extraCodCharge", 0);
+                } else if (!extraCodClosed) {
+                  form.setValue("extraCodCharge", savedExtraCodCharge ?? 0, { shouldValidate: true });
+                }
+              }}
             >
-              <SelectTrigger className="h-9">
+              <SelectTrigger className="h-8" aria-label="Payment">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PAYMENT_STATUSES.filter((item) => item !== "FAILED" && item !== "PENDING" && item !== "REFUNDED").map((item) => (
+                {MANUAL_ORDER_PAYMENT_DEFAULTS.map((item) => (
                   <SelectItem key={item} value={item}>
                     {PAYMENT_STATUS_LABELS[item]}
                   </SelectItem>
@@ -421,10 +743,98 @@ export default function NewOrderPage() {
               hint="The rest is collected on delivery."
               error={form.formState.errors.amountPaid?.message}
             >
-              <Input className="h-9" type="number" min={0} step="0.01" {...form.register("amountPaid")} />
+              <Input className="h-8" type="number" min={0} step="0.01" {...form.register("amountPaid")} />
             </Field>
           ) : null}
-          {paymentStatus === "COD" || paymentStatus === "PARTIAL" ? (
+          {paymentStatus === "COD" ? (
+            <div className="space-y-3 md:col-span-2">
+              {extraCodClosed ? (
+                <button
+                  type="button"
+                  className="text-xs font-medium text-brand underline-offset-2 hover:underline"
+                  onClick={() => {
+                    setExtraCodClosed(false);
+                    form.setValue("extraCodCharge", savedExtraCodCharge ?? 0, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                  }}
+                >
+                  Add extra COD charge
+                </button>
+              ) : (
+                <div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Label htmlFor="extra-cod-charge">Extra COD Charge (₹)</Label>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-brand underline-offset-2 hover:underline disabled:cursor-default disabled:text-muted disabled:no-underline"
+                        disabled={saveExtraCodDefault.isPending || !extraCodParsed.ok || extraCodDefaultSaved}
+                        onClick={() => {
+                          if (!extraCodParsed.ok) return;
+                          saveExtraCodDefault.mutate(extraCodCharge);
+                        }}
+                      >
+                        {saveExtraCodDefault.isPending ? "Saving…" : extraCodDefaultSaved ? "Default" : "Save as default"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-muted underline-offset-2 hover:underline"
+                        onClick={() => {
+                          setExtraCodClosed(true);
+                          form.setValue("extraCodCharge", 0, { shouldDirty: true, shouldValidate: true });
+                        }}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-1 max-w-64">
+                    <Input
+                      id="extra-cod-charge"
+                      className="h-8"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      inputMode="decimal"
+                      placeholder="Enter additional COD charge"
+                      aria-describedby="extra-cod-charge-hint"
+                      {...form.register("extraCodCharge")}
+                    />
+                  </div>
+                  <p id="extra-cod-charge-hint" className="mt-0.5 text-[11px] text-muted">
+                    Optional additional amount to collect from the customer.
+                  </p>
+                  {extraCodFieldError ? <p className="mt-0.5 text-xs text-error">{extraCodFieldError}</p> : null}
+                </div>
+              )}
+              <div className="rounded-xl border border-border bg-surface-soft p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payment details</p>
+                <dl className="mt-2 space-y-1.5 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted">Product Amount</dt>
+                    <dd className="tabular-nums">{formatCurrency(orderTotal)}</dd>
+                  </div>
+                  {codAdvance > 0.001 ? (
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted">COD advance</dt>
+                      <dd className="tabular-nums">{formatCurrency(codAdvance)}</dd>
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted">Extra COD Charge</dt>
+                    <dd className="tabular-nums">{formatCurrency(extraCodCharge)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-border pt-2 font-semibold text-ink">
+                    <dt>Final COD Amount</dt>
+                    <dd className="tabular-nums">{formatCurrency(finalCodAmount)}</dd>
+                  </div>
+                </dl>
+              </div>
+            </div>
+          ) : null}
+          {paymentStatus === "PARTIAL" ? (
             <p className="text-sm text-muted md:col-span-2">
               Collect on delivery: {formatCurrency(collectOnDelivery)}
               {orderTotal > 0 ? ` of ${formatCurrency(orderTotal)} total` : ""}
@@ -437,7 +847,7 @@ export default function NewOrderPage() {
         ref={customerPanel}
         className="group rounded-2xl border border-border bg-card text-foreground shadow-[0_1px_2px_rgb(9_9_11/0.04),0_8px_24px_rgb(9_9_11/0.04)]"
       >
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3 [&::-webkit-details-marker]:hidden">
           <div>
             <CardTitle>Create customer account</CardTitle>
             <p className="mt-0.5 text-xs text-muted">
@@ -446,9 +856,9 @@ export default function NewOrderPage() {
           </div>
           <ChevronDown className="size-4 shrink-0 text-muted transition-transform group-open:rotate-180" />
         </summary>
-        <div className="grid gap-3 px-4 pb-4 pt-0 md:grid-cols-3">
+        <div className="grid gap-2.5 px-3 pb-3 pt-0 md:grid-cols-3">
           <Field label="Name" hint="Optional." error={form.formState.errors.customerName?.message}>
-            <Input className="h-9" autoComplete="name" {...form.register("customerName")} />
+            <Input className="h-8" autoComplete="name" {...form.register("customerName")} />
           </Field>
           <Field label="Phone" hint="Optional." error={form.formState.errors.customerPhone?.message}>
             <IndiaWhatsappField
@@ -464,7 +874,7 @@ export default function NewOrderPage() {
           </Field>
           <Field label="Email" hint="Optional." error={form.formState.errors.customerEmail?.message}>
             <Input
-              className="h-9"
+              className="h-8"
               type="email"
               autoComplete="email"
               placeholder="name@example.com (optional)"
@@ -475,10 +885,10 @@ export default function NewOrderPage() {
       </details>
 
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader className="p-3">
           <CardTitle>Shipping address</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
+        <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
           <AddressFields
             prefix="shippingAddress"
             form={{
@@ -498,12 +908,12 @@ export default function NewOrderPage() {
         </CardContent>
       </Card>
 
-      {!billingSame ? (
+      <Expand open={!billingSame}>
         <Card>
-          <CardHeader className="p-4">
+          <CardHeader className="p-3">
             <CardTitle>Billing address</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-3 p-4 pt-0 md:grid-cols-2">
+          <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
             <AddressFields
               prefix="billingAddress"
               form={{
@@ -515,10 +925,10 @@ export default function NewOrderPage() {
             />
           </CardContent>
         </Card>
-      ) : null}
+      </Expand>
 
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-3 p-4">
+        <CardHeader className="flex-row items-center justify-between gap-3 p-3">
           <div>
             <CardTitle>Line items</CardTitle>
             <p className="mt-0.5 text-xs text-muted">
@@ -532,7 +942,7 @@ export default function NewOrderPage() {
             Add inventory
           </Link>
         </CardHeader>
-        <CardContent className="p-4 pt-0">
+        <CardContent className="p-3 pt-0">
           <div
             aria-hidden
             className={cn(
@@ -554,40 +964,76 @@ export default function NewOrderPage() {
               const titleError = form.formState.errors.lineItems?.[index]?.title?.message;
               const row = lineItemValues?.[index];
               const lineTotal = Number(row?.quantity || 0) * Number(row?.unitPrice || 0);
+              const fromInventory = Boolean(row?.productId);
+              const typedName = row?.title?.trim() ?? "";
+              const canSaveToInventory =
+                !fromInventory &&
+                Boolean(typedName) &&
+                Number(row?.unitPrice) > 0 &&
+                Number(row?.weightGrams) > 0;
+              const saveToInventory = canSaveToInventory ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="xs"
+                  className="mt-1 h-auto px-0 font-medium"
+                  disabled={saveInventory.isPending}
+                  onClick={() => saveInventory.mutate(index)}
+                >
+                  {saveInventory.isPending && saveInventory.variables === index ? "Saving…" : "Save to inventory"}
+                </Button>
+              ) : null;
               return (
+                <div key={field.id} className="rounded-xl border border-border transition-colors duration-300 lg:rounded-none lg:border-0">
                 <div
-                  key={field.id}
                   className={cn(
-                    "grid grid-cols-2 gap-x-2 gap-y-3 rounded-xl border border-border p-3 sm:grid-cols-4 lg:items-start lg:gap-y-0 lg:rounded-none lg:border-0 lg:px-3 lg:py-2.5",
+                    "grid grid-cols-2 gap-x-2 gap-y-3 p-3 transition-colors duration-300 sm:grid-cols-4 lg:items-center lg:gap-y-0 lg:px-3 lg:py-2",
+                    fromInventory && "bg-brand/[0.04]",
                     LINE_ITEM_GRID
                   )}
                 >
                   <div className="col-span-2 sm:col-span-4 lg:col-span-1">
-                    <LineLabel htmlFor={`item-${field.id}-title`}>Product</LineLabel>
+                    <LineLabel htmlFor={catalogItems.length ? `item-${field.id}-product` : `item-${field.id}-title`}>Product</LineLabel>
                     {catalogItems.length ? (
+                      <>
+                      <input
+                        className="sr-only"
+                        tabIndex={-1}
+                        aria-hidden
+                        {...form.register(`lineItems.${index}.title`)}
+                      />
                       <Combobox
-                        className="mb-1.5 h-9"
-                        placeholder="Inventory product (optional)"
+                        id={`item-${field.id}-product`}
+                        className="h-8 [&_input]:h-8"
+                        placeholder="Product name or saved product"
                         emptyText="No matching products"
+                        aria-invalid={Boolean(titleError)}
                         options={[
-                          { value: "", label: "Custom item" },
+                          ...(typedName && !fromInventory
+                            ? [{ value: "__custom__", label: typedName, group: "This order" }]
+                            : []),
                           ...catalogItems.map((product) => ({
                             value: product.id,
-                            label: `${product.name} · ${product.sku}`,
+                            label: product.name,
+                            detail: product.sku,
+                            group: "Inventory",
                           })),
                         ]}
-                        value={row?.productId ?? ""}
-                        onChange={(value) => applyCatalogProduct(index, value)}
+                        value={fromInventory ? row?.productId : typedName ? "__custom__" : ""}
+                        onInput={(name) => setCustomProductName(index, name)}
+                        onChange={(value) => applyCatalogProduct(index, !value || value === "__custom__" ? "" : value)}
                       />
-                    ) : null}
-                    <Input
-                      id={`item-${field.id}-title`}
-                      className="h-9"
-                      placeholder="e.g. Cotton saree"
-                      aria-invalid={Boolean(titleError)}
-                      disabled={Boolean(row?.productId)}
-                      {...form.register(`lineItems.${index}.title`)}
-                    />
+                      </>
+                    ) : (
+                      <Input
+                        id={`item-${field.id}-title`}
+                        className="h-8"
+                        placeholder="e.g. Cotton saree"
+                        aria-invalid={Boolean(titleError)}
+                        {...form.register(`lineItems.${index}.title`)}
+                      />
+                    )}
+                    {saveToInventory}
                     {titleError ? <p className="mt-1 text-xs text-error">{titleError}</p> : null}
                   </div>
 
@@ -595,7 +1041,7 @@ export default function NewOrderPage() {
                     <LineLabel htmlFor={`item-${field.id}-sku`}>SKU</LineLabel>
                     <Input
                       id={`item-${field.id}-sku`}
-                      className="h-9"
+                      className="h-8"
                       placeholder="Optional"
                       disabled={Boolean(row?.productId)}
                       {...form.register(`lineItems.${index}.sku`)}
@@ -604,12 +1050,15 @@ export default function NewOrderPage() {
 
                   <div>
                     <LineLabel htmlFor={`item-${field.id}-qty`}>Qty</LineLabel>
-                    <div className="flex h-9 items-stretch overflow-hidden rounded-[var(--radius-input)] border border-border bg-card shadow-sm focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/30">
+                    <div className="flex h-8 items-stretch overflow-hidden rounded-[var(--radius-input)] border border-border bg-card shadow-sm focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/30">
                       <button
                         type="button"
                         aria-label="Decrease quantity"
                         disabled={Number(row?.quantity || 1) <= 1}
-                        onClick={() => stepQuantity(index, -1)}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          stepQuantity(index, -1);
+                        }}
                         className="flex w-8 shrink-0 items-center justify-center text-muted transition-colors hover:bg-surface-soft hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
                       >
                         <Minus className="size-3.5" />
@@ -628,7 +1077,10 @@ export default function NewOrderPage() {
                       <button
                         type="button"
                         aria-label="Increase quantity"
-                        onClick={() => stepQuantity(index, 1)}
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          stepQuantity(index, 1);
+                        }}
                         className="flex w-8 shrink-0 items-center justify-center text-muted transition-colors hover:bg-surface-soft hover:text-foreground"
                       >
                         <Plus className="size-3.5" />
@@ -642,7 +1094,7 @@ export default function NewOrderPage() {
                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">₹</span>
                       <Input
                         id={`item-${field.id}-price`}
-                        className={cn("h-9 pl-7 tabular-nums", NO_SPINNER)}
+                        className={cn("h-8 pl-7 tabular-nums", NO_SPINNER)}
                         type="number"
                         inputMode="decimal"
                         min={0}
@@ -660,7 +1112,7 @@ export default function NewOrderPage() {
                     <div className="relative">
                       <Input
                         id={`item-${field.id}-weight`}
-                        className={cn("h-9 pr-7 tabular-nums", NO_SPINNER)}
+                        className={cn("h-8 pr-7 tabular-nums", NO_SPINNER)}
                         type="number"
                         inputMode="numeric"
                         min={0}
@@ -673,12 +1125,12 @@ export default function NewOrderPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 sm:col-span-3 lg:col-span-1 lg:h-9 lg:justify-end">
+                  <div className="flex items-center gap-2 sm:col-span-3 lg:col-span-1 lg:h-8 lg:justify-end">
                     <span className="text-xs text-muted lg:hidden">Line total</span>
                     <span className="text-sm font-medium tabular-nums text-ink">{formatCurrency(lineTotal)}</span>
                   </div>
 
-                  <div className="flex justify-end lg:h-9 lg:items-center">
+                  <div className="flex justify-end lg:h-8 lg:items-center">
                     <Button
                       type="button"
                       variant="ghost"
@@ -693,6 +1145,7 @@ export default function NewOrderPage() {
                     </Button>
                   </div>
                 </div>
+                </div>
               );
             })}
           </div>
@@ -701,7 +1154,7 @@ export default function NewOrderPage() {
             <Button
               type="button"
               variant="ghost"
-              size="sm"
+              size="xs"
               className="justify-center border border-dashed border-border text-muted hover:border-brand hover:text-brand sm:justify-start"
               onClick={addLineItem}
             >
@@ -723,10 +1176,10 @@ export default function NewOrderPage() {
       </Card>
 
       <Card>
-        <CardHeader className="p-4">
+        <CardHeader className="p-3">
           <CardTitle>Shipment</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3 p-4 pt-0">
+        <CardContent className="space-y-2.5 p-3 pt-0">
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
               checked={createShipment}
@@ -734,15 +1187,20 @@ export default function NewOrderPage() {
             />
             Book with India Post
           </label>
-          {createShipment ? <IndiaPostBookingGuide selectedService={selectedService} /> : null}
-          {createShipment ? (
-            <div className="space-y-3">
+          <Expand open={createShipment}>
+            <div className="space-y-2.5">
+          <IndiaPostBookingGuide selectedService={selectedService} />
             <ShipmentPackPresets
               weightGrams={Number(shipmentWeight) || undefined}
               lengthCm={Number(shipmentLength) || undefined}
               widthCm={Number(shipmentWidth) || undefined}
               heightCm={Number(shipmentHeight) || undefined}
               serviceCode={selectedService}
+              onApplySize={(size) => {
+                form.setValue("shipment.lengthCm", size.lengthCm, { shouldDirty: true });
+                form.setValue("shipment.widthCm", size.widthCm, { shouldDirty: true });
+                form.setValue("shipment.heightCm", size.heightCm, { shouldDirty: true });
+              }}
               onApply={(pack) => {
                 serviceTouched.current = true;
                 form.setValue("shipment.weightGrams", pack.weightGrams, { shouldDirty: true });
@@ -752,18 +1210,18 @@ export default function NewOrderPage() {
                 form.setValue("shipment.serviceCode", pack.serviceCode, { shouldDirty: true });
               }}
             />
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-2.5 md:grid-cols-5">
               <Field label="Weight (g)" error={form.formState.errors.shipment?.weightGrams?.message}>
-                <Input className="h-9" type="number" min={1} {...form.register("shipment.weightGrams")} />
+                <Input className="h-8" type="number" min={1} {...form.register("shipment.weightGrams")} />
               </Field>
               <Field label="Length (cm)" error={form.formState.errors.shipment?.lengthCm?.message}>
-                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.lengthCm")} />
+                <Input className="h-8" type="number" min={0} max={150} step="0.1" {...form.register("shipment.lengthCm")} />
               </Field>
               <Field label="Width (cm)" error={form.formState.errors.shipment?.widthCm?.message}>
-                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.widthCm")} />
+                <Input className="h-8" type="number" min={0} max={150} step="0.1" {...form.register("shipment.widthCm")} />
               </Field>
               <Field label="Height (cm)" error={form.formState.errors.shipment?.heightCm?.message}>
-                <Input className="h-9" type="number" min={0} max={150} step="0.1" {...form.register("shipment.heightCm")} />
+                <Input className="h-8" type="number" min={0} max={150} step="0.1" {...form.register("shipment.heightCm")} />
               </Field>
               <Field
                 label="Service"
@@ -781,11 +1239,13 @@ export default function NewOrderPage() {
                   value={selectedService || undefined}
                   disabled={indiaPost.isPending || serviceOptions.length === 0}
                   onValueChange={(value) => {
+                    if (value === form.getValues("shipment.serviceCode")) return;
                     serviceTouched.current = true;
-                    form.setValue("shipment.serviceCode", value);
+                    form.setValue("shipment.serviceCode", value, { shouldDirty: true });
+                    toast.success(`Switched to ${indiaPostServiceLabel(value)}.`);
                   }}
                 >
-                  <SelectTrigger className="h-9">
+                  <SelectTrigger className="h-8">
                     <SelectValue placeholder="Choose a service" />
                   </SelectTrigger>
                   <SelectContent>
@@ -808,13 +1268,24 @@ export default function NewOrderPage() {
               </Field>
             </div>
             </div>
-          ) : null}
+            </Expand>
+      <TariffEstimateCard
+        draft={{
+          service: selectedService,
+          destinationPincode: tariffDestinationPincode,
+          weightGrams: positiveNumber(shipmentWeight) ?? (lineItemValues?.length && lineItemValues.every((item) => Number(item.weightGrams) > 0) ? totalWeight : undefined),
+          lengthCm: positiveNumber(shipmentLength),
+          widthCm: positiveNumber(shipmentWidth),
+          heightCm: positiveNumber(shipmentHeight),
+          ...(paymentStatus === "COD" && Number.isFinite(finalCodAmount) && finalCodAmount > 0 ? { codAmount: finalCodAmount } : {}),
+        }}
+        onEstimate={updateTariffEstimate}
+      />
         </CardContent>
       </Card>
       </div>
-
-      <aside className="hidden xl:block">
-        <div className="sticky top-4 space-y-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <aside>
+        <div className="sticky top-4 space-y-2.5 rounded-2xl border border-border bg-card p-3 shadow-sm">
           <h2 className="text-sm font-semibold text-ink">Summary</h2>
           <p className="flex justify-between text-sm">
             <span className="text-muted">Items</span>
@@ -824,7 +1295,35 @@ export default function NewOrderPage() {
             <span className="text-muted">Total</span>
             <span className="font-medium tabular-nums">{formatCurrency(orderTotal)}</span>
           </p>
-          {paymentStatus === "COD" || paymentStatus === "PARTIAL" ? (
+          {tariffEstimate.visible && paymentStatus === "COD" ? (
+            <>
+              <p className="flex justify-between gap-3 text-sm" aria-live="polite">
+                <span className="text-muted">Shipping tariff</span>
+                <span className="font-medium tabular-nums">
+                  {tariffEstimate.estimatedTotal != null && tariffEstimate.codCharges != null
+                    ? formatCurrency(postageAmount(tariffEstimate.estimatedTotal, tariffEstimate.codCharges))
+                    : tariffEstimate.text}
+                </span>
+              </p>
+              <p className="flex justify-between gap-3 text-sm">
+                <span className="text-muted">India Post COD service charge</span>
+                <span className="font-medium tabular-nums">
+                  {tariffEstimate.codCharges != null ? formatCurrency(tariffEstimate.codCharges) : "—"}
+                </span>
+              </p>
+            </>
+          ) : tariffEstimate.visible ? (
+            <p className="flex justify-between gap-3 text-sm" aria-live="polite">
+              <span className="text-muted">Shipping tariff</span>
+              <span className="font-medium tabular-nums">{tariffEstimate.text}</span>
+            </p>
+          ) : null}
+          {paymentStatus === "COD" ? (
+            <p className="flex justify-between text-sm font-semibold text-[#0D3311] dark:text-[#0D3311]">
+              <span>Final COD</span>
+              <span className="tabular-nums">{formatCurrency(finalCodAmount)}</span>
+            </p>
+          ) : paymentStatus === "PARTIAL" ? (
             <p className="flex justify-between text-sm">
               <span className="text-muted">Collect</span>
               <span className="tabular-nums">{formatCurrency(collectOnDelivery)}</span>
@@ -834,18 +1333,48 @@ export default function NewOrderPage() {
       </aside>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 p-3 backdrop-blur-sm xl:hidden">
-        <Button type="submit" className="w-full" size="sm" disabled={form.formState.isSubmitting}>
-          {form.formState.isSubmitting ? "Booking…" : "Book now"}
+      <div className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-2 gap-2 border-t border-border bg-card/95 p-2 backdrop-blur-sm xl:hidden">
+        <Button type="submit" name="submitAction" value="processing" variant="secondary" className="w-full" size="xs" disabled={form.formState.isSubmitting}>
+          {form.formState.isSubmitting && activeSubmitAction === "processing" ? "Saving…" : "Processing"}
+        </Button>
+        <Button type="submit" name="submitAction" value="book" className="w-full" size="xs" disabled={form.formState.isSubmitting}>
+          {form.formState.isSubmitting && activeSubmitAction === "book" ? "Booking…" : "Book now"}
         </Button>
       </div>
     </form>
   );
 }
 
+function firstFormError(errors: unknown): string | undefined {
+  if (!errors || typeof errors !== "object") return undefined;
+  if ("message" in errors && typeof errors.message === "string" && errors.message) {
+    return errors.message;
+  }
+  for (const value of Object.values(errors)) {
+    const found = firstFormError(value);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 const LINE_ITEM_GRID = "lg:grid-cols-[minmax(0,1fr)_6.5rem_7rem_7rem_5.5rem_5.5rem_2rem]";
 const NO_SPINNER =
   "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
+
+function Expand({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+      )}
+    >
+      <div className="min-h-0 overflow-hidden" inert={!open}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 function formatWeight(grams: number) {
   if (!grams) return "—";
@@ -920,20 +1449,26 @@ function Field({
   hint,
   error,
   className,
+  htmlFor,
   children,
 }: {
   label: string;
   hint?: string;
   error?: string;
   className?: string;
+  htmlFor?: string;
   children: ReactNode;
 }) {
   return (
     <div className={className}>
-      <Label>{label}</Label>
-      <div className="mt-1.5">{children}</div>
-      {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
-      {error ? <p className="mt-1 text-sm text-error">{error}</p> : null}
+      <Label htmlFor={htmlFor}>{label}</Label>
+      <div className="mt-1">{children}</div>
+      {hint ? (
+        <p id={htmlFor ? `${htmlFor}-hint` : undefined} className="mt-0.5 text-[11px] text-muted">
+          {hint}
+        </p>
+      ) : null}
+      {error ? <p className="mt-0.5 text-xs text-error">{error}</p> : null}
     </div>
   );
 }
@@ -952,7 +1487,7 @@ function AddressFields({
         label={prefix === "billingAddress" ? "Name" : "Customer name"}
         error={form.formState.errors[prefix]?.name?.message}
       >
-        <Input className="h-9" autoComplete="name" placeholder="Customer name" {...form.register(`${prefix}.name`)} />
+        <Input className="h-8" autoComplete="name" placeholder="Customer name" {...form.register(`${prefix}.name`)} />
       </Field>
       <Field label="Phone" error={phoneError}>
         <IndiaWhatsappField
@@ -966,34 +1501,33 @@ function AddressFields({
           placeholder="10-digit mobile number"
         />
       </Field>
-      <Field
+      <AddressLineInput
+        id={`${prefix}-line1`}
         label="Address"
         className="md:col-span-2"
+        inputClassName="h-8"
         hint="House, building, and street — required for booking."
         error={form.formState.errors[prefix]?.line1?.message}
-      >
-        <Input
-          className="h-9"
-          autoComplete="address-line1"
-          placeholder="House / building, street"
-          {...form.register(`${prefix}.line1`)}
-        />
-      </Field>
-      <Field
+        control={form.control}
+        autoComplete="address-line1"
+        placeholder="House / building, street"
+        {...form.register(`${prefix}.line1`)}
+      />
+      <AddressLineInput
+        id={`${prefix}-line2`}
         label="Area / locality"
         className="md:col-span-2"
+        inputClassName="h-8"
         hint="Optional. Landmark or extra address — not required for India Post booking."
-      >
-        <Input
-          className="h-9"
-          autoComplete="address-line2"
-          placeholder="Landmark, area (optional)"
-          {...form.register(`${prefix}.line2`)}
-        />
-      </Field>
+        error={form.formState.errors[prefix]?.line2?.message}
+        control={form.control}
+        autoComplete="address-line2"
+        placeholder="Landmark, area (optional)"
+        {...form.register(`${prefix}.line2`)}
+      />
       <Field label="Pincode" error={form.formState.errors[prefix]?.pincode?.message}>
         <Input
-          className="h-9 tabular-nums tracking-wide"
+          className="h-8 tabular-nums tracking-wide"
           inputMode="numeric"
           maxLength={6}
           autoComplete="postal-code"
@@ -1003,7 +1537,7 @@ function AddressFields({
         <PincodeLookup control={form.control} setValue={form.setValue} prefix={prefix} />
       </Field>
       <Field label="City" error={form.formState.errors[prefix]?.city?.message}>
-        <Input className="h-9" {...form.register(`${prefix}.city`)} />
+        <Input className="h-8" {...form.register(`${prefix}.city`)} />
       </Field>
       <Field label="State" error={form.formState.errors[prefix]?.state?.message}>
         <Controller
@@ -1021,6 +1555,7 @@ function AddressFields({
               placeholder="Search state"
               emptyText="No state matches your search"
               aria-invalid={Boolean(fieldState.error)}
+              className="[&_input]:h-8"
             />
           )}
         />
@@ -1030,7 +1565,7 @@ function AddressFields({
         <div
           aria-readonly="true"
           title="Shipping is available within India only"
-          className="flex h-9 w-full cursor-not-allowed select-none items-center gap-2.5 rounded-[var(--radius-input)] border border-border bg-surface-soft px-3.5 text-sm text-foreground"
+          className="flex h-8 w-full cursor-not-allowed select-none items-center gap-2.5 rounded-[var(--radius-input)] border border-border bg-surface-soft px-3.5 text-sm text-foreground"
         >
           <IndiaFlag className="h-3.5 w-5 shrink-0 rounded-[2px] shadow-[0_0_0_1px_rgb(9_9_11/0.08)]" />
           <span className="font-medium">India</span>

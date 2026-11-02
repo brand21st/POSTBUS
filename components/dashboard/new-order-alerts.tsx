@@ -10,6 +10,8 @@ import {
   unlockNewOrderSound,
   collectDashboardAlerts,
   isNewOrderCreatedNotification,
+  rememberDashboardAlerts,
+  DASHBOARD_ALERT_EVENT,
   LABELS_READY_NOTIFICATION,
   TRACKING_HOST_LIVE_NOTIFICATION,
 } from "@/lib/notifications/new-order";
@@ -42,6 +44,7 @@ export function NewOrderAlerts() {
   const queryClient = useQueryClient();
   const notifications = useNotifications();
   const seen = useRef(new Set<string>());
+  const startedAt = useRef(Date.now());
   const primed = useRef(false);
   const [alerts, setAlerts] = useState<NotificationRecord[]>([]);
 
@@ -49,6 +52,7 @@ export function NewOrderAlerts() {
     function onIncoming(event: Event) {
       const detail = (event as CustomEvent<NotificationRecord[]>).detail;
       if (!Array.isArray(detail) || !detail.length) return;
+      rememberDashboardAlerts(seen.current, detail);
       setAlerts(detail);
       void playDashboardAlertSound(detail.map((item) => item.type));
       refreshOrdersIfCreated(
@@ -56,8 +60,8 @@ export function NewOrderAlerts() {
         detail.map((item) => item.type)
       );
     }
-    window.addEventListener("postbus:new-shopify-orders", onIncoming);
-    return () => window.removeEventListener("postbus:new-shopify-orders", onIncoming);
+    window.addEventListener(DASHBOARD_ALERT_EVENT, onIncoming);
+    return () => window.removeEventListener(DASHBOARD_ALERT_EVENT, onIncoming);
   }, [queryClient]);
 
   useEffect(() => {
@@ -74,12 +78,8 @@ export function NewOrderAlerts() {
   useEffect(() => {
     const items = notifications.items;
     if (!items.length && !notifications.isFetched) return;
-    if (!primed.current) {
-      for (const item of items) seen.current.add(item.id);
-      primed.current = true;
-      return;
-    }
-    const incoming = collectDashboardAlerts(items, seen.current, 0);
+    const incoming = collectDashboardAlerts(items, seen.current, primed.current ? 0 : startedAt.current);
+    primed.current = true;
     if (!incoming.length) return;
     setAlerts(incoming);
     void playDashboardAlertSound(incoming.map((item) => item.type));

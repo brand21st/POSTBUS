@@ -14,7 +14,7 @@ import {
 } from "@/modules/labels/page-presets";
 import type { LabelTemplate } from "@/modules/labels/template-schema";
 
-const MAX_LABELS = 100;
+export const MAX_LABELS = 100;
 
 export type MultiUpDisposition = "inline" | "attachment" | "print";
 
@@ -105,6 +105,11 @@ export function labelSizeMm(page: LabelTemplate["page"]) {
   };
 }
 
+export function normalizeMultiUpDisposition(body: unknown): MultiUpDisposition {
+  const source = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  return source.disposition === "attachment" || source.disposition === "print" ? source.disposition : "inline";
+}
+
 export function parseMultiUpRequest(body: unknown): MultiUpSheetRequest {
   const source = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
   const sheet = source.sheet && typeof source.sheet === "object" ? (source.sheet as Record<string, unknown>) : {};
@@ -127,7 +132,7 @@ export function parseMultiUpRequest(body: unknown): MultiUpSheetRequest {
   const total = copies.reduce((sum, item) => sum + item.copies, 0);
   if (!copies.length) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Add at least one order.");
   if (total > MAX_LABELS) throw new AppError(ERROR_CODES.VALIDATION_ERROR, `A sheet run can include up to ${MAX_LABELS} labels.`);
-  const disposition = source.disposition === "attachment" || source.disposition === "print" ? source.disposition : "inline";
+  const disposition = normalizeMultiUpDisposition(source);
   const scale = numberValue(sheet.scale, 1);
   const labelWidthMm = optionalPositive(sheet.labelWidthMm);
   const labelHeightMm = optionalPositive(sheet.labelHeightMm);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyWhatsAppCustomerFields,
+  countAppliedWhatsAppFields,
   fieldsFromUnknown,
   parseWhatsAppCustomerMessage,
 } from "@/lib/parsers/whatsapp-customer-message";
@@ -74,6 +75,28 @@ describe("parseWhatsAppCustomerMessage", () => {
     expect(applied.name).toBe("Existing");
     expect(applied.phone).toBe("9876543210");
     expect(applied.city).toBe("Kozhikode");
+  });
+
+  it("replaces filled customer fields when overwrite is on", () => {
+    const current = {
+      name: "goutham",
+      phone: "8129760955",
+      line1: "madapally house",
+      line2: "mall house",
+      pincode: "673592",
+      city: "Wayanad",
+    };
+    const parsed = parseWhatsAppCustomerMessage(`Name: rahul
+Phone: 8848772371
+Address: kollathil house, township waynad
+PIN: 673593`);
+    const next = applyWhatsAppCustomerFields({}, parsed.fields, { overwrite: true });
+    expect(next.name).toBe("rahul");
+    expect(next.phone).toBe("8848772371");
+    expect(next.line1).toMatch(/kollathil/i);
+    expect(next.pincode).toBe("673593");
+    expect(next.line2).toBeUndefined();
+    expect(countAppliedWhatsAppFields(current, { ...current, ...next })).toBeGreaterThan(0);
   });
 
   it("returns empty fields for unstructured text", () => {

@@ -6,7 +6,7 @@ export function pickStoreRecommendations(
   configuredIds: string[],
   options?: { categoryIds?: string[]; excludeId?: string; limit?: number }
 ) {
-  const limit = Math.min(4, Math.max(1, options?.limit ?? 3));
+  const limit = Math.min(8, Math.max(1, options?.limit ?? 3));
   const inCart = new Set(cart.map((line) => line.product.id));
   if (options?.excludeId) inCart.add(options.excludeId);
   const byId = new Map(source.map((item) => [item.id, item]));

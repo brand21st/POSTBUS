@@ -4,9 +4,16 @@ import { orIlike } from "@/lib/api/filters";
 import type { OrderStatus } from "@/types/domain";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
+import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
-import { settleOrderPayment } from "@/modules/orders/payment";
+import { applyManualExtraCodCharge } from "@/modules/orders/extra-cod";
+import { settleOrderPayment, shipmentCollectFromOrder } from "@/modules/orders/payment";
+import {
+  applyShopifyPaymentOverrideStatus,
+  mergeShopifyPaymentMetadata,
+  shopifyPaymentSnapshotFromMetadata,
+} from "@/modules/shopify/payment";
 import {
   mapCatalogRows,
   resolveLineFromCatalog,
@@ -17,6 +24,7 @@ import {
 import { loadCatalogProducts } from "@/modules/products/service";
 import { bookingBoxWeightGrams } from "@/modules/orders/weight";
 import { syncOpenShipmentsService } from "@/modules/shipments/service";
+import { resumeSmartAutoRetryAfterCorrection } from "@/modules/india-post/smart-auto-retry";
 import {
   enrichShopifyLineItemImagesFromCache,
   enrichShopifyLineItemImagesInOrders,
@@ -26,6 +34,7 @@ import {
   isOrderNumberConflict,
   nextPbOrderNumber,
   nextWaPbOrderNumber,
+  orderLookup,
   shouldReallocateOnConflict,
 } from "@/modules/orders/order-number";
 
@@ -36,7 +45,7 @@ type OrderListQuery = z.infer<typeof orderListQuery>;
 const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CANCELLED"]);
 
 const ORDER_LIST_SELECT =
-  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, parcel_weight_mode, parcel_weight_grams, customers(name, phone), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at)";
+  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, india_post_estimate_amount, india_post_estimated_at, india_post_estimate_key, parcel_weight_mode, parcel_weight_grams, customers(name, phone), shipping_address:addresses!shipping_address_id(pincode), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at, metadata)";
 
 function wantsOrderCounts(query: OrderListQuery) {
   const value = (query.includeCounts ?? "").toLowerCase();
@@ -109,6 +118,27 @@ function applyOrderListFilters(
   return builder;
 }
 
+export function resolveOrderListSort(sort?: OrderListQuery["sort"]) {
+  if (sort === "order_number") return { mode: "number" as const, ascending: true };
+  if (sort === "-order_number") return { mode: "number" as const, ascending: false };
+  if (sort === "created_at") return { mode: "created" as const, ascending: true };
+  return { mode: "created" as const, ascending: false };
+}
+
+function applyOrderListSort<T extends { order: (column: string, options?: object) => T }>(
+  builder: T,
+  sort?: OrderListQuery["sort"]
+): T {
+  const spec = resolveOrderListSort(sort);
+  if (spec.mode === "number") {
+    return builder
+      .order("order_number_sort", { ascending: spec.ascending, nullsFirst: false })
+      .order("order_number", { ascending: spec.ascending })
+      .order("created_at", { ascending: false });
+  }
+  return builder.order("created_at", { ascending: spec.ascending });
+}
+
 async function countOrders(
   supabase: SupabaseClient,
   ctx: TenantContext,
@@ -134,11 +164,10 @@ export async function listOrders(
   const from = (query.page - 1) * query.pageSize;
   const to = from + query.pageSize - 1;
 
-  const listBuilder = applyOrderListFilters(
-    supabase.from("orders").select(ORDER_LIST_SELECT).order("created_at", { ascending: false }).range(from, to),
-    ctx,
-    query
-  );
+  const listBuilder = applyOrderListSort(
+    applyOrderListFilters(supabase.from("orders").select(ORDER_LIST_SELECT), ctx, query),
+    query.sort
+  ).range(from, to);
 
   const includeCounts = wantsOrderCounts(query);
   const [listed, total, all, today, yesterday] = await Promise.all([
@@ -169,13 +198,15 @@ export async function listOrders(
 }
 
 export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id: string) {
+  const lookup = orderLookup(id);
+  if (!lookup) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
   const { data, error } = await supabase
     .from("orders")
     .select(
       "*, customers(*), shipping_address:addresses!shipping_address_id(*), billing_address:addresses!billing_address_id(*), order_line_items(*), shipments(*), shipping_invoices(id, status, invoice_number, error_message, shipment_id, created_at)"
     )
     .eq("organization_id", ctx.organizationId)
-    .eq("id", id)
+    .eq(lookup.column, lookup.value)
     .maybeSingle();
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   if (!data) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
@@ -188,7 +219,8 @@ export async function getOrder(supabase: SupabaseClient, ctx: TenantContext, id:
 export async function createManualOrder(
   supabase: SupabaseClient,
   ctx: OrderActor,
-  input: CreateInput
+  input: CreateInput,
+  serverResolvedLines?: ResolvedOrderLine[]
 ) {
   const { data: customer, error: customerError } = await supabase
     .from("customers")
@@ -225,7 +257,7 @@ export async function createManualOrder(
       image_urls?: unknown;
     }>
   );
-  const resolvedLines: ResolvedOrderLine[] = input.lineItems.map((item) => {
+  const resolvedLines: ResolvedOrderLine[] = serverResolvedLines ?? input.lineItems.map((item) => {
     if (!item.productId) return resolveManualLine(item);
     const product = catalog.get(item.productId);
     if (!product) {
@@ -234,10 +266,14 @@ export async function createManualOrder(
     return resolveLineFromCatalog(product, item.quantity);
   });
   const subtotal = resolvedLines.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const payment = settleResolvedOrderPayment({
-    lines: resolvedLines,
-    paymentStatus: input.paymentStatus,
-    amountPaid: input.amountPaid,
+  const payment = applyManualExtraCodCharge({
+    requestedPaymentStatus: input.paymentStatus,
+    settled: settleResolvedOrderPayment({
+      lines: resolvedLines,
+      paymentStatus: input.paymentStatus,
+      amountPaid: input.amountPaid,
+    }),
+    extraCodCharge: input.extraCodCharge,
   });
   const requestedNumber = input.orderNumber?.trim() || "";
   const keepRequested = Boolean(requestedNumber) && !isAllocatedSequenceNumber(requestedNumber);
@@ -260,6 +296,7 @@ export async function createManualOrder(
         payment_status: payment.paymentStatus,
         amount_paid: payment.amountPaid,
         cod_amount: payment.codAmount,
+        extra_cod_charge: payment.extraCodCharge,
         fulfillment_status: "UNFULFILLED",
         status: input.status ?? "READY",
         metadata: input.metadata ?? {},
@@ -318,6 +355,7 @@ export async function createManualOrder(
       paymentStatus: payment.paymentStatus,
       amountPaid: payment.amountPaid,
       codAmount: payment.codAmount,
+      extraCodCharge: payment.extraCodCharge,
     },
   });
 
@@ -326,6 +364,20 @@ export async function createManualOrder(
     scheduleMerchantKnowledgeSync(supabase, ctx.organizationId);
   } catch {
     // VaChat knowledge is optional; the order should still be created.
+  }
+
+  if ((input.source ?? "MANUAL") !== "API") {
+    try {
+      const { publishOrderCreated } = await import("@/modules/webhooks/publish");
+      await publishOrderCreated(supabase, {
+        organizationId: ctx.organizationId,
+        orderId: order.id,
+        orderNumber,
+        status: input.status ?? "READY",
+      });
+    } catch {
+      // Webhook fan-out must not break order creation.
+    }
   }
 
   return { ...order, createShipment: Boolean(input.createShipment), shipment: input.shipment };
@@ -482,6 +534,11 @@ export async function updateOrderWeights(
       .eq("organization_id", ctx.organizationId)
       .in("id", openIds);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    await resumeSmartAutoRetryAfterCorrection(supabase, {
+      organizationId: ctx.organizationId,
+      shipmentIds: openIds,
+      userId: ctx.userId,
+    });
   }
 
   return getOrder(supabase, ctx, orderId);
@@ -515,9 +572,11 @@ export async function updateOrderShippingAddress(
     throw new AppError(ERROR_CODES.CONFLICT, "Address is locked after India Post booking.");
   }
 
+  const phone = input.phone ? extractIndiaMobileDigits(input.phone) ?? input.phone : null;
+  const name = input.name?.trim() || null;
   const fields = {
-    name: input.name ?? null,
-    phone: input.phone ?? null,
+    name,
+    phone,
     line1: input.line1,
     line2: input.line2 ?? null,
     city: input.city,
@@ -538,12 +597,24 @@ export async function updateOrderShippingAddress(
       supabase,
       ctx.organizationId,
       (order.customer_id as string | null) ?? null,
-      input
+      { ...input, name: name ?? undefined, phone: phone ?? undefined }
     );
     const { error } = await supabase
       .from("orders")
       .update({ shipping_address_id: shipping.id })
       .eq("id", orderId)
+      .eq("organization_id", ctx.organizationId);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  }
+
+  if (order.customer_id && (name || phone)) {
+    const { error } = await supabase
+      .from("customers")
+      .update({
+        ...(name ? { name } : {}),
+        ...(phone ? { phone } : {}),
+      })
+      .eq("id", order.customer_id)
       .eq("organization_id", ctx.organizationId);
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   }
@@ -554,10 +625,27 @@ export async function updateOrderShippingAddress(
     action: "order.shipping_address_updated",
     entity_type: "order",
     entity_id: orderId,
-    after: { pincode: input.pincode, city: input.city, state: input.state },
+    after: { pincode: input.pincode, city: input.city, state: input.state, phone, name },
   });
 
+  const openShipmentIds = ((shipments ?? []) as Array<{ id: string; status?: string | null }>)
+    .filter((row) => ["DRAFT", "QUEUED", "FAILED", "VALIDATING"].includes((row.status ?? "").toUpperCase()))
+    .map((row) => row.id);
+  if (openShipmentIds.length) {
+    await resumeSmartAutoRetryAfterCorrection(supabase, {
+      organizationId: ctx.organizationId,
+      shipmentIds: openShipmentIds,
+      userId: ctx.userId,
+    });
+  }
+
   return getOrder(supabase, ctx, orderId);
+}
+
+function mappedAddress(address: Record<string, unknown> | null) {
+  if (!address) return null;
+  const phone = typeof address.phone === "string" ? extractIndiaMobileDigits(address.phone) ?? address.phone : address.phone;
+  return { ...address, phone };
 }
 
 function mapOrder(row: Record<string, unknown>) {
@@ -580,12 +668,24 @@ function mapOrder(row: Record<string, unknown>) {
     amount_paid: row.amount_paid,
     codAmount: row.cod_amount,
     cod_amount: row.cod_amount,
+    extraCodCharge: row.extra_cod_charge ?? 0,
+    extra_cod_charge: row.extra_cod_charge ?? 0,
     createdAt: row.created_at,
     indiaPostService: row.india_post_service ?? null,
+    indiaPostEstimateAmount: row.india_post_estimate_amount ?? null,
+    india_post_estimate_amount: row.india_post_estimate_amount ?? null,
+    indiaPostEstimatedAt: row.india_post_estimated_at ?? null,
+    india_post_estimated_at: row.india_post_estimated_at ?? null,
+    indiaPostEstimateKey: row.india_post_estimate_key ?? null,
+    india_post_estimate_key: row.india_post_estimate_key ?? null,
     parcelWeightMode: row.parcel_weight_mode ?? "auto",
     parcelWeightGrams: row.parcel_weight_grams ?? null,
     customer: customer
-      ? { name: customer.name, phone: customer.phone, email: customer.email }
+      ? {
+          name: customer.name,
+          phone: extractIndiaMobileDigits(customer.phone) ?? customer.phone,
+          email: customer.email,
+        }
       : null,
     customerName: customer?.name ?? null,
     lineItems: items.map((item) => ({
@@ -604,11 +704,12 @@ function mapOrder(row: Record<string, unknown>) {
           errorMessage: invoices[0].error_message,
         }
       : null,
-    shippingAddress:
+    shippingAddress: mappedAddress(
       (row.shipping_address as Record<string, unknown> | null) ??
-      (row.addresses as Record<string, unknown> | null) ??
-      null,
-    billingAddress: (row.billing_address as Record<string, unknown> | null) ?? null,
+        (row.addresses as Record<string, unknown> | null) ??
+        null
+    ),
+    billingAddress: mappedAddress((row.billing_address as Record<string, unknown> | null) ?? null),
   };
 }
 
@@ -617,12 +718,13 @@ export async function exportOrdersCsv(
   ctx: TenantContext,
   query: z.infer<typeof orderListQuery>
 ) {
-  let builder = supabase
-    .from("orders")
-    .select("order_number, source, status, total_amount, payment_status, created_at, customers(name)")
-    .eq("organization_id", ctx.organizationId)
-    .order("created_at", { ascending: false })
-    .limit(5000);
+  let builder = applyOrderListSort(
+    supabase
+      .from("orders")
+      .select("order_number, source, status, total_amount, payment_status, created_at, customers(name)")
+      .eq("organization_id", ctx.organizationId),
+    query.sort
+  ).limit(5000);
   if (query.status) builder = builder.eq("status", query.status);
   if (query.source) builder = builder.eq("source", query.source);
   if (query.paymentStatus) builder = builder.eq("payment_status", query.paymentStatus);
@@ -790,4 +892,88 @@ export async function confirmWhatsAppOrder(
   });
 
   return updated;
+}
+
+export async function confirmShopifyPayment(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  paymentType: "PREPAID" | "COD"
+) {
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, source, payment_status, total_amount, metadata")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+  if (order.source !== "SHOPIFY") {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This is not a Shopify order.");
+  }
+  if (String(order.payment_status).toUpperCase() !== "PENDING") {
+    throw new AppError(ERROR_CODES.CONFLICT, "This Shopify order is not waiting for payment confirmation.");
+  }
+
+  const total = Number(order.total_amount ?? 0);
+  const settled = settleOrderPayment({
+    paymentStatus: applyShopifyPaymentOverrideStatus(paymentType),
+    totalAmount: total,
+  });
+  const stored = shopifyPaymentSnapshotFromMetadata(order.metadata);
+  const override = { kind: paymentType, actorId: ctx.userId || null, at: new Date().toISOString() };
+  const metadata = mergeShopifyPaymentMetadata(order.metadata, {
+    financialStatus: stored?.financialStatus ?? "pending",
+    gateways: stored?.gateways ?? [],
+    sourceName: stored?.sourceName ?? null,
+    outstanding: stored?.outstanding ?? null,
+    updatedAt: stored?.updatedAt ?? new Date().toISOString(),
+    reason: `merchant_override:${paymentType.toLowerCase()}`,
+    collectionMode: paymentType,
+    override,
+    bookingConflict: stored?.bookingConflict ?? null,
+  });
+
+  const { data: updated, error: updateError } = await supabase
+    .from("orders")
+    .update({
+      payment_status: settled.paymentStatus,
+      amount_paid: settled.amountPaid,
+      cod_amount: settled.codAmount,
+      metadata,
+    })
+    .eq("id", orderId)
+    .eq("organization_id", ctx.organizationId)
+    .eq("source", "SHOPIFY")
+    .eq("payment_status", "PENDING")
+    .select()
+    .maybeSingle();
+  if (updateError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError.message);
+  if (!updated) throw new AppError(ERROR_CODES.CONFLICT, "This Shopify order is not waiting for payment confirmation.");
+
+  const collect = shipmentCollectFromOrder(updated);
+  const { error: shipmentError } = await supabase
+    .from("shipments")
+    .update({ payment_mode: collect.payment_mode, cod_amount: collect.cod_amount })
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId)
+    .in("status", ["DRAFT", "FAILED"])
+    .is("booked_at", null);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+
+  await supabase.from("audit_logs").insert({
+    organization_id: ctx.organizationId,
+    actor_id: ctx.userId || null,
+    action: "order.shopify_payment_confirmed",
+    entity_type: "order",
+    entity_id: orderId,
+    after: {
+      paymentType,
+      paymentStatus: settled.paymentStatus,
+      collectionMode: paymentType,
+      capturedPayment: false,
+    },
+  });
+
+  return getOrder(supabase, ctx, orderId);
 }

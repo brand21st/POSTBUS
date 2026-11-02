@@ -60,6 +60,15 @@ function client(state: { rows: Row[]; failDefault?: boolean }) {
           },
         };
       }
+      if (table === "print_settings") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: { paper_size: "A6" }, error: null }),
+            }),
+          }),
+        };
+      }
       if (table === "automation_settings") {
         return {
           select: () => ({
@@ -211,6 +220,8 @@ describe("printer configuration", () => {
     const listed = await listPrinters(supabase as never, ctx.organizationId);
     expect(listed.printers.map((item) => item.id)).toEqual(["printer-2"]);
     expect(listed.autoLabelPrinting).toBe(true);
+    expect(listed.paperSize).toBe("A6");
+    expect(listed.labelSizeLabel).toBe("A6 (105 × 148 mm)");
     expect(listed.printers[0]?.isDefault).toBe(false);
     expect(state.rows.some((row) => row.organization_id === "org-2")).toBe(true);
     expect(supabase.audits.some((row) => row.action === "printer.connected" && row.organization_id === "org-1")).toBe(

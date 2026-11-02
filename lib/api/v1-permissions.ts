@@ -7,6 +7,9 @@ export function permissionForTenantRoute(
 ): Permission | undefined {
   const key = `${method} ${path}`;
   const root = slugs[0];
+  if (key === "GET india-post/tariff-capabilities") return "orders.read";
+  if (key === "POST india-post/tariff-quotes") return "orders.write";
+  if (method === "POST" && /^orders\/[^/]+\/tariff-quote$/.test(path)) return "orders.read";
 
   if (path.startsWith("dashboard/")) return "orders.read";
 
@@ -51,6 +54,10 @@ export function permissionForTenantRoute(
     return method === "GET" ? "orders.read" : "orders.write";
   }
 
+  if (root === "sales-invoices" || root === "sales-invoice-settings") {
+    return method === "GET" ? "orders.read" : "orders.write";
+  }
+
   if (root === "invoices") {
     if (method === "POST" && (slugs[2] === "retry" || slugs[2] === "regenerate")) return "orders.write";
     return "orders.read";
@@ -60,6 +67,7 @@ export function permissionForTenantRoute(
     if (
       method === "POST" &&
       (slugs[1] === "retry-incomplete" ||
+        slugs[1] === "bulk-print" ||
         slugs[2] === "print" ||
         slugs[2] === "regenerate" ||
         slugs[2] === "india-post" ||
@@ -76,6 +84,11 @@ export function permissionForTenantRoute(
     return "automation.manage";
   }
 
+  if (root === "print-devices") {
+    if (method === "GET" && slugs.length === 1) return undefined;
+    return "automation.manage";
+  }
+
   if (root === "printers") {
     if (method === "GET") return undefined;
     if (method === "POST" && slugs[2] === "presence") return "labels.write";
@@ -84,11 +97,11 @@ export function permissionForTenantRoute(
 
   if (root === "print-jobs") {
     if (method === "GET") return "labels.read";
-    if (slugs[2] === "claim" || slugs[2] === "complete") return "labels.write";
+    if (slugs[2] === "claim" || slugs[2] === "complete" || slugs[2] === "reprint") return "labels.write";
   }
 
   if (root === "manifests") {
-    return method === "POST" ? "manifests.write" : "manifests.read";
+    return method === "GET" ? "manifests.read" : "manifests.write";
   }
 
   if (path === "tracking") return "tracking.read";
@@ -104,6 +117,8 @@ export function permissionForTenantRoute(
     const readable =
       key === "GET integrations" ||
       key === "GET integrations/shopify" ||
+      key === "GET integrations/woocommerce" ||
+      key === "GET integrations/woocommerce/deliveries" ||
       key === "GET integrations/india-post" ||
       key === "GET integrations/india-post/offices" ||
       key === "GET integrations/wati" ||
@@ -113,6 +128,17 @@ export function permissionForTenantRoute(
   }
 
   if (key === "PATCH organizations") return "org.manage";
+
+  if (root === "addons") {
+    if (method === "GET") return undefined;
+    return "org.manage";
+  }
+
+  if (root === "ai-accountant") {
+    // Asking the assistant and previewing a COD file read books without changing them.
+    if (key === "POST ai-accountant/assistant" || key === "POST ai-accountant/cod/preview") return "accounting.read";
+    return method === "GET" ? "accounting.read" : "accounting.write";
+  }
 
   if (root === "ai-credits") return "orders.read";
 
@@ -131,16 +157,30 @@ export function permissionForTenantRoute(
   if (key === "PATCH settings/policies") return "settings.manage";
   if (root === "settings") return "settings.manage";
 
-  if (root === "api-keys") return "api_keys.manage";
+  if (root === "api-keys" || root === "merchant-api") return "api_keys.manage";
 
-  if (path === "webhooks") return "webhooks.manage";
+  if (root === "webhooks") return "webhooks.manage";
 
   if (path === "audit-logs") return "audit.read";
 
   if (path === "search") return "orders.read";
 
-  if (root === "shipment-presets") {
+  if (root === "shipment-presets" || root === "autopack") {
     return method === "GET" ? "orders.read" : "orders.write";
+  }
+
+  if (root === "order-defaults") {
+    return method === "GET" ? "orders.read" : "orders.write";
+  }
+
+  if (root === "support") {
+    if (method === "GET") return "support.read";
+    if (slugs[1] === "settings") return "support.settings";
+    if (slugs[3] === "messages" || slugs[3] === "templates" || slugs[3] === "read") return "support.reply";
+    if (slugs[1] === "tickets" && slugs[3] === "notes") return "support.reply";
+    if (slugs[1] === "tickets" && slugs[3] === "assign") return "support.assign";
+    if (method === "POST" && slugs[1] === "tickets" && !slugs[2]) return "support.manage";
+    return "support.manage";
   }
 
   if (root === "ui") return undefined;

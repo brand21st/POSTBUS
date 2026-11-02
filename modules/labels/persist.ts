@@ -46,7 +46,7 @@ export async function persistLabelPdf(
     shipmentId: string;
     kind: LabelKind;
     bytes: Buffer | Uint8Array;
-    templateSnapshot?: LabelTemplate | null;
+    templateSnapshot?: (LabelTemplate & Record<string, unknown>) | LabelTemplate | null;
   }
 ) {
   return timed(

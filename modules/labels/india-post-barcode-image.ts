@@ -13,7 +13,7 @@ export async function indiaPostBarcodePng(articleId: string): Promise<Buffer | n
   const png = await bwipjs.toBuffer({
     bcid: "code128",
     text: article,
-    scale: 3,
+    scale: 6,
     height: 12,
     includetext: false,
     paddingwidth: 0,

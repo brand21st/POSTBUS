@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Loader2, Package, Scale, Sparkles, Zap } from "lucide-react";
+import { AlertCircle, Check, Loader2, Package, Scale, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,10 +15,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ShipmentPackPresets } from "@/components/orders/shipment-pack-presets";
+import { AutoPackSuggestion, type AutoPackPick } from "@/components/orders/autopack-suggestion";
+import { Checkbox } from "@/components/ui/checkbox";
+import { AiMark } from "@/components/ui/ai-mark";
 import { orderNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
-import { isIndiaPostAcceptedStatus, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { indiaPostStatusOf, isIndiaPostAcceptedStatus, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { dimensionSourceLabel, dimensionSourceShort, formatParcelSize, readParcelDimensionSource } from "@/modules/shopify/dimensions";
+import { isStrictParcelDimensionsOrg } from "@/modules/shopify/strict-parcel-dimensions";
+import { useMe } from "@/lib/hooks/use-me";
 import { isParcelArticle } from "@/modules/india-post/article-validator";
 import { bookingBoxWeightGrams, hasDeclaredBookingWeight } from "@/modules/orders/weight";
 import type { OrderRecord } from "@/types/api";
@@ -26,14 +33,13 @@ import type { OrderRecord } from "@/types/api";
 type Props = {
   order: OrderRecord;
   disabled?: boolean;
+  /** Table button asks the page to open one dialog outside the row. */
+  onEdit?: () => void;
+  /** Renders only the editor, owned by the page so a table refresh cannot close it. */
+  dialogOnly?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
-
-const DIMENSION_PRESETS = [
-  { label: "Small Box", length: 15, width: 10, height: 5 },
-  { label: "Medium Box", length: 20, width: 15, height: 10 },
-  { label: "Apparel / Polybag", length: 25, width: 20, height: 5 },
-  { label: "Large Box", length: 30, width: 25, height: 15 },
-] as const;
 
 const WEIGHT_PRESETS = [
   { label: "250g", weight: 250 },
@@ -45,15 +51,18 @@ const WEIGHT_PRESETS = [
 
 function ParcelPill({
   tone,
+  className,
   children,
 }: {
   tone: "ok" | "action" | "locked" | "neutral";
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
     <span
       className={cn(
         "inline-flex max-w-full items-center gap-0.5 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-4",
+        className,
         tone === "ok" &&
           "border border-emerald-200/80 bg-emerald-50 text-emerald-900 shadow-2xs transition-colors hover:border-emerald-300 hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300",
         tone === "action" &&
@@ -69,8 +78,20 @@ function ParcelPill({
   );
 }
 
-export function OrderDimensionBadge({ order, disabled }: Props) {
-  const [open, setOpen] = useState(false);
+export function OrderDimensionBadge({ order, disabled, onEdit, dialogOnly, open: openProp, onOpenChange }: Props) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = dialogOnly ? Boolean(openProp) : uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (dialogOnly) onOpenChange?.(next);
+    else setUncontrolledOpen(next);
+  };
+  const openedAt = useRef(0);
+  if (open && openedAt.current === 0) openedAt.current = performance.now();
+  if (!open && openedAt.current !== 0) openedAt.current = 0;
+  const requestOpenChange = (next: boolean) => {
+    if (!next && performance.now() - openedAt.current < 500) return;
+    setOpen(next);
+  };
   const lengthId = useId();
   const widthId = useId();
   const heightId = useId();
@@ -83,6 +104,15 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const width = Number(shipment?.widthCm ?? shipment?.width_cm ?? 0);
   const height = Number(shipment?.heightCm ?? shipment?.height_cm ?? 0);
   const hasDimensions = length > 0 && width > 0 && height > 0;
+  const me = useMe();
+  const strictOrg = isStrictParcelDimensionsOrg(me.data?.organization?.id);
+  const dimensionSource = readParcelDimensionSource(
+    (shipment as { metadata?: unknown } | null | undefined)?.metadata
+  );
+  const sourceLabel = dimensionSourceLabel(dimensionSource);
+  const sourceShort = dimensionSourceShort(dimensionSource);
+  const sizeLabel = formatParcelSize(length, width, height);
+  const compactSize = sizeLabel.replace(" cm", "").replaceAll(" × ", "×");
 
   const currentWeightGrams = bookingBoxWeightGrams({
     parcelWeightMode: order.parcelWeightMode ?? order.parcel_weight_mode,
@@ -108,22 +138,42 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const isParcel = isParcelArticle(serviceCode, currentWeightGrams);
 
   const shipmentStatus = shipment?.status;
+  const shipmentStatusName = indiaPostStatusOf(shipmentStatus);
   const isLocked =
     Boolean(disabled) ||
     isIndiaPostAcceptedStatus(shipmentStatus) ||
-    isIndiaPostBookingInFlight(shipmentStatus);
+    (isIndiaPostBookingInFlight(shipmentStatus) && shipmentStatusName !== "QUEUED");
 
   const lineItemsList = (order.lineItems ?? order.line_items ?? []).filter(
     (item): item is typeof item & { id: string } => Boolean(item.id)
   );
 
   // Controlled form states
-  const [lengthInput, setLengthInput] = useState("");
-  const [widthInput, setWidthInput] = useState("");
-  const [heightInput, setHeightInput] = useState("");
-  const [boxWeightInput, setBoxWeightInput] = useState("");
-  const [itemWeights, setItemWeights] = useState<Record<string, string>>({});
+  const [lengthInput, setLengthInput] = useState(() => (length > 0 ? String(length) : ""));
+  const [widthInput, setWidthInput] = useState(() => (width > 0 ? String(width) : ""));
+  const [heightInput, setHeightInput] = useState(() => (height > 0 ? String(height) : ""));
+  const [boxWeightInput, setBoxWeightInput] = useState(() => {
+    const savedBox = Number(
+      order.parcelWeightGrams ?? order.parcel_weight_grams ?? shipment?.weightGrams ?? shipment?.weight_grams
+    );
+    if (Number.isFinite(savedBox) && savedBox > 0) return String(Math.round(savedBox));
+    if (currentWeightGrams > 0) return String(Math.round(currentWeightGrams));
+    return "";
+  });
+  const [itemWeights, setItemWeights] = useState<Record<string, string>>(() => {
+    const initialWeights: Record<string, string> = {};
+    lineItemsList.forEach((item) => {
+      const g = Number(item.weightGrams ?? item.weight_grams);
+      initialWeights[item.id] = Number.isFinite(g) && g > 0 ? String(Math.round(g)) : "";
+    });
+    return initialWeights;
+  });
   const [formError, setFormError] = useState<string | null>(null);
+  // Where the box came from: a saved pack size, an AutoPack suggestion, or typed.
+  const [pickedPresetId, setPickedPresetId] = useState<string | null>(null);
+  const [autopackPick, setAutopackPick] = useState<AutoPackPick | null>(null);
+  const [measured, setMeasured] = useState(false);
+  const isShopifyOrder = String(order.source ?? "").toUpperCase() === "SHOPIFY";
 
   useEffect(() => {
     if (open) {
@@ -148,6 +198,9 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       }
 
       setFormError(null);
+      setPickedPresetId(null);
+      setAutopackPick(null);
+      setMeasured(false);
     }
   }, [open, length, width, height, currentWeightGrams]);
 
@@ -165,6 +218,9 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       heightCm: number;
       boxWeightGrams?: number;
       lineItems?: Array<{ id: string; weightGrams: number; weightMode: "auto" | "manual" }>;
+      presetId?: string;
+      autopackEvidenceId?: string;
+      measured?: boolean;
     }) => {
       const endpoint = shipment?.id
         ? `/api/v1/shipments/${shipment.id}`
@@ -178,6 +234,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       toast.success("Parcel dimensions and weight saved successfully.");
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["order", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["autopack", order.id] });
       setOpen(false);
     },
     onError: (err: unknown) => {
@@ -220,20 +277,25 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
       weightMode: "manual" as const,
     }));
 
+    // The suggestion only counts if the box was not edited afterwards.
+    const usedSuggestion =
+      autopackPick &&
+      autopackPick.lengthCm === l &&
+      autopackPick.widthCm === w &&
+      autopackPick.heightCm === h
+        ? autopackPick.evidenceId
+        : undefined;
+
     saveMutation.mutate({
       lengthCm: l,
       widthCm: w,
       heightCm: h,
       boxWeightGrams: Number.isFinite(bWeight) && bWeight > 0 ? Math.round(bWeight) : undefined,
       lineItems: lineItemsPayload.length > 0 ? lineItemsPayload : undefined,
+      ...(usedSuggestion ? { autopackEvidenceId: usedSuggestion } : {}),
+      ...(!usedSuggestion && pickedPresetId ? { presetId: pickedPresetId } : {}),
+      ...(measured ? { measured: true } : {}),
     });
-  };
-
-  const applyDimensionPreset = (preset: (typeof DIMENSION_PRESETS)[number]) => {
-    setLengthInput(String(preset.length));
-    setWidthInput(String(preset.width));
-    setHeightInput(String(preset.height));
-    setFormError(null);
   };
 
   const applyWeightPreset = (preset: (typeof WEIGHT_PRESETS)[number]) => {
@@ -257,7 +319,6 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   const parsedBoxWeight = Number(boxWeightInput) || 0;
   const billableWeightGrams = Math.max(parsedBoxWeight, volumetricGrams);
 
-  const sizeLabel = `${length} × ${width} × ${height} cm`;
   const needsSetup = !hasDimensions || !hasWeight;
 
   // 1. Non-parcel (e.g. Speed Post DOC)
@@ -279,8 +340,10 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
   }
 
   const optionalHint = isLocked
-    ? " You can still ship; India Post uses Settings defaults when these are empty."
-    : " Optional — click to add. If skipped, India Post uses Settings → Shipping defaults.";
+    ? " This shipment is already with India Post and its size cannot be changed."
+    : strictOrg
+      ? " Parcel length, width, and height are required before booking unless Settings has a default package."
+      : " Optional — click to add. If skipped, India Post uses Settings → Shipping defaults.";
 
   let triggerContent: React.ReactNode;
   let triggerTitle: string;
@@ -322,44 +385,32 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
     );
   } else {
     triggerTitle = isLocked
-      ? `Parcel ${sizeLabel} · ${currentWeightGrams}g · Booked`
-      : `Parcel ${sizeLabel} · ${currentWeightGrams}g · Click to edit`;
+      ? `Parcel ${sizeLabel} · ${currentWeightGrams}g · Booked${sourceLabel ? ` · ${sourceLabel}` : ""}`
+      : `Parcel ${sizeLabel} · ${currentWeightGrams}g · Click to edit${sourceLabel ? ` · ${sourceLabel}` : ""}`;
     triggerContent = (
-      <ParcelPill tone="ok">
-        <Check className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-        <span className="tabular-nums font-medium">
-          {length}×{width}×{height}
-          {currentWeightGrams > 0 ? ` · ${currentWeightGrams}g` : ""}
+      <span className="flex min-w-0 flex-col items-start gap-0.5 whitespace-normal leading-none">
+        <ParcelPill tone="ok" className="max-w-full overflow-hidden">
+          <Check className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          <span className="min-w-0 truncate tabular-nums font-medium">{compactSize}</span>
+        </ParcelPill>
+        <span className="max-w-full truncate px-0.5 text-[10px] font-medium tabular-nums text-muted">
+          {currentWeightGrams > 0 ? `${currentWeightGrams}g` : null}
+          {currentWeightGrams > 0 && sourceShort ? " · " : null}
+          {sourceShort}
         </span>
-      </ParcelPill>
+      </span>
     );
   }
 
-  return (
-    <>
-      <button
-        type="button"
-        disabled={isLocked}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (!isLocked) setOpen(true);
-        }}
-        title={triggerTitle}
-        aria-label={triggerTitle}
-        className={cn(
-          "inline-flex max-w-full text-left transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 rounded-full",
-          !isLocked ? "cursor-pointer active:scale-[0.98]" : "cursor-default"
-        )}
-      >
-        {triggerContent}
-      </button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
+  const dialog = (
+      <Dialog open={open} onOpenChange={requestOpenChange}>
         <DialogContent
           className="sm:max-w-md max-h-[90vh] overflow-y-auto"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
+          onPointerDownOutside={(event) => {
+            if (performance.now() - openedAt.current < 500) event.preventDefault();
+          }}
         >
           <form onSubmit={handleSubmit}>
             <DialogHeader className="gap-1.5">
@@ -379,7 +430,8 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                     {needsSetup ? "Add parcel size" : "Edit parcel"}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-muted">
-                    Order {orderNumber(order)} · Optional. Empty fields use Settings defaults at booking.
+                    Order <span className="font-medium text-ink">{orderNumber(order)}</span>
+                    {hasWeight ? <> · {currentWeightGrams} g</> : null}
                   </DialogDescription>
                 </div>
               </div>
@@ -387,123 +439,106 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
 
             <div className="space-y-4 py-3">
               {needsSetup ? (
-                <p className="rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-                  {!hasDimensions && !hasWeight
-                    ? "You can still ship without entering these. India Post booking will use Settings → Shipping defaults (or 14 × 9 × 1 cm and 100 g)."
-                    : !hasDimensions
-                      ? `Weight is ${currentWeightGrams}g. Size is optional — add L × W × H here, or booking uses Settings defaults.`
-                      : "Size is saved. Weight is optional — add it here, or booking uses the Settings default weight."}
-                </p>
+                <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+                  <p>
+                    {!hasDimensions && !hasWeight
+                      ? "Add the box size to book. Empty weight uses your Settings weight, or 100 g."
+                      : !hasDimensions
+                        ? "Add the box size to book this parcel."
+                        : "Size is saved. Empty weight uses your Settings weight, or 100 g."}
+                    {!hasDimensions ? (
+                      <span className="text-amber-800/80 dark:text-amber-300/80"> Not needed if Settings has a default package.</span>
+                    ) : null}
+                  </p>
+                </div>
               ) : null}
 
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-1 text-[11px] font-medium text-muted">
-                  <Sparkles className="size-3 text-amber-500" />
-                  <span>Quick box size</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {DIMENSION_PRESETS.map((preset) => {
-                    const selected =
-                      Number(lengthInput) === preset.length &&
-                      Number(widthInput) === preset.width &&
-                      Number(heightInput) === preset.height;
-                    return (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        onClick={() => applyDimensionPreset(preset)}
-                        className={cn(
-                          "rounded-lg border px-2 py-1 text-[11px] font-medium transition active:scale-95",
-                          selected
-                            ? "border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-600 dark:bg-amber-950/50 dark:text-amber-200"
-                            : "border-border bg-surface-soft text-ink hover:border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                        )}
-                      >
-                        {preset.label}
-                        <span className="ml-1 tabular-nums text-muted">
-                          {preset.length}×{preset.width}×{preset.height}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <AutoPackSuggestion
+                orderId={String(order.id)}
+                enabled={open && isShopifyOrder && !isLocked}
+                applied={
+                  autopackPick != null &&
+                  Number(lengthInput) === autopackPick.lengthCm &&
+                  Number(widthInput) === autopackPick.widthCm &&
+                  Number(heightInput) === autopackPick.heightCm
+                }
+                onUse={(pick) => {
+                  setLengthInput(String(pick.lengthCm));
+                  setWidthInput(String(pick.widthCm));
+                  setHeightInput(String(pick.heightCm));
+                  setAutopackPick(pick);
+                  setPickedPresetId(null);
+                  setFormError(null);
+                }}
+              />
 
-              {/* Dimension Inputs */}
-              <div className="grid grid-cols-3 gap-2.5">
-                <div className="space-y-1">
-                  <Label htmlFor={lengthId} className="text-xs font-medium text-ink">
-                    Length
-                  </Label>
-                  <div className="relative flex items-center">
-                    <Input
-                      id={lengthId}
-                      type="number"
-                      step="0.1"
-                      min={14}
-                      max={150}
-                      placeholder="20"
-                      value={lengthInput}
-                      onChange={(e) => setLengthInput(e.target.value)}
-                      disabled={saveMutation.isPending}
-                      className="h-9 pr-7 text-xs font-semibold tabular-nums"
-                      required
-                      autoFocus
-                    />
-                    <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-muted">
-                      cm
-                    </span>
-                  </div>
-                </div>
+              <ShipmentPackPresets
+                weightGrams={Number(boxWeightInput) || undefined}
+                lengthCm={Number(lengthInput) || undefined}
+                widthCm={Number(widthInput) || undefined}
+                heightCm={Number(heightInput) || undefined}
+                serviceCode={serviceCode}
+                onApplySize={(size) => {
+                  setLengthInput(String(size.lengthCm));
+                  setWidthInput(String(size.widthCm));
+                  setHeightInput(String(size.heightCm));
+                  setPickedPresetId(null);
+                  setAutopackPick(null);
+                  setFormError(null);
+                }}
+                onApply={(pack) => {
+                  setLengthInput(String(pack.lengthCm));
+                  setWidthInput(String(pack.widthCm));
+                  setHeightInput(String(pack.heightCm));
+                  setBoxWeightInput(String(Math.round(pack.weightGrams)));
+                  setPickedPresetId(pack.presetId ?? null);
+                  setAutopackPick(null);
+                  setFormError(null);
+                }}
+              />
 
-                <div className="space-y-1">
-                  <Label htmlFor={widthId} className="text-xs font-medium text-ink">
-                    Width
-                  </Label>
-                  <div className="relative flex items-center">
-                    <Input
-                      id={widthId}
-                      type="number"
-                      step="0.1"
-                      min={9}
-                      max={150}
-                      placeholder="15"
-                      value={widthInput}
-                      onChange={(e) => setWidthInput(e.target.value)}
-                      disabled={saveMutation.isPending}
-                      className="h-9 pr-7 text-xs font-semibold tabular-nums"
-                      required
-                    />
-                    <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-muted">
-                      cm
-                    </span>
-                  </div>
+              {/* Box size */}
+              <fieldset className="space-y-1.5">
+                <legend className="mb-1.5 flex w-full items-center justify-between text-xs font-semibold text-ink">
+                  <span>Box size</span>
+                  <span className="text-[11px] font-normal text-muted">cm · L × W × H</span>
+                </legend>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: lengthId, label: "Length", min: 14, example: "20", value: lengthInput, set: setLengthInput },
+                      { id: widthId, label: "Width", min: 9, example: "15", value: widthInput, set: setWidthInput },
+                      { id: heightId, label: "Height", min: 1, example: "10", value: heightInput, set: setHeightInput },
+                    ] as const
+                  ).map((field, index) => (
+                    <div key={field.label} className="space-y-1">
+                      <Label htmlFor={field.id} className="text-[11px] font-medium text-muted">
+                        {field.label}
+                      </Label>
+                      <div className="relative flex items-center">
+                        <Input
+                          id={field.id}
+                          type="number"
+                          inputMode="decimal"
+                          step="0.1"
+                          min={field.min}
+                          max={150}
+                          placeholder={`e.g. ${field.example}`}
+                          value={field.value}
+                          onChange={(e) => field.set(e.target.value)}
+                          disabled={saveMutation.isPending}
+                          className="h-10 pr-8 text-sm font-semibold tabular-nums placeholder:font-normal placeholder:text-muted/50"
+                          required
+                          autoFocus={index === 0 && !autopackPick}
+                        />
+                        <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-muted">cm</span>
+                      </div>
+                      <p className="text-[10px] text-muted/80">min {field.min}</p>
+                    </div>
+                  ))}
                 </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor={heightId} className="text-xs font-medium text-ink">
-                    Height
-                  </Label>
-                  <div className="relative flex items-center">
-                    <Input
-                      id={heightId}
-                      type="number"
-                      step="0.1"
-                      min={1}
-                      max={150}
-                      placeholder="10"
-                      value={heightInput}
-                      onChange={(e) => setHeightInput(e.target.value)}
-                      disabled={saveMutation.isPending}
-                      className="h-9 pr-7 text-xs font-semibold tabular-nums"
-                      required
-                    />
-                    <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-muted">
-                      cm
-                    </span>
-                  </div>
-                </div>
-              </div>
+              </fieldset>
 
               {/* Weight Section */}
               <div className="space-y-2 rounded-xl border border-border/80 bg-surface-soft/60 p-3">
@@ -609,11 +644,11 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                         <button
                           type="button"
                           onClick={syncBoxFromItems}
-                          className="inline-flex items-center gap-0.5 text-[10px] font-medium text-brand hover:underline"
+                          className="inline-flex items-center gap-0.5 rounded-md px-1 text-[10px] font-medium text-muted transition hover:bg-card hover:text-ink"
                           title="Set box weight from total item weights"
                         >
-                          <Zap className="size-2.5" />
-                          <span>Use items sum ({itemsTotalWeight}g)</span>
+                          <Zap className="size-2.5" aria-hidden />
+                          <span>Use items total · {itemsTotalWeight} g</span>
                         </button>
                       ) : null}
                     </div>
@@ -638,7 +673,7 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
 
               {/* Volumetric Weight & Tariff Live Preview */}
               <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-xl bg-surface-soft px-3 py-2 text-[11px] text-muted">
-                <span>Limits: L ≥ 14, W ≥ 9, H ≥ 1 cm</span>
+                <span>{volumetricGrams > 0 ? "Billed on the higher of actual and volumetric weight" : "Enter the box size to see the billable weight"}</span>
                 <div className="flex items-center gap-2 font-medium text-ink">
                   {volumetricGrams > 0 ? (
                     <span title="Volumetric weight: (L × W × H) / 5000">
@@ -652,6 +687,34 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
                   ) : null}
                 </div>
               </div>
+
+              {isShopifyOrder ? (
+                <label
+                  className={cn(
+                    "flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition",
+                    measured
+                      ? "border-violet-300 bg-violet-50/60 dark:border-violet-800 dark:bg-violet-950/30"
+                      : "border-border hover:border-violet-200 hover:bg-violet-50/30 dark:hover:border-violet-900"
+                  )}
+                >
+                  <Checkbox
+                    checked={measured}
+                    onCheckedChange={(value) => setMeasured(value === true)}
+                    disabled={saveMutation.isPending}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0 flex-1 text-[11px] leading-4 text-muted">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-ink">
+                      I measured this box
+                      <AiMark size="xs" />
+                    </span>
+                    <span className="mt-0.5 block">
+                      AutoPack can reuse this size for orders with exactly the same items and quantities, when AutoPack
+                      box selection is on in Automation.
+                    </span>
+                  </span>
+                </label>
+              ) : null}
 
               {formError ? (
                 <div className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
@@ -691,6 +754,34 @@ export function OrderDimensionBadge({ order, disabled }: Props) {
           </form>
         </DialogContent>
       </Dialog>
+  );
+
+  if (dialogOnly) return dialog;
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={isLocked}
+        onPointerDown={(e) => e.stopPropagation()}
+        onPointerUp={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (isLocked) return;
+          if (onEdit) onEdit();
+          else setOpen(true);
+        }}
+        title={triggerTitle}
+        aria-label={triggerTitle}
+        className={cn(
+          "inline-flex w-full min-w-0 max-w-full text-left whitespace-normal transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 rounded-md",
+          !isLocked ? "cursor-pointer active:scale-[0.98]" : "cursor-default"
+        )}
+      >
+        {triggerContent}
+      </button>
+      {onEdit ? null : dialog}
     </>
   );
 }

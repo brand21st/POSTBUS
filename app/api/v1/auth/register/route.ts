@@ -3,6 +3,7 @@ import { registerAccountSchema } from "@/lib/auth/register-schema";
 import { authCallbackUrl } from "@/lib/auth/urls";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { fail, ok } from "@/lib/api/response";
+import { logError } from "@/lib/logger";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -40,6 +41,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (data.user?.id && !data.session) {
+      void import("@/modules/vachat/abandoned-signup")
+        .then(({ enqueueAbandonedSignup }) => enqueueAbandonedSignup(data.user!.id))
+        .catch((scheduleError) => {
+          logError("vachat.abandoned_signup.schedule_failed", {
+            userId: data.user?.id,
+            message: scheduleError instanceof Error ? scheduleError.message : "schedule",
+          });
+        });
+    }
     if (data.user?.id && data.session) {
       const { error: profileError } = await supabase
         .from("profiles")

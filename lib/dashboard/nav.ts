@@ -11,39 +11,66 @@ import {
   ClipboardList,
   Radio,
   Workflow,
+  MessageCircle,
   Plug,
   CreditCard,
   Settings,
   LifeBuoy,
+  Calculator,
 } from "lucide-react";
 import { YoutubeIcon } from "@/components/icons/youtube-icon";
+
+export type NavChildItem = {
+  label: string;
+  href: string;
+};
 
 export type NavItem = {
   label: string;
   href: string;
   icon: ComponentType<{ className?: string }>;
   tour?: string;
+  children?: NavChildItem[];
 };
 
 export const sidebarNav: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
-  { label: "Orders", href: "/dashboard/orders", icon: ShoppingBag, tour: "nav-orders" },
+  {
+    label: "Orders",
+    href: "/dashboard/orders",
+    icon: ShoppingBag,
+    tour: "nav-orders",
+    children: [{ label: "Bulk Excel Booking", href: "/dashboard/orders/bulk-excel" }],
+  },
   { label: "Inventory", href: "/dashboard/inventory", icon: Package },
   { label: "Shipments", href: "/dashboard/shipments", icon: Truck, tour: "nav-shipments" },
   { label: "NDR & RTO", href: "/dashboard/ndr-rto", icon: PackageX },
-  { label: "Labels", href: "/dashboard/labels", icon: Tag, tour: "nav-labels" },
+  {
+    label: "Labels",
+    href: "/dashboard/labels",
+    icon: Tag,
+    tour: "nav-labels",
+    children: [{ label: "Multi print", href: "/dashboard/labels/multi-print" }],
+  },
   { label: "Invoices", href: "/dashboard/invoices", icon: Receipt },
   { label: "Manifest", href: "/dashboard/manifests", icon: ClipboardList },
   { label: "Tracking", href: "/dashboard/tracking", icon: Radio },
   { label: "Automation", href: "/dashboard/automation", icon: Workflow },
+  { label: "Support Center", href: "/dashboard/support", icon: MessageCircle },
   { label: "Integrations", href: "/dashboard/integrations", icon: Plug, tour: "nav-integrations" },
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
+export const aiAccountantNav: NavItem = {
+  label: "AI Accountant",
+  href: "/dashboard/ai-accountant",
+  icon: Calculator,
+};
+
 export const tutorialsNav: NavItem = {
-  label: "YouTube Tutorials",
+  label: "Tutorials",
   href: "/dashboard/tutorials",
   icon: YoutubeIcon,
 };
@@ -81,7 +108,7 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
       continue;
     }
     if (segment === "tutorials") {
-      crumbs.push({ label: "YouTube Tutorials", href });
+      crumbs.push({ label: "Tutorials", href });
       continue;
     }
     if (isResourceIdSegment(segment)) {
@@ -92,9 +119,19 @@ export function breadcrumbs(pathname: string): Breadcrumb[] {
       label:
         segment === "new"
           ? "New"
-          : segment === "customer-links"
+            : segment === "customer-links"
             ? "Customer order link"
-            : segment.replace(/-/g, " "),
+            : segment === "support"
+              ? "Support Center"
+              : segment === "developer"
+                ? "Developer API"
+              : segment === "google-sheets"
+                ? "Google Sheets"
+              : segment === "ai-accountant"
+                ? "AI Accountant"
+              : segment === "bulk-excel"
+                ? "Bulk Excel Booking"
+              : segment.replace(/-/g, " "),
       href,
     });
   }

@@ -9,7 +9,7 @@ import { ArrowDownRight, ArrowUpRight, Package, Plug, RefreshCw, Truck } from "l
 import { toast } from "sonner";
 import { DataTable, type DataTableColumn } from "@/components/dashboard/data-table";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { StatusBadge } from "@/components/dashboard/status-badge";
+import { orderStatusBadgeValue, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -142,7 +142,7 @@ export default function DashboardPage() {
       ),
     },
     { id: "customer", header: "Customer", cell: (row) => customerName(row) },
-    { id: "status", header: "Status", cell: (row) => <StatusBadge value={row.status} /> },
+    { id: "status", header: "Status", cell: (row) => <StatusBadge value={orderStatusBadgeValue(row.status)} /> },
     {
       id: "payment",
       header: "Payment",

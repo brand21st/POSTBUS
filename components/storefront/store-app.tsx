@@ -1,18 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import dynamic from "next/dynamic";
+import { MarketplaceHome, EMPTY_FILTERS, type CatalogFilters } from "./marketplace-home";
+import { MarketplaceProduct } from "./marketplace-product";
+import marketStyles from "./marketplace.module.css";
+import { contrastText } from "@/modules/storefront/config";
+import { bundleCartLine, cartRequest, ungroupBundle } from "@/modules/storefront/cart";
+import { commerceEvent, emitStoreEvent } from "@/modules/storefront/tracking-events";
+import { StoreTracking } from "./store-tracking";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, ShoppingBag } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
-import { CartSheet } from "@/components/storefront/cart-sheet";
 import { StoreOrderSuccess, type StoreOrderReceipt } from "@/components/storefront/order-success";
-import { ProductDetailSheet } from "@/components/storefront/product-detail-sheet";
 import { StoreHome } from "@/components/storefront/store-home";
 import { StorePincodeLookup } from "@/components/storefront/store-pincode-lookup";
 import { StoreSkeleton } from "@/components/storefront/store-skeleton";
-import type { CartLine, StorePayload, StoreProduct } from "@/components/storefront/store-types";
+import type { CartLine, StorePayload, StoreProduct, StoreBundle } from "@/components/storefront/store-types";
 import { IndiaWhatsappField } from "@/components/auth/india-whatsapp-field";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -25,6 +31,7 @@ import { publicOrderLinkApiPath } from "@/modules/customer-order-links/schema";
 import { formatStorePrice } from "@/modules/storefront/pricing";
 import { returnPolicyLabel, summarizeReturnPolicy } from "@/modules/products/return-policy";
 import { pickStoreRecommendations } from "@/modules/storefront/recommendations";
+import { trendingProducts } from "@/modules/storefront/trending";
 
 const checkoutSchema = z.object({
   customerName: z.string().trim().min(2, "Enter your full name."),
@@ -37,20 +44,26 @@ const checkoutSchema = z.object({
   paymentPreference: z.enum(["PREPAID", "COD"]).optional(),
 });
 
-type CheckoutValues = z.infer<typeof checkoutSchema>;
+type CheckoutValues = z.infer<typeof checkoutSchema> & { quoteVersion?: string };
 type StoreRef = { workspace?: string; publicId?: string; token?: string };
+const CartSheet = dynamic(() => import("./cart-sheet").then((m) => m.CartSheet));
+const ProductDetailSheet = dynamic(() => import("./product-detail-sheet").then((m) => m.ProductDetailSheet));
 
 function cartKey(workspace: string) {
   return `postbus-store-cart:${workspace}`;
 }
 
-function catalogParams(ref: StoreRef, page: number, pageSize: number, query: string, categoryId: string) {
+function catalogParams(ref: StoreRef, page: number, pageSize: number, query: string, categoryId: string, filters: CatalogFilters = EMPTY_FILTERS) {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (ref.workspace) params.set("workspace", ref.workspace);
   if (ref.publicId) params.set("code", ref.publicId);
   if (ref.token) params.set("token", ref.token);
   if (query.trim()) params.set("q", query.trim());
   if (categoryId !== "all") params.set("categoryId", categoryId);
+  params.set("sort", filters.sort);
+  if (filters.priceMin !== "") params.set("priceMin", filters.priceMin);
+  if (filters.priceMax !== "") params.set("priceMax", filters.priceMax);
+  if (filters.inStock) params.set("inStock", "true");
   return params;
 }
 
@@ -72,6 +85,12 @@ export function StoreApp({
   const [loadedStore, setLoadedStore] = useState<StorePayload | null>(initialStore ?? null);
   const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState<CatalogFilters>(EMPTY_FILTERS);
+  const [urlReady, setUrlReady] = useState(false);
+  const browseUrl = useRef<string | null>(null);
+  const browseScroll = useRef(0);
+  const pushedProduct = useRef(false);
+  const onProductPath = useRef(false);
   const [categoryId, setCategoryId] = useState<string | "all">(initialCategoryId);
   const [searching, setSearching] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -87,6 +106,35 @@ export function StoreApp({
   const dismissReceipt = useCallback(() => setOrderReceipt(null), []);
   const apiRef = useMemo(() => ({ workspace, publicId, token }), [workspace, publicId, token]);
   const workspaceKey = workspace || initialStore?.workspace || preview?.workspace || "preview";
+  useEffect(() => {
+    if (isPreview) return;
+    const read = () => {
+      const params = new URLSearchParams(window.location.search);
+      const nextOnProduct = window.location.pathname.includes("/products/");
+      setQuery(params.get("q") ?? "");
+      setCategoryId(params.get("category") ?? initialCategoryId);
+      setFilters({ sort: params.get("sort") ?? "newest", priceMin: params.get("priceMin") ?? "", priceMax: params.get("priceMax") ?? "", inStock: params.get("inStock") === "true" });
+      if (onProductPath.current && !nextOnProduct) {
+        pushedProduct.current = false;
+        setProduct(null);
+        const y = browseScroll.current;
+        requestAnimationFrame(() => window.scrollTo(0, y));
+      }
+      onProductPath.current = nextOnProduct;
+      setUrlReady(true);
+    };
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, [initialCategoryId, isPreview]);
+  useEffect(() => {
+    if (!urlReady || isPreview || product) return;
+    const url = new URL(window.location.href);
+    for (const [key, value] of Object.entries({ q: query, category: categoryId === "all" ? "" : categoryId, sort: filters.sort === "newest" ? "" : filters.sort, priceMin: filters.priceMin, priceMax: filters.priceMax, inStock: filters.inStock ? "true" : "" })) {
+      if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
+    }
+    window.history.replaceState(window.history.state, "", url);
+  }, [categoryId, filters, isPreview, product, query, urlReady]);
 
   const loadStore = useCallback(async () => {
     if (isPreview) return;
@@ -157,9 +205,10 @@ export function StoreApp({
           item.name.toLowerCase().includes(needle) ||
           item.sku.toLowerCase().includes(needle) ||
           item.categoryIds?.some((id) => matchingCategoryIds.has(id)))
-    );
+    ).filter((item) => (!filters.inStock || item.inStock) && (filters.priceMin === "" || item.price >= Number(filters.priceMin)) && (filters.priceMax === "" || item.price <= Number(filters.priceMax)))
+      .sort((a, b) => filters.sort === "priceAsc" ? a.price - b.price : filters.sort === "priceDesc" ? b.price - a.price : filters.sort === "name" ? a.name.localeCompare(b.name) : 0);
     return { ...current, products: { ...current.products, items, total: items.length, page: 1 } };
-  }, [categoryId, loadedStore, preview, query]);
+  }, [categoryId, filters, loadedStore, preview, query]);
 
   const catalogPool = useMemo(() => {
     const items = [...(store?.products.items ?? []), ...(store?.products.related ?? [])];
@@ -169,17 +218,18 @@ export function StoreApp({
   }, [store]);
 
   useEffect(() => {
-    if (isPreview) return;
-    if (requestSequence.current === 0 && !query.trim() && categoryId === "all") {
+    if (isPreview || !urlReady) return;
+    if (requestSequence.current === 0 && !query.trim() && categoryId === "all" && JSON.stringify(filters) === JSON.stringify(EMPTY_FILTERS)) {
       requestSequence.current = 1;
       return;
     }
     const sequence = ++requestSequence.current;
+    const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setSearching(true);
       try {
         const products = await api<StorePayload["products"]>(
-          `/api/v1/public/store/products?${catalogParams(apiRef, 1, 24, query, categoryId)}`
+          `/api/v1/public/store/products?${catalogParams(apiRef, 1, 24, query, categoryId, filters)}`, { signal: controller.signal }
         );
         if (sequence === requestSequence.current) {
           setLoadedStore((current) => (current ? { ...current, products } : current));
@@ -190,13 +240,20 @@ export function StoreApp({
         if (sequence === requestSequence.current) setSearching(false);
       }
     }, 300);
-    return () => window.clearTimeout(timer);
-  }, [apiRef, categoryId, isPreview, query]);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [apiRef, categoryId, filters, isPreview, query, urlReady]);
+
+  const seenCovers = useRef(new Set<string>());
 
   function trackEvent(
-    eventType: "PRODUCT_VIEW" | "PRODUCT_CLICK" | "ADD_TO_CART" | "CART_OPENED" | "CHECKOUT_STARTED" | "PURCHASE",
-    details?: { productId?: string; quantity?: number; value?: number }
+    eventType: "PRODUCT_VIEW" | "PRODUCT_CLICK" | "ADD_TO_CART" | "CART_OPENED" | "CHECKOUT_STARTED" | "PURCHASE" | "COVER_IMPRESSION" | "COVER_CLICK",
+    details?: { productId?: string; quantity?: number; value?: number; slideId?: string }
   ) {
+    const names = { PRODUCT_VIEW: "view_item", PRODUCT_CLICK: "select_item", ADD_TO_CART: "add_to_cart", CART_OPENED: "view_cart", CHECKOUT_STARTED: "begin_checkout", PURCHASE: "purchase" } as const;
+    const item = catalogPool.find((candidate) => candidate.id === details?.productId);
+    if (eventType !== "PURCHASE" && eventType !== "COVER_IMPRESSION" && eventType !== "COVER_CLICK") {
+      emitStoreEvent(workspaceKey, commerceEvent(names[eventType], { value: details?.value, items: item ? [{ item_id: item.id, item_name: item.name, price: item.price, quantity: details?.quantity ?? 1 }] : cart.map((line) => ({ item_id: line.product.id, item_name: line.product.name, price: line.product.price, quantity: line.quantity })) }));
+    }
     if (isPreview) return;
     const sessionKey = `postbus-store-session:${workspaceKey}`;
     const sessionId = sessionStorage.getItem(sessionKey) || crypto.randomUUID();
@@ -211,12 +268,38 @@ export function StoreApp({
         token: apiRef.token,
         sessionId,
         eventType,
+        device: window.matchMedia("(max-width: 767px)").matches ? "mobile" : "desktop",
         ...details,
       }),
     }).catch(() => undefined);
   }
 
+  function closeProduct() {
+    setProduct(null);
+    if (isPreview) return;
+    const y = browseScroll.current;
+    if (pushedProduct.current) {
+      pushedProduct.current = false;
+      onProductPath.current = false;
+      window.history.back();
+    } else if (window.location.pathname.includes("/products/")) {
+      onProductPath.current = false;
+      window.history.replaceState(window.history.state, "", browseUrl.current ?? `/store/${workspaceKey}`);
+    }
+    requestAnimationFrame(() => window.scrollTo(0, y));
+  }
+
   function openProduct(next: StoreProduct) {
+    if (!isPreview && !product) { browseUrl.current = window.location.href; browseScroll.current = window.scrollY; }
+    if (!isPreview && next.slug && !window.location.pathname.endsWith(`/products/${next.slug}`)) {
+      const url = `/store/${workspaceKey}/products/${next.slug}`;
+      if (product || window.location.pathname.includes("/products/")) window.history.replaceState({ storefrontProduct: next.slug }, "", url);
+      else {
+        window.history.pushState({ storefrontProduct: next.slug }, "", url);
+        pushedProduct.current = true;
+      }
+      onProductPath.current = true;
+    }
     setProduct(next);
     trackEvent("PRODUCT_CLICK", { productId: next.id });
     trackEvent("PRODUCT_VIEW", { productId: next.id });
@@ -228,6 +311,7 @@ export function StoreApp({
     if (!isPreview && cart.length) {
       void Promise.all(
         cart.map(async (line) => {
+          if (line.bundle) return line;
           try {
             const params = catalogParams(apiRef, 1, 1, "", "all");
             params.set("id", line.product.id);
@@ -252,6 +336,16 @@ export function StoreApp({
     });
   }
 
+  function addBundle(bundle: StoreBundle) {
+    emitStoreEvent(workspaceKey, commerceEvent("add_bundle", { value: bundle.total, items: bundle.components.map((item) => ({ item_id: item.product.id, item_name: item.product.name, price: item.product.price, quantity: item.quantity })) }));
+    const next = bundleCartLine(bundle);
+    setCart((current) => {
+      const existing = current.find((line) => line.product.id === next.product.id);
+      if (existing) return current.map((line) => line === existing ? { ...next, quantity: Math.min(next.product.onHand, line.quantity + 1) } : line);
+      return [...current, next];
+    });
+  }
+
   function submissionId() {
     if (submissionIdRef.current) return submissionIdRef.current;
     const key = `postbus-store-submit:${workspaceKey}`;
@@ -263,6 +357,8 @@ export function StoreApp({
   }
 
   function decrease(productId: string) {
+    const item = cart.find((line) => line.product.id === productId);
+    if (item) emitStoreEvent(workspaceKey, commerceEvent("remove_from_cart", { value: item.product.price, items: [{ item_id: productId, item_name: item.product.name, price: item.product.price, quantity: 1 }] }));
     setCart((current) =>
       current
         .map((line) => (line.product.id === productId ? { ...line, quantity: line.quantity - 1 } : line))
@@ -271,7 +367,8 @@ export function StoreApp({
   }
 
   async function loadMore() {
-    if (!store || isPreview) return;
+    if (!store || isPreview || searching) return;
+    const sequence = requestSequence.current;
     setSearching(true);
     try {
       const products = await api<StorePayload["products"]>(
@@ -280,14 +377,18 @@ export function StoreApp({
           store.products.page + 1,
           store.products.pageSize,
           query,
-          categoryId
+          categoryId,
+          filters
         )}`
       );
+      if (sequence !== requestSequence.current) return;
       setLoadedStore((current) =>
         current
           ? { ...current, products: { ...products, items: [...current.products.items, ...products.items] } }
           : current
       );
+    } catch {
+      setSubmitError("Could not load more products. Please try again.");
     } finally {
       setSearching(false);
     }
@@ -321,7 +422,7 @@ export function StoreApp({
   }
 
   if (orderReceipt) {
-    return <StoreOrderSuccess receipt={orderReceipt} onContinue={dismissReceipt} />;
+    return <><StoreOrderSuccess receipt={orderReceipt} onContinue={dismissReceipt} />{store.marketplace ? <StoreTracking workspace={workspaceKey} config={store.tracking} preview={isPreview} /> : null}</>;
   }
 
   const count = cart.reduce((sum, line) => sum + line.quantity, 0);
@@ -336,12 +437,18 @@ export function StoreApp({
     catalogPool,
     cart,
     product?.upsellIds ?? [],
-    { categoryIds: product?.categoryIds, excludeId: product?.id, limit: 4 }
+    { categoryIds: product?.categoryIds, excludeId: product?.id, limit: 8 }
   );
 
   return (
-    <>
-      <StoreHome
+    <div className={store.marketplace ? marketStyles.store : undefined} data-font={store.theme?.font ?? "geist"} style={store.marketplace ? { "--accent": store.accentColor, "--accent-text": contrastText(store.accentColor), "--secondary": store.theme?.secondaryColor, paddingBottom: product ? 0 : count ? 80 : 0 } as CSSProperties : undefined}>
+      {store.marketplace ? <MarketplaceHome store={store} cart={cart} query={query} categoryId={categoryId} searching={searching} filters={filters} onFilters={setFilters} onQueryChange={(value) => { setQuery(value); if (product) { pushedProduct.current = false; onProductPath.current = false; setProduct(null); } }} onCategoryChange={setCategoryId} onOpenCart={openCart} onOpenProduct={openProduct} onAdd={addToCart} onDecrease={decrease} onLoadMore={() => void loadMore()} onBundle={addBundle} onHome={closeProduct} onCoverEvent={(type, slideId) => {
+          if (type === "COVER_IMPRESSION") {
+            if (seenCovers.current.has(slideId)) return;
+            seenCovers.current.add(slideId);
+          }
+          trackEvent(type, { slideId });
+        }} detail={product ? <MarketplaceProduct product={product} quantity={cart.find((line) => line.product.id === product.id)?.quantity ?? 0} related={related} onBack={closeProduct} onAdd={addToCart} onDecrease={decrease} onOpenProduct={openProduct} /> : undefined} /> : <StoreHome
         store={store}
         cart={cart}
         query={query}
@@ -354,7 +461,14 @@ export function StoreApp({
         onAdd={addToCart}
         onDecrease={decrease}
         onLoadMore={() => void loadMore()}
-      />
+        onCoverEvent={(type, slideId) => {
+          if (type === "COVER_IMPRESSION") {
+            if (seenCovers.current.has(slideId)) return;
+            seenCovers.current.add(slideId);
+          }
+          trackEvent(type, { slideId });
+        }}
+      />}
 
       {count > 0 && !sheet && !product ? (
         <div className="fixed inset-x-0 bottom-0 z-40 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4 lg:inset-x-auto lg:bottom-5 lg:right-6 lg:w-[22rem] lg:px-0 lg:pb-0">
@@ -377,14 +491,14 @@ export function StoreApp({
         </div>
       ) : null}
 
-      {product ? (
+      {product && !store.marketplace ? (
         <ProductDetailSheet
           product={product}
           quantity={cart.find((line) => line.product.id === product.id)?.quantity ?? 0}
           accent={store.accentColor}
           related={related}
           cart={cart}
-          onClose={() => setProduct(null)}
+          onClose={closeProduct}
           onAdd={addToCart}
           onDecrease={decrease}
           onOpenProduct={openProduct}
@@ -393,13 +507,16 @@ export function StoreApp({
 
       {sheet ? (
         <CartSheet
+          onUngroup={(id) => setCart((current) => ungroupBundle(current, id))}
           cart={cart}
           accent={store.accentColor}
           checkout={sheet === "checkout"}
           recommendations={recommendations}
+          suggestions={trendingProducts([...(store.products.bestSellers ?? []), ...(store.products.featured ?? []), ...catalogPool])}
           checkoutForm={
             <CheckoutForm
               apiRef={apiRef}
+              preview={isPreview}
               cart={cart}
               submitting={submitting}
               error={submitError}
@@ -416,6 +533,8 @@ export function StoreApp({
                 try {
                   const result = await api<{
                     status: string;
+                    orderId?: string;
+                    items?: Array<{ productId: string; name: string; unitPrice: number; quantity: number }>;
                     orderNumber?: string | null;
                     total?: number;
                     advanceAmount?: number;
@@ -427,7 +546,7 @@ export function StoreApp({
                     body: JSON.stringify({
                       ...values,
                       clientRequestId: submissionId(),
-                      items: cart.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
+                      ...cartRequest(cart),
                     }),
                   });
                   sessionStorage.removeItem(`postbus-store-submit:${workspaceKey}`);
@@ -443,7 +562,8 @@ export function StoreApp({
                     paymentMethod: result.paymentMethod ?? "Prepaid",
                     returnPolicy: result.returnPolicy ?? summarizeReturnPolicy(cart.map((line) => line.product.returnAvailable !== false)).label,
                   });
-                  trackEvent("PURCHASE", { value: total });
+                  if (result.orderId) emitStoreEvent(workspaceKey, commerceEvent("purchase", { eventId: `order:${result.orderId}`, transactionId: result.orderId, value: Number(result.total ?? 0), items: result.items?.map((item) => ({ item_id: item.productId, item_name: item.name, price: item.unitPrice, quantity: item.quantity })) }));
+                  trackEvent("PURCHASE", { value: Number(result.total ?? 0) });
                 } catch (error) {
                   setSubmitError(error instanceof Error ? error.message : "Could not submit this order. Please try again.");
                 } finally {
@@ -476,7 +596,8 @@ export function StoreApp({
           onRemove={(productId) => setCart((current) => current.filter((line) => line.product.id !== productId))}
         />
       ) : null}
-    </>
+      {store.marketplace ? <StoreTracking workspace={workspaceKey} config={store.tracking} preview={isPreview} /> : null}
+    </div>
   );
 }
 
@@ -486,6 +607,7 @@ function FieldError({ message }: { message?: string }) {
 
 function CheckoutForm({
   apiRef,
+  preview = false,
   cart,
   submitting,
   error,
@@ -494,6 +616,7 @@ function CheckoutForm({
   onSubmit,
 }: {
   apiRef: StoreRef;
+  preview?: boolean;
   cart: CartLine[];
   submitting: boolean;
   error: string | null;
@@ -533,9 +656,9 @@ function CheckoutForm({
   const returns = summarizeReturnPolicy(cart.map((line) => line.product.returnAvailable !== false));
   const quote = useQuery({
     queryKey: ["store-quote", apiRef, preference, cart.map((line) => `${line.product.id}:${line.quantity}`).join(",")],
-    enabled: Boolean(cart.length && (preference === "PREPAID" || preference === "COD") && (prepaid || cod)),
+    enabled: !preview && Boolean(cart.length && (preference === "PREPAID" || preference === "COD") && (prepaid || cod)),
     queryFn: () =>
-      api<{ total: number; amountDueNow: number; amountOnDelivery: number; expectedAdvance: number }>(
+      api<{ total: number; amountDueNow: number; amountOnDelivery: number; expectedAdvance: number; quoteVersion: string }>(
         "/api/v1/public/store/quote",
         {
           method: "POST",
@@ -544,7 +667,7 @@ function CheckoutForm({
             code: apiRef.publicId,
             token: apiRef.token,
             paymentPreference: preference,
-            items: cart.map((line) => ({ productId: line.product.id, quantity: line.quantity })),
+            ...cartRequest(cart),
           }),
         }
       ),
@@ -556,13 +679,18 @@ function CheckoutForm({
 
   return (
     <form
+      data-clarity-mask="true"
       className="flex min-h-0 min-w-0 flex-1 flex-col"
       onSubmit={form.handleSubmit(async (values) => {
         if (step !== "summary") {
           onStepChange("summary");
           return;
         }
-        await onSubmit(values);
+        if (preview) return;
+        const fresh = await quote.refetch();
+        if (!fresh.data || fresh.error) return;
+        if (fresh.data.quoteVersion !== quote.data?.quoteVersion) { form.setError("root", { message: "Prices changed. Review the updated total and place your order again." }); return; }
+        await onSubmit({ ...values, quoteVersion: fresh.data.quoteVersion });
       })}
       noValidate
     >
@@ -663,6 +791,7 @@ function CheckoutForm({
                       <div key={line.product.id} className="flex justify-between gap-3">
                         <span className="min-w-0">
                           <span className="block truncate font-medium">{line.product.name}</span>
+                          {line.bundle ? <span className="block text-xs text-zinc-500">{line.bundle.components.map((item) => `${item.quantity} × ${item.product.name}`).join(" + ")}</span> : null}
                           <span className="text-xs text-zinc-500">
                             Qty {line.quantity}
                             {line.product.sku ? ` · ${line.product.sku}` : ""} · {returnPolicyLabel(line.product.returnAvailable !== false)}
@@ -760,10 +889,11 @@ function CheckoutForm({
       </div>
       <div className="mt-auto shrink-0 border-t border-zinc-100 bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6">
         <div className="mx-auto max-w-lg">
+          {quote.error || form.formState.errors.root ? <p role="alert" className="mb-2 text-sm text-red-600">{quote.error?.message ?? form.formState.errors.root?.message}</p> : null}
           <Button
             type="submit"
             className="h-12 w-full rounded-2xl"
-            disabled={submitting || !cart.length || (step === "summary" && !prepaid && !cod)}
+            disabled={submitting || !cart.length || (step === "summary" && (preview || quote.isFetching || quote.isError || !quote.data || (!prepaid && !cod)))}
           >
             {step === "summary" ? (submitting ? "Placing order…" : "Place order") : "Next"}
           </Button>

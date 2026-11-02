@@ -45,8 +45,17 @@ export function resolveSafeInvoicePath(
   if (posix.split("/").some((segment) => segment === ".." || segment === "")) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Invalid invoice path.");
   }
-  const [folder, file] = posix.split("/");
-  if (!folder || !file || posix.split("/").length !== 2 || !file.endsWith(".pdf")) {
+  const parts = posix.split("/");
+  let folder = "";
+  let file = "";
+  if (parts.length === 2) {
+    folder = parts[0] ?? "";
+    file = parts[1] ?? "";
+  } else if (parts.length === 3 && parts[0] === "sales") {
+    folder = parts[1] ?? "";
+    file = parts[2] ?? "";
+  }
+  if (!folder || !file || !file.endsWith(".pdf") || !UUID.test(folder)) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Invalid invoice path.");
   }
   if (organizationId && folder !== organizationId) {
@@ -66,8 +75,9 @@ export async function saveInvoicePdf(input: {
   invoiceId: string;
   bytes: Buffer | Uint8Array;
   root?: string;
+  relativePath?: string;
 }) {
-  const relative = relativeInvoicePath(input.organizationId, input.invoiceId);
+  const relative = input.relativePath ?? relativeInvoicePath(input.organizationId, input.invoiceId);
   const absolute = resolveSafeInvoicePath(relative, input.organizationId, input.root);
   try {
     await mkdir(path.dirname(absolute), { recursive: true });

@@ -128,8 +128,10 @@ export function placeLines(input: {
     const widths = runs.map((run) => input.measure(run.text, run));
     const total = widths.reduce((sum, width) => sum + width, 0);
     let cursor = input.box.x;
-    if (input.align === "center") cursor = input.box.x + (input.box.width - total) / 2;
-    if (input.align === "right") cursor = input.box.x + input.box.width - total;
+    if (total <= input.box.width + 0.5) {
+      if (input.align === "center") cursor = input.box.x + (input.box.width - total) / 2;
+      if (input.align === "right") cursor = input.box.x + input.box.width - total;
+    }
     const runPlaced: PlacedRun[] = runs.map((run, runIndex) => {
       const width = widths[runIndex] ?? 0;
       const x = cursor;

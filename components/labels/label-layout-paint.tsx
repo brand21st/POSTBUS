@@ -97,6 +97,7 @@ function LayoutBlockView({
         outline: selected ? "2px solid var(--brand)" : undefined,
         outlineOffset: 2,
         overflow: "hidden",
+        opacity: block.kind === "watermark" ? (block.opacity ?? 1) : undefined,
       }}
       onPointerDown={interactive ? (event) => onPointerDown(block.id, event) : undefined}
       onPointerMove={interactive ? (event) => onPointerMove(block.id, event) : undefined}
@@ -191,6 +192,8 @@ function LayoutLine({
           style={{
             left: (run.x - block.x) * scale,
             top,
+            maxWidth: Math.max(0, (block.x + block.width - run.x) * scale),
+            overflow: "hidden",
             fontSize: line.fontSize * scale,
             lineHeight: `${line.fontSize * scale}px`,
             fontWeight: run.bold ? 700 : 400,

@@ -3,6 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
+import { hasPermission } from "@/lib/permissions/rbac";
+import { assertBrowserOrigin } from "@/lib/security/origin";
+import { normalizeMultiUpDisposition } from "@/modules/labels/multi-up/request";
 import {
   customLabelBarcodePng,
   loadCustomShippingLabel,
@@ -14,6 +17,7 @@ import {
 } from "@/modules/labels/custom-label-service";
 import { generateAndStoreOfficialIndiaPostLabelPdf } from "@/modules/labels/official-fetch";
 import { persistPackingSlip } from "@/modules/labels/packing-fetch";
+import { getLabelDashboardCounts } from "@/modules/labels/list";
 import { retryIncompleteLabelById, retryIncompleteLabelsByIds } from "@/modules/labels/retry";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { pickOfficialPreviewLabel } from "@/modules/labels/preview-pick";
@@ -21,6 +25,14 @@ import { parseLabelTemplate } from "@/modules/labels/template-schema";
 import { getLabelTemplate, saveLabelTemplate } from "@/modules/labels/template-service";
 import { organizationLogoUrl } from "@/modules/organizations/branding";
 import { printMultiUpSheet, renderMultiUpSheet } from "@/modules/labels/multi-up/render";
+import {
+  claimManualPrintKey,
+  printRequestFingerprint,
+  releaseManualPrintKey,
+  requirePrintIdempotencyKey,
+  storeManualPrintKey,
+} from "@/modules/print/manual-idempotency";
+import { queuedPrintMessage } from "@/modules/print/queued-message";
 import { enqueueManualPrintJob, getPrintStation, updatePrintSettings } from "@/modules/print/service";
 
 export async function handleLabelTemplateRoutes(
@@ -31,6 +43,10 @@ export async function handleLabelTemplateRoutes(
   method: string,
   slugs: string[]
 ) {
+  if (method === "GET" && slugs[0] === "labels" && slugs[1] === "summary" && !slugs[2]) {
+    return getLabelDashboardCounts(supabase, ctx);
+  }
+
   if (key === "GET label-template") {
     const template = await getLabelTemplate(supabase, ctx.organizationId);
     const { data: org } = await supabase
@@ -106,8 +122,16 @@ export async function handleLabelTemplateRoutes(
 
   if (key === "POST label-template/multi-sheet") {
     const body = await request.json().catch(() => ({}));
-    const disposition = body && typeof body === "object" ? (body as { disposition?: string }).disposition : "inline";
-    if (disposition === "print") return printMultiUpSheet(supabase, ctx, body);
+    const disposition = normalizeMultiUpDisposition(body);
+    assertBrowserOrigin(request, disposition === "print");
+    if (disposition === "print") {
+      if (!hasPermission(ctx.role, "labels.write")) {
+        throw new AppError(ERROR_CODES.FORBIDDEN, "You do not have permission to print labels.");
+      }
+      return printMultiUpSheet(supabase, ctx, body, {
+        idempotencyKey: request.headers.get("idempotency-key"),
+      });
+    }
     const rendered = await renderMultiUpSheet(supabase, ctx.organizationId, body);
     const filename = "shipping-labels.pdf";
     const download = disposition === "attachment" ? "attachment" : "inline";
@@ -120,37 +144,65 @@ export async function handleLabelTemplateRoutes(
   }
 
   if (key === "POST label-template/custom-print") {
+    assertBrowserOrigin(request, true);
     const body = await readCustomLabelBody(request);
-    const printed = await printCustomShippingLabel(supabase, ctx, body);
-    return {
-      labelId: printed.labelId,
-      job: printed.job,
-      connected: printed.connected,
-      downloadPath: printed.downloadPath,
-      message: printed.message,
-    };
+    const rawKey = requirePrintIdempotencyKey(request.headers.get("idempotency-key"));
+    const fingerprint = printRequestFingerprint({
+      action: "custom-print",
+      shipmentId: body.shipmentId ?? null,
+      orderId: body.orderId ?? null,
+      templateId: body.templateId ?? null,
+    });
+    const claimed = await claimManualPrintKey(supabase, ctx.organizationId, rawKey, fingerprint);
+    if (claimed.cached) return claimed.cached;
+    try {
+      const printed = await printCustomShippingLabel(supabase, ctx, body, { idempotencyKey: claimed.key });
+      const result = {
+        labelId: printed.labelId,
+        job: printed.job,
+        connected: printed.connected,
+        downloadPath: printed.downloadPath,
+        message: printed.message,
+      };
+      await storeManualPrintKey(supabase, ctx.organizationId, claimed.key, result);
+      return result;
+    } catch (error) {
+      await releaseManualPrintKey(supabase, ctx.organizationId, claimed.key);
+      throw error;
+    }
   }
 
   if (key === "POST label-template/print-test") {
+    assertBrowserOrigin(request, true);
     const body = (await request.json().catch(() => ({}))) as { copies?: number };
     const official = await loadOfficialLabel(supabase, ctx.organizationId, null);
     if (!official) {
       throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Book a shipment to print the India Post label.");
     }
-    const job = await enqueueManualPrintJob(supabase, ctx, official.id, {
-      paperSize: "A6",
-      copies: body.copies,
-    });
-    const station = await getPrintStation(supabase, ctx.organizationId);
-    return {
-      job: { id: job.id, status: job.status, source: job.source, paperSize: "A6" },
-      labelId: official.id,
-      connected: station.connected,
-      message: station.connected
-        ? "India Post label sent to the printer."
-        : "Printer unavailable. Opening the official India Post PDF.",
-      downloadPath: `/api/v1/labels/${official.id}/download?raw=1`,
-    };
+    const rawKey = requirePrintIdempotencyKey(request.headers.get("idempotency-key"));
+    const fingerprint = printRequestFingerprint({ action: "print-test", labelId: official.id, copies: body.copies ?? 1 });
+    const claimed = await claimManualPrintKey(supabase, ctx.organizationId, rawKey, fingerprint);
+    if (claimed.cached) return claimed.cached;
+    try {
+      const job = await enqueueManualPrintJob(supabase, ctx, official.id, {
+        paperSize: "A6",
+        copies: body.copies,
+        idempotencyKey: claimed.key,
+      });
+      const station = await getPrintStation(supabase, ctx.organizationId);
+      const result = {
+        job: { id: job.id, status: job.status, source: job.source, paperSize: "A6" },
+        labelId: official.id,
+        connected: station.connected,
+        message: queuedPrintMessage({ connected: station.connected, delivery: job.delivery }),
+        downloadPath: `/api/v1/labels/${official.id}/download?raw=1`,
+      };
+      await storeManualPrintKey(supabase, ctx.organizationId, claimed.key, result);
+      return result;
+    } catch (error) {
+      await releaseManualPrintKey(supabase, ctx.organizationId, claimed.key);
+      throw error;
+    }
   }
 
   if (method === "POST" && slugs[0] === "labels" && slugs[1] === "retry-incomplete" && !slugs[2]) {

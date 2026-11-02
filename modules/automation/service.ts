@@ -12,12 +12,15 @@ type Column =
   | "auto_tracking_sync"
   | "auto_shopify_fulfillment"
   | "auto_shopify_processing"
+  | "auto_woocommerce_sync"
+  | "auto_woocommerce_tracking"
   | "auto_wati_order_confirmation"
   | "auto_wati_processing"
   | "auto_wati_booked"
   | "auto_wati_in_transit"
   | "auto_wati_delivered"
-  | "auto_label_printing";
+  | "auto_label_printing"
+  | "auto_package_selection";
 
 const CAMEL_TO_COLUMN: Record<string, Column> = {
   autoShopifySync: "auto_shopify_sync",
@@ -36,6 +39,10 @@ const CAMEL_TO_COLUMN: Record<string, Column> = {
   auto_shopify_fulfillment: "auto_shopify_fulfillment",
   autoShopifyProcessing: "auto_shopify_processing",
   auto_shopify_processing: "auto_shopify_processing",
+  autoWooCommerceSync: "auto_woocommerce_sync",
+  auto_woocommerce_sync: "auto_woocommerce_sync",
+  autoWooCommerceTracking: "auto_woocommerce_tracking",
+  auto_woocommerce_tracking: "auto_woocommerce_tracking",
   autoWatiOrderConfirmation: "auto_wati_order_confirmation",
   auto_wati_order_confirmation: "auto_wati_order_confirmation",
   autoWatiProcessing: "auto_wati_processing",
@@ -48,6 +55,8 @@ const CAMEL_TO_COLUMN: Record<string, Column> = {
   auto_wati_delivered: "auto_wati_delivered",
   autoLabelPrinting: "auto_label_printing",
   auto_label_printing: "auto_label_printing",
+  autoPackageSelection: "auto_package_selection",
+  auto_package_selection: "auto_package_selection",
 };
 
 export type AutomationRow = {
@@ -60,12 +69,16 @@ export type AutomationRow = {
   auto_tracking_sync: boolean;
   auto_shopify_fulfillment: boolean;
   auto_shopify_processing?: boolean;
+  auto_woocommerce_sync?: boolean;
+  auto_woocommerce_tracking?: boolean;
   auto_wati_order_confirmation?: boolean;
   auto_wati_processing?: boolean;
   auto_wati_booked?: boolean;
   auto_wati_in_transit?: boolean;
   auto_wati_delivered?: boolean;
   auto_label_printing?: boolean;
+  /** Not in AUTOMATION_DEFAULTS: the column default (false) applies, so inserts work before the migration. */
+  auto_package_selection?: boolean;
 };
 
 export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
@@ -77,6 +90,8 @@ export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
   auto_tracking_sync: true,
   auto_shopify_fulfillment: true,
   auto_shopify_processing: false,
+  auto_woocommerce_sync: true,
+  auto_woocommerce_tracking: false,
   auto_wati_order_confirmation: true,
   auto_wati_processing: true,
   auto_wati_booked: true,
@@ -104,6 +119,10 @@ export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
     auto_shopify_fulfillment: row.auto_shopify_fulfillment,
     autoShopifyProcessing: row.auto_shopify_processing ?? false,
     auto_shopify_processing: row.auto_shopify_processing ?? false,
+    autoWooCommerceSync: row.auto_woocommerce_sync ?? true,
+    auto_woocommerce_sync: row.auto_woocommerce_sync ?? true,
+    autoWooCommerceTracking: row.auto_woocommerce_tracking ?? false,
+    auto_woocommerce_tracking: row.auto_woocommerce_tracking ?? false,
     autoWatiOrderConfirmation: row.auto_wati_order_confirmation ?? true,
     auto_wati_order_confirmation: row.auto_wati_order_confirmation ?? true,
     autoWatiProcessing: row.auto_wati_processing ?? true,
@@ -116,6 +135,8 @@ export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
     auto_wati_delivered: row.auto_wati_delivered ?? true,
     autoLabelPrinting: row.auto_label_printing ?? false,
     auto_label_printing: row.auto_label_printing ?? false,
+    autoPackageSelection: row.auto_package_selection ?? false,
+    auto_package_selection: row.auto_package_selection ?? false,
   };
 }
 
@@ -175,6 +196,18 @@ export async function getAutomationSettings(
   }
 
   return mapAutomationSettings(created as AutomationRow);
+}
+
+export async function isAutoWooCommerceSyncEnabled(
+  supabase: SupabaseClient,
+  organizationId: string
+): Promise<boolean> {
+  try {
+    const settings = await getAutomationSettings(supabase, organizationId);
+    return Boolean(settings.autoWooCommerceSync);
+  } catch {
+    return AUTOMATION_DEFAULTS.auto_woocommerce_sync ?? true;
+  }
 }
 
 export async function isAutoShopifySyncEnabled(

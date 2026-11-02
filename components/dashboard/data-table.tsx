@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   createColumnHelper,
   rowSelectionFeature,
   tableFeatures,
   useTable,
 } from "@tanstack/react-table";
-import { AlertCircle, ChevronLeft, ChevronRight, Inbox } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -19,6 +19,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  applyHeaderSelectionChange,
+  toggleRowSelection,
+  visibleHeaderState,
+} from "@/lib/dashboard/row-selection";
 import { displayValue } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +47,11 @@ export type DataTableColumn<TData extends Record<string, unknown>> = {
   /** Shrink to this pixel width instead of absorbing leftover table width. */
   hug?: boolean;
   width?: number;
+  sort?: {
+    state: "none" | "asc" | "desc";
+    onToggle: () => void;
+    title?: string;
+  };
 };
 
 export type DataTableProps<TData extends Record<string, unknown>> = {
@@ -238,6 +248,11 @@ export function DataTable<TData extends Record<string, unknown>>({
   const cellPad = compact ? "px-2.5 py-1.5" : "px-4 py-3";
   const stacked = stackDisplay(stackBelow);
   const [widths, setWidths] = useState<Record<string, number>>(columnWidths ?? {});
+  const selectedIdsRef = useRef(selectedIds);
+  const fetchingRef = useRef(fetching);
+  const liveVisibleIdsRef = useRef<string[]>([]);
+  selectedIdsRef.current = selectedIds;
+  fetchingRef.current = fetching;
 
   useEffect(() => {
     if (columnWidths) setWidths(columnWidths);
@@ -293,26 +308,37 @@ export function DataTable<TData extends Record<string, unknown>>({
         id: "_select",
         header: ({ table }) => {
           const visibleIds = table.getRowModel().rows.map((row) => row.id);
-          const selectedVisible = selectedIds
-            ? visibleIds.filter((id) => selectedIds.includes(id)).length
-            : table.getIsAllRowsSelected()
-              ? visibleIds.length
-              : 0;
-          const allVisibleSelected = visibleIds.length > 0 && selectedVisible === visibleIds.length;
+          liveVisibleIdsRef.current = visibleIds;
+          const current = selectedIds ?? [];
+          const headerState = selectedIds
+            ? visibleHeaderState(selectedIds, visibleIds)
+            : visibleHeaderState(
+                table.getRowModel().rows.filter((row) => row.getIsSelected()).map((row) => row.id),
+                visibleIds
+              );
           return (
             <Checkbox
               aria-label="Select all visible orders"
-              checked={
-                allVisibleSelected ? true : selectedVisible > 0 ? "indeterminate" : false
-              }
+              checked={headerState}
+              disabled={visibleIds.length === 0}
               onCheckedChange={(value) => {
-                if (selectedIds) {
-                  onSelectionChange?.(value ? visibleIds : []);
+                if (liveVisibleIdsRef.current.length === 0) return;
+                const checked = value === true;
+                const live = liveVisibleIdsRef.current;
+                const selected = selectedIdsRef.current ?? [];
+                const next = applyHeaderSelectionChange(
+                  selected,
+                  live,
+                  checked,
+                  Boolean(fetchingRef.current)
+                );
+                if (selectedIdsRef.current) {
+                  onSelectionChange?.(next);
                   return;
                 }
-                table.toggleAllRowsSelected(!!value);
+                table.toggleAllRowsSelected(checked);
                 if (!onSelectionChange) return;
-                onSelectionChange(value ? visibleIds : []);
+                onSelectionChange(next);
               }}
             />
           );
@@ -322,22 +348,15 @@ export function DataTable<TData extends Record<string, unknown>>({
             aria-label="Select row"
             checked={selectedIds ? selectedIds.includes(row.id) : row.getIsSelected()}
             onCheckedChange={(value) => {
+              const checked = value === true;
               if (selectedIds) {
-                onSelectionChange?.(
-                  value
-                    ? Array.from(new Set([...selectedIds, row.id]))
-                    : selectedIds.filter((id) => id !== row.id)
-                );
+                onSelectionChange?.(toggleRowSelection(selectedIds, row.id, checked));
                 return;
               }
-              row.toggleSelected(!!value);
+              row.toggleSelected(checked);
               if (!onSelectionChange) return;
               const current = table.getSelectedRowModel().rows.map((selected) => selected.id);
-              onSelectionChange(
-                value
-                  ? Array.from(new Set([...current, row.id]))
-                  : current.filter((id) => id !== row.id)
-              );
+              onSelectionChange(toggleRowSelection(current, row.id, checked));
             }}
             onClick={(event) => event.stopPropagation()}
           />
@@ -530,6 +549,15 @@ export function DataTable<TData extends Record<string, unknown>>({
                       <th
                         key={header.id}
                         data-col-id={header.id}
+                        aria-sort={
+                          column?.sort?.state === "asc"
+                            ? "ascending"
+                            : column?.sort?.state === "desc"
+                              ? "descending"
+                              : column?.sort
+                                ? "none"
+                                : undefined
+                        }
                         className={cn(
                           "text-xs font-semibold uppercase text-muted transition-[width,min-width,max-width] duration-150 ease-out",
                           compact ? "tracking-normal" : "tracking-wide",
@@ -543,7 +571,28 @@ export function DataTable<TData extends Record<string, unknown>>({
                         )}
                         style={columnBoxStyle(widths[header.id], boxMode, column?.width)}
                       >
-                        {header.isPlaceholder ? null : <table.FlexRender header={header} />}
+                        {header.isPlaceholder ? null : column?.sort ? (
+                          <button
+                            type="button"
+                            title={column.sort.title ?? `Sort by ${column.header}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              column.sort?.onToggle();
+                            }}
+                            className="-ml-1 inline-flex max-w-full items-center gap-0.5 rounded-md px-1 py-0.5 text-left uppercase hover:bg-surface-soft hover:text-foreground"
+                          >
+                            <span className="truncate">{column.header}</span>
+                            {column.sort.state === "asc" ? (
+                              <ChevronUp className="size-3.5 shrink-0 text-foreground" aria-hidden />
+                            ) : column.sort.state === "desc" ? (
+                              <ChevronDown className="size-3.5 shrink-0 text-foreground" aria-hidden />
+                            ) : (
+                              <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" aria-hidden />
+                            )}
+                          </button>
+                        ) : (
+                          <table.FlexRender header={header} />
+                        )}
                         {column?.resizable ? (
                           <ColumnResizeHandle
                             columnId={header.id}
@@ -572,7 +621,18 @@ export function DataTable<TData extends Record<string, unknown>>({
                         onRowClick && "cursor-pointer",
                         selectedIds?.includes(row.id) && "ring-1 ring-inset ring-brand/20"
                       )}
-                      onClick={() => onRowClick?.(row.original)}
+                      onClick={(event) => {
+                        const target = event.target;
+                        if (!(target instanceof Element)) return;
+                        const parcelCell = target.closest("[data-col-id='dimensions']");
+                        if (parcelCell) {
+                          const edit = parcelCell.querySelector("button");
+                          if (edit instanceof HTMLButtonElement && !edit.contains(target)) edit.click();
+                          return;
+                        }
+                        if (target.closest("button, a, input, textarea, select, label")) return;
+                        onRowClick?.(row.original);
+                      }}
                       onMouseEnter={() => onRowHover?.(row.original)}
                     >
                       {cells.map((cell, index) => {
@@ -592,7 +652,7 @@ export function DataTable<TData extends Record<string, unknown>>({
                           )}
                           style={columnBoxStyle(widths[cell.column.id], boxMode, column?.width)}
                         >
-                          <table.FlexRender cell={cell} />
+                          {column?.cell ? column.cell(row.original) : <table.FlexRender cell={cell} />}
                         </td>
                         );
                       })}

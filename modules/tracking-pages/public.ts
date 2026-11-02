@@ -3,8 +3,14 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orExact } from "@/lib/api/filters";
 import { titleCase } from "@/lib/format";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
-import { indiaPostFromRow } from "@/modules/india-post/provider";
-import { ingestBulkTrackingArticle, snapshotFromShipmentRow } from "@/modules/india-post/apply-tracking";
+import { ensurePersistedIndiaPostSession } from "@/modules/india-post/session";
+import {
+  bulkEventOccurredAt,
+  ingestBulkTrackingArticle,
+  matchingBulkTrackingArticle,
+  snapshotFromShipmentRow,
+  type BulkTrackingArticle,
+} from "@/modules/india-post/apply-tracking";
 import type { PublicTrackResult, PublicTrackingEvent } from "@/types/api";
 import { indiaPostServiceLabel } from "@/types/domain";
 import { parseTrackingSubdomain } from "./host";
@@ -14,6 +20,7 @@ type LiveState = PublicTrackResult["liveTracking"];
 
 type CachedLive = {
   expiresAt: number;
+  fetchedAt: number;
   events: PublicTrackingEvent[];
   status?: string | null;
 };
@@ -26,18 +33,6 @@ const SHIPMENT_DETAIL_COLUMNS =
 
 const ORG_SHIPMENT_DETAIL_COLUMNS =
   "id, barcode, tracking_number, status, operational_status, order_id, shipping_address_id, pickup_location_id, service_code, payment_mode, cod_amount, weight_grams, booked_at, last_event_at";
-
-type ProviderArticle = {
-  booking_details?: { article_number?: string };
-  tracking_details?: Array<{
-    event?: string;
-    office?: string;
-    date?: string;
-    time?: string;
-    event_code?: string;
-  }>;
-  del_status?: { del_status?: string };
-};
 
 type StoredShipmentRow = {
   organizationId?: string;
@@ -74,17 +69,7 @@ function cacheKey(organizationId: string, barcode: string) {
 }
 
 function eventOccurredAt(event: { date?: string; time?: string }) {
-  if (event.date && event.time) {
-    const combined = `${event.date}T${event.time}`;
-    const parsed = new Date(combined);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-  }
-  if (event.date) {
-    const parsed = new Date(event.date);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-    return event.date;
-  }
-  return new Date().toISOString();
+  return bulkEventOccurredAt(event);
 }
 
 function customerServiceLabel(code?: string | null) {
@@ -279,10 +264,26 @@ async function loadStoredShipment(
   return redactShipment(data as StoredShipmentRow);
 }
 
+function liveEventsFromArticle(article: BulkTrackingArticle | null) {
+  return (article?.tracking_details ?? [])
+    .map((event) => ({
+      eventCode: event.event_code || event.event || "EVENT",
+      eventDescription: event.event ?? null,
+      officeName: event.office ?? null,
+      occurredAt: eventOccurredAt(event),
+    }))
+    .filter((event) => event.eventDescription || event.eventCode !== "EVENT" || event.occurredAt);
+}
+
 async function refreshLiveTracking(
   organizationId: string,
   shipment: NonNullable<PublicTrackResult["shipment"]>
-): Promise<{ liveTracking: LiveState; liveMessage: string | null; status?: string | null }> {
+): Promise<{
+  liveTracking: LiveState;
+  liveMessage: string | null;
+  status?: string | null;
+  events?: PublicTrackingEvent[];
+}> {
   const barcode = shipment.barcode || shipment.trackingNumber;
   if (!barcode) {
     return {
@@ -293,7 +294,12 @@ async function refreshLiveTracking(
 
   const cached = liveCache.get(cacheKey(organizationId, barcode));
   if (cached && cached.expiresAt > Date.now()) {
-    return { liveTracking: "ok", liveMessage: null, status: cached.status };
+    return {
+      liveTracking: "cached",
+      liveMessage: `Last updated at ${new Date(cached.fetchedAt).toISOString()}`,
+      status: cached.status,
+      events: cached.events,
+    };
   }
 
   if (!hasAdminClient()) {
@@ -318,10 +324,9 @@ async function refreshLiveTracking(
   }
 
   try {
-    const provider = indiaPostFromRow(connection);
-    const result = (await provider.trackShipment([barcode])) as { data?: ProviderArticle[] };
-    const article =
-      result.data?.find((item) => item.booking_details?.article_number === barcode) ?? result.data?.[0];
+    const provider = await ensurePersistedIndiaPostSession(admin, connection);
+    const result = (await provider.trackShipment([barcode])) as { data?: BulkTrackingArticle[] };
+    const article = matchingBulkTrackingArticle(result.data, barcode);
     const { data: row } = await admin
       .from("shipments")
       .select(
@@ -336,17 +341,14 @@ async function refreshLiveTracking(
             organizationId,
             shipment: snapshotFromShipmentRow(row, organizationId),
             article,
+            source: "public",
           })
         : null;
-    const incoming = (article?.tracking_details ?? []).map((event) => ({
-      eventCode: event.event_code || event.event || "EVENT",
-      eventDescription: event.event ?? null,
-      officeName: event.office ?? null,
-      occurredAt: eventOccurredAt(event),
-    }));
+    const incoming = liveEventsFromArticle(article);
 
     liveCache.set(cacheKey(organizationId, barcode), {
       expiresAt: Date.now() + LIVE_TTL_MS,
+      fetchedAt: Date.now(),
       events: incoming,
       status: ingested?.snapshot.status ?? shipment.status,
     });
@@ -355,6 +357,7 @@ async function refreshLiveTracking(
       liveTracking: "ok",
       liveMessage: null,
       status: ingested?.snapshot.status ?? shipment.status,
+      events: incoming,
     };
   } catch {
     return {
@@ -372,20 +375,20 @@ async function buildTrackResult(
 ): Promise<PublicTrackResult> {
   const live = await refreshLiveTracking(organizationId, stored);
   const refreshed =
-    live.liveTracking === "ok"
-      ? await loadStoredShipment(supabase, organizationId, query)
+    live.liveTracking === "ok" || live.liveTracking === "cached"
+      ? (await loadStoredShipment(supabase, organizationId, query)) ?? stored
       : stored;
+  const events = refreshed.events?.length ? refreshed.events : live.events ?? refreshed.events;
 
   return {
     found: true,
     liveTracking: live.liveTracking,
     liveMessage: live.liveMessage,
-    shipment: refreshed
-      ? {
-          ...refreshed,
-          status: live.status ?? refreshed.status,
-        }
-      : stored,
+    shipment: {
+      ...refreshed,
+      status: live.status ?? refreshed.status,
+      events,
+    },
   };
 }
 

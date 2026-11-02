@@ -141,6 +141,9 @@ export async function listAiCreditLedger(supabase: SupabaseClient, organizationI
 function ledgerDescription(type: string, reason: string) {
   if (type === "PURCHASE" || reason === "PURCHASE") return "AI Credits";
   if (reason === "AI_ADDRESS_EXTRACTION") return "AI Extraction";
+  if (reason === "AI_PRODUCT_COPY") return "AI Product copy";
+  if (reason === "AI_IMAGE_STUDIO") return "AI Image studio";
+  if (reason === "AI_PROMPT_ENHANCE") return "AI Prompt enhance";
   if (type === "REFUND" || reason === "REFUND") return "Refund";
   if (type === "BONUS" || reason === "BONUS") return "Bonus";
   return reason.replaceAll("_", " ");
@@ -170,6 +173,69 @@ export async function consumeAiCredit(
     void trackUsage(organizationId, "ai_credits.consumed", Math.max(1, Math.floor(input?.qty ?? 1)));
   }
   return Math.max(0, Math.floor(asNumber(parsed.remaining, 0)));
+}
+
+export type CreditReservationResult = {
+  remaining: number;
+  reserved: boolean;
+  duplicate: boolean;
+  status: string;
+};
+
+export async function reserveAiCredits(
+  supabase: AiCreditsDb,
+  organizationId: string,
+  input: { qty: number; reason: string; idempotencyKey: string }
+): Promise<CreditReservationResult> {
+  const { data, error } = await supabase.rpc("reserve_ai_credits", {
+    p_org: organizationId,
+    p_qty: Math.max(1, Math.floor(input.qty)),
+    p_reason: input.reason,
+    p_idempotency_key: input.idempotencyKey,
+  });
+  if (error) {
+    logError("ai_credits.reserve_failed", { message: error.message, organizationId });
+    throw new AppError(ERROR_CODES.PROVIDER_ERROR, "Could not reserve AI credits.");
+  }
+  const parsed = parseRpcObject(data);
+  return {
+    remaining: Math.max(0, Math.floor(asNumber(parsed?.remaining, 0))),
+    reserved: Boolean(parsed?.reserved),
+    duplicate: Boolean(parsed?.duplicate),
+    status: String(parsed?.status ?? "UNKNOWN"),
+  };
+}
+
+export async function finalizeAiCreditReservation(
+  supabase: AiCreditsDb,
+  organizationId: string,
+  idempotencyKey: string
+) {
+  const { data, error } = await supabase.rpc("finalize_ai_credit_reservation", {
+    p_org: organizationId,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) {
+    logError("ai_credits.finalize_failed", { message: error.message, organizationId });
+    return null;
+  }
+  return parseRpcObject(data);
+}
+
+export async function releaseAiCreditReservation(
+  supabase: AiCreditsDb,
+  organizationId: string,
+  idempotencyKey: string
+) {
+  const { data, error } = await supabase.rpc("release_ai_credit_reservation", {
+    p_org: organizationId,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) {
+    logError("ai_credits.release_failed", { message: error.message, organizationId });
+    return null;
+  }
+  return parseRpcObject(data);
 }
 
 export function shouldGrantAiCredits(previousStatus: string | null | undefined, billingCycle: string | null | undefined) {

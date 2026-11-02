@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
+import { claimWebhookEvent, finishWebhookEvent } from "@/modules/billing/webhook-lease";
 import { isUniqueViolation, processRazorpayEvent, razorpayWebhookEventId } from "@/modules/billing/webhooks";
 import { getRazorpayWebhookSecret } from "@/modules/razorpay/config";
 import { verifyWebhookSignature } from "@/modules/razorpay/signature";
@@ -46,32 +47,40 @@ export async function POST(request: NextRequest) {
     .select("id")
     .maybeSingle();
 
-  if (error) {
-    if (isUniqueViolation(error)) {
-      return NextResponse.json({ success: true, duplicate: true });
-    }
+  if (error && !isUniqueViolation(error)) {
     logError("razorpay.webhook_store_failed", { message: error.message });
     return NextResponse.json({ success: false, message: "Could not store webhook." }, { status: 500 });
   }
 
+  // A repeated delivery is not automatically a duplicate: if the earlier attempt
+  // failed (or its worker died), Razorpay's retry must be processed again.
+  let claim;
   try {
-    await processRazorpayEvent(supabase, payload, id);
-    if (inserted?.id) {
-      await supabase
-        .from("razorpay_webhook_events")
-        .update({ status: "processed", processed_at: new Date().toISOString() })
-        .eq("id", inserted.id);
-    }
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Webhook processing failed.";
+    claim = await claimWebhookEvent(supabase, id, error ? null : inserted?.id ?? null);
+  } catch {
+    if (error) return NextResponse.json({ success: true, duplicate: true });
+    return NextResponse.json({ success: false, message: "Webhook processing is temporarily unavailable." }, { status: 503 });
+  }
+  if (claim.state === "complete") {
+    return NextResponse.json({ success: true, duplicate: true });
+  }
+  if (claim.state === "busy") {
+    return NextResponse.json({ success: false, message: "Webhook is being processed." }, { status: 409 });
+  }
+  if (claim.state === "missing") {
+    if (error) return NextResponse.json({ success: true, duplicate: true });
+    return NextResponse.json({ success: false, message: "Webhook was not stored." }, { status: 500 });
+  }
+
+  try {
+    const result = await processRazorpayEvent(supabase, payload, id);
+    const ignored = Boolean(result && "ignored" in result && result.ignored);
+    await finishWebhookEvent(supabase, claim, { status: ignored ? "ignored" : "processed" });
+    return NextResponse.json({ success: true, ignored });
+  } catch (processError) {
+    const message = processError instanceof Error ? processError.message : "Webhook processing failed.";
     logError("razorpay.webhook_failed", { message, event: payload.event, eventId: id });
-    if (inserted?.id) {
-      await supabase
-        .from("razorpay_webhook_events")
-        .update({ status: "failed", error: message })
-        .eq("id", inserted.id);
-    }
-    return NextResponse.json({ success: false, message }, { status: 500 });
+    await finishWebhookEvent(supabase, claim, { status: "failed", error: message });
+    return NextResponse.json({ success: false, message: "Webhook processing failed." }, { status: 500 });
   }
 }

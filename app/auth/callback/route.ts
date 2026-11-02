@@ -8,6 +8,11 @@ import {
   requestPublicOrigin,
   safeAuthNext,
 } from "@/lib/auth/urls";
+import {
+  appendLegacyDomainExpiryHeaders,
+  authStorageKeyFromSupabaseUrl,
+  supabaseAuthCookieOptions,
+} from "@/lib/supabase/auth-cookies";
 
 const OTP_TYPES = new Set<EmailOtpType>([
   "signup",
@@ -48,7 +53,10 @@ export async function GET(request: NextRequest) {
   }
 
   const redirect = NextResponse.redirect(new URL(next || DEFAULT_AFTER_AUTH, origin));
+  const secure = origin.startsWith("https://");
+  const storageKey = authStorageKeyFromSupabaseUrl(env.supabaseUrl);
   const supabase = createServerClient(env.supabaseUrl, env.supabaseAnonKey, {
+    cookieOptions: supabaseAuthCookieOptions({ secure }),
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -56,15 +64,17 @@ export async function GET(request: NextRequest) {
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value, options }) => {
           const cookieOptions = {
+            ...supabaseAuthCookieOptions({ secure }),
             ...options,
             path: options?.path ?? "/",
             sameSite: (options?.sameSite ?? "lax") as "lax" | "strict" | "none",
-            secure: origin.startsWith("https://") ? true : options?.secure,
-            ...(origin.includes("postbus.in") ? { domain: ".postbus.in" } : {}),
+            secure: secure ? true : options?.secure,
           };
+          delete (cookieOptions as { domain?: string }).domain;
           request.cookies.set(name, value);
           redirect.cookies.set(name, value, cookieOptions);
         });
+        appendLegacyDomainExpiryHeaders(redirect.headers, storageKey, secure);
       },
     },
   });

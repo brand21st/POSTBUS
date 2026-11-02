@@ -189,7 +189,7 @@ export function InvoiceEditor() {
     paymentStatus: "COD",
     currency: "INR",
     customer: { name: "Customer", phone: "", email: "", lines: [] },
-    billing: { name: "Sample Store", phone: "9876543210", email: businessEmail, lines: ["Sample address"] },
+    billing: { name: "Customer", phone: "", email: "", lines: ["Billing address"] },
     shipping: { name: "Customer", phone: "", email: "", lines: ["Shipping address"] },
     items: [{ title: "Cotton Shirt", sku: "SHIRT-BLK", quantity: 2, unitPrice: 799, lineTotal: 1598 }],
     subtotal: 1598,

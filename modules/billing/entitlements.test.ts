@@ -8,6 +8,7 @@ import {
   expandPlanFeatures,
   lockedFeatureForApi,
   lockedFeatureForPath,
+  showsStarterOfficialIndiaPostLabel,
 } from "@/modules/billing/entitlements";
 
 describe("plan entitlements", () => {
@@ -21,6 +22,18 @@ describe("plan entitlements", () => {
 
   it("unlocks every catalog feature during trial", () => {
     expect(expandPlanFeatures([], { trial: true, slug: "starter" })).toEqual(BUSINESS_FEATURES);
+  });
+
+  it("does not keep trial unlocks after the trial flag is false", () => {
+    expect(expandPlanFeatures([], { trial: false, slug: "starter" })).toEqual(STARTER_FEATURES);
+    expect(expandPlanFeatures([], { trial: false, slug: "starter" })).not.toContain(FEATURE.wati);
+  });
+
+  it("shows official India Post label buttons only on Starter", () => {
+    expect(showsStarterOfficialIndiaPostLabel({ slug: "starter" })).toBe(true);
+    expect(showsStarterOfficialIndiaPostLabel({ slug: "pro" })).toBe(false);
+    expect(showsStarterOfficialIndiaPostLabel({ slug: "business" })).toBe(false);
+    expect(showsStarterOfficialIndiaPostLabel({ slug: "starter", trial: true })).toBe(false);
   });
 
   it("expands Everything in Pro for custom slugs", () => {
@@ -44,15 +57,21 @@ describe("plan entitlements", () => {
 
   it("locks matching write APIs", () => {
     expect(lockedFeatureForApi("GET", "dashboard/analytics", ["dashboard", "analytics"])).toBe(FEATURE.analytics);
+    expect(lockedFeatureForApi("GET", "sales-invoices", ["sales-invoices"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("GET", "invoices", ["invoices"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("PUT", "invoice-template", ["invoice-template"])).toBe(FEATURE.invoices);
     expect(lockedFeatureForApi("GET", "tracking", ["tracking"])).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForApi("PATCH", "tracking-pages", ["tracking-pages"])).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForApi("POST", "labels/bulk-download", ["labels", "bulk-download"])).toBe(FEATURE.bulk);
+    expect(lockedFeatureForApi("POST", "labels/bulk-print", ["labels", "bulk-print"])).toBe(FEATURE.bulk);
     expect(lockedFeatureForApi("POST", "bookings/validate", ["bookings", "validate"])).toBe(FEATURE.bulk);
     expect(lockedFeatureForApi("GET", "automation", ["automation"])).toBeNull();
     expect(lockedFeatureForApi("PATCH", "automation", ["automation"])).toBe(FEATURE.automation);
     expect(lockedFeatureForApi("POST", "integrations/shopify", ["integrations", "shopify"])).toBe(FEATURE.shopify);
+    expect(lockedFeatureForApi("POST", "label-template/multi-sheet", ["label-template", "multi-sheet"])).toBe(
+      FEATURE.packing
+    );
+    expect(lockedFeatureForApi("GET", "labels", ["labels"])).toBeNull();
   });
 
   it("locks automation toggles until the matching plan feature is included", () => {

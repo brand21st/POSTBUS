@@ -1,5 +1,6 @@
 import { ShopifyLogo } from "@/components/brand/shopify-logo";
 import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
+import { WooCommerceLogo } from "@/components/brand/woocommerce-logo";
 import { Badge } from "@/components/ui/badge";
 import { titleCase } from "@/lib/format";
 
@@ -18,6 +19,7 @@ const SUCCESS = new Set([
   "PRINTED",
   "SUBMITTED",
   "CONFIRMED",
+  "HANDED_OVER",
 ]);
 
 const WARNING = new Set([
@@ -35,9 +37,15 @@ const WARNING = new Set([
   "DRAFT",
   "WAITING",
   "PRINTING",
+  "NEEDS_REVIEW",
   "HOLD",
   "CREATED",
   "OPENED",
+  "UNFULFILLED",
+  "PARTIAL",
+  "PAYMENT_PENDING",
+  "NOT_INSTALLED",
+  "READ_ONLY",
 ]);
 
 const ERROR = new Set([
@@ -56,15 +64,22 @@ const ERROR = new Set([
   "EXPIRED",
 ]);
 
-const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY", "WHATSAPP"]);
+const BRAND = new Set(["SHIPPED", "IMPORTED", "SHOPIFY", "WHATSAPP", "WOOCOMMERCE", "CLOSED"]);
 
-/** Soft full-row tint for order status in tables. BOOKED is light yellow. */
+/** Order status READY is shown as Unfulfilled until packing/booking starts. */
+export function orderStatusBadgeValue(status?: string | null) {
+  const key = (status ?? "").toUpperCase();
+  if (key === "READY") return "UNFULFILLED";
+  return status;
+}
+
+/** Soft full-row tint for order status in tables. Unfulfilled is yellow; BOOKED is amber. */
 export function orderStatusRowClass(status?: string | null) {
   switch ((status ?? "").toUpperCase()) {
     case "IMPORTED":
       return "bg-sky-50/40 hover:bg-sky-50";
     case "READY":
-      return "bg-emerald-50/40 hover:bg-emerald-50";
+      return "bg-yellow-50/80 hover:bg-yellow-50";
     case "PROCESSING":
       return "bg-orange-50/50 hover:bg-orange-50";
     case "BOOKED":
@@ -90,6 +105,9 @@ export function StatusBadge({ value }: { value?: string | null }) {
   if (key === "SHOPIFY") {
     return <ShopifyLogo />;
   }
+  if (key === "WOOCOMMERCE") {
+    return <WooCommerceLogo className="h-[21px]" />;
+  }
   if (key === "WHATSAPP") {
     return <WhatsAppLogo />;
   }
@@ -107,7 +125,9 @@ export function StatusBadge({ value }: { value?: string | null }) {
     <Badge
       variant={variant}
       className={
-        key === "BOOKED"
+        key === "UNFULFILLED"
+          ? "border-transparent bg-yellow-100 font-medium text-black dark:bg-yellow-100 dark:text-black"
+          : key === "BOOKED"
           ? "border-amber-200 bg-amber-200/80 font-semibold text-black dark:text-black"
           : key === "IN_TRANSIT"
             ? "text-black dark:text-black"
@@ -115,9 +135,13 @@ export function StatusBadge({ value }: { value?: string | null }) {
       }
     >
       {key === "WAITING"
-        ? "Waiting to print"
+        ? "Waiting for Print Agent"
+        : key === "PRINTING"
+          ? "Sending to Print Agent"
         : key === "PRINTED"
-          ? "Printed"
+          ? "Sent to Windows printer"
+          : key === "NEEDS_REVIEW"
+            ? "Needs verification"
           : key === "LABEL_PENDING"
             ? "Generating label"
             : titleCase(value)}

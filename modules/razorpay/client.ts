@@ -2,6 +2,8 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError } from "@/lib/logger";
 import { getRazorpayCredentials } from "@/modules/razorpay/config";
 
+/** PLATFORM BILLING ONLY (Domain A). Do not reuse these credentials for merchant store payments. */
+
 const RAZORPAY_API = "https://api.razorpay.com/v1";
 
 export type RazorpayEntity = Record<string, unknown>;
@@ -142,6 +144,14 @@ export async function updateRazorpaySubscription(
 
 export async function fetchRazorpayPayment(id: string) {
   return razorpayRequest("GET", `/payments/${id}`);
+}
+
+/** Read-only: every payment attempt made against a Razorpay order. */
+export async function fetchRazorpayOrderPayments(orderId: string) {
+  return razorpayRequest<{ count?: number; items?: RazorpayEntity[] }>(
+    "GET",
+    `/orders/${encodeURIComponent(orderId)}/payments`
+  );
 }
 
 export async function refundRazorpayPayment(id: string, amountPaise?: number) {

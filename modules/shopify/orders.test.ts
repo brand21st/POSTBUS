@@ -41,6 +41,7 @@ import {
   shopifyPincode,
   shopifyReadyToSync,
   upsertShopifyOrder,
+  ORDER_WEBHOOK_TOPICS,
 } from "@/modules/shopify/orders";
 
 const { createShipmentsForOrders, getAutomationSettings } = vi.hoisted(() => ({
@@ -62,6 +63,8 @@ function query(data: unknown) {
   const self: Record<string, unknown> = {};
   self.select = () => self;
   self.eq = () => self;
+  self.in = () => self;
+  self.is = () => self;
   self.insert = () => self;
   self.update = () => self;
   self.upsert = () => self;
@@ -95,6 +98,12 @@ const remoteOrder = {
 };
 
 describe("shopify order mapping", () => {
+  it("subscribes to order paid webhooks as well as create and update", () => {
+    expect(ORDER_WEBHOOK_TOPICS).toContain("orders/paid");
+    expect(ORDER_WEBHOOK_TOPICS).toContain("orders/create");
+    expect(ORDER_WEBHOOK_TOPICS).toContain("orders/updated");
+  });
+
   it("treats open unfulfilled and partial orders as importable", () => {
     expect(isUnfulfilledShopifyOrder({ fulfillment_status: null, cancelled_at: null })).toBe(true);
     expect(isUnfulfilledShopifyOrder({ fulfillment_status: "unfulfilled", cancelled_at: null })).toBe(true);
@@ -109,9 +118,134 @@ describe("shopify order mapping", () => {
     expect(mapShopifyPaymentStatus("pending", ["cash_on_delivery"])).toBe("COD");
     expect(mapShopifyPaymentStatus("authorized", "Cash on Delivery (COD)")).toBe("COD");
     expect(mapShopifyPaymentStatus("paid", ["cash_on_delivery"])).toBe("PAID");
+    expect(mapShopifyPaymentStatus("paid", ["manual"])).toBe("PAID");
+    expect(mapShopifyPaymentStatus("pending", ["manual"])).toBe("PENDING");
     expect(mapShopifyFulfillmentStatus(null, null)).toBe("UNFULFILLED");
     expect(mapShopifyFulfillmentStatus("partial", null)).toBe("PARTIAL");
     expect(mapShopifyFulfillmentStatus("unfulfilled", "2026-01-01")).toBe("CANCELLED");
+  });
+
+  it("stores Shopify payment evidence on import", async () => {
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    await upsertShopifyOrder(trackedOrderClient({ inserts, deletes: [] }) as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: {
+        ...remoteOrder,
+        financial_status: "paid",
+        payment_gateway_names: ["manual"],
+        source_name: "shopify_draft_order",
+        updated_at: "2026-10-14T12:00:00Z",
+        total_price: "10",
+      },
+    });
+    expect(inserts.find((row) => row.table === "orders")?.payload).toEqual(
+      expect.objectContaining({
+        payment_status: "PAID",
+        amount_paid: 10,
+        cod_amount: 0,
+        metadata: expect.objectContaining({
+          shopifyPayment: expect.objectContaining({
+            financialStatus: "paid",
+            gateways: ["manual"],
+            sourceName: "shopify_draft_order",
+          }),
+        }),
+      })
+    );
+  });
+
+  it("does not overwrite a newer stored Shopify payment with an older webhook", async () => {
+    const updates: Array<{ table: string; payload: unknown }> = [];
+    await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        paymentStatus: "PAID",
+        metadata: {
+          shopifyPayment: {
+            financialStatus: "paid",
+            gateways: ["manual"],
+            sourceName: "shopify_draft_order",
+            outstanding: 0,
+            updatedAt: "2026-10-14T12:00:00Z",
+            reason: "financial_status:paid",
+          },
+        },
+        inserts: [],
+        deletes: [],
+        updates,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: {
+          ...remoteOrder,
+          financial_status: "pending",
+          payment_gateway_names: ["manual"],
+          updated_at: "2026-10-14T11:00:00Z",
+          total_price: "10",
+        },
+      }
+    );
+    const orderUpdate = updates.find((row) => row.table === "orders")?.payload as { payment_status?: string };
+    expect(orderUpdate?.payment_status).toBeUndefined();
+  });
+
+  it("records a booked AWB collect conflict without rewriting the shipment", async () => {
+    const updates: Array<{ table: string; payload: unknown }> = [];
+    const inserts: Array<{ table: string; payload: unknown }> = [];
+    await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "BOOKED",
+        paymentStatus: "COD",
+        shipments: [{ id: "ship-1", status: "BOOKED", booked_at: "2026-10-01T00:00:00Z", payment_mode: "COD" }],
+        inserts,
+        deletes: [],
+        updates,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: {
+          ...remoteOrder,
+          financial_status: "paid",
+          payment_gateway_names: ["manual"],
+          updated_at: "2026-10-14T15:00:00Z",
+          total_price: "10",
+        },
+      }
+    );
+    const orderUpdate = updates.find((row) => row.table === "orders")?.payload as {
+      payment_status?: string;
+      metadata?: { shopifyPayment?: { bookingConflict?: { bookedPaymentMode?: string } } };
+    };
+    expect(orderUpdate?.payment_status).toBe("PAID");
+    expect(orderUpdate?.metadata?.shopifyPayment?.bookingConflict?.bookedPaymentMode).toBe("COD");
+    expect(updates.filter((row) => row.table === "shipments")).toEqual([]);
+    expect(inserts.find((row) => row.table === "audit_logs")).toEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({ action: "order.shopify_booking_conflict" }),
+      })
+    );
+  });
+
+  it("does not auto-book a pending Shopify order", async () => {
+    createShipmentsForOrders.mockClear();
+    await upsertShopifyOrder(newOrderClient() as never, {
+      organizationId: "org-1",
+      shopDomain: "demo.myshopify.com",
+      remote: { ...remoteOrder, financial_status: "pending", payment_gateway_names: ["manual"] },
+      createShipment: true,
+      enqueueBooking: true,
+    });
+    expect(createShipmentsForOrders).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      ["ord-1"],
+      expect.objectContaining({ enqueueBooking: false })
+    );
   });
 
   it("maps Shopify outstanding balance onto remaining COD", () => {
@@ -524,7 +658,9 @@ describe("shopify automation flags", () => {
 function trackedOrderClient(options: {
   existingOrderId?: string | null;
   orderStatus?: string;
-  shipments?: Array<{ status: string }>;
+  paymentStatus?: string;
+  metadata?: unknown;
+  shipments?: Array<{ id?: string; status: string; booked_at?: string | null; payment_mode?: string }>;
   lineItems?: unknown;
   inserts: Array<{ table: string; payload: unknown }>;
   deletes: string[];
@@ -536,7 +672,12 @@ function trackedOrderClient(options: {
       if (table === "external_order_references") {
         data = options.existingOrderId ? { order_id: options.existingOrderId } : null;
       } else if (table === "orders") {
-        data = { id: options.existingOrderId ?? "ord-1", status: options.orderStatus ?? "READY" };
+        data = {
+          id: options.existingOrderId ?? "ord-1",
+          status: options.orderStatus ?? "READY",
+          payment_status: options.paymentStatus ?? "PENDING",
+          metadata: options.metadata ?? {},
+        };
       } else if (table === "customers") data = { id: "cust-1" };
       else if (table === "addresses") data = { id: "addr-1" };
       else if (table === "shipments") data = options.shipments ?? [];
@@ -545,6 +686,8 @@ function trackedOrderClient(options: {
       const self: Record<string, unknown> = {};
       self.select = () => self;
       self.eq = () => self;
+      self.in = () => self;
+      self.is = () => self;
       self.insert = (row: unknown) => {
         options.inserts.push({ table, payload: row });
         return self;
@@ -825,21 +968,21 @@ describe("shopify product shipping hydrate", () => {
     expect(shopifyLineItemWeightGrams(item)).toBe(500);
   });
 
-  it("clamps Shopify box size to India Post parcel limits", () => {
+  it("keeps a measured Shopify box instead of raising it to India Post minima", () => {
     expect(
       shopifyParcelFromLineItems([
         { title: "Kurta", quantity: 1, grams: 400, length_cm: 10, width_cm: 8, height_cm: 5 },
       ])
-    ).toEqual({ weightGrams: 400, lengthCm: 14, widthCm: 9, heightCm: 5 });
+    ).toEqual({ weightGrams: 400, lengthCm: 10, widthCm: 8, heightCm: 5 });
   });
 
-  it("takes the max box across line items and sums weight", () => {
+  it("does not combine different product boxes into one invented size", () => {
     expect(
       shopifyParcelFromLineItems([
         { title: "A", quantity: 2, grams: 200, length_cm: 20, width_cm: 10, height_cm: 8 },
         { title: "B", quantity: 1, grams: 300, length_cm: 30, width_cm: 12, height_cm: 4 },
       ])
-    ).toEqual({ weightGrams: 700, lengthCm: 30, widthCm: 12, heightCm: 8 });
+    ).toEqual({ weightGrams: 700, lengthCm: null, widthCm: null, heightCm: null });
   });
 
   it("keeps size empty when Shopify has weight but no dimensions", () => {
@@ -872,7 +1015,7 @@ describe("shopify product shipping hydrate", () => {
       [{ title: "Kurta", quantity: 1, grams: 500, length_cm: 20, width_cm: 15, height_cm: 10 }],
       { lengthCm: 30, widthCm: 20, heightCm: 12, weightGrams: 800 }
     );
-    expect(metafieldDims).toEqual({ lengthCm: 20, widthCm: 15, heightCm: 10 });
+    expect(metafieldDims).toEqual({ lengthCm: 20, widthCm: 15, heightCm: 10, dimensionSource: "shopify" });
     expect(
       shopifyResolvedShipmentDims([{ title: "Kurta", quantity: 1, grams: 500 }], {
         lengthCm: 30,
@@ -880,7 +1023,7 @@ describe("shopify product shipping hydrate", () => {
         heightCm: 12,
         weightGrams: 800,
       })
-    ).toEqual({ lengthCm: 30, widthCm: 20, heightCm: 12 });
+    ).toEqual({ lengthCm: 30, widthCm: 20, heightCm: 12, dimensionSource: "postbus_default" });
   });
 
   it("does not invent Shopify saved-package dimensions when none were fetched", () => {
@@ -912,7 +1055,7 @@ describe("shopify product shipping hydrate", () => {
     ]);
   });
 
-  it("passes clamped Shopify dimensions into shipment create", async () => {
+  it("passes measured Shopify dimensions into shipment create", async () => {
     createShipmentsForOrders.mockClear();
     const result = await upsertShopifyOrder(newOrderClient() as never, {
       organizationId: "org-1",
@@ -939,7 +1082,15 @@ describe("shopify product shipping hydrate", () => {
       expect.anything(),
       expect.objectContaining({ organizationId: "org-1" }),
       ["ord-1"],
-      { enqueueBooking: false, runBookingNow: false, setOrderProcessing: false, lengthCm: 14, widthCm: 9, heightCm: 5 }
+      expect.objectContaining({
+        enqueueBooking: false,
+        runBookingNow: false,
+        setOrderProcessing: false,
+        lengthCm: 10,
+        widthCm: 8,
+        heightCm: 5,
+        dimensionSource: "shopify",
+      })
     );
   });
 
@@ -978,7 +1129,12 @@ describe("shopify product shipping hydrate", () => {
       expect.arrayContaining([
         {
           table: "shipments",
-          payload: { length_cm: 20, width_cm: 15, height_cm: 10, weight_grams: 500 },
+          payload: expect.objectContaining({
+            length_cm: 20,
+            width_cm: 15,
+            height_cm: 10,
+            weight_grams: 500,
+          }),
         },
       ])
     );

@@ -253,7 +253,8 @@ describe("submitPublicCustomerOrderLink", () => {
         status: "IMPORTED",
         paymentStatus: "PENDING",
         customer: expect.objectContaining({ name: "Rahul", phone: "9876543210" }),
-      })
+      }),
+      undefined
     );
   });
 
@@ -344,7 +345,8 @@ describe("submitPublicCustomerOrderLink", () => {
         metadata: expect.objectContaining({
           storefront: expect.objectContaining({ paymentPreference: "COD" }),
         }),
-      })
+      }),
+      expect.any(Array)
     );
   });
 

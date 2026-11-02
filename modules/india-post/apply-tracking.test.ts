@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { applyIndiaPostTracking, type ShipmentTrackingSnapshot } from "@/modules/india-post/apply-tracking";
+import {
+  applyIndiaPostTracking,
+  bulkEventOccurredAt,
+  ingestBulkTrackingArticle,
+  isTrackingPollStatus,
+  matchingBulkTrackingArticle,
+  TRACKING_POLL_STATUSES,
+  type ShipmentTrackingSnapshot,
+} from "@/modules/india-post/apply-tracking";
 import { planTrackingUpdate, mapIndiaPostEventToShipmentUpdate } from "@/modules/india-post/event-mapper";
+import { buildIndiaPostRoutingView } from "@/lib/dashboard/india-post-routing";
 import { processIndiaPostInboxEvent } from "@/modules/india-post/webhook";
 
 function snapshot(overrides: Partial<ShipmentTrackingSnapshot> = {}): ShipmentTrackingSnapshot {
@@ -109,7 +118,7 @@ describe("planTrackingUpdate", () => {
     expect(plan.whatsappEvents).toEqual(["in_transit"]);
   });
 
-  it("does not queue WhatsApp for a later in-transit scan", () => {
+  it("queues in_transit WhatsApp for a later office scan", () => {
     const plan = planTrackingUpdate({
       currentStatus: "IN_TRANSIT",
       currentOperational: "IN_TRANSIT",
@@ -119,7 +128,7 @@ describe("planTrackingUpdate", () => {
       mapped: mapIndiaPostEventToShipmentUpdate({ eventCode: "ITEM_RECEIVED", eventDescription: "Item Received" }),
     });
     expect(plan.applyStatus).toBe(true);
-    expect(plan.whatsappEvents).toEqual([]);
+    expect(plan.whatsappEvents).toEqual(["in_transit"]);
   });
 
   it("queues shipment_delayed WhatsApp when India Post reports a delay", () => {
@@ -151,6 +160,7 @@ describe("planTrackingUpdate", () => {
     });
     expect(plan.applyStatus).toBe(false);
     expect(plan.updateLastScan).toBe(false);
+    expect(plan.whatsappEvents).toEqual(["in_transit"]);
   });
 
   it("turns a later plain delivered scan into RTO delivered without marking the order delivered", () => {
@@ -181,7 +191,101 @@ describe("planTrackingUpdate", () => {
   });
 });
 
+describe("bulkEventOccurredAt", () => {
+  it("uses an ISO date field without concatenating time again", () => {
+    expect(
+      bulkEventOccurredAt({ date: "2026-09-07T15:24:12Z", time: "15:24:12" })
+    ).toBe("2026-09-07T15:24:12.000Z");
+  });
+
+  it("combines CEPT midnight date with the office scan time", () => {
+    expect(
+      bulkEventOccurredAt({ date: "2026-10-16T00:00:00Z", time: "11:04:20", event: "Item Booked" })
+    ).toBe("2026-10-16T05:34:20.000Z");
+  });
+
+  it("combines a civil date and time when date is not ISO", () => {
+    const parsed = bulkEventOccurredAt({ date: "2026-09-27", time: "10:15:00" });
+    expect(parsed).toBeTruthy();
+    expect(Number.isNaN(Date.parse(parsed ?? ""))).toBe(false);
+  });
+
+  it("does not invent a timestamp when date and time are missing", () => {
+    expect(bulkEventOccurredAt({})).toBeNull();
+  });
+
+  it("parses India Post website dates and office-scan field names", () => {
+    expect(
+      bulkEventOccurredAt({
+        event_date: "16/10/2026",
+        event_time: "11:04:20",
+        event_description: "Item Booked",
+        event_office_name: "Kozhikode PH",
+      })
+    ).toBe("2026-10-16T05:34:20.000Z");
+  });
+});
+
+describe("tracking poll eligibility", () => {
+  it("does not poll FAILED booking shipments", () => {
+    expect(TRACKING_POLL_STATUSES).not.toContain("FAILED");
+    expect(isTrackingPollStatus("FAILED")).toBe(false);
+    expect(isTrackingPollStatus("BOOKED")).toBe(true);
+  });
+});
+
+describe("matchingBulkTrackingArticle", () => {
+  it("does not fall back to another article in the batch", () => {
+    const match = matchingBulkTrackingArticle(
+      [
+        { booking_details: { article_number: "OTHERIN" } },
+        { booking_details: { article_number: "AW784699994IN" } },
+      ],
+      "MISSINGIN"
+    );
+    expect(match).toBeNull();
+  });
+
+  it("uses the only unlabeled article when the requested AWB has scans", () => {
+    const match = matchingBulkTrackingArticle(
+      [{ tracking_details: [{ event: "Item Booked", date: "2026-10-09", time: "11:33:44" }] }],
+      "CX075250656IN"
+    );
+    expect(match?.tracking_details?.[0]?.event).toBe("Item Booked");
+  });
+
+  it("uses the only article with scans even if CEPT omits a matching article number", () => {
+    const match = matchingBulkTrackingArticle(
+      [
+        {
+          booking_details: { article_number: "UNKNOWN" },
+          tracking_details: [{ event: "Item Dispatched", date: "2026-10-16T00:00:00Z", time: "13:18:30" }],
+        },
+      ],
+      "CX075364450IN"
+    );
+    expect(match?.tracking_details?.[0]?.event).toBe("Item Dispatched");
+  });
+});
+
 describe("applyIndiaPostTracking", () => {
+  it("persists operational_status for Item Delivered(Addressee)", async () => {
+    const { client, updates, events } = memorySupabase();
+    const result = await applyIndiaPostTracking(client, snapshot(), {
+      eventCode: "ITEM_DELIVERED",
+      eventDescription: "Item Delivered(Addressee)",
+      officeName: "Pandhana S.O",
+      officeId: null,
+      occurredAt: "2026-09-04T08:00:00.000Z",
+      raw: {},
+      nonDeliveryReason: null,
+      mapText: "Item Delivered(Addressee)",
+    });
+    expect(result.operationalStatus).toBe("DELIVERED");
+    expect(events[0].classification).toBe("DELIVERED");
+    expect(updates.some((update) => update.patch.operational_status === "DELIVERED")).toBe(true);
+  });
+
   it("does not increment the NDR attempt count for a duplicate event", async () => {
     const { client, updates } = memorySupabase();
     const first = await applyIndiaPostTracking(client, snapshot({ status: "OUT_FOR_DELIVERY", operationalStatus: "OUT_FOR_DELIVERY" }), {
@@ -205,7 +309,9 @@ describe("applyIndiaPostTracking", () => {
       raw: { non_delivery_reason: "Door locked" },
       nonDeliveryReason: "Door locked",
     });
+    expect(first.whatsappEvents).toEqual(["in_transit"]);
     expect(second.duplicate).toBe(true);
+    expect(second.whatsappEvents).toEqual([]);
     expect(second.snapshot.ndrAttemptCount).toBe(1);
     const attemptPatches = updates
       .filter((update) => update.table === "shipments")
@@ -232,6 +338,147 @@ describe("applyIndiaPostTracking", () => {
     expect(result.operationalStatus).toBe("RTO_DELIVERED");
     expect(result.orderStatus).toBeNull();
     expect(updates.some((update) => update.table === "orders")).toBe(false);
+  });
+
+  it("stores office id and remarks and maps rts without using wall-clock delivery", async () => {
+    const { client, events, updates } = memorySupabase();
+    const ingested = await ingestBulkTrackingArticle(client, {
+      organizationId: "org-1",
+      shipment: snapshot({ status: "IN_TRANSIT", operationalStatus: "IN_TRANSIT" }),
+      article: {
+        booking_details: { article_number: "AW1", delivery_confirmed_on: "2026-09-08T04:00:00.000Z" },
+        tracking_details: [
+          {
+            event: "Item Kept on Hold",
+            office: "Kalanjoor SO",
+            officeid: "22660021",
+            date: "2026-09-07T15:24:12Z",
+            time: "15:24:12",
+            remarks: "Intimation Delivered",
+            rts: false,
+          },
+          {
+            event: "Item Dispatched",
+            officeid: "22360017",
+            date: "2026-09-08T01:00:00Z",
+            time: "01:00:00",
+            rts: true,
+          },
+        ],
+        del_status: { del_status: "delivered" },
+      },
+    });
+    expect(events[0]).toMatchObject({
+      office_id: "22660021",
+      event_description: "Item Kept on Hold — Intimation Delivered",
+    });
+    expect((events[0].raw as { _meta?: { source?: string } })._meta?.source).toBe("bulk");
+    expect(ingested.notices.map((notice) => notice.eventCode)).toEqual(["Item Kept on Hold", "Item Dispatched"]);
+    expect(ingested.snapshot.status).toBe("RTO");
+    const delivery = updates.find((update) => update.patch.status === "DELIVERED");
+    expect(delivery).toBeUndefined();
+  });
+
+  it("skips events without a postal timestamp instead of applying wall-clock order", async () => {
+    const { client, events, updates } = memorySupabase();
+    const ingested = await ingestBulkTrackingArticle(client, {
+      organizationId: "org-1",
+      shipment: snapshot({ status: "IN_TRANSIT", operationalStatus: "IN_TRANSIT" }),
+      article: {
+        tracking_details: [{ event: "Item Delivered(Addressee)", event_code: "ITEM_DELIVERED" }],
+      },
+    });
+    expect(events).toHaveLength(0);
+    expect(ingested.snapshot.operationalStatus).toBe("IN_TRANSIT");
+    expect(updates.some((update) => update.patch.operational_status === "DELIVERED")).toBe(false);
+  });
+
+  it("stores India Post website routing scans with DD/MM/YYYY timestamps", async () => {
+    const { client, events } = memorySupabase();
+    await ingestBulkTrackingArticle(client, {
+      organizationId: "org-1",
+      shipment: snapshot({ status: "MANIFEST_READY" }),
+      article: {
+        article_number: "CX075364503IN",
+        tracking_details: [
+          {
+            event_date: "16/10/2026",
+            event_time: "11:04:20",
+            event_description: "Item Booked",
+            event_office_name: "Kozhikode PH",
+          },
+          {
+            event_date: "16/10/2026",
+            event_time: "15:42:27",
+            event_description: "Item bagged",
+            event_office_name: "Kozhikode PH",
+          },
+          {
+            event_date: "16/10/2026",
+            event_time: "16:59:36",
+            event_description: "Item Dispatched",
+            event_office_name: "Kozhikode PH",
+          },
+          {
+            event_date: "17/10/2026",
+            event_time: "07:20:49",
+            event_description: "Bag Received for Forwarding",
+            event_office_name: "Palakkad TMO",
+          },
+          {
+            event_date: "17/10/2026",
+            event_time: "07:53:51",
+            event_description: "Item Dispatched",
+            event_office_name: "Palakkad TMO",
+          },
+        ],
+      },
+    });
+    expect(events).toHaveLength(5);
+    expect(events.map((event) => event.event_description)).toEqual([
+      "Item Booked",
+      "Item bagged",
+      "Item Dispatched",
+      "Bag Received for Forwarding",
+      "Item Dispatched",
+    ]);
+    expect(events[0]).toMatchObject({
+      office_name: "Kozhikode PH",
+      occurred_at: "2026-10-16T05:34:20.000Z",
+    });
+    const view = buildIndiaPostRoutingView(
+      {
+        barcode: "CX075364503IN",
+        trackingNumber: "CX075364503IN",
+        serviceCode: "BUSINESS_PARCEL",
+        status: "IN_TRANSIT",
+        operationalStatus: "DISPATCHED",
+      },
+      events.map((event, index) => ({
+        id: `ev-${index + 1}`,
+        eventCode: String(event.event_code),
+        eventDescription: String(event.event_description ?? ""),
+        officeName: String(event.office_name ?? ""),
+        occurredAt: String(event.occurred_at),
+      }))
+    );
+    expect(view.steps).toHaveLength(5);
+    expect(view.steps.map((step) => step.title)).toEqual([
+      "Item Booked",
+      "Item bagged",
+      "Item Dispatched",
+      "Bag Received for Forwarding",
+      "Item Dispatched",
+    ]);
+    expect(view.steps.map((step) => step.office)).toEqual([
+      "Kozhikode PH",
+      "Kozhikode PH",
+      "Kozhikode PH",
+      "Palakkad TMO",
+      "Palakkad TMO",
+    ]);
+    expect(view.steps.every((step) => step.dateLabel !== "—")).toBe(true);
+    expect(view.currentEvent).toBe("Item Dispatched");
   });
 });
 

@@ -22,12 +22,24 @@ const ALL: Permission[] = [
   "webhooks.manage",
   "audit.read",
   "settings.manage",
+  "support.read",
+  "support.reply",
+  "support.assign",
+  "support.manage",
+  "support.settings",
+  "accounting.read",
+  "accounting.write",
 ];
 
 const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
   OWNER: ALL,
   ADMIN: ALL.filter((permission) => permission !== "org.billing"),
   MANAGER: [
+    "support.read",
+    "support.reply",
+    "support.assign",
+    "support.manage",
+    "accounting.read",
     "orders.read",
     "orders.write",
     "products.read",
@@ -43,6 +55,9 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
     "automation.manage",
   ],
   OPERATOR: [
+    "support.read",
+    "support.reply",
+    "accounting.read",
     "orders.read",
     "orders.write",
     "products.read",
@@ -50,9 +65,13 @@ const ROLE_PERMISSIONS: Record<MemberRole, Permission[]> = {
     "shipments.write",
     "labels.read",
     "labels.write",
+    "manifests.read",
+    "manifests.write",
     "tracking.read",
   ],
   VIEWER: [
+    "support.read",
+    "accounting.read",
     "orders.read",
     "products.read",
     "shipments.read",
