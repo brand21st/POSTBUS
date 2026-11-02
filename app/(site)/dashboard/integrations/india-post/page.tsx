@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { IndiaPostLogo } from "@/components/brand/india-post-logo";
@@ -799,12 +799,13 @@ export default function IndiaPostPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <PageHeader
         title={<IndiaPostLogo className="h-12 max-w-[12rem]" />}
         description="Sign in with your India Post customer ID and password, then add your post office and barcode series."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <IndiaPostWatchTutorialLink />
             <StatusBadge value={config?.status ?? "NOT_CONNECTED"} />
             <Button
               type="button"
@@ -818,22 +819,21 @@ export default function IndiaPostPage() {
         }
       />
 
-      <IndiaPostWatchTutorialLink />
-
       <IndiaPostGuideBanner selectedService={form.defaultServiceCode} />
 
+      <div className="grid gap-4 xl:grid-cols-2">
       <Card
         id="india-post-connection"
         className={cn(highlightConnection && "ring-2 ring-brand ring-offset-2 ring-offset-background")}
       >
-        <CardHeader className="pb-4">
+        <CardHeader className="p-5 pb-3">
           <CardTitle>Connection</CardTitle>
           <CardDescription>
             Use the customer ID and password from your India Post booking account. Your password is saved securely.
             {lastVerified ? ` Last checked ${formatDate(lastVerified, true)}.` : ""}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <CardContent className="grid gap-3 px-5 pb-5 sm:grid-cols-2">
           <Field
             label="Customer ID"
             value={form.customerId}
@@ -865,17 +865,17 @@ export default function IndiaPostPage() {
             />
           )}
           {productionBlocked ? (
-            <p className="text-sm text-muted sm:col-span-2 xl:col-span-3">
+            <p className="text-sm text-muted sm:col-span-2">
               Live booking is not ready yet.
             </p>
           ) : null}
           {lastError ? (
-            <p className="rounded-xl border border-error/20 bg-error/5 px-3 py-2 text-sm text-error sm:col-span-2 xl:col-span-3">
+            <p className="rounded-xl border border-error/20 bg-error/5 px-3 py-2 text-sm text-error sm:col-span-2">
               {lastError}
             </p>
           ) : null}
         </CardContent>
-        <CardFooter className="flex flex-wrap gap-2 border-t border-border pt-4">
+        <CardFooter className="flex flex-wrap gap-2 border-t border-border px-5 py-3">
           <Button
             type="button"
             variant="secondary"
@@ -910,7 +910,7 @@ export default function IndiaPostPage() {
       </Card>
 
       <Card>
-        <CardHeader className="pb-4">
+        <CardHeader className="p-5 pb-3">
           <CardTitle>Webhook URL</CardTitle>
           <CardDescription>
             Copy these links into your India Post portal. PostBus uses them to receive booking confirmations and
@@ -920,7 +920,7 @@ export default function IndiaPostPage() {
               : " Log in to India Post above to generate the links."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-5">
+        <CardContent className="grid gap-4 px-5 pb-5">
           <CopyField
             id="india-post-booking-webhook"
             label="Booking"
@@ -937,9 +937,11 @@ export default function IndiaPostPage() {
           />
         </CardContent>
       </Card>
+      </div>
 
+      <div className="grid gap-4 xl:grid-cols-2">
       <Card>
-        <CardHeader className="pb-4">
+        <CardHeader className="p-5 pb-3">
           <CardTitle>Pickup Location</CardTitle>
           <CardDescription className="mt-1">
             The India Post office used when a booking is pickup. Search the 6-digit office pincode and select the office
@@ -949,23 +951,11 @@ export default function IndiaPostPage() {
               : ""}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+        <CardContent className="grid gap-3 px-5 pb-5 sm:grid-cols-[9rem_minmax(0,1fr)]">
           <Field
             label="Office ID"
             value={form.pickupOfficeId}
             placeholder="21360043"
-            hint={
-              form.pickupOfficeName
-                ? [
-                    form.pickupOfficeName,
-                    [form.pickupOfficePincode, form.pickupOfficeCity, form.pickupOfficeState]
-                      .filter(Boolean)
-                      .join(" · "),
-                  ]
-                    .filter(Boolean)
-                    .join(" — ")
-                : undefined
-            }
             onChange={(value) => {
               const next = value.replace(/\D/g, "").slice(0, 8);
               setForm((current) => ({
@@ -988,8 +978,20 @@ export default function IndiaPostPage() {
             onSelect={applyPickupOffice}
             canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
           />
+          {form.pickupOfficeName ? (
+            <p className="text-sm font-medium text-foreground sm:col-span-2">
+              {[
+                form.pickupOfficeName,
+                [form.pickupOfficePincode, form.pickupOfficeCity, form.pickupOfficeState]
+                  .filter(Boolean)
+                  .join(" · "),
+              ]
+                .filter(Boolean)
+                .join(" — ")}
+            </p>
+          ) : null}
         </CardContent>
-        <CardFooter className="flex flex-wrap gap-2 border-t border-border pt-4">
+        <CardFooter className="flex flex-wrap gap-2 border-t border-border px-5 py-3">
           <Button
             type="button"
             variant="secondary"
@@ -1043,9 +1045,8 @@ export default function IndiaPostPage() {
         </CardFooter>
       </Card>
 
-      <div className="grid gap-5 xl:grid-cols-2">
         <Card>
-          <CardHeader className="pb-4">
+          <CardHeader className="p-5 pb-3">
             <CardTitle>Drop-off office</CardTitle>
             <CardDescription className="mt-1">
               The post office where you hand over parcels. Search the 6-digit office pincode and select the office so
@@ -1055,12 +1056,11 @@ export default function IndiaPostPage() {
                 : ""}
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
+          <CardContent className="grid gap-3 px-5 pb-5 sm:grid-cols-[9rem_minmax(0,1fr)]">
             <Field
               label="Office ID"
               value={form.pickupDropoffOfficeId}
               placeholder="22660454"
-              hint={form.pickupDropoffOfficeName || undefined}
               onChange={(value) => {
                 const next = value.replace(/\D/g, "").slice(0, 8);
                 setForm((current) => ({
@@ -1093,8 +1093,11 @@ export default function IndiaPostPage() {
               }}
               canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
             />
+            {form.pickupDropoffOfficeName ? (
+              <p className="text-sm font-medium text-foreground sm:col-span-2">{form.pickupDropoffOfficeName}</p>
+            ) : null}
           </CardContent>
-          <CardFooter className="flex flex-wrap gap-2 border-t border-border pt-4">
+          <CardFooter className="flex flex-wrap gap-2 border-t border-border px-5 py-3">
             <Button
               type="button"
               variant="secondary"
@@ -1128,11 +1131,13 @@ export default function IndiaPostPage() {
             </Button>
           </CardFooter>
         </Card>
+      </div>
 
+      <div className="grid gap-4 xl:grid-cols-2">
         <Card>
-          <CardHeader className="pb-4">
+          <CardHeader className="p-5 pb-3">
             <CardTitle>Barcode range</CardTitle>
-            <CardDescription className="mt-1 space-y-2">
+            <CardDescription className="mt-1 space-y-1">
               <span className="block">
                 Get the barcode series from your nearest post office. Enter the prefix and the start and end numbers they allotted you.
               </span>
@@ -1141,7 +1146,7 @@ export default function IndiaPostPage() {
               </span>
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-4 px-5 pb-5">
             {INDIA_POST_SERVICES.map((service) => {
               const draft =
                 form.ranges.find((row) => row.serviceCode === service.code) ?? emptySeries(service.code);
@@ -1151,9 +1156,10 @@ export default function IndiaPostPage() {
               return (
                 <div
                   key={service.code}
-                  className="space-y-4 border-t border-border pt-4 first:border-t-0 first:pt-0"
+                  className="space-y-3 border-t border-border pt-4 first:border-t-0 first:pt-0"
                 >
-                  <div>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">{service.label}</p>
                     <p className="text-xs text-muted">
                       {service.code === "BUSINESS_PARCEL"
@@ -1161,7 +1167,31 @@ export default function IndiaPostPage() {
                         : "Books as SP Inland Parcel. Prefix EY or EL."}
                     </p>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="flex shrink-0 gap-1.5">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => persistSeries(draft, { force: true })}
+                      disabled={saveRange.isPending || !payload}
+                    >
+                      {saveRange.isPending ? "Saving…" : "Save range"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => clearSeries(service.code)}
+                      disabled={
+                        saveRange.isPending ||
+                        (!hasSaved && !draft.prefix && !draft.startNumber && !draft.endNumber)
+                      }
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[4.5rem_minmax(0,1fr)_minmax(0,1fr)]">
                     <Field
                       label="Prefix"
                       value={draft.prefix}
@@ -1211,36 +1241,14 @@ export default function IndiaPostPage() {
                       }
                     />
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => persistSeries(draft, { force: true })}
-                      disabled={saveRange.isPending || !payload}
-                    >
-                      {saveRange.isPending ? "Saving…" : "Save range"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => clearSeries(service.code)}
-                      disabled={
-                        saveRange.isPending ||
-                        (!hasSaved && !draft.prefix && !draft.startNumber && !draft.endNumber)
-                      }
-                    >
-                      Clear
-                    </Button>
-                  </div>
                 </div>
               );
             })}
           </CardContent>
         </Card>
-      </div>
 
       <Card>
-        <CardHeader className="pb-4">
+        <CardHeader className="p-5 pb-3">
           <CardTitle>Service contracts</CardTitle>
           <CardDescription>
             One contract number per service you ship. Leave unused rows blank. New shipments use the default.
@@ -1259,7 +1267,7 @@ export default function IndiaPostPage() {
               return (
                 <div
                   key={service.code}
-                  className="grid gap-3 px-6 py-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] md:items-center"
+                  className="grid gap-x-3 gap-y-2 px-5 py-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] sm:items-center"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">{service.label}</p>
@@ -1322,7 +1330,7 @@ export default function IndiaPostPage() {
           </div>
         </CardContent>
       </Card>
-
+      </div>
     </div>
   );
 }
@@ -1341,9 +1349,9 @@ function CopyField({
   hint?: string;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
-      {hint ? <p className="text-sm text-muted">{hint}</p> : null}
+      {hint ? <p className="text-xs text-muted">{hint}</p> : null}
       <div className="flex gap-2">
         <Input
           id={id}
@@ -1396,12 +1404,14 @@ function Field({
 }) {
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = type === "password";
+  const inputId = useId();
 
   return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
+    <div className="min-w-0 space-y-2">
+      <Label htmlFor={inputId}>{label}</Label>
       <div className={isPassword ? "relative" : undefined}>
         <Input
+          id={inputId}
           type={isPassword && showPassword ? "text" : type}
           value={value}
           placeholder={placeholder}
