@@ -35,7 +35,10 @@ export function WhatsappSupportButton() {
   const openedByUser = useRef(false);
   const panelId = useId();
   // PostBus support is for merchants; their customers on storefront pages must not see it.
+  // Inside the dashboard it lives in the sidebar instead, so it never covers tables and actions.
   const hidden =
+    pathname === "/dashboard" ||
+    pathname.startsWith("/dashboard/") ||
     pathname === "/shopify" ||
     pathname.startsWith("/shopify/") ||
     pathname === "/store-preview" ||

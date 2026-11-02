@@ -5,10 +5,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronsLeft, Lock } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
+import { WhatsappIcon } from "@/components/layout/whatsapp-support-button";
 import { Badge } from "@/components/ui/badge";
 import { aiAccountantNav, helpNav, isNavItemActive, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
 import { useSupportUnread } from "@/lib/hooks/use-support-unread";
 import { initials } from "@/lib/format";
+import { siteConfig } from "@/lib/site-config";
 import { cn } from "@/lib/utils";
 import { lockedFeatureForPath } from "@/modules/billing/entitlements";
 import { multiUpPrintEnabled } from "@/modules/labels/multi-up/flag";
@@ -47,6 +49,9 @@ export function Sidebar({
   const workspace = me?.organization?.name ?? "Workspace";
   const profileName = me?.user.fullName ?? me?.user.email ?? "Account";
   const supportUnread = useSupportUnread();
+  const whatsappHref = `https://wa.me/${siteConfig.supportWhatsapp}?text=${encodeURIComponent(
+    `Hi PostBus support, I need help with my workspace "${workspace}".`
+  )}`;
   const [tip, setTip] = useState<Tip | null>(null);
 
   // Collapsed rail labels render as a fixed tooltip so the scrolling nav cannot clip them.
@@ -186,7 +191,7 @@ export function Sidebar({
         aria-label="Dashboard"
         onScroll={() => setTip(null)}
       >
-        <ul className={cn("space-y-0.5", collapsed && "flex flex-col items-center")}>
+        <ul className={cn(collapsed && "flex flex-col items-center")}>
           {items.map((item) => {
             const active = isNavItemActive(item.href, pathname);
             const lockedFeature = trial ? null : lockedFeatureForPath(item.href);
@@ -203,7 +208,7 @@ export function Sidebar({
                   collapsed ? (
                     <span aria-hidden className="mx-auto my-1 block h-px w-6 bg-border" />
                   ) : (
-                    <p className="px-2.5 pb-0.5 pt-2.5 text-[11px] font-semibold uppercase leading-4 tracking-wider text-muted/80">
+                    <p className="px-2.5 pb-0.5 pt-2 text-[11px] font-semibold uppercase leading-4 tracking-wider text-muted/80">
                       {section}
                     </p>
                   )
@@ -256,6 +261,27 @@ export function Sidebar({
           collapsed && "flex flex-col items-center px-2"
         )}
       >
+        <a
+          href={whatsappHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => setTip(null)}
+          {...tipHandlers("WhatsApp support · 24x7")}
+          aria-label="WhatsApp support, available 24x7 (opens WhatsApp)"
+          className={cn(
+            itemBase,
+            "text-foreground hover:bg-[#25D366]/10",
+            collapsed && "w-10 justify-center px-0"
+          )}
+        >
+          <WhatsappIcon className="size-4 text-[#25D366]" />
+          <span className={cn("truncate", collapsed && "sr-only")}>WhatsApp help</span>
+          {collapsed ? null : (
+            <span className="ml-auto rounded-full bg-[#25D366]/15 px-1.5 py-px text-[10px] font-semibold text-[#128C4A] dark:text-[#4ade80]">
+              24x7
+            </span>
+          )}
+        </a>
         <div className={cn("grid grid-cols-2 gap-0.5", collapsed && "flex flex-col items-center")}>
           {navLink({
             href: tutorialsNav.href,
