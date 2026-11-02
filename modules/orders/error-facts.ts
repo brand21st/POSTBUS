@@ -247,7 +247,20 @@ export function resolveDisplayError(order: FactSource, server?: ServerErrorStatu
   return { status: rules.status, summary: rules.summary, source: "rules", kind: rules.kind, facts };
 }
 
-export type ErrorQuickAction = "force" | "retry" | "parcel" | "review" | "open";
+export type ErrorQuickAction = "force" | "retry" | "parcel" | "review" | "autocorrect" | "open";
+
+export const AUTO_CORRECT_LABEL = "Apply Smart AI auto correct address";
+
+/** A wrong PIN still needs a person. Line cleanup and city alignment are automatic. */
+export function addressCorrectionMode(error: DisplayErrorStatus): "pin" | "auto" | null {
+  const address = error.facts.some((fact) => fact.kind === "address");
+  const provider = error.facts.find((fact) => fact.kind === "provider");
+  const blob = [provider?.code, provider?.message, ...error.facts.map((fact) => fact.message)].filter(Boolean).join(" ");
+  const badPin = /INVALID_PINCODE|not found by India Post|does not belong to the selected state|not serviceable|must be exactly six|state does not match this PIN/i.test(blob);
+  if (badPin) return "pin";
+  if (address || (provider && providerErrorTopic(provider) === "address")) return "auto";
+  return null;
+}
 
 /** What a provider (booking) failure is about, read from its exact code and message. */
 export type ProviderErrorTopic = "parcel" | "address" | "transient" | "other";
@@ -289,9 +302,9 @@ export function errorQuickAction(error: DisplayErrorStatus, unknownBooking: bool
   if (provider) {
     const topic = providerErrorTopic(provider);
     if (topic === "parcel") return parcelMissing ? "parcel" : "retry";
-    if (topic === "address") return "review";
+    if (topic === "address") return addressCorrectionMode(error) === "pin" ? "review" : "autocorrect";
     if (parcelMissing) return "parcel";
-    if (addressIssue) return "review";
+    if (addressIssue) return addressCorrectionMode(error) === "pin" ? "review" : "autocorrect";
     return topic === "transient" ? "retry" : "open";
   }
   switch (error.kind) {
@@ -300,7 +313,7 @@ export function errorQuickAction(error: DisplayErrorStatus, unknownBooking: bool
     case "shipment":
       return parcelMissing ? "parcel" : "retry";
     case "address":
-      return "review";
+      return addressCorrectionMode(error) === "pin" ? "review" : "autocorrect";
     default:
       return "open";
   }

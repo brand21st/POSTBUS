@@ -756,9 +756,24 @@ export default function OrdersPage() {
     );
   }
 
+  async function correctAddressAndBook(row: OrderRecord) {
+    try {
+      toast.message("Apply Smart AI auto correct address");
+      await api("/api/v1/bookings/precheck", {
+        method: "POST",
+        body: JSON.stringify({ orderIds: [row.id], allowAi: true, forceAi: true }),
+      });
+      if (row.shipment?.id) retryBooking.mutate(row);
+      else ship.mutate({ orderIds: [row.id], action: "fulfill" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Address correction failed.");
+    }
+  }
+
   function onErrorAction(row: OrderRecord, action: ErrorQuickAction | "details") {
     if (action === "parcel") openParcelEditor(row, Boolean(row.shipment?.id));
     else if (action === "retry") retryBooking.mutate(row);
+    else if (action === "autocorrect") void correctAddressAndBook(row);
     else if (action === "review") setReviewIds([row.id]);
     else if (action === "open") router.push(`/dashboard/orders/${row.id}`);
     else setErrorDialog({ orderId: row.id, confirmForce: action === "force" });

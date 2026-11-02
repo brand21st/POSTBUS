@@ -601,7 +601,7 @@ async function runIndiaPostBookingAttempt(
         organizationId: input.organizationId,
         address: rawAddress,
         searchPostOffices: (pin) => provider.searchPostOffices(pin),
-        allowAi: false,
+        allowAi: true,
       });
     } catch (error) {
       if (!isDatabaseInfraError(error)) throw error;

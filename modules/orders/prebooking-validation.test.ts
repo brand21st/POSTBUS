@@ -121,7 +121,7 @@ describe("pre-booking address checks", () => {
   });
 
   it("flags a very long address for review", async () => {
-    const result = await assessPrebookingAddress(address({ line1: "X".repeat(81) }));
+    const result = await assessPrebookingAddress(address({ line1: "X".repeat(250) }));
     expect(result.status).toBe("NEEDS_REVIEW");
     expect(result.issues.some((issue) => issue.code === "address_too_long")).toBe(true);
   });

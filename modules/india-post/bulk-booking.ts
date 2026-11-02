@@ -144,7 +144,8 @@ export async function summarizeBulkBookings(
 export async function validateOrdersForBooking(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  orderIds: string[]
+  orderIds: string[],
+  options?: { forceAi?: boolean }
 ): Promise<BulkBookingResult> {
   const ids = [...new Set(orderIds)];
   if (!ids.length) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Select at least one order.");
@@ -192,6 +193,7 @@ export async function validateOrdersForBooking(
           address: order.shipping_address as never,
           searchPostOffices: (pin) => provider.searchPostOffices(pin),
           allowAi: true,
+          forceAi: options?.forceAi,
         })
       );
     }

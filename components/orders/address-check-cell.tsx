@@ -33,6 +33,8 @@ import {
   isUnknownBookingError,
   resolveDisplayError,
   type DisplayErrorStatus,
+  AUTO_CORRECT_LABEL,
+  addressCorrectionMode,
   type ErrorQuickAction,
   type ServerErrorStatus,
 } from "@/modules/orders/error-facts";
@@ -47,6 +49,7 @@ const ACTION_LABEL: Record<ErrorQuickAction, string> = {
   retry: "Retry booking",
   parcel: "Set parcel",
   review: "Fix address",
+  autocorrect: AUTO_CORRECT_LABEL,
   open: "Open order",
 };
 
@@ -55,6 +58,7 @@ const ACTION_ICON: Record<ErrorQuickAction, typeof Zap> = {
   retry: RotateCcw,
   parcel: Package,
   review: MapPin,
+  autocorrect: MapPin,
   open: ExternalLink,
 };
 
@@ -66,7 +70,7 @@ function unknownOutcome(order: OrderRecord, error: DisplayErrorStatus) {
   return isUnknownBookingError({ ...order.shipment, summary: error.summary });
 }
 
-function StatusPill({ error, className }: { error: DisplayErrorStatus; className?: string }) {
+function StatusPill({ error, label, className }: { error: DisplayErrorStatus; label?: string; className?: string }) {
   const tone = errorTone(error.kind);
   const Icon = error.kind === "address" ? MapPin : error.kind === "parcel" ? Package : tone === "failure" ? XCircle : AlertTriangle;
   return (
@@ -80,7 +84,7 @@ function StatusPill({ error, className }: { error: DisplayErrorStatus; className
       )}
     >
       <Icon className="size-3 shrink-0" aria-hidden />
-      <span className="truncate">{error.status}</span>
+      <span className={label ? "whitespace-normal" : "truncate"}>{label ?? error.status}</span>
       {error.source === "ai" ? (
         <span className="rounded bg-white/70 px-0.5 text-[9px] font-bold uppercase tracking-wide opacity-80 dark:bg-black/30">
           AI
@@ -123,6 +127,7 @@ export function BookingErrorCell({
   const error = orderDisplayError(order, finalStatus);
   if (!error) return <span className="text-xs text-muted">—</span>;
   const action = errorQuickAction(error, unknownOutcome(order, error));
+  const autoLabel = addressCorrectionMode(error) === "auto" ? AUTO_CORRECT_LABEL : undefined;
   const ActionIcon = busy ? Loader2 : ACTION_ICON[action];
   const hint = errorActionHint(error, action);
   const exactCode = error.facts.find((fact) => fact.kind === "provider" && fact.code)?.code;
@@ -134,7 +139,7 @@ export function BookingErrorCell({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex max-w-full items-center gap-1">
-        <StatusPill error={error} className="min-w-0" />
+        <StatusPill error={error} label={autoLabel} className="min-w-0" />
         {exactCode ? (
           <code className="truncate rounded bg-surface-soft px-1 text-[10px] font-medium text-muted" title="India Post error code">
             {exactCode}
@@ -152,7 +157,7 @@ export function BookingErrorCell({
             size="xs"
             variant={action === "open" ? "secondary" : "primary"}
             className={cn(
-              "h-6 gap-1 px-2 text-[11px]",
+              "h-auto min-h-6 gap-1 whitespace-normal px-2 py-1 text-left text-[11px]",
               action === "force" && "bg-red-600 hover:bg-red-700",
               action === "parcel" && "bg-amber-600 hover:bg-amber-700",
               action === "retry" && "bg-emerald-600 hover:bg-emerald-700"
@@ -226,7 +231,7 @@ export function BookingErrorDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Order {number}
-            {error ? <StatusPill error={error} /> : null}
+            {error ? <StatusPill error={error} label={addressCorrectionMode(error) === "auto" ? AUTO_CORRECT_LABEL : undefined} /> : null}
           </DialogTitle>
           <DialogDescription>{error ? error.summary : "This order has no booking errors now."}</DialogDescription>
         </DialogHeader>
@@ -295,7 +300,13 @@ export function BookingErrorDialog({
                 Set parcel
               </Button>
             ) : null}
-            {error && (action === "review" || error.facts.some((fact) => fact.kind === "address")) ? (
+            {error && action === "autocorrect" ? (
+              <Button type="button" variant="secondary" size="sm" className="h-auto whitespace-normal" onClick={() => onAction("autocorrect")}>
+                <MapPin className="size-4" />
+                {AUTO_CORRECT_LABEL}
+              </Button>
+            ) : null}
+            {error && action === "review" ? (
               <Button type="button" variant="secondary" size="sm" onClick={() => onAction("review")}>
                 <MapPin className="size-4" />
                 Fix address

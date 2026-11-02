@@ -6,7 +6,7 @@ import { logError, logInfo } from "@/lib/logger";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { wrapIndiaPostAddressLines } from "@/modules/india-post/address-lines";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
-import type { IndiaPostOffice } from "@/modules/india-post/endpoints";
+import { indiaPostDeliveryOfficeFlag, type IndiaPostOffice } from "@/modules/india-post/endpoints";
 import {
   applyAiAddressSuggestion,
   classifyStoredShippingAddress,
@@ -155,7 +155,7 @@ export function assessDestinationOffices(state: string, city: string, offices: I
   if (!offices.length) {
     return {
       status: "INVALID" as const,
-      message: "PIN code was not found by India Post.",
+      message: "This PIN code was not found by India Post. Check the PIN and try again.",
       offices: [] as ReturnType<typeof officeChoices>,
     };
   }
@@ -164,7 +164,7 @@ export function assessDestinationOffices(state: string, city: string, offices: I
   if (stated.length && !stateOk.length) {
     return {
       status: "INVALID" as const,
-      message: "State does not match this PIN code.",
+      message: "This PIN code does not belong to the selected state.",
       offices: officeChoices(offices),
     };
   }
@@ -172,14 +172,24 @@ export function assessDestinationOffices(state: string, city: string, offices: I
   const described = pool.filter((office) => officeLocality(office));
   if (!described.length) return { status: "VERIFIED" as const, message: "", offices: officeChoices(pool) };
   const matched = described.filter((office) => cityMatches(city, office));
-  if (!matched.length) {
-    return {
-      status: "NEEDS_REVIEW" as const,
-      message: "City does not match the post offices for this PIN code. Choose the correct city or PIN.",
-      offices: officeChoices(described),
-    };
-  }
-  return { status: "VERIFIED" as const, message: "", offices: officeChoices(matched) };
+  return {
+    status: "VERIFIED" as const,
+    message: "",
+    offices: officeChoices(matched.length ? matched : described),
+  };
+}
+
+/** When the typed city is not a post office for this PIN, use the delivery office city. */
+function cityAlignedToPin(city: string, offices: IndiaPostOffice[]) {
+  const wanted = collapse(city).toLocaleLowerCase();
+  if (wanted && offices.some((office) => officeLocality(office).toLocaleLowerCase().includes(wanted))) return null;
+  const delivery =
+    offices.find((office) => indiaPostDeliveryOfficeFlag(office.delivery_office_flag) && collapse(office.city_name)) ??
+    offices.find((office) => collapse(office.city_name));
+  if (!delivery) return null;
+  const nextCity = collapse(delivery.city_name);
+  if (!nextCity || nextCity.toLocaleLowerCase() === wanted) return null;
+  return { city: nextCity, state: collapse(delivery.state_name) || "" };
 }
 
 function splitFragments(value: string) {
@@ -308,23 +318,22 @@ function contactFromStored(address: StoredShippingFields): NormalizedShopifyShip
 
 export async function assessPrebookingAddress(
   address: StoredShippingFields,
-  options?: { searchPostOffices?: SearchPostOffices; allowAi?: boolean }
+  options?: { searchPostOffices?: SearchPostOffices; allowAi?: boolean; forceAi?: boolean }
 ) {
-  const classified = classifyStoredShippingAddress(address);
-  const issues: PrebookingIssue[] = classified.issues.map((issue) => ({ ...issue, field: issue.field || "address" }));
-  let status: AddressValidationStatus = classified.status;
-  const formatting = status === "INVALID" ? null : formattingSuggestion(address);
+  let working: StoredShippingFields = { ...address };
+  const formatting = formattingSuggestion(working);
   if (formatting) {
-    status = "NEEDS_REVIEW";
-    issues.push({
-      code: "address_formatting",
-      field: "line1",
-      message: formatting.reasons.join(" "),
-      blocking: false,
-      suggestion: { line1: formatting.line1, line2: formatting.line2, line3: formatting.line3 },
-    });
+    working = {
+      ...working,
+      line1: formatting.line1,
+      line2: formatting.line2,
+      line3: formatting.line3,
+    };
   }
-  if (status !== "INVALID" && missingHouse(address)) {
+  const classified = classifyStoredShippingAddress(working);
+  let issues: PrebookingIssue[] = classified.issues.map((issue) => ({ ...issue, field: issue.field || "address" }));
+  let status: AddressValidationStatus = classified.status;
+  if (status !== "INVALID" && missingHouse(working)) {
     status = "NEEDS_REVIEW";
     issues.push({
       code: "missing_house",
@@ -351,51 +360,51 @@ export async function assessPrebookingAddress(
       if (offices.status === "INVALID") {
         status = "INVALID";
         issues.push({
-          code: offices.message.includes("State") ? "pin_state_mismatch" : "pin_not_found",
+          code: /not found/i.test(offices.message) ? "pin_not_found" : "pin_state_mismatch",
           field: "pincode",
           message: offices.message,
           blocking: true,
           offices: offices.offices,
         });
-      } else if (offices.status === "NEEDS_REVIEW") {
-        status = "NEEDS_REVIEW";
-        issues.push({
-          code: "pin_city_review",
-          field: "city",
-          message: offices.message,
-          blocking: false,
-          offices: offices.offices,
-        });
+      } else if (offices.status === "VERIFIED") {
+        const aligned = cityAlignedToPin(working.city, lookup.offices);
+        if (aligned) {
+          working = { ...working, city: aligned.city, state: aligned.state || working.state };
+        }
       }
     }
   }
 
-  const ambiguous = classified.needsAi && !formatting && status !== "INVALID" && status !== "VALIDATION_UNAVAILABLE";
-  if (options?.allowAi && ambiguous) {
+  const ambiguous = classified.needsAi && status !== "INVALID" && status !== "VALIDATION_UNAVAILABLE";
+  if (options?.allowAi && (options.forceAi || ambiguous) && status !== "VALIDATION_UNAVAILABLE") {
     try {
       const { requestAiAddressSuggestion } = await import("@/modules/shopify/address-ai");
-      const contact = contactFromStored(address);
+      const contact = contactFromStored(working);
       const suggestion = await requestAiAddressSuggestion(contact);
       const applied = suggestion ? applyAiAddressSuggestion(contact, suggestion) : null;
-      if (applied) {
-        const changed = [applied.line1, applied.line2, applied.line3, applied.city, applied.state].join("|")
-          !== [contact.line1, contact.line2, contact.line3, contact.city, contact.state].join("|");
-        if (changed || applied.status !== "READY" || suggestion?.needs_review) {
-          status = status === "VALIDATION_UNAVAILABLE" ? status : "NEEDS_REVIEW";
-          issues.push({
-            code: "ai_formatting",
-            field: "line1",
-            message: suggestion?.warnings?.[0] || suggestion?.changes?.[0] || "AI suggested an address cleanup. Review it before booking.",
-            blocking: false,
-            suggestion: {
-              line1: applied.line1,
-              line2: applied.line2,
-              line3: applied.line3,
-              city: applied.city,
-              state: applied.state,
-              pincode: applied.pincode,
-            },
-          });
+      if (applied && !suggestion?.needs_review) {
+        const next: StoredShippingFields = {
+          ...working,
+          line1: applied.line1,
+          line2: applied.line2,
+          line3: applied.line3,
+          city: applied.city || working.city,
+          state: applied.state || working.state,
+        };
+        const again = classifyStoredShippingAddress(next);
+        if (again.status === "READY" || again.status === status) {
+          working = next;
+          status = again.status;
+          issues = again.issues.map((issue) => ({ ...issue, field: issue.field || "address" }));
+          if (status !== "INVALID" && missingHouse(working) && !issues.some((issue) => issue.code === "missing_house")) {
+            status = "NEEDS_REVIEW";
+            issues.push({
+              code: "missing_house",
+              field: "line1",
+              message: "House or building details look missing from address line 1.",
+              blocking: false,
+            });
+          }
         }
       }
     } catch (error) {
@@ -406,7 +415,8 @@ export async function assessPrebookingAddress(
   return {
     status,
     issues,
-    fingerprint: addressValidationFingerprint(address),
+    fingerprint: addressValidationFingerprint(working),
+    address: working,
   };
 }
 
@@ -417,22 +427,38 @@ export async function refreshAddressPrebooking(
     address: StoredShippingFields;
     searchPostOffices?: SearchPostOffices;
     allowAi?: boolean;
+    forceAi?: boolean;
     force?: boolean;
   }
 ) {
   const fingerprint = addressValidationFingerprint(input.address);
   const stored = String(input.address.address_validation_status ?? "").toUpperCase();
   const reusable = stored === "READY" || stored === "NEEDS_REVIEW" || stored === "INVALID";
-  if (!input.force && input.address.address_validation_fingerprint === fingerprint && reusable) {
+  const storedErrors = JSON.stringify(input.address.address_validation_errors ?? "");
+  const staleCityReview = /city does not match/i.test(storedErrors);
+  if (
+    !input.force &&
+    !input.forceAi &&
+    !input.searchPostOffices &&
+    !staleCityReview &&
+    input.address.address_validation_fingerprint === fingerprint &&
+    reusable
+  ) {
     return input.address;
   }
   const assessed = await assessPrebookingAddress(input.address, {
     searchPostOffices: input.searchPostOffices,
     allowAi: input.allowAi,
+    forceAi: input.forceAi,
   });
   const patch = {
     ...validationPatchFromClassification(assessed, "prebooking"),
     address_validation_fingerprint: assessed.fingerprint,
+    line1: assessed.address.line1,
+    line2: assessed.address.line2,
+    line3: assessed.address.line3,
+    city: assessed.address.city,
+    state: assessed.address.state,
   };
   logInfo("prebooking.address_checked", {
     organizationId: input.organizationId,
@@ -457,7 +483,7 @@ export async function refreshAddressPrebooking(
       });
     }
   }
-  return { ...input.address, ...patch, address_validation_errors: assessed.issues };
+  return { ...input.address, ...assessed.address, ...patch, address_validation_errors: assessed.issues };
 }
 
 export async function gateAddressForBooking(
@@ -481,7 +507,8 @@ export async function gateAddressForBooking(
     organizationId: input.organizationId,
     address: input.address,
     searchPostOffices: input.searchPostOffices,
-    allowAi: input.allowAi ?? false,
+    allowAi: input.allowAi ?? true,
+    forceAi: input.forceAi,
   });
   const status = String(address.address_validation_status ?? "").toUpperCase();
   if (status === "VALIDATION_UNAVAILABLE") {
@@ -611,7 +638,7 @@ export async function precheckOrders(
   supabase: SupabaseClient,
   ctx: TenantContext,
   orderIds: string[],
-  options?: { allowAi?: boolean }
+  options?: { allowAi?: boolean; forceAi?: boolean }
 ): Promise<PrebookingCheckResult> {
   const ids = [...new Set(orderIds.map((id) => id.trim()).filter(Boolean))];
   if (!ids.length) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Select at least one order.");
@@ -625,7 +652,7 @@ export async function precheckOrders(
   let disconnected = false;
   try {
     const { validateOrdersForBooking } = await import("@/modules/india-post/bulk-booking");
-    booking = await validateOrdersForBooking(supabase, ctx, ids);
+    booking = await validateOrdersForBooking(supabase, ctx, ids, { forceAi: options?.forceAi });
   } catch (error) {
     if (error instanceof AppError && error.code === ERROR_CODES.INTEGRATION_NOT_CONNECTED) disconnected = true;
     else throw error;
@@ -643,6 +670,7 @@ export async function precheckOrders(
           throw new Error("India Post is not connected.");
         },
         allowAi: options?.allowAi ?? true,
+        forceAi: options?.forceAi,
       });
     });
   } else {
