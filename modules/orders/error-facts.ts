@@ -236,20 +236,71 @@ export function resolveDisplayError(order: FactSource, server?: ServerErrorStatu
   return { status: rules.status, summary: rules.summary, source: "rules", kind: rules.kind, facts };
 }
 
-export type ErrorQuickAction = "force" | "parcel" | "review" | "open";
+export type ErrorQuickAction = "force" | "retry" | "parcel" | "review" | "open";
 
+/** What a provider (booking) failure is about, read from its exact code and message. */
+export type ProviderErrorTopic = "parcel" | "address" | "transient" | "other";
+
+const TRANSIENT_CODES = new Set([
+  "PRE_POST_TRANSIENT",
+  "QUEUE_UNAVAILABLE",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "RATE_LIMITED",
+  "HTTP_429",
+  "TEMPORARY_PROVIDER_FAILURE",
+]);
+
+export function providerErrorTopic(fact: Pick<ErrorFact, "code" | "message">): ProviderErrorTopic {
+  const code = text(fact.code).toUpperCase();
+  const message = text(fact.message);
+  if (code === "INVALID_WEIGHT" || code === "INVALID_DIMENSIONS") return "parcel";
+  if (/\b(?:length|breadth|height|dimension|weight)\b/i.test(message)) return "parcel";
+  if (code === "INVALID_PINCODE" || code === "INVALID_ADDRESS") return "address";
+  if (/\b(?:address|pin ?code|pincode|receiver)\b/i.test(message)) return "address";
+  if (TRANSIENT_CODES.has(code)) return "transient";
+  if (/try again|temporar|unable to fetch|could not be reached|retry automatically/i.test(message)) return "transient";
+  return "other";
+}
+
+/**
+ * One button per error, chosen by what will actually fix it.
+ * A booking that failed on the parcel is retried straight away once the row's parcel is complete.
+ */
 export function errorQuickAction(error: DisplayErrorStatus, unknownBooking: boolean): ErrorQuickAction {
   if (unknownBooking) return "force";
+  const parcelMissing = error.facts.some((fact) => fact.kind === "parcel");
+  const addressIssue = error.facts.some((fact) => fact.kind === "address");
+  const provider = error.facts.find((fact) => fact.kind === "provider");
+  if (provider) {
+    const topic = providerErrorTopic(provider);
+    if (topic === "parcel") return parcelMissing ? "parcel" : "retry";
+    if (topic === "address") return "review";
+    if (parcelMissing) return "parcel";
+    if (addressIssue) return "review";
+    return topic === "transient" ? "retry" : "open";
+  }
   switch (error.kind) {
     case "parcel":
       return "parcel";
-    case "provider":
     case "shipment":
+      return parcelMissing ? "parcel" : "retry";
     case "address":
       return "review";
     default:
       return "open";
   }
+}
+
+/** A short line explaining why the suggested action fits, when the error is out of date. */
+export function errorActionHint(error: DisplayErrorStatus, action: ErrorQuickAction) {
+  const provider = error.facts.find((fact) => fact.kind === "provider");
+  if (action === "retry" && provider && providerErrorTopic(provider) === "parcel") {
+    return "Parcel updated after this error. Retry to book.";
+  }
+  return null;
 }
 
 /** Red for failures, amber for details the merchant can fill in. */
