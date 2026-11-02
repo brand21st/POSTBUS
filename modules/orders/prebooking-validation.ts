@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { TenantContext } from "@/lib/api/context";
-import { logInfo } from "@/lib/logger";
+import { logError, logInfo } from "@/lib/logger";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { wrapIndiaPostAddressLines } from "@/modules/india-post/address-lines";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
@@ -446,7 +446,16 @@ export async function refreshAddressPrebooking(
       .update(patch)
       .eq("id", input.address.id)
       .eq("organization_id", input.organizationId);
-    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    // The saved result is only a cache. A failed write (schema drift, brief outage) must not
+    // block booking when the check itself just ran.
+    if (error) {
+      logError("prebooking.address_cache_write_failed", {
+        organizationId: input.organizationId,
+        addressId: input.address.id,
+        code: error.code ?? null,
+        message: error.message,
+      });
+    }
   }
   return { ...input.address, ...patch, address_validation_errors: assessed.issues };
 }

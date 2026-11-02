@@ -38,7 +38,7 @@ import { confirmHistoryForBookedShipment } from "@/modules/autopack/history";
 import { revalidateShopifyBooking } from "@/modules/shopify/booking-guard";
 import { indiaPostBookingLockTtlSeconds, withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
 import { indiaPostBookingTimeoutMs } from "@/modules/india-post/http";
-import { classifyProviderError } from "@/lib/jobs/retry";
+import { classifyProviderError, isDatabaseInfraError } from "@/lib/jobs/retry";
 import { tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
 import { existingBarcodeMayBeSubmitted } from "@/modules/india-post/booking-retry-eligibility";
 import { trustedFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
@@ -517,12 +517,23 @@ export async function runIndiaPostBooking(
     }
 
     const rawAddress = shipment.addresses as StoredShippingFields | null;
-    const addressGate = await gateAddressForBooking(supabase, {
-      organizationId: input.organizationId,
-      address: rawAddress,
-      searchPostOffices: (pin) => provider.searchPostOffices(pin),
-      allowAi: false,
-    });
+    let addressGate: Awaited<ReturnType<typeof gateAddressForBooking>>;
+    try {
+      addressGate = await gateAddressForBooking(supabase, {
+        organizationId: input.organizationId,
+        address: rawAddress,
+        searchPostOffices: (pin) => provider.searchPostOffices(pin),
+        allowAi: false,
+      });
+    } catch (error) {
+      if (!isDatabaseInfraError(error)) throw error;
+      // Nothing was sent to India Post yet, so the job retries on its own.
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = `Address check could not run (${detail}). Booking will retry automatically.`;
+      await markShipmentBookingFailed(supabase, shipment.id, message, "PRE_POST_TRANSIENT", input.organizationId);
+      failedIds.push(shipment.id);
+      throw Object.assign(new Error(message), { code: "PRE_POST_TRANSIENT", bookingPhase: "PRE_POST" });
+    }
     const address = addressGate.address;
     if (!addressGate.ok) {
       const code = addressGate.retryable ? "PRE_POST_TRANSIENT" : "VALIDATION_ERROR";
