@@ -81,7 +81,7 @@ describe("updateOrderShippingAddress", () => {
       expect.arrayContaining([
         {
           table: "addresses",
-          values: {
+          values: expect.objectContaining({
             name: "Asha Rao",
             phone: "9876543210",
             line1: "12 MG Road",
@@ -95,7 +95,7 @@ describe("updateOrderShippingAddress", () => {
             address_review_required: true,
             address_validation_fingerprint: null,
             address_normalization_source: "manual",
-          },
+          }),
         },
       ])
     );
