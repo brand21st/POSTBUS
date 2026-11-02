@@ -16,6 +16,7 @@ import {
   bulkRetryBucket,
   evaluateBookingRetryEligibility,
   evaluateOrderBookingEligibility,
+  existingBarcodeMayBeSubmitted,
   HISTORICAL_FIRST_BOOKING_BEFORE,
   isHistoricalUnauthoredFirstBooking,
   ORDER_STATUSES_BLOCK_NEW_BOOKING,
@@ -199,6 +200,18 @@ describe("evaluateBookingRetryEligibility", () => {
     expect(decision.action).toBe("MANUAL_REVIEW_REQUIRED");
   });
 
+  it("allows retry when a succeeded job recorded a pre-post fetch failure", () => {
+    const decision = evaluateBookingRetryEligibility(
+      {
+        shipment: shipment({ status: "FAILED", last_error_code: "VALIDATION_ERROR" }),
+        job: { id: "job-1", status: "SUCCEEDED", attempt_count: 0, max_attempts: 5 },
+      },
+      NOW
+    );
+    expect(decision.action).toBe("SAFE_TO_REQUEUE");
+    expect(decision.eligible).toBe(true);
+  });
+
   it("does not treat a missing tracking result as permission to resubmit", () => {
     const decision = evaluateBookingRetryEligibility(
       {
@@ -213,6 +226,36 @@ describe("evaluateBookingRetryEligibility", () => {
     );
     expect(decision.eligible).toBe(false);
     expect(decision.reason).toMatch(/could not be confirmed/i);
+  });
+
+  it("allows a confirmed force resubmit of an unknown barcode", () => {
+    const decision = evaluateBookingRetryEligibility(
+      {
+        shipment: shipment({
+          status: "FAILED",
+          barcode: "CX467191515IN",
+          last_error_code: "SHOPIFY_FULFILLMENT_BLOCKED",
+          metadata: {
+            ceptSubmitIntentAt: "2026-11-01T14:45:14.323Z",
+            ceptForceResubmitAt: "2026-11-02T04:16:00.000Z",
+          },
+        }),
+        job: { id: "job-done", status: "SUCCEEDED", attempt_count: 1, max_attempts: 5 },
+      },
+      NOW
+    );
+    expect(decision.action).toBe("SAFE_TO_REQUEUE");
+    expect(decision.eligible).toBe(true);
+    expect(
+      existingBarcodeMayBeSubmitted({
+        barcode: "CX467191515IN",
+        last_error_code: "CEPT_UNKNOWN",
+        metadata: {
+          ceptSubmitIntentAt: "2026-11-01T14:45:14.323Z",
+          ceptForceResubmitAt: "2026-11-02T04:16:00.000Z",
+        },
+      })
+    ).toBe(true);
   });
 
   it("blocks QUEUED with a barcode and a null error code", () => {

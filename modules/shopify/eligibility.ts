@@ -296,9 +296,9 @@ export function evaluateShopifyOrderEligibility(
     exclusionReason = "unknown_fulfillment_status";
   } else if (displayStatus === "FULFILLED") {
     exclusionReason = "fulfilled";
-  } else if (!remainingQuantityKnown) {
+  } else if (!remainingQuantityKnown && !(fulfillmentOrdersFetched && foRemaining > 0)) {
     exclusionReason = "remaining_quantity_unknown";
-  } else if (remainingShippableQuantity <= 0) {
+  } else if (remainingShippableQuantity <= 0 && !(fulfillmentOrdersFetched && foRemaining > 0)) {
     exclusionReason = "no_remaining_shippable_quantity";
   }
 

@@ -1,6 +1,6 @@
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
 import { isAuthoritativeIndiaPostBooking, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
-import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
+import { readCeptForceResubmitAt, readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { FULFILLMENT_STATUSES, ORDER_STATUSES, type FulfillmentStatus, type OrderStatus } from "@/types/domain";
 
 /** Matches claim_background_jobs stale RUNNING recovery. */
@@ -87,6 +87,9 @@ const AMBIGUOUS_CODES = new Set([
 export const NEVER_SUBMITTED_CODES = new Set([
   "PRE_POST_TRANSIENT",
   "QUEUE_UNAVAILABLE",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ECONNREFUSED",
   "INVALID_PINCODE",
   "INVALID_ADDRESS",
   "INVALID_WEIGHT",
@@ -142,6 +145,21 @@ const BLOCKED_FULFILLMENT = new Set<string>(["FULFILLED", "CANCELLED"] satisfies
  * Covers the 24 Sep-2026 orphans and 14 Oct-8 queued jobs.
  */
 export const HISTORICAL_FIRST_BOOKING_BEFORE = "2026-10-31T00:00:00.000Z";
+
+/**
+ * A shipment inside an active multi-article batch is owned by that batch's job. A separate
+ * single-article retry would POST it a second time, so membership decides before anything else.
+ */
+export function bulkMembershipRetryDecision(
+  shipmentId: string,
+  articleResult: string | null | undefined
+): BookingRetryDecision | null {
+  const result = String(articleResult ?? "").toUpperCase();
+  if (result === "SUCCEEDED") return decision("ALREADY_BOOKED", shipmentId);
+  if (result === "PENDING") return decision("BOOKING_IN_PROGRESS", shipmentId);
+  if (result === "SUBMITTED" || result === "RECOVERY_REQUIRED") return decision("BOOKING_OUTCOME_UNKNOWN", shipmentId);
+  return null;
+}
 
 export function readBookingFirstSubmitApprovedAt(metadata: unknown): string | null {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
@@ -250,6 +268,9 @@ function nextAttemptMs(job: NonNullable<BookingRetryJob>) {
  * An empty error code is not that record.
  */
 export function existingBarcodeMayBeSubmitted(shipment: BookingRetryShipment) {
+  if (readCeptForceResubmitAt(shipment.metadata) && shipmentBarcode(shipment.barcode || shipment.trackingNumber || shipment.tracking_number)) {
+    return true;
+  }
   if (readCeptSubmitIntentAt(shipment.metadata)) return false;
   if (shipment.bookedAt ?? shipment.booked_at) return false;
   if (shipmentBarcode(shipment.trackingNumber ?? shipment.tracking_number)) return false;
@@ -275,6 +296,7 @@ export function shipmentOutcomeIsUncertain(
   shipment: BookingRetryShipment,
   job?: BookingRetryJob
 ) {
+  if (readCeptForceResubmitAt(shipment.metadata)) return false;
   const status = statusOf(shipment);
   if (status === "RECOVERY_REQUIRED") return true;
   if (hasSubmissionArtifact(shipment)) return true;
@@ -322,6 +344,8 @@ export function evaluateBookingRetryEligibility(
     });
   }
 
+  const forceResubmit = Boolean(readCeptForceResubmitAt(shipment.metadata));
+
   const job = input.job;
   if (job?.id) {
     const state = jobStatus(job);
@@ -344,13 +368,23 @@ export function evaluateBookingRetryEligibility(
         });
       }
     }
-    if (state === "SUCCEEDED") {
-      return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job.id });
+    if (state === "SUCCEEDED" && !forceResubmit) {
+      const recordedPrePostFailure =
+        status === "FAILED" &&
+        !hasSubmissionArtifact(shipment) &&
+        NEVER_SUBMITTED_CODES.has(errorCodeOf(shipment));
+      if (!recordedPrePostFailure) {
+        return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job.id });
+      }
     }
   }
 
   if (status === "BOOKING") {
     return decision("BOOKING_IN_PROGRESS", shipmentId, { existingJobId: job?.id ?? undefined });
+  }
+
+  if (forceResubmit && (SAFE_STATUSES.has(status) || status === "RECOVERY_REQUIRED")) {
+    return decision("SAFE_TO_REQUEUE", shipmentId, { existingJobId: job?.id ?? undefined });
   }
 
   if (!SAFE_STATUSES.has(status)) {

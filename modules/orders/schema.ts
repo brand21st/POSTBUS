@@ -23,7 +23,9 @@ export const addressInput = z.object({
   country: z.string().min(2).default("IN"),
 });
 
-export const updateOrderAddressSchema = addressInput;
+export const updateOrderAddressSchema = addressInput.extend({
+  expectedFingerprint: z.string().min(16).max(128).optional(),
+});
 
 /** HTML number inputs send "" or 0; treat those as “not set”. */
 export const optionalPositiveInt = z.preprocess((value) => {

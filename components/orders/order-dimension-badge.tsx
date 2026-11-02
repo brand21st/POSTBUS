@@ -235,6 +235,12 @@ export function OrderDimensionBadge({ order, disabled, onEdit, dialogOnly, open:
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["order", order.id] });
       queryClient.invalidateQueries({ queryKey: ["autopack", order.id] });
+      if (shipment?.id) {
+        queryClient.invalidateQueries({ queryKey: ["shipment", shipment.id] });
+        queryClient.invalidateQueries({ queryKey: ["booking-retry", shipment.id] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
+      queryClient.invalidateQueries({ queryKey: ["order-error-status"] });
       setOpen(false);
     },
     onError: (err: unknown) => {
@@ -327,7 +333,7 @@ export function OrderDimensionBadge({ order, disabled, onEdit, dialogOnly, open:
       return (
         <ParcelPill tone="neutral">
           <span className="tabular-nums" title={`Document: ${sizeLabel}`}>
-            {sizeLabel}
+            {compactSize}
           </span>
         </ParcelPill>
       );
@@ -374,9 +380,7 @@ export function OrderDimensionBadge({ order, disabled, onEdit, dialogOnly, open:
     triggerTitle = `${sizeLabel} saved. Weight missing.${optionalHint}`;
     triggerContent = (
       <span className="flex items-center gap-1">
-        <span className="text-[11px] font-medium tabular-nums text-muted">
-          {length}×{width}×{height}
-        </span>
+        <span className="text-[11px] font-medium tabular-nums text-muted">{compactSize}</span>
         <ParcelPill tone={missingTone}>
           <AlertCircle className="size-3 shrink-0" aria-hidden="true" />
           <span>No wt</span>

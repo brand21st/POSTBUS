@@ -19,7 +19,7 @@ describe("shipping address booking gate", () => {
     expect(shippingAddressBookingBlock(valid)).toBeNull();
     expect(shippingAddressBookingBlock({ ...valid, line2: undefined })).toBeNull();
     const { address_validation_status: _status, ...withoutStoredStatus } = valid;
-    expect(shippingAddressBookingBlock(withoutStoredStatus)).toBeNull();
+    expect(shippingAddressBookingBlock(withoutStoredStatus)).toMatch(/not been validated/i);
   });
 
   it("allows a previously validated READY address that still matches India Post rules", () => {

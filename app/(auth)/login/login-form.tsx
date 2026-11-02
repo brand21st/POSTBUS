@@ -18,6 +18,7 @@ import { ApiError, api } from "@/lib/hooks/use-api";
 import { createClient } from "@/lib/supabase/client";
 
 const SAVED_LOGIN_KEY = "postbus.login.saved-email";
+const ADMIN_PROBE_TIMEOUT_MS = 5000;
 
 const schema = z.object({
   email: z.email("Enter a valid email."),
@@ -57,8 +58,17 @@ async function continueAfterSession(next: string) {
   const email = (user?.email ?? "").trim().toLowerCase();
   let isAdmin = user ? await hasPlatformAdminRow(supabase, user.id, email) : false;
   if (!isAdmin) {
-    const probe = await fetch("/api/admin/overview", { credentials: "same-origin" });
-    isAdmin = probe.ok;
+    // Merchants hit this probe on every sign-in. A slow or failing admin route must not hold
+    // the session on "Signing in…", so give up after a few seconds and treat it as not admin.
+    try {
+      const probe = await fetch("/api/admin/overview", {
+        credentials: "same-origin",
+        signal: AbortSignal.timeout(ADMIN_PROBE_TIMEOUT_MS),
+      });
+      isAdmin = probe.ok;
+    } catch {
+      isAdmin = false;
+    }
   }
   const dest = isAdmin ? (next.startsWith("/admin") ? next : "/admin") : next;
   if (dest.startsWith("/admin")) {

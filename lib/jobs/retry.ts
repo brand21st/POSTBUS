@@ -47,6 +47,18 @@ export type ClassifiedError = {
   httpStatus?: number;
 };
 
+function causeCode(error: unknown): string {
+  const cause = (error as { cause?: { code?: string; message?: string } } | null)?.cause;
+  return String(cause?.code ?? "").trim();
+}
+
+function isUndiciNetworkFailure(error: unknown) {
+  const anyError = error as { code?: string; message?: string; name?: string };
+  const text = `${anyError?.message ?? ""} ${anyError?.code ?? ""} ${causeCode(error)}`;
+  if (/fetch failed/i.test(String(anyError?.message ?? ""))) return true;
+  return /UND_ERR_|ENOTFOUND|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ECONNABORTED|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET/i.test(text);
+}
+
 export function classifyProviderError(error: unknown): ClassifiedError {
   const anyError = error as {
     code?: string;
@@ -74,6 +86,15 @@ export function classifyProviderError(error: unknown): ClassifiedError {
   // HTTP 500 on a CEPT_UNKNOWN error must not become a retryable HTTP_500.
   if (bookingPhase === "POST_SUBMIT" || code === "CEPT_UNKNOWN") {
     return { retryable: false, code: "CEPT_UNKNOWN", message, httpStatus };
+  }
+
+  if (isUndiciNetworkFailure(error)) {
+    return {
+      retryable: true,
+      code: "ECONNRESET",
+      message: "India Post could not be reached. Try booking again.",
+      httpStatus,
+    };
   }
 
   if (PERMANENT_CODES.has(code)) {

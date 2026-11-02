@@ -13,7 +13,11 @@ export function permissionForTenantRoute(
 
   if (path.startsWith("dashboard/")) return "orders.read";
 
-  if (root === "bookings") {
+  if (key === "PATCH bookings/excel-settings") return "integrations.manage";
+  if (key === "PATCH booking-queue/settings") return "integrations.manage";
+  if (key === "POST bookings/precheck") return "orders.write";
+  if (key === "POST orders/error-status") return "orders.read";
+  if (root === "bookings" || root === "booking-queue") {
     return method === "GET" ? "shipments.read" : "shipments.write";
   }
 

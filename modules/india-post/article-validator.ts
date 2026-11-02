@@ -79,6 +79,18 @@ export function parcelBoxIssue(
   return null;
 }
 
+/** Booking failed because the box is missing or outside India Post limits. The merchant can edit size. */
+export function isParcelDimensionBookingError(message?: string | null) {
+  const text = String(message ?? "");
+  if (!text.trim()) return false;
+  return (
+    /length, breadth and height are required/i.test(text) ||
+    /Length must be between/i.test(text) ||
+    /Breadth(?:\/diameter)? must be between/i.test(text) ||
+    /Height must be between/i.test(text)
+  );
+}
+
 export function isParcelArticle(serviceCode: string, weightGrams: number) {
   const type = indiaPostBookingArticleType(serviceCode);
   if (type === "BP" || type === "BUSINESS_PARCEL" || type === "SP_INLAND_PARCEL" || type === "24_SPP_PARSPL") return true;

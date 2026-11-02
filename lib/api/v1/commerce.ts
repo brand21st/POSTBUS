@@ -194,6 +194,21 @@ export async function handleCommerceRoutes(
     return updateOrderShippingAddress(supabase, ctx, slugs[1], body);
   }
 
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address" && slugs[3] === "restore") {
+    const { restoreOrderShippingAddress } = await import("@/modules/orders/service");
+    return restoreOrderShippingAddress(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address" && slugs[3] === "accept") {
+    const { acceptOrderShippingAddress } = await import("@/modules/orders/service");
+    return acceptOrderShippingAddress(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address" && slugs[3] === "revalidate") {
+    const { revalidateOrderShippingAddress } = await import("@/modules/orders/service");
+    return revalidateOrderShippingAddress(supabase, ctx, slugs[1]);
+  }
+
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "dimensions") {
     const body = updateShipmentDimensionsSchema.parse(await request.json());
     return setOrderShipmentDimensions(supabase, ctx, slugs[1], body);
@@ -257,9 +272,22 @@ export async function handleCommerceRoutes(
     return { ...order, shipment: shipment ?? null };
   }
 
+  if (key === "POST orders/error-status") {
+    const { explainOrderErrorStatuses } = await import("@/modules/orders/error-status");
+    const body = (await request.json().catch(() => ({}))) as { orderIds?: string[] };
+    return explainOrderErrorStatuses(supabase, ctx, body.orderIds ?? []);
+  }
+
   if (key === "POST orders/bulk/status") {
     const body = bulkOrderStatusSchema.parse(await request.json());
     return bulkUpdateOrderStatus(supabase, ctx, body);
+  }
+
+  if (key === "POST bookings/precheck") {
+    const { precheckOrders } = await import("@/modules/orders/prebooking-validation");
+    const body = await request.json();
+    const orderIds: string[] = body.orderIds ?? [];
+    return precheckOrders(supabase, ctx, orderIds, { allowAi: body.allowAi !== false });
   }
 
   if (key === "POST bookings/validate") {
@@ -341,6 +369,28 @@ export async function handleCommerceRoutes(
     const body = await request.json().catch(() => ({}));
     return retryShipment(supabase, ctx, slugs[1], body);
   }
+
+  if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "reconcile-booking") {
+    const { reconcileUncertainBooking } = await import("@/modules/india-post/booking-reconcile");
+    return reconcileUncertainBooking(supabase, ctx, slugs[1]);
+  }
+
+  if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "force-book") {
+    const body = (await request.json().catch(() => ({}))) as { confirm?: boolean };
+    if (body.confirm !== true) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Confirm force book to submit this article again.");
+    }
+    const { forceBookUnknownShipment } = await import("@/modules/india-post/booking-force-retry");
+    const { reconcileUncertainBooking } = await import("@/modules/india-post/booking-reconcile");
+    try {
+      const tracked = await reconcileUncertainBooking(supabase, ctx, slugs[1]);
+      if (tracked.reconciled) return tracked;
+    } catch (error) {
+      if (!(error instanceof AppError) || error.code !== ERROR_CODES.CONFLICT) throw error;
+    }
+    return forceBookUnknownShipment(supabase, ctx, slugs[1]);
+  }
+
 
   if (method === "POST" && slugs[0] === "shipments" && slugs[2] === "india-post-label") {
     const { data: shipment } = await supabase

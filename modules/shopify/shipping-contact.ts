@@ -22,12 +22,23 @@ export const INDIA_POST_ADDRESS_TOTAL_MAX = INDIA_POST_ADDRESS_LINE_MAX * 3;
 
 export type PhoneSource = "shipping" | "order" | "customer" | "billing" | "missing";
 export type NameSource = "shipping" | "customer" | "billing" | "missing";
-export type AddressValidationStatus = "READY" | "NEEDS_REVIEW" | "INVALID";
+export type AddressValidationStatus = "READY" | "NEEDS_REVIEW" | "INVALID" | "VALIDATION_UNAVAILABLE";
+
+export type AddressSuggestionFields = {
+  line1?: string;
+  line2?: string;
+  line3?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+};
 
 export type AddressIssue = {
   code: string;
   message: string;
   blocking: boolean;
+  field?: string;
+  suggestion?: AddressSuggestionFields;
 };
 
 export type ShopifyAddressInput = {
@@ -506,6 +517,8 @@ export function addressStatusLabel(status?: string | null) {
       return "Address Review Required";
     case "INVALID":
       return "Invalid Shipping Details";
+    case "VALIDATION_UNAVAILABLE":
+      return "PIN verification unavailable";
     default:
       return "";
   }
@@ -528,6 +541,7 @@ export type StoredShippingFields = {
   original_shipping?: unknown;
   address_validation_status?: string | null;
   address_validation_errors?: unknown;
+  address_validation_fingerprint?: string | null;
   address_manual_override?: boolean | null;
 };
 
@@ -588,24 +602,57 @@ export function validationPatchFromClassification(
 }
 
 /**
- * Fail closed: India Post live field checks always run.
- * Stored INVALID/NEEDS_REVIEW still blocks. Missing stored status (production
- * addresses schema) is classified from the latest saved fields.
+ * Merchant edits are not PIN-verified. A format-clean address stays unchecked
+ * until pre-booking verification writes READY with a matching fingerprint.
+ */
+export function validationPatchPendingPinCheck(
+  classified: { issues: AddressIssue[]; status: AddressValidationStatus },
+  source: string
+) {
+  const patch = validationPatchFromClassification(classified, source);
+  if (classified.status !== "READY") {
+    return { ...patch, address_validation_fingerprint: null };
+  }
+  return {
+    ...patch,
+    address_validation_status: null,
+    address_review_required: true,
+    address_validation_fingerprint: null,
+    address_validation_errors: [
+      {
+        code: "not_checked",
+        field: "address",
+        message: "Shipping address has not been checked against India Post.",
+        blocking: true,
+      },
+    ],
+  };
+}
+
+/**
+ * Fail closed: only an explicitly READY status that still matches the live fields
+ * may proceed to India Post booking.
  */
 export function shippingAddressBookingBlock(address?: StoredShippingFields | null) {
   if (!address) {
     return "Missing shipping address. Correct the shipping address before India Post booking.";
   }
+  const stored = String(address.address_validation_status ?? "").toUpperCase();
+  if (stored !== "READY") {
+    if (!stored) {
+      return "Shipping address has not been validated. Revalidate or edit it before India Post booking.";
+    }
+    if (stored === "VALIDATION_UNAVAILABLE") {
+      return "India Post PIN verification is temporarily unavailable. Retry the address check before booking.";
+    }
+    if (stored === "NEEDS_REVIEW" || stored === "INVALID") {
+      return bookingBlockMessage(stored, address.address_validation_errors);
+    }
+    return "Shipping address validation is incomplete. Correct it before India Post booking.";
+  }
   const live = classifyStoredShippingAddress(address);
   if (live.status !== "READY") {
     return bookingBlockMessage(live.status, live.issues);
-  }
-  const stored = String(address.address_validation_status ?? "").toUpperCase();
-  if (stored === "NEEDS_REVIEW" || stored === "INVALID") {
-    return bookingBlockMessage(stored, address.address_validation_errors);
-  }
-  if (stored && stored !== "READY") {
-    return "Shipping address validation is incomplete. Correct it before India Post booking.";
   }
   return null;
 }

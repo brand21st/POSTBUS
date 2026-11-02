@@ -4,8 +4,14 @@ import type { TenantContext } from "@/lib/api/context";
 import { commercePendingBookingBlocked } from "@/lib/dashboard/records";
 import { createBackgroundJob } from "@/modules/jobs/service";
 import { loadLatestShipmentBookingJob } from "@/modules/jobs/shipment-booking-job";
-import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import {
+  metadataWithCeptForceResubmit,
+  readCeptForceResubmitAt,
+  readCeptSubmitIntentAt,
+} from "@/modules/india-post/booking-intent";
+import { shipmentBarcode } from "@/modules/india-post/booking-idempotency";
+import {
+  bulkMembershipRetryDecision,
   bulkRetryBucket,
   evaluateBookingRetryEligibility,
   metadataWithFirstSubmitApproval,
@@ -66,6 +72,24 @@ export async function evaluateOwnedBookingRetry(
   if (!shipment) {
     return evaluateBookingRetryEligibility({ shipment: null });
   }
+  if (!shipment.booked_at && !readCeptForceResubmitAt(shipment.metadata)) {
+    const { data: member, error: memberError } = await supabase
+      .from("india_post_bulk_batch_articles")
+      .select("article_result")
+      .eq("organization_id", organizationId)
+      .eq("shipment_id", shipmentId)
+      .in("article_result", ["PENDING", "SUBMITTED", "SUCCEEDED", "RECOVERY_REQUIRED"])
+      .limit(1)
+      .maybeSingle();
+    // Fail closed: an unreadable membership must not turn into a second POST.
+    // A database without the bulk tables has no bulk members, so that case may continue.
+    if (memberError && !/does not exist|PGRST205|42P01/i.test(`${memberError.code ?? ""} ${memberError.message ?? ""}`)) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, memberError.message);
+    }
+    const owned = bulkMembershipRetryDecision(shipmentId, member?.article_result as string | undefined);
+    if (owned) return owned;
+  }
+
   const job = await loadLatestShipmentBookingJob(supabase, { organizationId, entityId: shipmentId });
   return evaluateBookingRetryEligibility({
     shipment,
@@ -223,6 +247,86 @@ export async function scheduleForceRetryBooking(
     scheduled: true,
     decision,
     message: "Retry scheduled.",
+  };
+}
+
+export async function forceBookUnknownShipment(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  shipmentId: string
+): Promise<ForceRetryResult & { reconciled?: boolean }> {
+  const shipment = await loadOwnedShipment(supabase, ctx.organizationId, shipmentId);
+  if (!shipment) {
+    throw conflict(evaluateBookingRetryEligibility({ shipment: null }));
+  }
+  if (shipment.booked_at) {
+    return {
+      shipmentId,
+      jobId: null,
+      scheduled: false,
+      reconciled: true,
+      decision: evaluateBookingRetryEligibility({ shipment }),
+      message: "This shipment is already booked with India Post.",
+    };
+  }
+
+  const barcode = shipmentBarcode(shipment.barcode || shipment.tracking_number);
+  if (!barcode) {
+    throw new AppError(ERROR_CODES.CONFLICT, "Force book needs the existing India Post barcode.");
+  }
+
+  const now = new Date().toISOString();
+  const metadata = metadataWithCeptForceResubmit(shipment.metadata, now);
+  const { data: claimed, error: claimError } = await supabase
+    .from("shipments")
+    .update({
+      status: "QUEUED",
+      last_error: null,
+      last_error_code: null,
+      metadata,
+    })
+    .eq("id", shipmentId)
+    .eq("organization_id", ctx.organizationId)
+    .is("booked_at", null)
+    .select("id, status, booked_at, barcode, tracking_number, provider_ref, last_error_code, metadata, updated_at")
+    .maybeSingle();
+  if (claimError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, claimError.message);
+  if (!claimed) {
+    throw new AppError(ERROR_CODES.CONFLICT, "This shipment could not be claimed for force book.");
+  }
+
+  const latest = await loadLatestShipmentBookingJob(supabase, { organizationId: ctx.organizationId, entityId: shipmentId });
+  const decision = evaluateBookingRetryEligibility({
+    shipment: claimed,
+    job: asJob(latest as Record<string, unknown> | null),
+  });
+  if (!decision.eligible && decision.action !== "RETRY_ALREADY_SCHEDULED") {
+    throw conflict(decision);
+  }
+
+  const job = await reuseOrCreateJob(supabase, ctx, shipmentId, latest as Record<string, unknown> | null);
+  const { claimedJobFromRow, runQueuedJobsNow } = await import("@/lib/jobs/drain");
+  await runQueuedJobsNow([claimedJobFromRow(job)]);
+
+  await supabase
+    .from("audit_logs")
+    .insert({
+      organization_id: ctx.organizationId,
+      actor_id: ctx.userId,
+      action: "shipment.force_book",
+      entity_type: "shipment",
+      entity_id: shipmentId,
+      after: { jobId: job.id, barcode, previousStatus: shipment.status ?? null },
+    })
+    .then(() => undefined, () => undefined);
+
+  return {
+    shipmentId,
+    jobId: job.id,
+    scheduled: true,
+    reconciled: false,
+    decision,
+    message: "Force book scheduled with the same barcode.",
   };
 }
 
