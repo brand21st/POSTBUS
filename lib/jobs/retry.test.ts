@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyProviderError } from "@/lib/jobs/retry";
+import { classifyProviderError, isDatabaseInfraError } from "@/lib/jobs/retry";
 
 describe("classifyProviderError", () => {
   it("retries timeouts and 429/5xx", () => {
@@ -63,5 +63,28 @@ describe("classifyProviderError", () => {
     expect(failed.retryable).toBe(true);
     expect(failed.code).toBe("ECONNRESET");
     expect(failed.message).not.toMatch(/fetch failed/i);
+  });
+});
+
+describe("isDatabaseInfraError", () => {
+  it("recognises PostBus schema and connection failures", () => {
+    expect(
+      isDatabaseInfraError({
+        code: "VALIDATION_ERROR",
+        message: "Could not find the 'address_validation_fingerprint' column of 'addresses' in the schema cache",
+      })
+    ).toBe(true);
+    expect(isDatabaseInfraError({ code: "PGRST205", message: "table not found" })).toBe(true);
+    expect(isDatabaseInfraError({ code: "42703", message: "column addresses.foo does not exist" })).toBe(true);
+  });
+
+  it("leaves merchant data errors alone", () => {
+    expect(isDatabaseInfraError({ code: "VALIDATION_ERROR", message: "Parcel weight is missing." })).toBe(false);
+    expect(isDatabaseInfraError({ code: "INVALID_PINCODE", message: "PIN 441904 not found" })).toBe(false);
+  });
+
+  it("a tagged pre-submit database failure is retried", () => {
+    const tagged = { code: "PRE_POST_TRANSIENT", bookingPhase: "PRE_POST", message: "Address check could not run." };
+    expect(classifyProviderError(tagged)).toMatchObject({ retryable: true, code: "PRE_POST_TRANSIENT" });
   });
 });

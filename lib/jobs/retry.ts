@@ -59,6 +59,22 @@ function isUndiciNetworkFailure(error: unknown) {
   return /UND_ERR_|ENOTFOUND|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ECONNABORTED|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET/i.test(text);
 }
 
+/**
+ * PostBus's own database failed (schema cache, missing column or table, dropped connection).
+ * These clear on their own or after a migration, so a pre-submit booking step may retry them.
+ */
+export function isDatabaseInfraError(error: unknown) {
+  const anyError = error as { code?: string; message?: string } | null;
+  const text = `${anyError?.code ?? ""} ${anyError?.message ?? ""}`;
+  return (
+    /schema cache/i.test(text) ||
+    /\bPGRST(?:002|204|205)\b/.test(text) ||
+    /\b(?:42703|42P01)\b/.test(text) ||
+    /(?:column|relation|table) .{1,80} does not exist/i.test(text) ||
+    /connection terminated|too many connections|could not connect to server/i.test(text)
+  );
+}
+
 export function classifyProviderError(error: unknown): ClassifiedError {
   const anyError = error as {
     code?: string;

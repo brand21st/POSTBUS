@@ -205,6 +205,34 @@ describe("pre-booking address checks", () => {
     expect(addressValidationFingerprint(address({ line1: "House 23" }))).not.toBe(first.address_validation_fingerprint);
   });
 
+  it("still gates booking when saving the check result fails", async () => {
+    clearDestinationPinCache();
+    const supabase = {
+      from() {
+        return {
+          update() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          then(resolve: (value: unknown) => unknown) {
+            return Promise.resolve({
+              data: null,
+              error: { code: "PGRST204", message: "Could not find the 'address_validation_fingerprint' column of 'addresses' in the schema cache" },
+            }).then(resolve);
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    const gate = await gateAddressForBooking(supabase, {
+      organizationId: "org-1",
+      address: address(),
+      searchPostOffices: search([office()]),
+    });
+    expect(gate.ok).toBe(true);
+  });
+
   it("fails closed for a wrong organization", async () => {
     const supabase = {
       from() {
