@@ -105,6 +105,7 @@ export async function processJob(queue: string, payload: JobPayload) {
     else if (queue === "manifest-generation") await generateManifest(supabase, payload);
     else if (queue === "tracking-sync") await syncTracking(supabase, payload);
     else if (queue === "shopify-sync") await shopifySync(supabase, payload);
+    else if (queue === "shopify-address-correction") await shopifyAddressCorrection(supabase, payload);
     else if (queue === "woocommerce-sync") await wooCommerceSync(supabase, payload);
     else if (queue === "woocommerce-tracking") await wooCommerceTracking(supabase, payload);
     else if (queue === "shopify-fulfillment") await shopifyFulfillment(supabase, payload);
@@ -986,6 +987,25 @@ async function wooCommerceTracking(supabase: ReturnType<typeof createAdminClient
     organizationId: payload.organizationId,
     orderId: payload.entityId,
     stage,
+  });
+}
+
+async function shopifyAddressCorrection(supabase: ReturnType<typeof createAdminClient>, payload: JobPayload) {
+  if (!payload.entityId) {
+    throw Object.assign(new Error("Address is missing."), { code: "VALIDATION_ERROR" });
+  }
+  const { data: job } = await supabase
+    .from("background_jobs")
+    .select("progress")
+    .eq("id", payload.jobId)
+    .eq("organization_id", payload.organizationId)
+    .maybeSingle();
+  const { runShopifyAddressCorrectionJob } = await import("@/modules/shopify/address-corrector");
+  await runShopifyAddressCorrectionJob(supabase, {
+    organizationId: payload.organizationId,
+    addressId: payload.entityId,
+    userId: payload.userId,
+    progress: (job?.progress ?? null) as Record<string, unknown> | null,
   });
 }
 

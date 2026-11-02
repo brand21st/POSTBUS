@@ -7,7 +7,7 @@ import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { wrapIndiaPostAddressLines } from "@/modules/india-post/address-lines";
 import { cleanBookingAddressLines } from "@/modules/orders/clean-booking-address";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
-import { indiaPostDeliveryOfficeFlag, type IndiaPostOffice } from "@/modules/india-post/endpoints";
+import { indiaPostIsEligibleBookingOffice, type IndiaPostOffice } from "@/modules/india-post/endpoints";
 import {
   applyAiAddressSuggestion,
   classifyStoredShippingAddress,
@@ -180,17 +180,48 @@ export function assessDestinationOffices(state: string, city: string, offices: I
   };
 }
 
-/** When the typed city is not a post office for this PIN, use the delivery office city. */
-function cityAlignedToPin(city: string, offices: IndiaPostOffice[]) {
+function distinctPlaceNames(values: string[]) {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const value of values) {
+    const text = collapse(value);
+    if (!text) continue;
+    const key = text.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(text);
+  }
+  return names;
+}
+
+/**
+ * The delivery-office city for this PIN, when every eligible office agrees.
+ * City comes from city_name. A conflicting city or state is left unchanged.
+ */
+export function cityAlignedToPin(city: string, offices: IndiaPostOffice[]) {
+  const eligible = offices.filter(
+    (office) => indiaPostIsEligibleBookingOffice(office) && collapse(office.city_name)
+  );
+  if (!eligible.length) return null;
   const wanted = collapse(city).toLocaleLowerCase();
-  if (wanted && offices.some((office) => officeLocality(office).toLocaleLowerCase().includes(wanted))) return null;
-  const delivery =
-    offices.find((office) => indiaPostDeliveryOfficeFlag(office.delivery_office_flag) && collapse(office.city_name)) ??
-    offices.find((office) => collapse(office.city_name));
-  if (!delivery) return null;
-  const nextCity = collapse(delivery.city_name);
+  if (wanted && eligible.some((office) => collapse(office.city_name).toLocaleLowerCase() === wanted)) return null;
+  const cities = distinctPlaceNames(eligible.map((office) => office.city_name || ""));
+  const states = distinctPlaceNames(eligible.map((office) => office.state_name || ""));
+  if (cities.length !== 1 || states.length > 1) return null;
+  const nextCity = cities[0];
   if (!nextCity || nextCity.toLocaleLowerCase() === wanted) return null;
-  return { city: nextCity, state: collapse(delivery.state_name) || "" };
+  return { city: nextCity, ...(states[0] ? { state: states[0] } : {}) };
+}
+
+/** Street lines still need the model. A clean or invalid address does not. */
+export function addressLinesNeedAi(address: StoredShippingFields) {
+  const classified = classifyStoredShippingAddress(address);
+  if (classified.status === "INVALID") return false;
+  const storedLengthBroken = [address.line1, address.line2, address.line3].some((line) => {
+    const text = collapse(line);
+    return text.length > 0 && (text.length < 3 || text.length > 80);
+  });
+  return storedLengthBroken || classified.needsAi || Boolean(formattingSuggestion(address));
 }
 
 /** Safe cleanup only: whitespace, empty commas, and repeated words already present. */
@@ -417,14 +448,16 @@ export async function refreshAddressPrebooking(
     allowAi: input.allowAi,
     forceAi: input.forceAi,
   });
+  const cityChanged = collapse(assessed.address.city) !== collapse(input.address.city);
+  const stateChanged = collapse(assessed.address.state) !== collapse(input.address.state);
   const patch = {
     ...validationPatchFromClassification(assessed, "prebooking"),
     address_validation_fingerprint: assessed.fingerprint,
     line1: assessed.address.line1,
     line2: assessed.address.line2,
     line3: assessed.address.line3,
-    city: assessed.address.city,
-    state: assessed.address.state,
+    ...(cityChanged ? { city: assessed.address.city } : {}),
+    ...(stateChanged ? { state: assessed.address.state } : {}),
   };
   logInfo("prebooking.address_checked", {
     organizationId: input.organizationId,

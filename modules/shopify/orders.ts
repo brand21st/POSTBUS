@@ -11,6 +11,12 @@ import {
 } from "@/modules/shopify/oauth";
 import { buildPostBusTrackingUrl } from "@/modules/tracking-pages/host";
 import { logError } from "@/lib/logger";
+import {
+  correctShopifyShippingAddress,
+  enqueueShopifyAddressCorrection,
+  shopifyBookingWaitsForAddressCorrection,
+  type ShopifyAddressBookingIntent,
+} from "@/modules/shopify/address-corrector";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { fetchWithShopifyTimeout, shopifyHttpError } from "@/modules/shopify/http";
@@ -2263,6 +2269,48 @@ async function insertAddress(
   return data.id as string;
 }
 
+async function prepareShopifyAddressForBooking(
+  supabase: SupabaseClient,
+  input: {
+    organizationId: string;
+    orderId: string;
+    addressId: string;
+    userId?: string;
+    sourceUpdatedAt?: string | null;
+    bookingIntent: ShopifyAddressBookingIntent;
+    allowRequeue: boolean;
+  }
+) {
+  try {
+    return await correctShopifyShippingAddress(supabase, {
+      organizationId: input.organizationId,
+      orderId: input.orderId,
+      addressId: input.addressId,
+      userId: input.userId,
+      source: "SHOPIFY",
+      sourceUpdatedAt: input.sourceUpdatedAt,
+      phase: "deterministic",
+      allowRequeue: input.allowRequeue,
+      bookingIntent: input.bookingIntent,
+    });
+  } catch (error) {
+    logError("shopify.address_correction", {
+      outcome: "failed",
+      organizationId: input.organizationId,
+      orderId: input.orderId,
+      addressId: input.addressId,
+      message: error instanceof Error ? error.name : "unknown",
+    });
+    return {
+      outcome: "failed" as const,
+      changed: false,
+      deferBooking: false,
+      requeued: false,
+      fingerprint: null,
+    };
+  }
+}
+
 export async function upsertShopifyOrder(
   supabase: SupabaseClient,
   input: {
@@ -2291,7 +2339,7 @@ export async function upsertShopifyOrder(
   const { data: existingOrder } = existing?.order_id
     ? await supabase
         .from("orders")
-        .select("status, payment_status, metadata, total_amount")
+        .select("status, payment_status, metadata, total_amount, shipping_address_id")
         .eq("id", existing.order_id)
         .eq("organization_id", input.organizationId)
         .maybeSingle()
@@ -2420,6 +2468,34 @@ export async function upsertShopifyOrder(
           });
         } catch {
           // Webhook fan-out must not break Shopify import.
+        }
+      }
+      const addressId = existingOrder?.shipping_address_id as string | undefined;
+      if (addressId) {
+        const bookingIntent = {
+          enqueueBooking: input.enqueueBooking === true,
+          enrollInQueue: false,
+        };
+        const corrected = await prepareShopifyAddressForBooking(supabase, {
+          organizationId: input.organizationId,
+          orderId: existing.order_id as string,
+          addressId,
+          userId: input.userId,
+          sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
+          bookingIntent,
+          allowRequeue: true,
+        });
+        if (shopifyBookingWaitsForAddressCorrection(corrected.deferBooking)) {
+          await enqueueShopifyAddressCorrection(supabase, {
+            organizationId: input.organizationId,
+            orderId: existing.order_id as string,
+            addressId,
+            userId: input.userId,
+            fingerprint: corrected.fingerprint,
+            sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
+            bookingIntent,
+            allowRequeue: true,
+          }).catch(() => undefined);
         }
       }
       return { imported: false, updated: true, skipped: false, orderId: existing.order_id as string };
@@ -2588,6 +2664,24 @@ export async function upsertShopifyOrder(
     shipment: null,
   });
   const parcelExtras = autopackChoice ? autopackShipmentExtras(autopackChoice) : ruleExtras;
+  const bookingIntent = {
+    enqueueBooking:
+      !autoShopifyProcessing &&
+      Boolean(input.createShipment) &&
+      input.enqueueBooking !== false &&
+      resolvedPaymentStatus !== "PENDING",
+    enrollInQueue: false,
+  };
+  const corrected = await prepareShopifyAddressForBooking(supabase, {
+    organizationId: input.organizationId,
+    orderId: order.id as string,
+    addressId: shippingId,
+    userId: input.userId,
+    sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
+    bookingIntent,
+    allowRequeue: false,
+  });
+  const deferBooking = shopifyBookingWaitsForAddressCorrection(corrected.deferBooking);
   const shipmentCtx = {
     userId: input.userId ?? "",
     email: null,
@@ -2613,7 +2707,7 @@ export async function upsertShopifyOrder(
     try {
       const { createShipmentsForOrders } = await import("@/modules/shipments/service");
       await createShipmentsForOrders(supabase, shipmentCtx, [order.id], {
-        enqueueBooking: input.enqueueBooking !== false && resolvedPaymentStatus !== "PENDING",
+        enqueueBooking: bookingIntent.enqueueBooking && !deferBooking,
         runBookingNow: false,
         setOrderProcessing: false,
         ...parcelExtras,
@@ -2632,6 +2726,19 @@ export async function upsertShopifyOrder(
       enqueueBooking: false,
       setOrderProcessing: false,
     });
+  }
+
+  if (deferBooking) {
+    await enqueueShopifyAddressCorrection(supabase, {
+      organizationId: input.organizationId,
+      orderId: order.id as string,
+      addressId: shippingId,
+      userId: input.userId,
+      fingerprint: corrected.fingerprint,
+      sourceUpdatedAt: remote.updated_at || remote.updatedAt || null,
+      bookingIntent,
+      allowRequeue: false,
+    }).catch(() => undefined);
   }
 
   return { imported: true, updated: false, skipped: false, orderId: order.id as string };

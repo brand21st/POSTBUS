@@ -4,6 +4,7 @@ import type { JobType } from "@/types/domain";
 
 export const QUEUE_NAMES = {
   shopifySync: "shopify-sync",
+  shopifyAddressCorrection: "shopify-address-correction",
   woocommerceSync: "woocommerce-sync",
   woocommerceTracking: "woocommerce-tracking",
   shipmentBooking: "shipment-booking",
