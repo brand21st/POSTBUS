@@ -21,7 +21,7 @@ import {
   INDIA_POST_ADDRESS_LINE_TOO_LONG,
 } from "@/components/address/address-line-input";
 import { useBookingAddressCleanup } from "@/components/address/booking-address-cleaner";
-import { cleanBookingAddressLines } from "@/modules/orders/clean-booking-address";
+import { cleanBookingAddressLines, SMART_ADDRESS_LABEL } from "@/modules/orders/clean-booking-address";
 import { unsetIfDefault } from "@/lib/parsers/whatsapp-customer-message";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
@@ -283,6 +283,7 @@ export default function NewOrderPage() {
   const savedPaymentDefault = orderDefaults.data?.paymentStatus ?? null;
   const savedExtraCodCharge = orderDefaults.data?.extraCodCharge ?? null;
   const [extraCodClosed, setExtraCodClosed] = useState(false);
+  const [shippingCleanNotice, setShippingCleanNotice] = useState({ line1: false, line2: false });
 
   useEffect(() => {
     if (paymentDefaultApplied.current || !orderDefaults.isSuccess) return;
@@ -656,8 +657,13 @@ export default function NewOrderPage() {
           const name = (fields.name ?? "").trim();
           const phone = (fields.phone ?? "").trim();
           const email = (fields.email ?? "").trim();
-          const line1 = clipIndiaPostAddressLine(fields.line1 ?? "");
-          const line2 = clipIndiaPostAddressLine(fields.line2 ?? "");
+          const cleaned = cleanBookingAddressLines({ line1: fields.line1, line2: fields.line2 });
+          const line1 = cleaned?.line1 || clipIndiaPostAddressLine(fields.line1 ?? "");
+          const line2 = cleaned?.line2 || clipIndiaPostAddressLine(fields.line2 ?? "");
+          setShippingCleanNotice({
+            line1: Boolean(cleaned?.changed.line1),
+            line2: Boolean(cleaned?.changed.line2),
+          });
           const city = (fields.city ?? "").trim();
           const state = (fields.state ?? "").trim() || DEFAULT_INDIAN_STATE;
           const pincode = (fields.pincode ?? "").trim();
@@ -895,6 +901,8 @@ export default function NewOrderPage() {
         <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
           <AddressFields
             prefix="shippingAddress"
+            cleanNotice={shippingCleanNotice}
+            onEditLine={(line) => setShippingCleanNotice((current) => ({ ...current, [line]: false }))}
             form={{
               register: form.register,
               control: form.control,
@@ -1486,9 +1494,13 @@ function cleanedAddressLines(address: { line1?: string | null; line2?: string | 
 function AddressFields({
   prefix,
   form,
+  cleanNotice,
+  onEditLine,
 }: {
   prefix: "shippingAddress" | "billingAddress";
   form: Pick<ReturnType<typeof useForm<FormValues>>, "register" | "control" | "formState" | "setValue">;
+  cleanNotice?: { line1: boolean; line2: boolean };
+  onEditLine?: (line: "line1" | "line2") => void;
 }) {
   const phoneError = form.formState.errors[prefix]?.phone?.message;
   const line1Id = `${prefix}-line1`;
@@ -1529,12 +1541,16 @@ function AddressFields({
         className="md:col-span-2"
         inputClassName="h-8"
         hint="House, building, and street — required for booking."
-        notice={addressClean.notice.line1}
+        notice={addressClean.notice.line1 || (cleanNotice?.line1 ? SMART_ADDRESS_LABEL : null)}
         error={form.formState.errors[prefix]?.line1?.message}
         control={form.control}
         autoComplete="address-line1"
         placeholder="House / building, street"
         {...line1Field}
+        onChange={(event) => {
+          line1Field.onChange(event);
+          onEditLine?.("line1");
+        }}
         onBlur={(event) => {
           line1Field.onBlur(event);
           addressClean.apply();
@@ -1546,12 +1562,16 @@ function AddressFields({
         className="md:col-span-2"
         inputClassName="h-8"
         hint="Optional. Landmark or extra address — not required for India Post booking."
-        notice={addressClean.notice.line2}
+        notice={addressClean.notice.line2 || (cleanNotice?.line2 ? SMART_ADDRESS_LABEL : null)}
         error={form.formState.errors[prefix]?.line2?.message}
         control={form.control}
         autoComplete="address-line2"
         placeholder="Landmark, area (optional)"
         {...line2Field}
+        onChange={(event) => {
+          line2Field.onChange(event);
+          onEditLine?.("line2");
+        }}
         onBlur={(event) => {
           line2Field.onBlur(event);
           addressClean.apply();

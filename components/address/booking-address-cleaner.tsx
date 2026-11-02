@@ -50,7 +50,7 @@ export function useBookingAddressCleanup<T extends FieldValues>({
     if (!preview) return;
     const active = typeof document === "undefined" ? "" : document.activeElement?.id;
     if (active === line1Id || active === line2Id) return;
-    const timer = window.setTimeout(apply, 350);
+    const timer = window.setTimeout(apply, 0);
     return () => window.clearTimeout(timer);
   }, [line1, line2, line1Id, line2Id, preview]);
 
