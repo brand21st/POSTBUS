@@ -123,6 +123,11 @@ function memoryDb(rows: Record<string, unknown>[]) {
         const intent = metadata && typeof metadata === "object" ? metadata.ceptSubmitIntentAt : null;
         return (intent == null || intent === "") && filter.value == null;
       }
+      if (filter.op === "filter" && filter.key === "metadata->>ceptForceResubmitAt") {
+        const metadata = row.metadata as Record<string, unknown> | null | undefined;
+        const force = metadata && typeof metadata === "object" ? metadata.ceptForceResubmitAt : null;
+        return force === (filter.value as { value?: unknown }).value;
+      }
       return true;
     });
 
@@ -531,7 +536,7 @@ describe("runIndiaPostBooking idempotency", () => {
     delete (supabase as { rpc?: unknown }).rpc;
     await expect(
       runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "TEMPORARY_PROVIDER_FAILURE" });
+    ).rejects.toMatchObject({ code: "PRE_POST_TRANSIENT", bookingPhase: "PRE_POST", ceptNotCalled: true });
     expect(bookShipmentMock).not.toHaveBeenCalled();
   });
 
@@ -793,18 +798,36 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(store.find((row) => row.id === "ship-2")?.status).toBe("RECOVERY_REQUIRED");
   });
 
-  it("keeps a single-article rejection as FAILED", async () => {
+  it("keeps a single-article rejection that names the article as FAILED", async () => {
     bookShipmentMock.mockReset().mockResolvedValueOnce({
       batch_id: "batch-1",
       valid_articles: [],
-      error_articles: [],
+      error_articles: [{ barcode_no: BARCODE, errors: ["Invalid receiver pincode"] }],
     });
     const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1")]);
     await expect(
       runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-    // Unchanged single-article behaviour: the stricter rule only applies to multi-article POSTs.
     expect(store.find((row) => row.id === "ship-1")?.status).toBe("FAILED");
+  });
+
+  it("treats a single-article reply that does not list the article as unknown, not rejected", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce({ batch_id: "batch-1", valid_articles: [], error_articles: [] });
+    const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1")]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(outcome.recoveryIds).toEqual(["ship-1"]);
+    expect(outcome.failedIds).toEqual([]);
+    const row = store.find((item) => item.id === "ship-1");
+    expect(row?.status).toBe("RECOVERY_REQUIRED");
+    expect(row?.last_error_code).toBe("CEPT_UNKNOWN");
+  });
+
+  it("treats an empty (non-JSON) single-article reply as unknown", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce({});
+    const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1")]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(outcome.recoveryIds).toEqual(["ship-1"]);
+    expect(store.find((item) => item.id === "ship-1")?.status).toBe("RECOVERY_REQUIRED");
   });
 
   it("lets two workers post a proved shipment only once", async () => {
@@ -933,5 +956,114 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(bookShipmentMock).toHaveBeenCalledTimes(1);
     expect(outcome.bookedIds).toEqual(["ship-1"]);
     expect(store[0]?.barcode).toBe(BARCODE);
+  });
+});
+
+describe("booking reliability phase 0", () => {
+  const FORCE_AT = "2026-11-02T00:00:00.000Z";
+  const INTENT_AT = "2026-11-01T14:47:53.000Z";
+
+  function forced(overrides: Record<string, unknown> = {}) {
+    return baseShipment({
+      status: "QUEUED",
+      barcode: BARCODE,
+      metadata: { ceptSubmitIntentAt: INTENT_AT, ceptForceResubmitAt: FORCE_AT },
+      ...overrides,
+    });
+  }
+
+  function timeoutError() {
+    return Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+  }
+
+  it("uses a force-resubmit permission for exactly one POST", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    const { supabase, store } = memoryDb([forced()]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    const metadata = store[0]?.metadata as Record<string, unknown>;
+    expect(metadata.ceptForceResubmitAt).toBeUndefined();
+    expect(typeof metadata.ceptForceResubmitConsumedAt).toBe("string");
+    expect(metadata.ceptSubmitIntentAt).toBe(INTENT_AT);
+  });
+
+  it("does not POST again after a forced POST ends with an unknown outcome", async () => {
+    bookShipmentMock.mockReset().mockRejectedValueOnce(timeoutError());
+    trackShipmentMock.mockReset().mockResolvedValue({ data: [] });
+    const { supabase, store } = memoryDb([forced()]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    // A stale reclaim or retry puts the row back in the queue.
+    Object.assign(store[0]!, { status: "QUEUED" });
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("books a single article on a request-level duplicate reply", async () => {
+    bookShipmentMock.mockReset().mockRejectedValueOnce(Object.assign(new Error("Duplicate article found"), { status: 409 }));
+    const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1")]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+  });
+
+  it("does not mark unnamed articles booked on a request-level duplicate reply", async () => {
+    bookShipmentMock
+      .mockReset()
+      .mockRejectedValueOnce(Object.assign(new Error(`Duplicate article ${BARCODE}`), { status: 409 }));
+    const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1"), withProof(BARCODE_2, "ship-2", "ord-2")]);
+    const outcome = await runIndiaPostBooking(supabase as never, {
+      organizationId: "org-1",
+      shipmentIds: ["ship-1", "ship-2"],
+    });
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(outcome.recoveryIds).toEqual(["ship-2"]);
+    expect(store.find((row) => row.id === "ship-2")?.status).toBe("RECOVERY_REQUIRED");
+    expect(store.find((row) => row.id === "ship-2")?.booked_at ?? null).toBeNull();
+  });
+
+  it("flags an accepted booking PostBus could not save instead of counting it booked", async () => {
+    const { supabase, store } = memoryDb([withProof(BARCODE, "ship-1", "ord-1")]);
+    bookShipmentMock.mockReset().mockImplementationOnce(async () => {
+      store[0]!.status = "CANCELLED";
+      return ceptSuccess();
+    });
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(outcome.bookedIds).toEqual([]);
+    expect(outcome.recoveryIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("CANCELLED");
+    expect(store[0]?.last_error_code).toBe("BOOKED_NOT_SAVED");
+  });
+
+  it("reports a lost claim without touching the row another job owns", async () => {
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([baseShipment({ status: "BOOKING" })]);
+    // This job loaded the row while it was QUEUED; another job claimed it before this one.
+    const realFrom = supabase.from;
+    (supabase as { from: (table: string) => unknown }).from = (table: string) => {
+      const real = realFrom(table) as Record<string, unknown>;
+      if (table !== "shipments") return real;
+      return {
+        ...real,
+        select: () => ({
+          eq: (key: string, value: unknown) => ({
+            in: async (_idsKey: string, ids: string[]) => ({
+              data: store
+                .filter((row) => row[key] === value && ids.includes(String(row.id)))
+                .map((row) => ({ ...row, status: "QUEUED" })),
+            }),
+            maybeSingle: async () => ({ data: store.find((row) => row[key] === value) ?? null }),
+          }),
+        }),
+      };
+    };
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "BOOKING_CLAIM_LOST", ceptNotCalled: true });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(store[0]?.status).toBe("BOOKING");
   });
 });

@@ -79,7 +79,8 @@ beforeAll(async () => {
     create table public.shipments (id uuid primary key default gen_random_uuid(),
       organization_id uuid not null references public.organizations(id),
       order_id uuid references public.orders(id), booked_at timestamptz,
-      status text not null default 'DRAFT', last_error text, last_error_code text);
+      status text not null default 'DRAFT', last_error text, last_error_code text,
+      barcode text, tracking_number text, provider_ref text, metadata jsonb not null default '{}'::jsonb);
     create table public.bulk_import_rows (id uuid primary key default gen_random_uuid());
     create table public.background_jobs (
       id uuid primary key default gen_random_uuid(),
@@ -96,6 +97,7 @@ beforeAll(async () => {
   await db.exec(migration("20261101180000_booking_queue.sql"));
   await db.exec(migration("20261101190000_booking_queue_dispatch.sql"));
   await db.exec(migration("20261101190000_booking_queue_dispatch.sql"));
+  await db.exec(migration("20261103090000_dispatch_preserve_intent.sql"));
   org = (await one<{ id: string }>("insert into public.organizations default values returning id")).id;
   otherOrg = (await one<{ id: string }>("insert into public.organizations default values returning id")).id;
 });
@@ -225,5 +227,67 @@ describe("dispatch_booking_run", () => {
     await db.query("update public.shipments set booked_at = now() where id = $1", [a.shipmentId]);
     await db.query("update public.booking_queue_items set state = 'BOOKED' where id = $1", [a.itemId]);
     expect((await itemState(a.itemId)).state).toBe("BOOKED");
+  });
+});
+
+describe("dispatch_booking_run keeps booking evidence (phase 0)", () => {
+  async function shipmentRow(id: string) {
+    return one<{ status: string; last_error_code: string | null }>(
+      "select status, last_error_code from public.shipments where id = $1",
+      [id]
+    );
+  }
+
+  it("does not requeue a shipment with submit intent and keeps its error code", async () => {
+    const a = await readyItem(org, { shipmentStatus: "FAILED" });
+    await db.query(
+      `update public.shipments set barcode = 'CX467191577IN', last_error_code = 'VALIDATION_ERROR',
+         metadata = jsonb_build_object('ceptSubmitIntentAt', '2026-11-01T14:47:53Z') where id = $1`,
+      [a.shipmentId]
+    );
+    const result = await dispatch(org, [a.itemId], key);
+    expect(result.dispatched).toHaveLength(0);
+    expect(result.skipped[0]?.reason).toBe("SHIPMENT_NOT_READY");
+    expect(await shipmentRow(a.shipmentId)).toEqual({ status: "FAILED", last_error_code: "VALIDATION_ERROR" });
+  });
+
+  it("does not requeue a barcode without a never-submitted code or creation proof", async () => {
+    const a = await readyItem(org, { shipmentStatus: "FAILED" });
+    await db.query("update public.shipments set barcode = 'CX1', last_error_code = 'INDIA_POST_VALIDATION' where id = $1", [
+      a.shipmentId,
+    ]);
+    const result = await dispatch(org, [a.itemId], key);
+    expect(result.dispatched).toHaveLength(0);
+    expect((await shipmentRow(a.shipmentId)).status).toBe("FAILED");
+  });
+
+  it("requeues a never-sent barcode and keeps its code for the booking run", async () => {
+    const a = await readyItem(org, { shipmentStatus: "FAILED" });
+    await db.query("update public.shipments set barcode = 'CX2', last_error_code = 'PRE_POST_TRANSIENT' where id = $1", [
+      a.shipmentId,
+    ]);
+    const result = await dispatch(org, [a.itemId], key);
+    expect(result.dispatched).toHaveLength(1);
+    expect(await shipmentRow(a.shipmentId)).toEqual({ status: "QUEUED", last_error_code: "PRE_POST_TRANSIENT" });
+  });
+
+  it("requeues a barcode written with a creation proof (bulk Excel)", async () => {
+    const a = await readyItem(org, { shipmentStatus: "DRAFT" });
+    await db.query(
+      `update public.shipments set barcode = 'CX3', metadata = jsonb_build_object('bookingBarcodeProof', jsonb_build_object('v', 1))
+        where id = $1`,
+      [a.shipmentId]
+    );
+    const result = await dispatch(org, [a.itemId], key);
+    expect(result.dispatched).toHaveLength(1);
+    expect((await shipmentRow(a.shipmentId)).status).toBe("QUEUED");
+  });
+
+  it("still clears the error on a plain failed shipment", async () => {
+    const a = await readyItem(org, { shipmentStatus: "FAILED" });
+    await db.query("update public.shipments set last_error_code = 'VALIDATION_ERROR' where id = $1", [a.shipmentId]);
+    const result = await dispatch(org, [a.itemId], key);
+    expect(result.dispatched).toHaveLength(1);
+    expect(await shipmentRow(a.shipmentId)).toEqual({ status: "QUEUED", last_error_code: null });
   });
 });

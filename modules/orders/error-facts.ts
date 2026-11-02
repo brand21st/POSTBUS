@@ -160,15 +160,26 @@ export function collectErrorFacts(input: FactSource): ErrorFact[] {
   return facts;
 }
 
-const UNKNOWN_CODES = new Set(["CEPT_UNKNOWN", "ETIMEDOUT", "HTTP_500", "HTTP_502", "HTTP_503", "HTTP_504"]);
+const UNKNOWN_CODES = new Set([
+  "CEPT_UNKNOWN",
+  "ETIMEDOUT",
+  "HTTP_500",
+  "HTTP_502",
+  "HTTP_503",
+  "HTTP_504",
+  "BOOKING_REVIEW_REQUIRED",
+]);
 
+/** India Post may already have the article: only an owner/admin Force book (with tracking check) moves it. */
 export function isUnknownBookingError(input: {
+  status?: string | null;
   last_error?: string | null;
   lastError?: string | null;
   last_error_code?: string | null;
   lastErrorCode?: string | null;
   summary?: string | null;
 }) {
+  if (text(input.status).toUpperCase() === "RECOVERY_REQUIRED") return true;
   const code = text(input.last_error_code ?? input.lastErrorCode).toUpperCase();
   if (UNKNOWN_CODES.has(code)) return true;
   const blob = `${text(input.last_error ?? input.lastError)} ${text(input.summary)}`.toUpperCase();
@@ -243,6 +254,7 @@ export type ProviderErrorTopic = "parcel" | "address" | "transient" | "other";
 
 const TRANSIENT_CODES = new Set([
   "PRE_POST_TRANSIENT",
+  "BULK_NOT_SUBMITTED",
   "QUEUE_UNAVAILABLE",
   "ECONNRESET",
   "ECONNREFUSED",

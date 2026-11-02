@@ -24,8 +24,6 @@ import {
 import { toast } from "sonner";
 import { BookingErrorCell, BookingErrorDialog, type FinalErrorStatus } from "@/components/orders/address-check-cell";
 import type { ErrorQuickAction } from "@/modules/orders/error-facts";
-import { NEVER_SUBMITTED_CODES } from "@/modules/india-post/booking-retry-eligibility";
-import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
 import { ShopifyPaymentConfirm } from "@/components/orders/shopify-payment-confirm";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
@@ -153,15 +151,6 @@ type TariffProgress = {
   status: "calculating" | "success" | "error";
   amount?: number;
 };
-
-/** The last failure was recorded by PostBus's own checks and India Post was never called. */
-function failedBeforeSubmit(row: OrderRecord) {
-  const shipment = row.shipment;
-  if (!shipment || shipment.bookedAt || shipment.booked_at) return false;
-  if (readCeptSubmitIntentAt(shipment.metadata)) return false;
-  const code = String(shipment.lastErrorCode ?? shipment.last_error_code ?? "").toUpperCase();
-  return NEVER_SUBMITTED_CODES.has(code);
-}
 
 function CreatedCell({ value }: { value?: string | null }) {
   if (!value) return <span className="text-muted">—</span>;
@@ -614,23 +603,11 @@ export default function OrdersPage() {
     mutationFn: async (row: OrderRecord) => {
       const shipmentId = row.shipment?.id;
       if (!shipmentId) throw new Error("This order has no shipment to retry.");
-      try {
-        return await api<{ message?: string }>(`/api/v1/shipments/${shipmentId}/retry`, {
-          method: "POST",
-          body: JSON.stringify({}),
-        });
-      } catch (error) {
-        // A barcode assigned before PostBus's own checks failed makes a plain retry look uncertain.
-        // When the failure was recorded before India Post was called, resubmit the same barcode:
-        // India Post answers "duplicate" if it already has it, so this cannot book twice.
-        if (!(error instanceof ApiError) || !failedBeforeSubmit(row)) throw error;
-        const details = (error.errors[0] as { details?: { action?: string } } | undefined)?.details;
-        if (details?.action !== "BOOKING_OUTCOME_UNKNOWN") throw error;
-        return api<{ message?: string }>(`/api/v1/shipments/${shipmentId}/force-book`, {
-          method: "POST",
-          body: JSON.stringify({ confirm: true }),
-        });
-      }
+      // The server decides whether the barcode may be sent again; this never resubmits on its own.
+      return api<{ message?: string }>(`/api/v1/shipments/${shipmentId}/retry`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
     },
     onSuccess: (result) => {
       toast.success(result.message || "Booking retry scheduled.");
@@ -639,7 +616,22 @@ export default function OrdersPage() {
       queryClient.invalidateQueries({ queryKey: ["order-error-status"] });
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, row) => {
+      const details =
+        error instanceof ApiError
+          ? (error.errors[0] as { details?: { action?: string } } | undefined)?.details
+          : undefined;
+      // India Post may already have this article. Only a person (owner/admin) may decide to
+      // resubmit it, through the Force book confirmation, which checks tracking first.
+      if (details?.action === "BOOKING_OUTCOME_UNKNOWN") {
+        toast.message("India Post may already have this booking.", {
+          description: "Review it and use Force book if it is not booked. Owners and admins only.",
+        });
+        setErrorDialog({ orderId: row.id, confirmForce: true });
+        return;
+      }
+      toast.error(error.message);
+    },
   });
 
   const setService = useMutation({

@@ -391,7 +391,10 @@ export async function handleCommerceRoutes(
     if (body.confirm !== true) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Confirm force book to submit this article again.");
     }
-    const { forceBookUnknownShipment } = await import("@/modules/india-post/booking-force-retry");
+    const { FORCE_BOOK_ROLES, forceBookUnknownShipment } = await import("@/modules/india-post/booking-force-retry");
+    if (!FORCE_BOOK_ROLES.has(String(ctx.role ?? "").toUpperCase())) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, "Only workspace owners and admins can force book.");
+    }
     const { reconcileUncertainBooking } = await import("@/modules/india-post/booking-reconcile");
     try {
       const tracked = await reconcileUncertainBooking(supabase, ctx, slugs[1]);

@@ -5,6 +5,7 @@ export type BulkMetricName =
   | "bulk_batches_succeeded"
   | "bulk_batches_partial"
   | "bulk_batches_failed"
+  | "bulk_batches_failed_before_post"
   | "bulk_batches_recovery_required"
   | "bulk_articles_submitted"
   | "bulk_articles_succeeded"

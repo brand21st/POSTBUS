@@ -4,9 +4,10 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
-import { isAuthoritativeIndiaPostBooking } from "@/modules/india-post/booking-idempotency";
+import { isAuthoritativeIndiaPostBooking, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
+import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { scheduleForceRetryBooking } from "@/modules/india-post/booking-force-retry";
-import { evaluateBookingRetryEligibility } from "@/modules/india-post/booking-retry-eligibility";
+import { evaluateBookingRetryEligibility, NEVER_SUBMITTED_CODES } from "@/modules/india-post/booking-retry-eligibility";
 import { resolveOrderBookingService, shipmentServiceLocked } from "@/modules/india-post/booking-service";
 import {
   indiaPostDisplayShipmentStatus,
@@ -121,6 +122,33 @@ export async function syncOpenShipmentsService(
   }
 }
 
+/**
+ * True when this shipment row may already be (or become) an India Post article: booked, sent
+ * with submit intent, in flight, awaiting recovery, or holding a barcode. Such an order must reuse
+ * this row; creating another shipment would allocate a second barcode for the same parcel.
+ */
+export function shipmentMayHoldIndiaPostBooking(row: {
+  status?: string | null;
+  booked_at?: string | null;
+  barcode?: string | null;
+  tracking_number?: string | null;
+  provider_ref?: string | null;
+  metadata?: unknown;
+}) {
+  const status = String(row.status ?? "").toUpperCase();
+  if (status === "CANCELLED") return false;
+  return (
+    Boolean(row.booked_at) ||
+    isAuthoritativeIndiaPostBooking(row) ||
+    status === "BOOKING" ||
+    status === "RECOVERY_REQUIRED" ||
+    Boolean(readCeptSubmitIntentAt(row.metadata)) ||
+    Boolean(shipmentBarcode(row.barcode)) ||
+    Boolean(shipmentBarcode(row.tracking_number)) ||
+    Boolean(String(row.provider_ref ?? "").trim())
+  );
+}
+
 export async function createShipmentsForOrders(
   supabase: SupabaseClient,
   ctx: TenantContext,
@@ -182,6 +210,13 @@ export async function createShipmentsForOrders(
     .eq("organization_id", ctx.organizationId)
     .in("order_id", orders.map((order) => order.id))
     .not("status", "eq", "CANCELLED");
+  // Any non-cancelled shipment that may already be at India Post blocks a second shipment for the
+  // order, whichever row is picked as "current" below. A new row would get a new barcode.
+  const ordersWithLiveBooking = new Set(
+    (existing ?? [])
+      .filter((row) => shipmentMayHoldIndiaPostBooking(row))
+      .map((row) => String(row.order_id))
+  );
   const existingByOrder = new Map<string, {
     id: string;
     order_id: string;
@@ -362,12 +397,15 @@ export async function createShipmentsForOrders(
       const keepMerchantDims =
         manualDimensionLock(readParcelDimensionSource(current.metadata), current.metadata) ||
         extras?.dimensionSource === "autopack_history";
-      const { data: requeued, error: requeueError } = await supabase
+      // A barcode PostBus recorded as never sent may be reused; its "never submitted" code stays
+      // on the row so the booking run accepts it.
+      const keptBarcode = shipmentBarcode(current.barcode);
+      const requeue = supabase
         .from("shipments")
         .update({
           status: "QUEUED",
           last_error: null,
-          last_error_code: null,
+          ...(keptBarcode ? {} : { last_error_code: null }),
           payment_mode: collect.payment_mode,
           cod_amount: collect.cod_amount,
           service_code: serviceFor(order),
@@ -379,11 +417,14 @@ export async function createShipmentsForOrders(
         .eq("id", current.id)
         .eq("organization_id", ctx.organizationId)
         .is("booked_at", null)
-        .is("barcode", null)
         .is("tracking_number", null)
         .is("provider_ref", null)
         .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED"])
-        .filter("metadata->>ceptSubmitIntentAt", "is", null)
+        .filter("metadata->>ceptSubmitIntentAt", "is", null);
+      const { data: requeued, error: requeueError } = await (keptBarcode
+        ? requeue.eq("barcode", keptBarcode).in("last_error_code", [...NEVER_SUBMITTED_CODES])
+        : requeue.is("barcode", null)
+      )
         .select("id")
         .maybeSingle();
       if (requeueError || !requeued) {
@@ -407,6 +448,10 @@ export async function createShipmentsForOrders(
     }
 
     if (current && (alreadyBooked || currentStatus !== "FAILED")) {
+      skipped.push(order.id);
+      continue;
+    }
+    if (ordersWithLiveBooking.has(String(order.id))) {
       skipped.push(order.id);
       continue;
     }

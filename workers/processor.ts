@@ -29,7 +29,7 @@ import {
   enqueueOrgTrackingSyncIfIdle,
   trackingSyncMinIntervalMs,
 } from "@/modules/india-post/tracking-sync";
-import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
+import { isBookingClaimLost, runIndiaPostBooking } from "@/modules/india-post/booking-run";
 import { assertIndiaPostBulkPostAllowed } from "@/modules/india-post/bulk-run";
 import { BULK_BATCH_JOB_ENTITY, loadBulkBatchById, loadBulkBatchByJobId } from "@/modules/india-post/bulk-store";
 import { isBulkBatchSuperseded, runIndiaPostBulkWorkerAttempt } from "@/modules/india-post/bulk-worker";
@@ -387,6 +387,15 @@ async function bookShipment(supabase: ReturnType<typeof createAdminClient>, payl
         }),
     });
   } catch (error) {
+    if (isBookingClaimLost(error)) {
+      // Another job claimed every shipment first and owns the outcome; this job posted nothing.
+      logInfo("booking.claim_lost", {
+        organizationId: payload.organizationId,
+        jobId: payload.jobId,
+        shipmentIds,
+      });
+      return;
+    }
     if (!isBulkBatchSuperseded(error)) throw error;
     // Nothing was posted by this job; the owning job reports the shipments.
     logInfo("booking.bulk_superseded", {
