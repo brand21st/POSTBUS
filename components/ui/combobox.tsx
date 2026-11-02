@@ -239,7 +239,7 @@ export const Combobox = React.forwardRef<HTMLInputElement, ComboboxProps>(functi
               const isSelected = option.value === value;
               const isActive = index === activeIndex;
               return (
-                <React.Fragment key={option.value}>
+                <React.Fragment key={`${option.value}::${option.label ?? ""}::${index}`}>
                   {showGroup ? (
                     <p className="sticky -top-1 z-10 -mx-1 bg-popover px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
                       {option.group}

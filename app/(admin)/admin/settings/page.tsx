@@ -104,7 +104,7 @@ type OpenRouterSettings = {
 
 type VachatLogRow = {
   id: string;
-  organization_id: string;
+  organization_id: string | null;
   event: string;
   phone: string | null;
   external_ref: string;
@@ -183,7 +183,11 @@ export default function AdminSettingsPage() {
   const resolvedKeyId = keyId || data?.keyId || "";
   const resolvedVachatUrl = vachatUrl || vachat?.apiBaseUrl || "https://cloud.vachat.in";
   const resolvedOpenrouterEnabled = openrouterEnabled ?? openrouter?.enabled ?? false;
-  const chatgptModels = openrouterModelsQuery.data?.models ?? openrouter?.models ?? [];
+  const chatgptModels = Array.isArray(openrouterModelsQuery.data?.models)
+    ? openrouterModelsQuery.data.models
+    : Array.isArray(openrouter?.models)
+      ? openrouter.models
+      : [];
   const resolvedOpenrouterModel = openrouterModel || openrouter?.model || "openai/gpt-4o-mini";
   const resolvedImageStudioEnabled = imageStudioEnabled ?? openrouter?.imageStudioEnabled ?? false;
   const resolvedImageModel = imageModel || openrouter?.imageModel || "google/gemini-2.5-flash-image";
@@ -721,7 +725,7 @@ export default function AdminSettingsPage() {
               value={assignOrderId}
               onChange={(event) => setAssignOrderId(event.target.value)}
             />
-            {(unassignedQuery.data?.items ?? []).map((row) => (
+            {(Array.isArray(unassignedQuery.data?.items) ? unassignedQuery.data.items : []).map((row) => (
               <div key={row.id} className="flex items-center justify-between gap-2 text-sm">
                 <div>
                   <p className="font-medium">+91 {row.phone_digits}</p>
@@ -989,10 +993,10 @@ export default function AdminSettingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(vachatLogsQuery.data ?? []).map((row) => (
+                  {(Array.isArray(vachatLogsQuery.data) ? vachatLogsQuery.data : []).map((row) => (
                     <tr key={row.id} className="border-b last:border-0">
                       <td className="p-2 whitespace-nowrap">{new Date(row.created_at).toLocaleString()}</td>
-                      <td className="p-2 font-mono">{row.organization_id.slice(0, 8)}</td>
+                      <td className="p-2 font-mono">{row.organization_id ? row.organization_id.slice(0, 8) : "platform"}</td>
                       <td className="p-2">{row.event}</td>
                       <td className="p-2">
                         <div>{row.status}</div>
