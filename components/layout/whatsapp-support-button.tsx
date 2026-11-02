@@ -34,7 +34,12 @@ export function WhatsappSupportButton() {
   const inputRef = useRef<HTMLInputElement>(null);
   const openedByUser = useRef(false);
   const panelId = useId();
-  const hideOnShopify = pathname === "/shopify" || pathname.startsWith("/shopify/");
+  // Inside the dashboard it lives in the sidebar instead, so it never covers tables and actions.
+  const hidden =
+    pathname === "/dashboard" ||
+    pathname.startsWith("/dashboard/") ||
+    pathname === "/shopify" ||
+    pathname.startsWith("/shopify/");
 
   useEffect(() => {
     if (open && openedByUser.current) {
@@ -67,7 +72,7 @@ export function WhatsappSupportButton() {
     openWhatsApp(text);
   }
 
-  if (hideOnShopify) return null;
+  if (hidden) return null;
 
   return (
     <>
