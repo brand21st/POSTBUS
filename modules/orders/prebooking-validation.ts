@@ -4,7 +4,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { TenantContext } from "@/lib/api/context";
 import { logError, logInfo } from "@/lib/logger";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
-import { wrapIndiaPostAddressLines } from "@/modules/india-post/address-lines";
+import { cleanBookingAddressLines } from "@/modules/orders/clean-booking-address";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
 import { indiaPostDeliveryOfficeFlag, type IndiaPostOffice } from "@/modules/india-post/endpoints";
 import {
@@ -192,58 +192,15 @@ function cityAlignedToPin(city: string, offices: IndiaPostOffice[]) {
   return { city: nextCity, state: collapse(delivery.state_name) || "" };
 }
 
-function splitFragments(value: string) {
-  return value
-    .replace(/[,;]{2,}/g, ",")
-    .replace(/\s+/g, " ")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
 /** Safe cleanup only: whitespace, empty commas, and repeated words already present. */
 export function formattingSuggestion(address: StoredShippingFields) {
-  const original = [address.line1, address.line2, address.line3].map(collapse);
-  const raw = original.filter(Boolean).join(", ");
-  const messy = /[,;]{2,}|[ \t]{2,}/.test([address.line1, address.line2, address.line3].join(","));
-  const parts = splitFragments(raw);
-  const seen = new Set<string>();
-  const kept: string[] = [];
-  let removed = false;
-  for (const part of parts) {
-    const words: string[] = [];
-    const wordSeen = new Set<string>();
-    for (const word of part.split(" ")) {
-      const key = word.toLocaleLowerCase();
-      if (!key) continue;
-      if (wordSeen.has(key)) {
-        removed = true;
-        continue;
-      }
-      wordSeen.add(key);
-      words.push(word);
-    }
-    const next = words.join(" ");
-    const key = next.toLocaleLowerCase();
-    if (!key || seen.has(key)) {
-      removed = true;
-      continue;
-    }
-    seen.add(key);
-    kept.push(next);
-  }
-  if (!removed && !messy) return null;
-  const wrapped = wrapIndiaPostAddressLines(kept.join(", "));
-  const next = [wrapped.line1, wrapped.line2 ?? "", wrapped.line3 ?? ""];
-  if (next.every((line, index) => collapse(line) === original[index])) return null;
+  const cleaned = cleanBookingAddressLines(address);
+  if (!cleaned) return null;
   return {
-    line1: wrapped.line1,
-    line2: wrapped.line2 ?? "",
-    line3: wrapped.line3 ?? "",
-    reasons: [
-      removed ? "Repeated locality or address line removed." : "",
-      messy ? "Extra commas or spaces removed." : "",
-    ].filter(Boolean),
+    line1: cleaned.line1,
+    line2: cleaned.line2,
+    line3: cleaned.line3,
+    reasons: cleaned.reasons,
   };
 }
 

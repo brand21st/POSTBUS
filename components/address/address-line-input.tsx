@@ -36,6 +36,7 @@ export function AddressLineInput<T extends FieldValues>({
   id,
   label,
   hint,
+  notice,
   error,
   className,
   inputClassName,
@@ -49,6 +50,8 @@ export function AddressLineInput<T extends FieldValues>({
   id: string;
   label: string;
   hint?: string;
+  /** Live note when Smart AI rewrites this line for booking. */
+  notice?: string | null;
   error?: string;
   className?: string;
   inputClassName?: string;
@@ -60,9 +63,10 @@ export function AddressLineInput<T extends FieldValues>({
   const remaining = addressLineRemaining(String(watched ?? "").length, maxLength);
   const showCount = shouldShowAddressLineRemaining(remaining, focused);
   const hintId = hint ? `${id}-hint` : undefined;
+  const noticeId = notice ? `${id}-clean` : undefined;
   const countId = `${id}-count`;
   const errorId = error ? `${id}-error` : undefined;
-  const describedBy = [hintId, showCount ? countId : undefined, errorId].filter(Boolean).join(" ") || undefined;
+  const describedBy = [hintId, noticeId, showCount ? countId : undefined, errorId].filter(Boolean).join(" ") || undefined;
 
   const handleFocus: FocusEventHandler<HTMLInputElement> = (event) => {
     setFocused(true);
@@ -107,6 +111,11 @@ export function AddressLineInput<T extends FieldValues>({
       {hint ? (
         <p id={hintId} className="mt-0.5 text-[11px] text-muted">
           {hint}
+        </p>
+      ) : null}
+      {notice ? (
+        <p id={noticeId} className="mt-0.5 text-[11px] font-medium text-emerald-700" role="status" aria-live="polite">
+          {notice}
         </p>
       ) : null}
       {error ? (

@@ -20,6 +20,8 @@ import {
   clipIndiaPostAddressLine,
   INDIA_POST_ADDRESS_LINE_TOO_LONG,
 } from "@/components/address/address-line-input";
+import { useBookingAddressCleanup } from "@/components/address/booking-address-cleaner";
+import { cleanBookingAddressLines } from "@/modules/orders/clean-booking-address";
 import { unsetIfDefault } from "@/lib/parsers/whatsapp-customer-message";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaPostBookingGuide } from "@/components/shipments/india-post-booking-guide";
@@ -536,6 +538,7 @@ export default function NewOrderPage() {
           },
           shippingAddress: {
             ...values.shippingAddress,
+            ...cleanedAddressLines(values.shippingAddress),
             phone: extractIndiaMobileDigits(values.shippingAddress.phone) ?? values.shippingAddress.phone,
           },
           billingSameAsShipping: values.billingSameAsShipping,
@@ -544,6 +547,7 @@ export default function NewOrderPage() {
             : values.billingAddress
               ? {
                   ...values.billingAddress,
+                  ...cleanedAddressLines(values.billingAddress),
                   phone:
                     extractIndiaMobileDigits(values.billingAddress.phone) ?? values.billingAddress.phone,
                 }
@@ -1473,6 +1477,12 @@ function Field({
   );
 }
 
+function cleanedAddressLines(address: { line1?: string | null; line2?: string | null }) {
+  const cleaned = cleanBookingAddressLines(address);
+  if (!cleaned) return {};
+  return { line1: cleaned.line1, line2: cleaned.line2 || undefined };
+}
+
 function AddressFields({
   prefix,
   form,
@@ -1481,6 +1491,18 @@ function AddressFields({
   form: Pick<ReturnType<typeof useForm<FormValues>>, "register" | "control" | "formState" | "setValue">;
 }) {
   const phoneError = form.formState.errors[prefix]?.phone?.message;
+  const line1Id = `${prefix}-line1`;
+  const line2Id = `${prefix}-line2`;
+  const addressClean = useBookingAddressCleanup({
+    control: form.control,
+    setValue: form.setValue,
+    line1Name: `${prefix}.line1`,
+    line2Name: `${prefix}.line2`,
+    line1Id,
+    line2Id,
+  });
+  const line1Field = form.register(`${prefix}.line1`);
+  const line2Field = form.register(`${prefix}.line2`);
   return (
     <>
       <Field
@@ -1502,28 +1524,38 @@ function AddressFields({
         />
       </Field>
       <AddressLineInput
-        id={`${prefix}-line1`}
+        id={line1Id}
         label="Address"
         className="md:col-span-2"
         inputClassName="h-8"
         hint="House, building, and street — required for booking."
+        notice={addressClean.notice.line1}
         error={form.formState.errors[prefix]?.line1?.message}
         control={form.control}
         autoComplete="address-line1"
         placeholder="House / building, street"
-        {...form.register(`${prefix}.line1`)}
+        {...line1Field}
+        onBlur={(event) => {
+          line1Field.onBlur(event);
+          addressClean.apply();
+        }}
       />
       <AddressLineInput
-        id={`${prefix}-line2`}
+        id={line2Id}
         label="Area / locality"
         className="md:col-span-2"
         inputClassName="h-8"
         hint="Optional. Landmark or extra address — not required for India Post booking."
+        notice={addressClean.notice.line2}
         error={form.formState.errors[prefix]?.line2?.message}
         control={form.control}
         autoComplete="address-line2"
         placeholder="Landmark, area (optional)"
-        {...form.register(`${prefix}.line2`)}
+        {...line2Field}
+        onBlur={(event) => {
+          line2Field.onBlur(event);
+          addressClean.apply();
+        }}
       />
       <Field label="Pincode" error={form.formState.errors[prefix]?.pincode?.message}>
         <Input

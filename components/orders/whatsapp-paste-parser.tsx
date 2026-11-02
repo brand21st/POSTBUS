@@ -13,6 +13,7 @@ import {
   countAppliedWhatsAppFields,
   type WhatsAppCustomerFields,
 } from "@/lib/parsers/whatsapp-customer-message";
+import { cleanBookingAddressLines, SMART_ADDRESS_LABEL } from "@/modules/orders/clean-booking-address";
 
 const MAX_CHARS = 2000;
 const PLACEHOLDER = "Paste the WhatsApp message here";
@@ -94,13 +95,19 @@ export function WhatsAppPasteParser({
       const applied = countAppliedWhatsAppFields(previous, { ...previous, ...next });
       onApply(next);
       const via = parsed.source === "ai" ? " with AI" : "";
+      const cleaned = cleanBookingAddressLines({ line1: next.line1, line2: next.line2 });
+      const cleanNote = cleaned ? ` ${SMART_ADDRESS_LABEL}.` : "";
       if (!overwrite && applied === 0) {
-        setHint("Those details are already in the form. Empty fields only — review before saving.");
+        setHint(
+          cleaned
+            ? `${SMART_ADDRESS_LABEL}. Review before saving.`
+            : "Those details are already in the form. Empty fields only — review before saving."
+        );
       } else {
         setHint(
           overwrite
-            ? `Replaced customer details${via}. Review before saving.`
-            : `Filled ${applied} field${applied === 1 ? "" : "s"}${via}. Empty fields only — review before saving.`
+            ? `Replaced customer details${via}.${cleanNote} Review before saving.`
+            : `Filled ${applied} field${applied === 1 ? "" : "s"}${via}.${cleanNote} Review before saving.`
         );
       }
     } catch (error) {

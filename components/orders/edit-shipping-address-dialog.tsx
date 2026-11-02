@@ -12,6 +12,8 @@ import {
   AddressLineInput,
   INDIA_POST_ADDRESS_LINE_TOO_LONG,
 } from "@/components/address/address-line-input";
+import { useBookingAddressCleanup } from "@/components/address/booking-address-cleaner";
+import { cleanBookingAddressLines } from "@/modules/orders/clean-booking-address";
 import { PincodeLocationHint } from "@/components/address/pincode-location-hint";
 import { IndiaWhatsappField } from "@/components/auth/india-whatsapp-field";
 import { Button } from "@/components/ui/button";
@@ -96,20 +98,22 @@ export function EditShippingAddressDialog({
   }, [address, form, open]);
 
   const save = useMutation({
-    mutationFn: (body: FormValues) =>
-      api(`/api/v1/orders/${orderId}/address`, {
+    mutationFn: (body: FormValues) => {
+      const cleaned = cleanBookingAddressLines(body);
+      return api(`/api/v1/orders/${orderId}/address`, {
         method: "PATCH",
         body: JSON.stringify({
           name: body.name.trim(),
           phone: extractIndiaMobileDigits(body.phone) ?? body.phone,
-          line1: body.line1.trim(),
-          line2: body.line2?.trim() || undefined,
+          line1: (cleaned?.line1 || body.line1).trim(),
+          line2: (cleaned?.line2 || body.line2)?.trim() || undefined,
           city: body.city.trim(),
           state: body.state.trim(),
           pincode: body.pincode.trim(),
           country: "IN",
         }),
-      }),
+      });
+    },
     onSuccess: () => {
       toast.success("Shipping address saved.");
       onOpenChange(false);
@@ -117,6 +121,16 @@ export function EditShippingAddressDialog({
     },
     onError: (error: Error) => toast.error(error.message),
   });
+  const addressClean = useBookingAddressCleanup({
+    control: form.control,
+    setValue: form.setValue,
+    line1Name: "line1",
+    line2Name: "line2",
+    line1Id: "edit-shipping-line1",
+    line2Id: "edit-shipping-line2",
+  });
+  const line1Field = form.register("line1");
+  const line2Field = form.register("line2");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -150,11 +164,16 @@ export function EditShippingAddressDialog({
             className="md:col-span-2"
             inputClassName="h-9"
             hint="House, building, and street — required for booking."
+            notice={addressClean.notice.line1}
             error={form.formState.errors.line1?.message}
             control={form.control}
             autoComplete="address-line1"
             placeholder="House / building, street"
-            {...form.register("line1")}
+            {...line1Field}
+            onBlur={(event) => {
+              line1Field.onBlur(event);
+              addressClean.apply();
+            }}
           />
           <AddressLineInput
             id="edit-shipping-line2"
@@ -162,11 +181,16 @@ export function EditShippingAddressDialog({
             className="md:col-span-2"
             inputClassName="h-9"
             hint="Optional. Landmark or extra address — not required for India Post booking."
+            notice={addressClean.notice.line2}
             error={form.formState.errors.line2?.message}
             control={form.control}
             autoComplete="address-line2"
             placeholder="Landmark, area (optional)"
-            {...form.register("line2")}
+            {...line2Field}
+            onBlur={(event) => {
+              line2Field.onBlur(event);
+              addressClean.apply();
+            }}
           />
           <Field label="Pincode" error={form.formState.errors.pincode?.message}>
             <Input
