@@ -23,6 +23,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { BookingErrorCell, BookingErrorDialog, type FinalErrorStatus } from "@/components/orders/address-check-cell";
+import type { ErrorQuickAction } from "@/modules/orders/error-facts";
+import { NEVER_SUBMITTED_CODES } from "@/modules/india-post/booking-retry-eligibility";
+import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { OrderDimensionBadge } from "@/components/orders/order-dimension-badge";
 import { ShopifyPaymentConfirm } from "@/components/orders/shopify-payment-confirm";
 import { BulkIndiaPostBooking } from "@/components/bookings/bulk-india-post-booking";
@@ -151,6 +154,15 @@ type TariffProgress = {
   amount?: number;
 };
 
+/** The last failure was recorded by PostBus's own checks and India Post was never called. */
+function failedBeforeSubmit(row: OrderRecord) {
+  const shipment = row.shipment;
+  if (!shipment || shipment.bookedAt || shipment.booked_at) return false;
+  if (readCeptSubmitIntentAt(shipment.metadata)) return false;
+  const code = String(shipment.lastErrorCode ?? shipment.last_error_code ?? "").toUpperCase();
+  return NEVER_SUBMITTED_CODES.has(code);
+}
+
 function CreatedCell({ value }: { value?: string | null }) {
   if (!value) return <span className="text-muted">—</span>;
   const date = parseISO(value);
@@ -183,9 +195,14 @@ export default function OrdersPage() {
   const [reviewIds, setReviewIds] = useState<string[] | null>(null);
   const [checkingIds, setCheckingIds] = useState<string[]>([]);
   const [parcelOrder, setParcelOrder] = useState<OrderRecord | null>(null);
+  // Opened from a booking error: saving the parcel also retries the booking.
+  const [parcelBookAfterSave, setParcelBookAfterSave] = useState(false);
   const [errorDialog, setErrorDialog] = useState<{ orderId: string; confirmForce: boolean } | null>(null);
-  const openParcelEditor = (order: OrderRecord) => {
-    window.setTimeout(() => setParcelOrder(order), 0);
+  const openParcelEditor = (order: OrderRecord, bookAfterSave = false) => {
+    window.setTimeout(() => {
+      setParcelBookAfterSave(bookAfterSave);
+      setParcelOrder(order);
+    }, 0);
   };
   const [dateFilter, setDateFilter] = useState<OrderDateFilterValue>({ kind: "all" });
   const [confirmFulfill, setConfirmFulfill] = useState(false);
@@ -593,6 +610,38 @@ export default function OrdersPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const retryBooking = useMutation({
+    mutationFn: async (row: OrderRecord) => {
+      const shipmentId = row.shipment?.id;
+      if (!shipmentId) throw new Error("This order has no shipment to retry.");
+      try {
+        return await api<{ message?: string }>(`/api/v1/shipments/${shipmentId}/retry`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+      } catch (error) {
+        // A barcode assigned before PostBus's own checks failed makes a plain retry look uncertain.
+        // When the failure was recorded before India Post was called, resubmit the same barcode:
+        // India Post answers "duplicate" if it already has it, so this cannot book twice.
+        if (!(error instanceof ApiError) || !failedBeforeSubmit(row)) throw error;
+        const details = (error.errors[0] as { details?: { action?: string } } | undefined)?.details;
+        if (details?.action !== "BOOKING_OUTCOME_UNKNOWN") throw error;
+        return api<{ message?: string }>(`/api/v1/shipments/${shipmentId}/force-book`, {
+          method: "POST",
+          body: JSON.stringify({ confirm: true }),
+        });
+      }
+    },
+    onSuccess: (result) => {
+      toast.success(result.message || "Booking retry scheduled.");
+      setErrorDialog(null);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["order-error-status"] });
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const setService = useMutation({
     mutationFn: ({ orderId, service }: { orderId: string; service: string }) =>
       api(`/api/v1/orders/${orderId}/service`, {
@@ -726,8 +775,9 @@ export default function OrdersPage() {
     );
   }
 
-  function onErrorAction(row: OrderRecord, action: "force" | "parcel" | "review" | "open" | "details") {
-    if (action === "parcel") openParcelEditor(row);
+  function onErrorAction(row: OrderRecord, action: ErrorQuickAction | "details") {
+    if (action === "parcel") openParcelEditor(row, Boolean(row.shipment?.id));
+    else if (action === "retry") retryBooking.mutate(row);
     else if (action === "review") setReviewIds([row.id]);
     else if (action === "open") router.push(`/dashboard/orders/${row.id}`);
     else setErrorDialog({ orderId: row.id, confirmForce: action === "force" });
@@ -894,6 +944,7 @@ export default function OrdersPage() {
           order={row}
           checking={checkingIds.includes(row.id)}
           finalStatus={errorByOrder.get(row.id)}
+          busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
           onAction={(action) => onErrorAction(row, action)}
         />
       ),
@@ -1250,6 +1301,7 @@ export default function OrdersPage() {
           finalStatus={errorByOrder.get(errorDialogOrder.id)}
           confirmForce={errorDialog?.confirmForce}
           forcing={forceBook.isPending}
+          retrying={retryBooking.isPending}
           onOpenChange={(next) => {
             if (!next && !forceBook.isPending) setErrorDialog(null);
           }}
@@ -1270,6 +1322,15 @@ export default function OrdersPage() {
           onOpenChange={(next) => {
             if (!next) setParcelOrder(null);
           }}
+          saveLabel={parcelBookAfterSave ? "Save & book" : undefined}
+          onSaved={
+            parcelBookAfterSave
+              ? () => {
+                  const row = list.items.find((item) => item.id === parcelOrder.id) ?? parcelOrder;
+                  retryBooking.mutate(row);
+                }
+              : undefined
+          }
         />
       ) : null}
       <DataTable
@@ -1361,6 +1422,7 @@ export default function OrdersPage() {
                         order={row}
                         checking={checkingIds.includes(row.id)}
                         finalStatus={errorByOrder.get(row.id)}
+                        busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
                         onAction={(action) => onErrorAction(row, action)}
                       />
                       <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />

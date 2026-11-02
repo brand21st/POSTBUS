@@ -42,6 +42,10 @@ type Props = {
   dialogOnly?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** Runs after a successful save, e.g. to retry a booking that failed on the parcel. */
+  onSaved?: () => void;
+  /** Replaces the save button text when saving also does something else ("Save & book"). */
+  saveLabel?: string;
 };
 
 const WEIGHT_PRESETS = [
@@ -81,7 +85,16 @@ function ParcelPill({
   );
 }
 
-export function OrderDimensionBadge({ order, disabled, onEdit, dialogOnly, open: openProp, onOpenChange }: Props) {
+export function OrderDimensionBadge({
+  order,
+  disabled,
+  onEdit,
+  dialogOnly,
+  open: openProp,
+  onOpenChange,
+  onSaved,
+  saveLabel,
+}: Props) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = dialogOnly ? Boolean(openProp) : uncontrolledOpen;
   const setOpen = (next: boolean) => {
@@ -239,6 +252,7 @@ export function OrderDimensionBadge({ order, disabled, onEdit, dialogOnly, open:
     },
     onSuccess: () => {
       toast.success("Parcel dimensions and weight saved successfully.");
+      onSaved?.();
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["order", order.id] });
       queryClient.invalidateQueries({ queryKey: ["autopack", order.id] });
@@ -753,6 +767,8 @@ export function OrderDimensionBadge({ order, disabled, onEdit, dialogOnly, open:
                     <Loader2 className="mr-1.5 size-3.5 animate-spin" />
                     Saving…
                   </>
+                ) : saveLabel ? (
+                  saveLabel
                 ) : needsSetup ? (
                   "Save parcel"
                 ) : (

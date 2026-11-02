@@ -27,6 +27,7 @@ import {
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import {
   ERROR_KIND_LABEL,
+  errorActionHint,
   errorQuickAction,
   errorTone,
   isUnknownBookingError,
@@ -43,15 +44,17 @@ export type FinalErrorStatus = ServerErrorStatus;
 
 const ACTION_LABEL: Record<ErrorQuickAction, string> = {
   force: "Force book",
+  retry: "Retry booking",
   parcel: "Set parcel",
-  review: "Fix & book",
+  review: "Fix address",
   open: "Open order",
 };
 
 const ACTION_ICON: Record<ErrorQuickAction, typeof Zap> = {
   force: Zap,
+  retry: RotateCcw,
   parcel: Package,
-  review: RotateCcw,
+  review: MapPin,
   open: ExternalLink,
 };
 
@@ -91,11 +94,14 @@ export function BookingErrorCell({
   order,
   checking = false,
   finalStatus,
+  busy = false,
   onAction,
 }: {
   order: OrderRecord;
   checking?: boolean;
   finalStatus?: FinalErrorStatus | null;
+  /** The row's quick action is running (e.g. retry in flight). */
+  busy?: boolean;
   onAction?: (action: ErrorQuickAction | "details") => void;
 }) {
   if (checking) {
@@ -117,7 +123,8 @@ export function BookingErrorCell({
   const error = orderDisplayError(order, finalStatus);
   if (!error) return <span className="text-xs text-muted">—</span>;
   const action = errorQuickAction(error, unknownOutcome(order, error));
-  const ActionIcon = ACTION_ICON[action];
+  const ActionIcon = busy ? Loader2 : ACTION_ICON[action];
+  const hint = errorActionHint(error, action);
   const exactCode = error.facts.find((fact) => fact.kind === "provider" && fact.code)?.code;
 
   return (
@@ -137,6 +144,7 @@ export function BookingErrorCell({
       <p className="line-clamp-2 text-[11px] leading-snug text-muted" title={error.summary}>
         {error.summary}
       </p>
+      {hint ? <p className="text-[11px] font-medium leading-snug text-emerald-700">{hint}</p> : null}
       {onAction ? (
         <div className="flex items-center gap-1">
           <Button
@@ -146,12 +154,14 @@ export function BookingErrorCell({
             className={cn(
               "h-6 gap-1 px-2 text-[11px]",
               action === "force" && "bg-red-600 hover:bg-red-700",
-              action === "parcel" && "bg-amber-600 hover:bg-amber-700"
+              action === "parcel" && "bg-amber-600 hover:bg-amber-700",
+              action === "retry" && "bg-emerald-600 hover:bg-emerald-700"
             )}
+            disabled={busy}
             onClick={() => onAction(action)}
           >
-            <ActionIcon className="size-3" aria-hidden />
-            {ACTION_LABEL[action]}
+            <ActionIcon className={cn("size-3", busy && "animate-spin")} aria-hidden />
+            {busy && action === "retry" ? "Booking…" : ACTION_LABEL[action]}
           </Button>
           <Button
             type="button"
@@ -175,6 +185,7 @@ export function BookingErrorDialog({
   finalStatus,
   confirmForce = false,
   forcing = false,
+  retrying = false,
   onOpenChange,
   onAction,
   onForce,
@@ -186,6 +197,7 @@ export function BookingErrorDialog({
   forcing?: boolean;
   onOpenChange: (open: boolean) => void;
   onAction: (action: Exclude<ErrorQuickAction, "force" | "open">) => void;
+  retrying?: boolean;
   onForce: () => void;
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
@@ -283,24 +295,35 @@ export function BookingErrorDialog({
                 Set parcel
               </Button>
             ) : null}
-            {error && action !== "open" && action !== "parcel" ? (
-              unknown ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="bg-red-600 hover:bg-red-700"
-                  disabled={!acknowledged || forcing}
-                  onClick={onForce}
-                >
-                  {forcing ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
-                  {forcing ? "Force booking…" : "Force book"}
-                </Button>
-              ) : (
-                <Button type="button" size="sm" onClick={() => onAction("review")}>
-                  <RotateCcw className="size-4" />
-                  Fix &amp; book
-                </Button>
-              )
+            {error && (action === "review" || error.facts.some((fact) => fact.kind === "address")) ? (
+              <Button type="button" variant="secondary" size="sm" onClick={() => onAction("review")}>
+                <MapPin className="size-4" />
+                Fix address
+              </Button>
+            ) : null}
+            {error && action === "retry" ? (
+              <Button
+                type="button"
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700"
+                disabled={retrying}
+                onClick={() => onAction("retry")}
+              >
+                {retrying ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+                {retrying ? "Booking…" : "Retry booking"}
+              </Button>
+            ) : null}
+            {error && unknown ? (
+              <Button
+                type="button"
+                size="sm"
+                className="bg-red-600 hover:bg-red-700"
+                disabled={!acknowledged || forcing}
+                onClick={onForce}
+              >
+                {forcing ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}
+                {forcing ? "Force booking…" : "Force book"}
+              </Button>
             ) : null}
           </div>
         </DialogFooter>

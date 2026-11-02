@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectErrorFacts,
+  errorActionHint,
   errorQuickAction,
   finalErrorFromFacts,
   isUnknownBookingError,
@@ -112,6 +113,46 @@ describe("order error status", () => {
   it("offers force book only for an unknown booking outcome", () => {
     const error = resolveDisplayError({ shipment: { status: "FAILED", last_error_code: "CEPT_UNKNOWN", length_cm: 1, width_cm: 1, height_cm: 1, weight_grams: 1 } });
     expect(error && errorQuickAction(error, true)).toBe("force");
-    expect(error && errorQuickAction(error, false)).toBe("review");
+  });
+
+  const fullParcel = { length_cm: 15, width_cm: 10, height_cm: 5, weight_grams: 2100 };
+
+  it("retries at once when the parcel was fixed after a parcel failure", () => {
+    const error = resolveDisplayError({
+      shipment: {
+        status: "FAILED",
+        last_error_code: "VALIDATION_ERROR",
+        last_error: "Parcel length, breadth and height are required and must be within India Post limits.",
+        ...fullParcel,
+      },
+    });
+    expect(error && errorQuickAction(error, false)).toBe("retry");
+    expect(error && errorActionHint(error, "retry")).toMatch(/Parcel updated/);
+  });
+
+  it("asks for the parcel while it is still incomplete", () => {
+    const error = resolveDisplayError({
+      shipment: {
+        status: "FAILED",
+        last_error_code: "VALIDATION_ERROR",
+        last_error: "Parcel length, breadth and height are required and must be within India Post limits.",
+        length_cm: 0,
+        width_cm: 0,
+        height_cm: 0,
+        weight_grams: 2100,
+      },
+    });
+    expect(error && errorQuickAction(error, false)).toBe("parcel");
+  });
+
+  it("sends address failures to the address check and temporary ones to retry", () => {
+    const address = resolveDisplayError({
+      shipment: { status: "FAILED", last_error_code: "INVALID_PINCODE", last_error: "Receiver PIN not serviceable.", ...fullParcel },
+    });
+    expect(address && errorQuickAction(address, false)).toBe("review");
+    const transient = resolveDisplayError({
+      shipment: { status: "FAILED", last_error_code: "VALIDATION_ERROR", last_error: "Unable to fetch India Post offices. Please try again.", ...fullParcel },
+    });
+    expect(transient && errorQuickAction(transient, false)).toBe("retry");
   });
 });
