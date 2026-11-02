@@ -17,7 +17,7 @@ export function PageHeader({
   actionsClassName?: string;
 }) {
   return (
-    <div className={cn("flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3", className)}>
+    <div className={cn("flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4 sm:gap-y-2", className)}>
       <div className="flex min-w-0 items-center gap-3">
         {icon}
         <div className="min-w-0">
@@ -28,7 +28,7 @@ export function PageHeader({
         </div>
       </div>
       {actions ? (
-        <div className={cn("flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:flex-nowrap", actionsClassName)}>
+        <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1.5 sm:ml-auto sm:justify-end", actionsClassName)}>
           {actions}
         </div>
       ) : null}

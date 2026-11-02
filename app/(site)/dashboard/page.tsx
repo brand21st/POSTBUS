@@ -220,23 +220,23 @@ export default function DashboardPage() {
         </CardHeader>
       </Card>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-tour="kpis">
+      <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3" data-tour="kpis">
         {KPI_DEFS.map((def) => {
           const value = kpiValue(kpis.data, def.key, def.fallback);
           const change = kpiChange(kpis.data, def.key);
           return (
-            <Card key={def.key} className="min-h-[9.5rem]">
-              <CardHeader>
-                <CardDescription>{def.label}</CardDescription>
-                <CardTitle className="min-h-9 text-3xl tabular-nums">
+            <Card key={def.key} className="sm:min-h-[9.5rem]">
+              <CardHeader className="p-4 sm:p-6">
+                <CardDescription className="truncate text-xs sm:text-sm">{def.label}</CardDescription>
+                <CardTitle className="min-h-8 text-2xl tabular-nums sm:min-h-9 sm:text-3xl">
                   {kpis.isLoading ? "…" : kpis.isError ? "—" : formatNumber(value)}
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-4 pb-4 sm:px-6 sm:pb-6">
                 {change === null ? (
-                  <p className="min-h-5 text-sm text-muted">No comparison for this window</p>
+                  <p className="min-h-5 text-xs text-muted sm:text-sm">No comparison for this window</p>
                 ) : (
-                  <p className="flex items-center gap-1 text-sm text-muted">
+                  <p className="flex flex-wrap items-center gap-1 text-xs text-muted sm:text-sm">
                     {change >= 0 ? (
                       <ArrowUpRight className="size-4 text-success" />
                     ) : (
@@ -261,11 +261,11 @@ export default function DashboardPage() {
             description={pipeline.error instanceof Error ? pipeline.error.message : "Try again shortly."}
           />
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {(pipeline.isLoading ? Array.from({ length: 4 }, () => null) : stages).map((stage, index) => (
               <Card key={stage?.status ?? stage?.key ?? index}>
-                <CardHeader>
-                  <CardDescription>
+                <CardHeader className="p-4 sm:p-5">
+                  <CardDescription className="truncate">
                     {stage ? stage.label ?? stage.status ?? stage.key ?? "Stage" : "Loading"}
                   </CardDescription>
                   <CardTitle className="text-2xl">
@@ -279,7 +279,7 @@ export default function DashboardPage() {
                 icon={Package}
                 title="No pipeline data"
                 description="Orders will appear here as they move through shipping."
-                className="sm:col-span-2 lg:col-span-4"
+                className="col-span-2 lg:col-span-4"
               />
             ) : null}
           </div>

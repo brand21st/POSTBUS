@@ -24,6 +24,32 @@ import {
   shouldRedirectToOnboardingFromMe,
 } from "@/lib/dashboard/shell-gate";
 
+const SIDEBAR_COLLAPSED_KEY = "postbus.sidebar.collapsed";
+const SIDEBAR_PREF_EVENT = "postbus:sidebar-pref";
+const TABLET_QUERY = "(min-width: 768px) and (max-width: 1023px)";
+const SMALL_LAPTOP_QUERY = "(min-width: 1024px) and (max-width: 1279px)";
+
+function subscribeSidebarLayout(onChange: () => void) {
+  const queries = [TABLET_QUERY, SMALL_LAPTOP_QUERY].map((query) => window.matchMedia(query));
+  queries.forEach((query) => query.addEventListener("change", onChange));
+  window.addEventListener("storage", onChange);
+  window.addEventListener(SIDEBAR_PREF_EVENT, onChange);
+  return () => {
+    queries.forEach((query) => query.removeEventListener("change", onChange));
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(SIDEBAR_PREF_EVENT, onChange);
+  };
+}
+
+function readSidebarPref(): "1" | "0" | null {
+  try {
+    const saved = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
+    return saved === "1" || saved === "0" ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
 function subscribeNever() {
   return () => {};
 }
@@ -63,17 +89,24 @@ export function DashboardShell({
   const pathname = usePathname();
   const me = useMe();
   const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
-  const [collapsed, setCollapsed] = useState(false);
-  const [tablet, setTablet] = useState(false);
+  // No saved choice: small laptops (1024-1279px) start on the icon rail, wider screens expanded.
+  const tablet = useSyncExternalStore(subscribeSidebarLayout, () => window.matchMedia(TABLET_QUERY).matches, () => false);
+  const smallLaptop = useSyncExternalStore(
+    subscribeSidebarLayout,
+    () => window.matchMedia(SMALL_LAPTOP_QUERY).matches,
+    () => false
+  );
+  const savedCollapsed = useSyncExternalStore(subscribeSidebarLayout, readSidebarPref, () => null);
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  useEffect(() => {
-    const media = window.matchMedia("(min-width: 768px) and (max-width: 1023px)");
-    const sync = () => setTablet(media.matches);
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, []);
+  const collapsed = tablet || (savedCollapsed === null ? smallLaptop : savedCollapsed === "1");
+  const setCollapsed = (next: boolean) => {
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
+    } catch {
+      // preference simply won't persist
+    }
+    window.dispatchEvent(new Event(SIDEBAR_PREF_EVENT));
+  };
 
   const [navPath, setNavPath] = useState(pathname);
   if (navPath !== pathname) {
@@ -151,13 +184,13 @@ export function DashboardShell({
     <div className="flex w-full min-h-screen min-w-0 bg-surface">
       <Sidebar
         me={me.data}
-        collapsed={collapsed || tablet}
-        onCollapsedChange={setCollapsed}
+        collapsed={collapsed}
+        onCollapsedChange={tablet ? undefined : setCollapsed}
         className="hidden md:flex"
       />
       <div className="flex min-w-0 flex-1 flex-col">
+        {trialCopy ? <TrialStatusBar {...trialCopy} /> : announcement}
         <div className="sticky top-0 z-30 bg-background">
-          {trialCopy ? <TrialStatusBar {...trialCopy} /> : announcement}
           <Topbar me={me.data} onMenuClick={() => setMobileOpen(true)} />
         </div>
         {me.data && !confirmedLoss ? <NewOrderAlerts /> : null}
@@ -167,14 +200,14 @@ export function DashboardShell({
           className={
             pathname === "/dashboard/orders" || pathname.startsWith("/dashboard/support")
               ? "min-w-0 flex-1 px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:py-4 xl:px-6"
-              : "min-w-0 flex-1 px-4 py-6 lg:px-8 lg:py-8"
+              : "min-w-0 flex-1 px-4 py-5 sm:px-5 lg:px-6 lg:py-6 xl:px-8"
           }
         >
           <div
             className={
               pathname === "/dashboard/orders" || pathname.startsWith("/dashboard/support")
                 ? "mx-auto w-full min-w-0 max-w-full"
-                : "mx-auto w-full min-w-0 max-w-[1280px]"
+                : "mx-auto w-full min-w-0 max-w-[1400px]"
             }
           >
             {me.data && !confirmedLoss ? <IndiaPostOnboardingHost /> : null}

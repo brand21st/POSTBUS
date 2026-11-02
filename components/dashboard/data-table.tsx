@@ -616,11 +616,13 @@ export function DataTable<TData extends Record<string, unknown>>({
                   return (
                     <tr
                       key={row.id}
+                      aria-selected={selectedIds ? selectedIds.includes(row.id) : undefined}
                       className={cn(
                         "border-b border-border last:border-0 transition-colors duration-150",
                         getRowClassName?.(row.original) ?? "hover:bg-surface-soft/60",
                         onRowClick && "cursor-pointer",
-                        selectedIds?.includes(row.id) && "ring-1 ring-inset ring-brand/20"
+                        selectedIds?.includes(row.id) &&
+                          "bg-rose-50/70 hover:bg-rose-50 [&>td:first-child]:shadow-[inset_3px_0_0_var(--brand)] dark:bg-brand/10 dark:hover:bg-brand/15"
                       )}
                       onClick={(event) => {
                         const target = event.target;

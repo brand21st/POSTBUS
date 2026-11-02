@@ -479,6 +479,43 @@ body {
   animation: order-verified-copy 0.45s 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Navigation drawer (Radix Dialog sets data-state on open/close). */
+@keyframes drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes drawer-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
+@keyframes drawer-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes drawer-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.drawer-panel[data-state="open"] {
+  animation: drawer-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.drawer-panel[data-state="closed"] {
+  animation: drawer-out 0.16s ease-in;
+}
+
+.drawer-overlay[data-state="open"] {
+  animation: drawer-fade-in 0.2s ease-out;
+}
+
+.drawer-overlay[data-state="closed"] {
+  animation: drawer-fade-out 0.16s ease-in;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

@@ -142,7 +142,7 @@ export function Topbar({
   }
 
   return (
-    <header className="flex h-16 items-center gap-3 border-b border-border bg-background px-4 lg:px-6">
+    <header className="flex h-14 items-center gap-2 border-b border-border bg-background px-3 sm:px-4 lg:px-5">
       <Button
         type="button"
         variant="ghost"
@@ -150,17 +150,30 @@ export function Topbar({
         className="md:hidden"
         onClick={onMenuClick}
         aria-label="Open navigation"
+        data-mobile-nav-trigger
       >
-        <Menu className="size-4" />
+        <Menu className="size-5" />
       </Button>
+      <p className="min-w-0 flex-1 truncate text-sm font-semibold capitalize text-ink md:hidden">
+        {(() => {
+          const last = crumbs[crumbs.length - 1];
+          if (!last) return null;
+          if (!last.resourceId) return last.label;
+          if (last.href.startsWith("/dashboard/orders/")) return orderCrumbLabel ?? "Order";
+          if (last.href.startsWith("/dashboard/shipments/")) return shipmentCrumbLabel ?? "Shipment";
+          if (last.href.startsWith("/dashboard/invoices/")) return invoiceCrumbLabel ?? "Invoice";
+          return templateCrumbLabel ?? "Template";
+        })()}
+      </p>
 
-      <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-1 text-sm md:flex">
+      <nav aria-label="Breadcrumb" className="hidden min-w-0 flex-1 items-center gap-1 text-sm md:flex">
         {crumbs.map((crumb, index) => (
           <span key={crumb.href} className="flex min-w-0 items-center gap-1">
             {index > 0 ? <ChevronRight className="size-3.5 text-muted" /> : null}
             <Link
               href={crumb.href}
               prefetch={false}
+              aria-current={index === crumbs.length - 1 ? "page" : undefined}
               className={cn(
                 "truncate hover:text-brand",
                 crumb.resourceId ? "font-medium normal-case" : "capitalize",
@@ -181,7 +194,7 @@ export function Topbar({
         ))}
       </nav>
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-1.5">
         {hideWorkspaceBookingToggle(indiaPost.data) ? null : (
         <ServiceToggle
           label="India Post booking service"
@@ -197,12 +210,12 @@ export function Topbar({
           <Button
             type="button"
             variant="secondary"
-            className="hidden h-10 w-72 justify-start font-normal text-muted md:inline-flex"
+            className="hidden h-9 w-48 justify-start font-normal text-muted md:inline-flex lg:w-60 xl:w-72"
             onClick={() => setSearchOpen(true)}
           >
             <Search className="size-4" />
             <span className="truncate">Search orders, AWB…</span>
-            <span className="ml-auto text-xs text-muted">⌘K</span>
+            <kbd className="ml-auto hidden font-sans text-xs text-muted lg:inline">⌘K</kbd>
           </Button>
           <Button
             type="button"
@@ -257,7 +270,7 @@ export function Topbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <span className="hidden max-w-[180px] truncate rounded-lg border border-border bg-surface-soft px-3 py-1.5 text-sm font-medium text-ink sm:inline-block">
+        <span className="hidden max-w-[180px] truncate rounded-lg border border-border bg-surface-soft px-3 py-1.5 text-sm font-medium text-ink xl:inline-block">
           {me?.organization?.name ?? "Workspace"}
         </span>
 

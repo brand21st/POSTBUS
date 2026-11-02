@@ -1171,7 +1171,7 @@ export default function OrdersPage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search order number, customer, phone…"
-            className="h-8 w-full min-w-0 shadow-none lg:max-w-xs"
+            className="h-8 w-full min-w-0 shadow-none lg:max-w-[15rem] xl:max-w-xs"
           />
           <div className="hidden min-w-0 flex-1 grid-cols-3 gap-2 lg:grid">
             {filterSelects}

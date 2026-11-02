@@ -167,7 +167,7 @@ function OrganizationSection() {
           Name, address, phone, and logo printed as the sender on India Post shipping labels.
         </CardDescription>
       </CardHeader>
-      <CardContent className="grid max-w-xl gap-4">
+      <CardContent className="grid max-w-xl grid-cols-[minmax(0,1fr)] gap-4">
         <Field label="Name">
           <Input disabled={!canManage} value={name} onChange={(event) => setName(event.target.value)} />
         </Field>
