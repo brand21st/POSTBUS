@@ -367,7 +367,7 @@ export async function assessPrebookingAddress(
           offices: offices.offices,
         });
       } else if (offices.status === "VERIFIED") {
-        const aligned = cityAlignedToPin(working.city, lookup.offices);
+        const aligned = cityAlignedToPin(collapse(working.city), lookup.offices);
         if (aligned) {
           working = { ...working, city: aligned.city, state: aligned.state || working.state };
         }
@@ -508,7 +508,6 @@ export async function gateAddressForBooking(
     address: input.address,
     searchPostOffices: input.searchPostOffices,
     allowAi: input.allowAi ?? true,
-    forceAi: input.forceAi,
   });
   const status = String(address.address_validation_status ?? "").toUpperCase();
   if (status === "VALIDATION_UNAVAILABLE") {
