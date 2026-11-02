@@ -80,7 +80,8 @@ function seedClient() {
 
 describe("Admin system settings", () => {
   it("renders platform logs with a null organization_id instead of crashing", () => {
-    expect(() => platformLog.organization_id!.slice(0, 8)).toThrow();
+    const organizationId: string | null = platformLog.organization_id;
+    expect(() => organizationId!.slice(0, 8)).toThrow();
     const html = renderToStaticMarkup(
       <QueryClientProvider client={seedClient()}>
         <AdminSettingsPage />
