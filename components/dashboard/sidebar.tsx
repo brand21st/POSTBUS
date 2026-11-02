@@ -148,7 +148,7 @@ export function Sidebar({
               : "text-muted hover:bg-surface-soft hover:text-foreground"
           )}
         >
-          <tutorialsNav.icon className="size-4 shrink-0" />
+          <tutorialsNav.icon className="size-4 shrink-0 text-[#FF0000]" />
           <span className={cn(collapsed && "sr-only")}>{tutorialsNav.label}</span>
         </Link>
         <Link
