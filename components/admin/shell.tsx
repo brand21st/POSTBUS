@@ -1,7 +1,9 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Menu, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { AdminSidebar } from "@/components/admin/sidebar";
 import { AdminAccountMenu } from "@/components/admin/account-menu";
@@ -12,6 +14,7 @@ import { useEffect } from "react";
 export function AdminShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const [navOpen, setNavOpen] = useState(false);
   const query = useQuery({
     queryKey: ["admin", "session"],
     queryFn: () => api<{ totals?: Record<string, number> }>("/api/admin/overview"),
@@ -76,12 +79,43 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <AdminSidebar />
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 items-center justify-between border-b border-border bg-card px-4 md:hidden">
-          <span className="font-semibold text-ink">PostBus Admin</span>
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-card px-3 md:hidden">
+          <button
+            type="button"
+            onClick={() => setNavOpen(true)}
+            aria-label="Open navigation"
+            data-admin-nav-trigger
+            className="flex size-10 items-center justify-center rounded-lg text-foreground hover:bg-surface-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          >
+            <Menu className="size-5" />
+          </button>
+          <span className="min-w-0 flex-1 truncate font-semibold text-ink">PostBus Admin</span>
           <AdminAccountMenu compact />
         </header>
-        <main className="flex-1 px-4 py-6 lg:px-8 lg:py-8">{children}</main>
+        <main className="min-w-0 flex-1 px-4 py-5 sm:px-5 lg:px-6 lg:py-6 xl:px-8">{children}</main>
       </div>
+      <DialogPrimitive.Root open={navOpen} onOpenChange={setNavOpen}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="drawer-overlay fixed inset-0 z-50 bg-black/40 md:hidden" />
+          <DialogPrimitive.Content
+            aria-describedby={undefined}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              document.querySelector<HTMLElement>("[data-admin-nav-trigger]")?.focus();
+            }}
+            className="drawer-panel fixed inset-y-0 left-0 z-50 w-[260px] max-w-[85vw] shadow-[0_12px_40px_rgb(9_9_11/0.18)] focus:outline-none md:hidden"
+          >
+            <DialogPrimitive.Title className="sr-only">Admin navigation</DialogPrimitive.Title>
+            <DialogPrimitive.Close
+              aria-label="Close menu"
+              className="absolute right-2 top-2.5 z-10 flex size-10 items-center justify-center rounded-lg text-muted hover:bg-surface-soft hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              <X className="size-5" />
+            </DialogPrimitive.Close>
+            <AdminSidebar onNavigate={() => setNavOpen(false)} className="w-full" />
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </div>
   );
 }

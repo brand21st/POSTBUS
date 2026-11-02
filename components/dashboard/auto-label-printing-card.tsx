@@ -165,6 +165,7 @@ export function AutoLabelPrintingCard({ enabled, canManage }: { enabled: boolean
             <p className="text-xs text-muted">Also print the merchant packing label after the official India Post PDF.</p>
           </div>
           <Switch
+            aria-label="Print packing label"
             checked={autoPrintMerchant}
             disabled={!canManage || saveStation.isPending}
             onCheckedChange={(checked) => saveStation.mutate({ autoPrintMerchant: checked })}

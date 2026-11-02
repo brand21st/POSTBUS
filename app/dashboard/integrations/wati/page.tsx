@@ -228,7 +228,7 @@ export default function WatiIntegrationPage() {
               : ""}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid max-w-xl gap-4">
+        <CardContent className="grid max-w-xl grid-cols-[minmax(0,1fr)] gap-4">
           <div className="space-y-2">
             <Label htmlFor="wati-client-id">Client ID</Label>
             <Input
@@ -329,7 +329,7 @@ export default function WatiIntegrationPage() {
             and tracking_url (https://www.postbus.in/track with the article ID).
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid max-w-xl gap-4">
+        <CardContent className="grid max-w-xl grid-cols-[minmax(0,1fr)] gap-4">
           {TEMPLATE_SLOTS.map((slot) => (
             <TemplateSelect
               key={slot.key}
@@ -375,7 +375,7 @@ export default function WatiIntegrationPage() {
               {webhookRegistered && !lastWebhookError ? " Subscription is registered." : ""}
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid max-w-xl gap-4">
+          <CardContent className="grid max-w-xl grid-cols-[minmax(0,1fr)] gap-4">
             <div className="space-y-2">
               <Label htmlFor="wati-webhook-url">Webhook URL</Label>
               <div className="flex gap-2">

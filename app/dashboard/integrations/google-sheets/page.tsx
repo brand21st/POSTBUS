@@ -76,7 +76,7 @@ export default function GoogleSheetsIntegrationPage() {
               In the Apps Script editor open Project Settings → Script properties. Add{" "}
               <code className="rounded bg-surface-soft px-1">POSTBUS_API_KEY</code> (the secret shown once) and optional{" "}
               <code className="rounded bg-surface-soft px-1">POSTBUS_API_BASE</code>{" "}
-              <code className="rounded bg-surface-soft px-1">https://www.postbus.in/api/merchant/v1</code>.
+              <code className="break-all rounded bg-surface-soft px-1">https://www.postbus.in/api/merchant/v1</code>.
             </li>
             <li>Paste the script below, save, reload the sheet. Use the PostBus menu.</li>
             <li>
@@ -146,15 +146,15 @@ export default function GoogleSheetsIntegrationPage() {
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-3">
-          <div>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
             <CardTitle className="flex items-center gap-2">
               <Sheet className="size-5 text-brand" />
               Apps Script
             </CardTitle>
             <CardDescription>Paste into a new script file. Never put the API key in a cell or ChatGPT.</CardDescription>
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 flex-wrap gap-2">
             <Button size="sm" variant="secondary" onClick={() => copyText(GOOGLE_APPS_SCRIPT_SOURCE, "Apps Script")}>
               <Copy className="size-4" />
               Copy script

@@ -685,7 +685,7 @@ export default function NewOrderPage() {
         <CardHeader className="p-3">
           <CardTitle>Order</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
+        <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-2.5 p-3 pt-0 md:grid-cols-2">
           <Field label="Order number" hint="A unique PB number is assigned when you book.">
             <div className="relative">
               <Input
@@ -866,7 +866,7 @@ export default function NewOrderPage() {
           </div>
           <ChevronDown className="size-4 shrink-0 text-muted transition-transform group-open:rotate-180" />
         </summary>
-        <div className="grid gap-2.5 px-3 pb-3 pt-0 md:grid-cols-3">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-2.5 px-3 pb-3 pt-0 md:grid-cols-3">
           <Field label="Name" hint="Optional." error={form.formState.errors.customerName?.message}>
             <Input className="h-8" autoComplete="name" {...form.register("customerName")} />
           </Field>
@@ -898,7 +898,7 @@ export default function NewOrderPage() {
         <CardHeader className="p-3">
           <CardTitle>Shipping address</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
+        <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-2.5 p-3 pt-0 md:grid-cols-2">
           <AddressFields
             prefix="shippingAddress"
             cleanNotice={shippingCleanNotice}
@@ -925,7 +925,7 @@ export default function NewOrderPage() {
           <CardHeader className="p-3">
             <CardTitle>Billing address</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-2.5 p-3 pt-0 md:grid-cols-2">
+          <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-2.5 p-3 pt-0 md:grid-cols-2">
             <AddressFields
               prefix="billingAddress"
               form={{
@@ -1222,7 +1222,7 @@ export default function NewOrderPage() {
                 form.setValue("shipment.serviceCode", pack.serviceCode, { shouldDirty: true });
               }}
             />
-            <div className="grid gap-2.5 md:grid-cols-5">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-2.5 md:grid-cols-5">
               <Field label="Weight (g)" error={form.formState.errors.shipment?.weightGrams?.message}>
                 <Input className="h-8" type="number" min={1} {...form.register("shipment.weightGrams")} />
               </Field>

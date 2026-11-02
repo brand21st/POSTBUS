@@ -233,6 +233,7 @@ export default function AutomationPage() {
                     <CardDescription className="mt-1">{item.description}</CardDescription>
                   </div>
                   <Switch
+                    aria-label={item.title}
                     checked={checked}
                     disabled={!canManage || mutation.isPending}
                     onCheckedChange={(value) => {
@@ -286,6 +287,13 @@ export default function AutomationPage() {
                         <CardDescription className="mt-1">{item.description}</CardDescription>
                       </div>
                       <Switch
+                        aria-label={
+                          showWatiToggles
+                            ? item.watiTitle
+                            : merchantVachatActive
+                              ? item.merchantTitle
+                              : item.vachatTitle
+                        }
                         checked={checked}
                         disabled={!canManage || mutation.isPending}
                         onCheckedChange={(value) => {
