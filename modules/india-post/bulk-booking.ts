@@ -26,6 +26,7 @@ import { isStrictParcelDimensionsOrg } from "@/modules/shopify/strict-parcel-dim
 import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import { shipmentMayBeRequeuedForBooking } from "@/modules/india-post/booking-retry-eligibility";
 import { duplicateBarcodeBookingBlock, metadataWithFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
 import { indiaPostRequiresOtp } from "@/modules/india-post/spec";
 import { DEFAULT_INDIA_POST_SERVICE } from "@/types/domain";
@@ -472,12 +473,41 @@ async function enqueueQueuedShipmentsAsBulkOrSingle(
   shipmentIds: string[]
 ) {
   if (!shipmentIds.length) return [];
+  // Requeue only shipments that cannot already be at India Post, and plan batches for those alone.
+  // A row with submit intent, a booking, or an unproven barcode keeps its status and error as evidence.
+  const { data: currentRows } = await supabase
+    .from("shipments")
+    .select("id, status, booked_at, barcode, tracking_number, provider_ref, last_error_code, metadata")
+    .eq("organization_id", ctx.organizationId)
+    .in("id", shipmentIds);
+  const safe = (currentRows ?? []).filter((row) => shipmentMayBeRequeuedForBooking(row));
+  const requeue = (ids: string[], patch: Record<string, unknown>) =>
+    ids.length
+      ? supabase
+          .from("shipments")
+          .update({ status: "QUEUED", last_error: null, ...patch })
+          .eq("organization_id", ctx.organizationId)
+          .in("id", ids)
+          .is("booked_at", null)
+          .is("tracking_number", null)
+          .is("provider_ref", null)
+          .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED"])
+          .filter("metadata->>ceptSubmitIntentAt", "is", null)
+          .select("id")
+      : Promise.resolve({ data: [] as Array<{ id: string }> });
+  const [{ data: freshRows }, { data: reusedRows }] = await Promise.all([
+    requeue(safe.filter((row) => !row.barcode).map((row) => String(row.id)), { last_error_code: null }),
+    // A reused barcode keeps its error code: the booking run reads it before reusing the barcode.
+    requeue(safe.filter((row) => row.barcode).map((row) => String(row.id)), {}),
+  ]);
+  const requeuedIds = [...(freshRows ?? []), ...(reusedRows ?? [])].map((row) => String(row.id));
+  if (!requeuedIds.length) return [];
   const store = await loadStoreContext(supabase, ctx.organizationId);
   const { data: memberRows } = await supabase
     .from("shipments")
     .select("id, organization_id, barcode, service_code, status, created_at, length_cm, width_cm, height_cm, weight_grams")
     .eq("organization_id", ctx.organizationId)
-    .in("id", shipmentIds);
+    .in("id", requeuedIds);
   const { data: contracts } = await supabase
     .from("india_post_contracts")
     .select("service_code, contract_id")
@@ -489,19 +519,14 @@ async function enqueueQueuedShipmentsAsBulkOrSingle(
   const { data: activeMembers } = await supabase
     .from("india_post_bulk_batch_articles")
     .select("shipment_id")
-    .in("shipment_id", shipmentIds)
+    .in("shipment_id", requeuedIds)
     .in("article_result", ["PENDING", "SUBMITTED", "SUCCEEDED", "RECOVERY_REQUIRED"]);
   const plan = memberRows?.length
     ? planIndiaPostBulkWork(
         candidatesFromQueuedShipments(memberRows, store.connection ?? {}, contractByService),
         { activeShipmentIds: new Set((activeMembers ?? []).map((row) => String(row.shipment_id))) }
       )
-    : { batches: [], leftoverShipmentIds: shipmentIds };
-  await supabase
-    .from("shipments")
-    .update({ status: "QUEUED", last_error: null, last_error_code: null })
-    .eq("organization_id", ctx.organizationId)
-    .in("id", shipmentIds);
+    : { batches: [], leftoverShipmentIds: requeuedIds };
   return enqueueIndiaPostBulkPlan(supabase, ctx, plan);
 }
 

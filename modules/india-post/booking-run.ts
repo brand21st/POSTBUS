@@ -7,7 +7,7 @@ import { applyWorkspaceParcelDefaults, parcelDefaultsFromConnection } from "@/mo
 import { isStrictParcelDimensionsOrg } from "@/modules/shopify/strict-parcel-dimensions";
 import { indiaPostBookingTransport } from "@/modules/india-post/booking-batch";
 import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-payload";
-import { splitIndiaPostBookingResult, type IndiaPostBookingResponse } from "@/modules/india-post/booking-apply";
+import { classifyMultiArticleOutcome, splitIndiaPostBookingResult, type IndiaPostBookingResponse } from "@/modules/india-post/booking-apply";
 import { indiaPostBookingServiceCode, indiaPostMobile } from "@/modules/india-post/endpoints";
 import type { StoredShippingFields } from "@/modules/shopify/shipping-contact";
 import {
@@ -33,7 +33,7 @@ import { commercePendingBookingBlocked } from "@/lib/dashboard/records";
 import { confirmHistoryForBookedShipment } from "@/modules/autopack/history";
 import { withIndiaPostBookingLock } from "@/modules/india-post/booking-lock";
 import { classifyProviderError, isDatabaseInfraError } from "@/lib/jobs/retry";
-import { tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
+import { markCeptNotCalled, tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
 import {
   evaluateOrderBookingEligibility,
   existingBarcodeMayBeSubmitted,
@@ -42,6 +42,7 @@ import {
 } from "@/modules/india-post/booking-retry-eligibility";
 import { trustedFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
 import {
+  metadataConsumingCeptForceResubmit,
   metadataWithCeptSubmitIntent,
   readCeptForceResubmitAt,
   readCeptSubmitIntentAt,
@@ -49,6 +50,13 @@ import {
 import { logInfo, logError } from "@/lib/logger";
 
 type Admin = SupabaseClient;
+
+/** This job lost the claim to another job; it posted nothing and must not write any status. */
+export const BOOKING_CLAIM_LOST = "BOOKING_CLAIM_LOST";
+
+export function isBookingClaimLost(error: unknown) {
+  return (error as { code?: string } | null)?.code === BOOKING_CLAIM_LOST;
+}
 
 function isRetryableCeptUncertainty(error: unknown) {
   const anyError = error as { name?: string; code?: string; message?: string };
@@ -194,6 +202,42 @@ export async function persistBookedShipment(
   return true;
 }
 
+/** The response does not prove the article either way; track it, never POST it again. */
+async function markShipmentRecoveryRequired(supabase: Admin, organizationId: string, shipmentId: string, reason: string) {
+  await supabase
+    .from("shipments")
+    .update({ status: "RECOVERY_REQUIRED", last_error: reason, last_error_code: "CEPT_UNKNOWN" })
+    .eq("id", shipmentId)
+    .eq("organization_id", organizationId)
+    .is("booked_at", null);
+}
+
+/**
+ * India Post accepted the article. If PostBus cannot record it (the row moved to a status the
+ * save does not cover, e.g. CANCELLED), the booking must not count as saved and must not be
+ * lost: it is flagged on the row for support and reported as needing recovery.
+ */
+async function persistOrFlagBooked(supabase: Admin, input: Parameters<typeof persistBookedShipment>[1]) {
+  if (await persistBookedShipment(supabase, input)) return true;
+  const row = await reloadShipmentForSubmit(supabase, input.shipmentId, input.organizationId);
+  if (row?.booked_at) return true;
+  logError("booking.booked_not_saved", {
+    organizationId: input.organizationId,
+    shipmentId: input.shipmentId,
+    barcodeRef: barcodeLogRef(input.barcode),
+  });
+  await supabase
+    .from("shipments")
+    .update({
+      last_error: `India Post accepted article ${input.articleId || input.barcode}, but PostBus could not save the booking. Contact support before booking it again.`,
+      last_error_code: "BOOKED_NOT_SAVED",
+    })
+    .eq("id", input.shipmentId)
+    .eq("organization_id", input.organizationId)
+    .is("booked_at", null);
+  return false;
+}
+
 async function reloadShipmentForSubmit(supabase: Admin, shipmentId: string, organizationId: string) {
   try {
     const byId = supabase
@@ -234,9 +278,16 @@ export function assertShipmentsClassified(input: {
   requestedIds: string[];
   bookedIds: string[];
   failedIds: string[];
+  recoveryIds?: string[];
+  skippedIds?: string[];
   preparedIds: string[];
 }) {
-  const done = new Set([...input.bookedIds, ...input.failedIds]);
+  const done = new Set([
+    ...input.bookedIds,
+    ...input.failedIds,
+    ...(input.recoveryIds ?? []),
+    ...(input.skippedIds ?? []),
+  ]);
   const unresolved = input.requestedIds.filter((id) => !done.has(id));
   if (!unresolved.length) return;
   const prepared = new Set(input.preparedIds);
@@ -254,13 +305,30 @@ export function assertShipmentsClassified(input: {
   });
 }
 
-export async function runIndiaPostBooking(
-  supabase: Admin,
-  input: {
-    organizationId: string;
-    shipmentIds: string[];
-    jobId?: string;
+type BookingRunInput = {
+  organizationId: string;
+  shipmentIds: string[];
+  jobId?: string;
+};
+
+/**
+ * Books the shipments with India Post. Any error thrown before the booking POST was sent is
+ * marked ceptNotCalled, so callers (the bulk worker) can tell "never sent" from "outcome unknown".
+ */
+export async function runIndiaPostBooking(supabase: Admin, input: BookingRunInput) {
+  const track = { submissionOpened: false };
+  try {
+    return await runIndiaPostBookingAttempt(supabase, input, track);
+  } catch (error) {
+    if (!track.submissionOpened) markCeptNotCalled(error);
+    throw error;
   }
+}
+
+async function runIndiaPostBookingAttempt(
+  supabase: Admin,
+  input: BookingRunInput,
+  track: { submissionOpened: boolean }
 ) {
   const { data: connection } = await supabase
     .from("india_post_connections")
@@ -475,6 +543,7 @@ export async function runIndiaPostBooking(
     provenFirstBarcode: boolean;
   }> = [];
   const reviewIds: string[] = [];
+  const claimLostIds: string[] = [];
 
   for (const shipment of pending) {
     const requestedService = (shipment.service_code as string) || DEFAULT_INDIA_POST_SERVICE;
@@ -658,6 +727,7 @@ export async function runIndiaPostBooking(
         jobId: input.jobId,
         barcodeRef: barcodeLogRef(barcode),
       });
+      claimLostIds.push(shipment.id);
       continue;
     }
     barcode = shipmentBarcode(claimed.barcode) || barcode;
@@ -731,6 +801,12 @@ export async function runIndiaPostBooking(
   }
 
   if (!prepared.length) {
+    if (claimLostIds.length && !reviewIds.length && !failedIds.length && !bookedIds.length) {
+      // Another job owns every shipment here. Reporting a failure would overwrite its BOOKING row.
+      throw Object.assign(new Error("Another booking job claimed this shipment first. Nothing was submitted."), {
+        code: BOOKING_CLAIM_LOST,
+      });
+    }
     if (reviewIds.length) {
       throw Object.assign(new Error("Booking needs review before it can be submitted. The article was not submitted again."), {
         code: "BOOKING_REVIEW_REQUIRED",
@@ -742,6 +818,7 @@ export async function runIndiaPostBooking(
         requestedIds: input.shipmentIds,
         bookedIds,
         failedIds,
+        skippedIds: claimLostIds,
         preparedIds: prepared.map((item) => item.shipment.id),
       });
       return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result: null };
@@ -827,40 +904,46 @@ export async function runIndiaPostBooking(
               shipmentIds: [item.shipment.id],
             });
           }
-          const nextMetadata = metadataWithCeptSubmitIntent(reloaded?.metadata ?? item.shipment.metadata, intentAt);
-          if (readCeptForceResubmitAt(reloaded?.metadata ?? item.shipment.metadata) && readCeptSubmitIntentAt(reloaded?.metadata ?? item.shipment.metadata)) {
-            item.shipment.metadata = nextMetadata;
-          } else {
-            const { data: intentSaved, error: intentError } = await supabase
-              .from("shipments")
-              .update({ metadata: nextMetadata })
-              .eq("id", item.shipment.id)
-              .eq("organization_id", input.organizationId)
-              .is("booked_at", null)
-              .filter("metadata->>ceptSubmitIntentAt", "is", null)
-              .select("id")
-              .maybeSingle();
-            if (intentError) {
-              throw Object.assign(new Error(intentError.message), { code: "PRE_POST_TRANSIENT", bookingPhase: "PRE_POST" });
-            }
-            if (!intentSaved) {
-              const blocked = reloaded ? await reloadShipmentForSubmit(supabase, item.shipment.id, input.organizationId) : null;
-              if (blocked?.booked_at || readCeptSubmitIntentAt(blocked?.metadata) || isAuthoritativeIndiaPostBooking(blocked ?? {})) {
-                throw Object.assign(new Error("Booking outcome could not be confirmed. The article was not submitted again."), {
-                  code: "CEPT_UNKNOWN",
-                  bookingPhase: "POST_SUBMIT",
-                  shipmentIds: [item.shipment.id],
-                });
-              }
-              throw Object.assign(new Error("Booking intent was not stored. The provider was not called."), {
-                code: "PRE_POST_TRANSIENT",
-                bookingPhase: "PRE_POST",
+          const currentMetadata = reloaded?.metadata ?? item.shipment.metadata;
+          const forceAt = readCeptForceResubmitAt(currentMetadata);
+          // A force permission is used up by this POST; see metadataConsumingCeptForceResubmit.
+          const nextMetadata = metadataConsumingCeptForceResubmit(
+            metadataWithCeptSubmitIntent(currentMetadata, intentAt),
+            intentAt
+          );
+          const claim = supabase
+            .from("shipments")
+            .update({ metadata: nextMetadata })
+            .eq("id", item.shipment.id)
+            .eq("organization_id", input.organizationId)
+            .is("booked_at", null);
+          const { data: intentSaved, error: intentError } = await (forceAt
+            ? claim.filter("metadata->>ceptForceResubmitAt", "eq", forceAt)
+            : claim.filter("metadata->>ceptSubmitIntentAt", "is", null)
+          )
+            .select("id")
+            .maybeSingle();
+          if (intentError) {
+            throw Object.assign(new Error(intentError.message), { code: "PRE_POST_TRANSIENT", bookingPhase: "PRE_POST" });
+          }
+          if (!intentSaved) {
+            const blocked = reloaded ? await reloadShipmentForSubmit(supabase, item.shipment.id, input.organizationId) : null;
+            if (blocked?.booked_at || readCeptSubmitIntentAt(blocked?.metadata) || isAuthoritativeIndiaPostBooking(blocked ?? {})) {
+              throw Object.assign(new Error("Booking outcome could not be confirmed. The article was not submitted again."), {
+                code: "CEPT_UNKNOWN",
+                bookingPhase: "POST_SUBMIT",
+                shipmentIds: [item.shipment.id],
               });
             }
-            item.shipment.metadata = nextMetadata;
+            throw Object.assign(new Error("Booking intent was not stored. The provider was not called."), {
+              code: "PRE_POST_TRANSIENT",
+              bookingPhase: "PRE_POST",
+            });
           }
+          item.shipment.metadata = nextMetadata;
         }
         submissionOpened = true;
+        track.submissionOpened = true;
         return timed(
           "india_post.book",
           {
@@ -907,9 +990,23 @@ export async function runIndiaPostBooking(
         shipmentId: prepared[0]?.shipment.id,
         barcodeRef: barcodeLogRef(prepared[0]?.barcode),
       });
+      // A request-level duplicate message proves only the articles it names. A single-article
+      // POST names its own article; in a larger POST, unnamed articles stay unproven.
+      const named = message.toUpperCase();
+      const duplicateRecoveryIds: string[] = [];
       for (const item of prepared) {
-        bookedIds.push(item.shipment.id);
-        await persistBookedShipment(supabase, {
+        const proven = prepared.length === 1 || named.includes(item.barcode.toUpperCase());
+        if (!proven) {
+          duplicateRecoveryIds.push(item.shipment.id);
+          await markShipmentRecoveryRequired(
+            supabase,
+            input.organizationId,
+            item.shipment.id,
+            "India Post reported a duplicate for this request without naming this article."
+          );
+          continue;
+        }
+        const saved = await persistOrFlagBooked(supabase, {
           organizationId: input.organizationId,
           shipmentId: item.shipment.id,
           orderId: item.shipment.order_id,
@@ -918,19 +1015,31 @@ export async function runIndiaPostBooking(
           persistDefaults: item.persistDefaults,
           payload: item.payload,
         });
+        (saved ? bookedIds : duplicateRecoveryIds).push(item.shipment.id);
       }
       logInfo("booking.cept_success", {
         organizationId: input.organizationId,
         duplicate: true,
         booked: bookedIds.length,
+        recovery: duplicateRecoveryIds.length,
       });
       assertShipmentsClassified({
         requestedIds: input.shipmentIds,
         bookedIds,
         failedIds,
+        recoveryIds: duplicateRecoveryIds,
+        skippedIds: claimLostIds,
         preparedIds: prepared.map((item) => item.shipment.id),
       });
-      return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result: null };
+      return {
+        booked: bookedIds.length,
+        failed: failedIds.length,
+        bookedIds,
+        failedIds,
+        recoveryIds: duplicateRecoveryIds,
+        prepared,
+        result: null,
+      };
     }
     const networkFailure =
       /timeout|econn|network|temporar|fetch failed/i.test(message) ||
@@ -970,16 +1079,39 @@ export async function runIndiaPostBooking(
   }
 
   const split = splitIndiaPostBookingResult(result);
+  const outcome = classifyMultiArticleOutcome(prepared.map((item) => item.barcode), result);
+  const recoveryIds: string[] = [];
   logInfo("booking.cept_success", {
     organizationId: input.organizationId,
     jobId: input.jobId,
     valid: split.valid.size,
     failed: split.failed.size,
+    recovery: outcome.recovery.size,
   });
 
   await Promise.all(
     prepared.map(async (item) => {
       const key = item.barcode.toUpperCase();
+      if (outcome.recovery.has(key)) {
+        recoveryIds.push(item.shipment.id);
+        logError("booking.recovery_required", {
+          INDIA_POST_ENV: indiaPostEnv,
+          organizationId: input.organizationId,
+          shipmentId: item.shipment.id,
+          jobId: input.jobId,
+          connectionId: connection.id,
+          reason: "CEPT_UNKNOWN",
+          barcodeRef: barcodeLogRef(item.barcode),
+          message: outcome.recoveryReason,
+        });
+        await markShipmentRecoveryRequired(
+          supabase,
+          input.organizationId,
+          item.shipment.id,
+          outcome.recoveryReason ?? "India Post response did not confirm this article."
+        );
+        return;
+      }
       const ok = split.valid.get(key);
       if (ok) {
         if (ok.duplicate) {
@@ -989,8 +1121,7 @@ export async function runIndiaPostBooking(
             barcodeRef: barcodeLogRef(item.barcode),
           });
         }
-        bookedIds.push(item.shipment.id);
-        await persistBookedShipment(supabase, {
+        const saved = await persistOrFlagBooked(supabase, {
           organizationId: input.organizationId,
           shipmentId: item.shipment.id,
           orderId: item.shipment.order_id,
@@ -1002,12 +1133,12 @@ export async function runIndiaPostBooking(
           persistDefaults: item.persistDefaults,
           payload: item.payload,
         });
+        (saved ? bookedIds : recoveryIds).push(item.shipment.id);
         return;
       }
       const message = split.failed.get(key) || "Booking rejected.";
       if (isIndiaPostDuplicateArticleMessage(message)) {
-        bookedIds.push(item.shipment.id);
-        await persistBookedShipment(supabase, {
+        const saved = await persistOrFlagBooked(supabase, {
           organizationId: input.organizationId,
           shipmentId: item.shipment.id,
           orderId: item.shipment.order_id,
@@ -1016,6 +1147,7 @@ export async function runIndiaPostBooking(
           persistDefaults: item.persistDefaults,
           payload: item.payload,
         });
+        (saved ? bookedIds : recoveryIds).push(item.shipment.id);
         return;
       }
       failedIds.push(item.shipment.id);
@@ -1037,7 +1169,9 @@ export async function runIndiaPostBooking(
     requestedIds: input.shipmentIds,
     bookedIds,
     failedIds,
+    recoveryIds,
+    skippedIds: claimLostIds,
     preparedIds: prepared.map((item) => item.shipment.id),
   });
-  return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, prepared, result };
+  return { booked: bookedIds.length, failed: failedIds.length, bookedIds, failedIds, recoveryIds, prepared, result };
 }

@@ -264,10 +264,35 @@ describe("evaluateBookingRetryEligibility", () => {
     ).toBe("BOOKING_OUTCOME_UNKNOWN");
   });
 
-  it("blocks FAILED with an existing barcode", () => {
+  it("allows FAILED with a barcode PostBus recorded as never sent (same rule as the booking run)", () => {
     expect(
       evaluateBookingRetryEligibility(
         { shipment: shipment({ status: "FAILED", barcode: "ET214330016IN", last_error_code: "VALIDATION_ERROR" }) },
+        NOW
+      ).action
+    ).toBe("SAFE_TO_REQUEUE");
+  });
+
+  it("blocks FAILED with a barcode and no never-submitted code", () => {
+    expect(
+      evaluateBookingRetryEligibility(
+        { shipment: shipment({ status: "FAILED", barcode: "ET214330016IN", last_error_code: "INDIA_POST_VALIDATION" }) },
+        NOW
+      ).action
+    ).toBe("BOOKING_OUTCOME_UNKNOWN");
+  });
+
+  it("blocks FAILED with a barcode and submit intent even with a never-submitted code", () => {
+    expect(
+      evaluateBookingRetryEligibility(
+        {
+          shipment: shipment({
+            status: "FAILED",
+            barcode: "ET214330016IN",
+            last_error_code: "VALIDATION_ERROR",
+            metadata: { ceptSubmitIntentAt: "2026-11-01T10:00:00.000Z" },
+          }),
+        },
         NOW
       ).action
     ).toBe("BOOKING_OUTCOME_UNKNOWN");

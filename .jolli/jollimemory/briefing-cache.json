@@ -1,0 +1,7 @@
+{
+	"branch": "release/booking-on-459c8cc",
+	"lastCommitHash": "cb3c4a04162a8018610b77b77ff8d1dfc85e0486",
+	"briefingText": "[Jolli Memory — release/booking-on-459c8cc]\n3 commits (2026-11-02 ~ 2026-11-02) | 45 files, +4012 -139\nLast: Pick one quick fix per order error: retry, set parcel, fix address. (2026-11-02)",
+	"clientKind": "shared",
+	"generatedAt": "2026-11-02T03:53:32.090Z"
+}

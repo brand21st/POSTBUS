@@ -7,6 +7,16 @@ import {
   uncertainBulkMustRecoverWithoutPost,
 } from "@/modules/india-post/bulk-store";
 import type { IndiaPostBulkBatchStatus } from "@/modules/india-post/bulk-state";
+import { failedBeforeCeptCall } from "@/modules/india-post/booking-failure-state";
+import { classifyProviderError } from "@/lib/jobs/retry";
+
+/** A bulk batch closed before India Post was called. In NEVER_SUBMITTED_CODES, so its barcodes may be reused. */
+export const BULK_NOT_SUBMITTED = "BULK_NOT_SUBMITTED";
+export const BULK_BATCH_SUPERSEDED = "BULK_BATCH_SUPERSEDED";
+
+export function isBulkBatchSuperseded(error: unknown) {
+  return (error as { code?: string } | null)?.code === BULK_BATCH_SUPERSEDED;
+}
 
 export type BulkCeptOutcome = {
   bookedIds: string[];
@@ -82,6 +92,35 @@ export async function runIndiaPostBulkWorkerAttempt(
       throw Object.assign(new Error("Injected crash after CEPT POST"), { code: "CEPT_UNKNOWN" });
     }
   } catch (error) {
+    if (failedBeforeCeptCall(error)) {
+      // Nothing reached India Post, so this is not an unknown outcome. Close the batch as FAILED
+      // (a new batch may be built) and leave each shipment retryable instead of in review.
+      const message = error instanceof Error ? error.message : "Bulk booking stopped before India Post was called.";
+      await deps.transition(input.supabase, bulkBatch.id, "SUBMITTING", "FAILED", {
+        last_error: message,
+        last_error_code: BULK_NOT_SUBMITTED,
+        completed_at: new Date().toISOString(),
+      }).catch(() => false);
+      bulkBatch.status = "FAILED";
+      await deps.persistArticles(input.supabase, bulkBatch.id, {
+        bookedIds: [],
+        failedIds: shipmentIds,
+        recoveryIds: [],
+      }).catch(() => undefined);
+      deps.recordMetric("bulk_batches_failed_before_post", {
+        batchId: bulkBatch.id,
+        organizationId: input.organizationId,
+      });
+      // A permanent error keeps its own code. A temporary one becomes BULK_NOT_SUBMITTED: the
+      // batch is closed, so a job retry would find nothing to post; "Retry booking" requeues it.
+      const classified = classifyProviderError(error);
+      if (!classified.retryable) throw error;
+      throw Object.assign(new Error(`Bulk booking did not reach India Post (${message}) Retry booking to submit again.`), {
+        code: BULK_NOT_SUBMITTED,
+        ceptNotCalled: true,
+        shipmentIds,
+      });
+    }
     await deps.transition(input.supabase, bulkBatch.id, "SUBMITTING", "RECOVERY_REQUIRED", {
       last_error: error instanceof Error ? error.message : "CEPT bulk POST failed",
       last_error_code: "RECOVERY_REQUIRED",

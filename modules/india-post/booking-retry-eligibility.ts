@@ -86,6 +86,7 @@ const AMBIGUOUS_CODES = new Set([
  */
 export const NEVER_SUBMITTED_CODES = new Set([
   "PRE_POST_TRANSIENT",
+  "BULK_NOT_SUBMITTED",
   "QUEUE_UNAVAILABLE",
   "ECONNRESET",
   "ENOTFOUND",
@@ -279,6 +280,26 @@ export function existingBarcodeMayBeSubmitted(shipment: BookingRetryShipment) {
   return NEVER_SUBMITTED_CODES.has(code);
 }
 
+/**
+ * May a not-yet-booked shipment be put back in the booking queue? Never when a POST may have
+ * happened (submit intent, tracking number, booking reference). A barcode is allowed only when
+ * PostBus recorded it as never sent, or wrote it at creation with a signed proof; the booking run
+ * verifies that proof again before posting.
+ */
+export function shipmentMayBeRequeuedForBooking(shipment: BookingRetryShipment) {
+  if (shipment.bookedAt ?? shipment.booked_at) return false;
+  if (!SAFE_STATUSES.has(statusOf(shipment))) return false;
+  if (readCeptSubmitIntentAt(shipment.metadata)) return false;
+  if (shipmentBarcode(shipment.trackingNumber ?? shipment.tracking_number)) return false;
+  if (String(shipment.providerRef ?? shipment.provider_ref ?? "").trim()) return false;
+  if (!shipmentBarcode(shipment.barcode)) return true;
+  if (NEVER_SUBMITTED_CODES.has(errorCodeOf(shipment))) return true;
+  const metadata = shipment.metadata;
+  return Boolean(
+    metadata && typeof metadata === "object" && !Array.isArray(metadata) && "bookingBarcodeProof" in metadata
+  );
+}
+
 function hasSubmissionArtifact(shipment: BookingRetryShipment) {
   return Boolean(
     shipmentBarcode(shipment.barcode) ||
@@ -299,7 +320,9 @@ export function shipmentOutcomeIsUncertain(
   if (readCeptForceResubmitAt(shipment.metadata)) return false;
   const status = statusOf(shipment);
   if (status === "RECOVERY_REQUIRED") return true;
-  if (hasSubmissionArtifact(shipment)) return true;
+  // A barcode alone is not evidence of a POST when PostBus recorded that CEPT was never called.
+  // This is the same rule the booking run applies before it reuses a barcode.
+  if (hasSubmissionArtifact(shipment) && !existingBarcodeMayBeSubmitted(shipment)) return true;
   const code = errorCodeOf(shipment);
   if (AMBIGUOUS_CODES.has(code)) return true;
   if (code && !NEVER_SUBMITTED_CODES.has(code)) return true;

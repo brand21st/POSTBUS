@@ -50,3 +50,51 @@ export function splitIndiaPostBookingResult(result: IndiaPostBookingResponse | n
     failed,
   };
 }
+
+export type MultiArticleOutcome = {
+  booked: Set<string>;
+  failed: Map<string, string>;
+  recovery: Set<string>;
+  recoveryReason: string | null;
+};
+
+function responseBarcodes(rows: Array<{ barcode_no?: string }> | undefined) {
+  return (rows ?? []).map((row) => String(row.barcode_no ?? "").trim().toUpperCase());
+}
+
+export function classifyMultiArticleOutcome(
+  submittedBarcodes: string[],
+  result: IndiaPostBookingResponse | null | undefined
+): MultiArticleOutcome {
+  const membership = new Set(submittedBarcodes.map((barcode) => barcode.trim().toUpperCase()));
+  const split = splitIndiaPostBookingResult(result);
+  const reported = [...responseBarcodes(result?.valid_articles), ...responseBarcodes(result?.error_articles)];
+
+  const problems: string[] = [];
+  if (reported.some((barcode) => !barcode)) problems.push("an article without a barcode");
+  if (reported.some((barcode) => barcode && !membership.has(barcode))) problems.push("an article that was not submitted");
+  if (new Set(reported.filter(Boolean)).size !== reported.filter(Boolean).length) problems.push("a repeated article");
+  const conflicting = [...split.failed.keys()].filter((barcode) => split.valid.has(barcode));
+  if (conflicting.length) problems.push("an article listed as both accepted and rejected");
+  const inconsistent = problems.length > 0;
+
+  const booked = new Set<string>();
+  const failed = new Map<string, string>();
+  const recovery = new Set<string>();
+  for (const barcode of membership) {
+    if (conflicting.includes(barcode)) {
+      recovery.add(barcode);
+    } else if (split.valid.has(barcode)) {
+      booked.add(barcode);
+    } else if (split.failed.has(barcode) && !inconsistent) {
+      failed.set(barcode, split.failed.get(barcode)!);
+    } else {
+      recovery.add(barcode);
+    }
+  }
+
+  let recoveryReason: string | null = null;
+  if (inconsistent) recoveryReason = `India Post response contains ${problems.join(", ")}.`;
+  else if (recovery.size) recoveryReason = "India Post response did not list every submitted article.";
+  return { booked, failed, recovery, recoveryReason };
+}
