@@ -4,6 +4,7 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { TenantContext } from "@/lib/api/context";
 import { logError, logInfo } from "@/lib/logger";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
+import { wrapIndiaPostAddressLines } from "@/modules/india-post/address-lines";
 import { cleanBookingAddressLines } from "@/modules/orders/clean-booking-address";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
 import { indiaPostDeliveryOfficeFlag, type IndiaPostOffice } from "@/modules/india-post/endpoints";
@@ -286,6 +287,14 @@ export async function assessPrebookingAddress(
       line2: formatting.line2,
       line3: formatting.line3,
     };
+  }
+  const fitted = wrapIndiaPostAddressLines(working.line1, working.line2, working.line3, working.city);
+  if (
+    fitted.line1 !== collapse(working.line1) ||
+    (fitted.line2 ?? "") !== collapse(working.line2) ||
+    (fitted.line3 ?? "") !== collapse(working.line3)
+  ) {
+    working = { ...working, line1: fitted.line1, line2: fitted.line2 ?? "", line3: fitted.line3 ?? "" };
   }
   const classified = classifyStoredShippingAddress(working);
   let issues: PrebookingIssue[] = classified.issues.map((issue) => ({ ...issue, field: issue.field || "address" }));

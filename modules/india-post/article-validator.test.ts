@@ -44,6 +44,15 @@ describe("India Post article validation", () => {
     expect(validateIndiaPostArticle(baseDraft())).toEqual([]);
   });
 
+  it("books a receiver line 1 that is shorter than 3 characters by borrowing the next line", () => {
+    const draft = baseDraft({ receiverLine1: "12", receiverLine2: "Green Park Road", receiverCity: "Virudhunagar" });
+    expect(validateIndiaPostArticle(draft).some((issue) => issue.field === "receiver_add_line_1")).toBe(false);
+    const payload = serializeIndiaPostBookingArticle(assertValidatedArticle(draft));
+    expect(String(payload.receiver_add_line_1).length).toBeGreaterThanOrEqual(3);
+    expect(String(payload.receiver_add_line_1).length).toBeLessThanOrEqual(80);
+    expect(String(payload.receiver_add_line_1)).toMatch(/^12\b/);
+  });
+
   it("does not require receiver line 2 for booking", () => {
     expect(validateIndiaPostArticle(baseDraft({ receiverLine2: "" })).some((issue) => issue.field === "receiver_add_line_2")).toBe(
       false

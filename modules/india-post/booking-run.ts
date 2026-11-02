@@ -649,7 +649,7 @@ async function runIndiaPostBookingAttempt(
       continue;
     }
 
-    const previewIssues = validateIndiaPostArticle(
+    const articleDraft = () =>
       applyWorkspaceParcelDefaults(
         mapShipmentToArticle({
           orderId: shipment.order_id,
@@ -687,8 +687,43 @@ async function runIndiaPostBookingAttempt(
           strictDimensions: true,
         }),
         parcelDefaultsFromConnection(connection)
-      )
+      );
+    let previewIssues = validateIndiaPostArticle(articleDraft());
+    const addressLengthFailure = previewIssues.some(
+      (issue) => /_add(?:ress)?_line_\d/i.test(issue.field) || /must be between 3 and \d+ characters/i.test(issue.error)
     );
+    if (addressLengthFailure && address) {
+      try {
+        const { refreshAddressPrebooking } = await import("@/modules/orders/prebooking-validation");
+        const repaired = await refreshAddressPrebooking(supabase, {
+          organizationId: input.organizationId,
+          address,
+          searchPostOffices: (pin) => provider.searchPostOffices(pin),
+          allowAi: true,
+          force: true,
+          forceAi: true,
+        });
+        address.line1 = repaired.line1;
+        address.line2 = repaired.line2;
+        address.line3 = repaired.line3;
+        address.city = repaired.city;
+        address.state = repaired.state;
+        previewIssues = validateIndiaPostArticle(articleDraft());
+      } catch (error) {
+        if (isDatabaseInfraError(error)) {
+          const detail = error instanceof Error ? error.message : String(error);
+          const message = `Address check could not run (${detail}). Booking will retry automatically.`;
+          await markShipmentBookingFailed(supabase, shipment.id, message, "PRE_POST_TRANSIENT", input.organizationId);
+          if (!failedIds.includes(shipment.id)) failedIds.push(shipment.id);
+          throw tagPrePostBookingError(Object.assign(new Error(message), { code: "PRE_POST_TRANSIENT" }));
+        }
+        logInfo("booking.address_repair_skipped", {
+          organizationId: input.organizationId,
+          shipmentId: shipment.id,
+          reason: error instanceof Error ? error.name : "unknown",
+        });
+      }
+    }
     if (previewIssues.length) {
       const message = previewIssues.map((issue) => issue.error).filter(Boolean).join(" ") || "Validation failed.";
       await markShipmentBookingFailed(supabase, shipment.id, message, "VALIDATION_ERROR", input.organizationId);

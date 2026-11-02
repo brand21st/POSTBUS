@@ -45,11 +45,51 @@ function mergeShortOptionalLines(lines: string[]) {
   }
 }
 
+/** Line 1 is required and must be at least 3 characters. Later lines donate words until it is. */
+function fillShortLine1(lines: string[], locality?: string | null) {
+  while (lines[0] && lines[0].length < LINE_MIN && lines.length > 1) {
+    const words = lines[1].split(" ").filter(Boolean);
+    let taken = 0;
+    let built = lines[0];
+    while (taken < words.length) {
+      const next = `${built} ${words[taken]}`.trim();
+      if (next.length > INDIA_POST_ADDRESS_LINE_MAX) break;
+      built = next;
+      taken += 1;
+      if (built.length >= LINE_MIN) break;
+    }
+    if (!taken) break;
+    lines[0] = built;
+    const rest = words.slice(taken).join(" ");
+    if (!rest) {
+      lines.splice(1, 1);
+      continue;
+    }
+    if (rest.length < LINE_MIN && `${lines[0]} ${rest}`.trim().length <= INDIA_POST_ADDRESS_LINE_MAX) {
+      lines[0] = `${lines[0]} ${rest}`.trim();
+      lines.splice(1, 1);
+      continue;
+    }
+    lines[1] = rest;
+  }
+  const place = normalizeStreetPart(locality);
+  if (
+    lines[0] &&
+    lines[0].length < LINE_MIN &&
+    place &&
+    !lines[0].toLocaleLowerCase().includes(place.toLocaleLowerCase()) &&
+    lines[0].length + 1 + place.length <= INDIA_POST_ADDRESS_LINE_MAX
+  ) {
+    lines[0] = `${lines[0]} ${place}`.trim();
+  }
+}
+
 /** Pack street lines into CEPT’s 3×80 limit instead of rejecting a long line 2. */
 export function wrapIndiaPostAddressLines(
   line1: string | null | undefined,
   line2?: string | null,
-  line3?: string | null
+  line3?: string | null,
+  locality?: string | null
 ) {
   const parts = [line1, line2, line3].map(normalizeStreetPart).filter(Boolean);
   const lines: string[] = [];
@@ -60,6 +100,7 @@ export function wrapIndiaPostAddressLines(
     }
   }
   mergeShortOptionalLines(lines);
+  fillShortLine1(lines, locality);
 
   return {
     line1: lines[0] ?? "",

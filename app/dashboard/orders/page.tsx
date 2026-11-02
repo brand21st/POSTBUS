@@ -758,7 +758,9 @@ export default function OrdersPage() {
 
   async function correctAddressAndBook(row: OrderRecord) {
     try {
-      toast.message("Apply Smart AI auto correct address");
+      toast.message("Fix address and book", {
+        description: "Address lines were corrected. Booking again.",
+      });
       await api("/api/v1/bookings/precheck", {
         method: "POST",
         body: JSON.stringify({ orderIds: [row.id], allowAi: true, forceAi: true }),

@@ -249,7 +249,7 @@ export function resolveDisplayError(order: FactSource, server?: ServerErrorStatu
 
 export type ErrorQuickAction = "force" | "retry" | "parcel" | "review" | "autocorrect" | "open";
 
-export const AUTO_CORRECT_LABEL = "Apply Smart AI auto correct address";
+export const AUTO_CORRECT_LABEL = "Fix address and book";
 
 /** A wrong PIN still needs a person. Line cleanup and city alignment are automatic. */
 export function addressCorrectionMode(error: DisplayErrorStatus): "pin" | "auto" | null {
@@ -284,6 +284,8 @@ export function providerErrorTopic(fact: Pick<ErrorFact, "code" | "message">): P
   if (code === "INVALID_WEIGHT" || code === "INVALID_DIMENSIONS") return "parcel";
   if (/\b(?:length|breadth|height|dimension|weight)\b/i.test(message)) return "parcel";
   if (code === "INVALID_PINCODE" || code === "INVALID_ADDRESS") return "address";
+  if (/(?:sender|receiver|pickup|alt)_add(?:ress)?_line_\d/i.test(message)) return "address";
+  if (/must be between 3 and \d+ characters/i.test(message)) return "address";
   if (/\b(?:address|pin ?code|pincode|receiver)\b/i.test(message)) return "address";
   if (TRANSIENT_CODES.has(code)) return "transient";
   if (/try again|temporar|unable to fetch|could not be reached|retry automatically/i.test(message)) return "transient";

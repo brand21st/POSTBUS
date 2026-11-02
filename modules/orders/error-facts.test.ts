@@ -155,4 +155,16 @@ describe("order error status", () => {
     });
     expect(transient && errorQuickAction(transient, false)).toBe("retry");
   });
+
+  it("books again after an address line is shorter or longer than India Post allows", () => {
+    const error = resolveDisplayError({
+      shipment: {
+        status: "FAILED",
+        last_error_code: "VALIDATION_ERROR",
+        last_error: "receiver_add_line_1 must be between 3 and 80 characters.",
+        ...fullParcel,
+      },
+    });
+    expect(error && errorQuickAction(error, false)).toBe("autocorrect");
+  });
 });

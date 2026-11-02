@@ -22,7 +22,7 @@ function party(input: {
 }): DraftParty {
   const name = text(input.name);
   const company = text(input.company) || name;
-  const street = wrapIndiaPostAddressLines(input.line1, input.line2, input.line3);
+  const street = wrapIndiaPostAddressLines(input.line1, input.line2, input.line3, input.city);
   return {
     name,
     company,
