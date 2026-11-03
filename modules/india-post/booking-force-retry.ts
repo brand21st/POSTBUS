@@ -10,7 +10,7 @@ import {
   readCeptForceResubmitConsumedAt,
   readCeptSubmitIntentAt,
 } from "@/modules/india-post/booking-intent";
-import { shipmentBarcode } from "@/modules/india-post/booking-idempotency";
+import { blankBookingArtifactPatch, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
 import {
   bulkMembershipRetryDecision,
   bulkRetryBucket,
@@ -26,7 +26,7 @@ import {
 import { bookingForceRetryEnabled } from "@/modules/india-post/booking-recovery";
 import { isParkedHistoricalBookingJob } from "@/modules/india-post/smart-auto-retry";
 
-const REQUEUEABLE = ["DRAFT", "VALIDATING", "QUEUED", "FAILED"] as const;
+const REQUEUEABLE = ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED"] as const;
 
 type RetryExtras = {
   lengthCm?: number;
@@ -203,6 +203,17 @@ export async function scheduleForceRetryBooking(
     throw conflict(evaluateBookingRetryEligibility({ shipment, job: asJob(latest as Record<string, unknown> | null) }));
   }
 
+  const blanks = blankBookingArtifactPatch(shipment ?? {});
+  if (shipment && Object.keys(blanks).length) {
+    await supabase
+      .from("shipments")
+      .update(blanks)
+      .eq("id", shipmentId)
+      .eq("organization_id", ctx.organizationId)
+      .is("booked_at", null);
+    Object.assign(shipment, blanks);
+  }
+
   // A barcode PostBus recorded as never sent may be reused. Its "never submitted" error code is
   // what lets the booking run reuse it, so the code stays on the row until the next attempt.
   const keptBarcode = shipmentBarcode(shipment?.barcode);
@@ -304,9 +315,6 @@ export function forceBookRefusal(
       kind: "conflict",
       reason: `Force book is only for failed or unconfirmed bookings. This shipment is ${status || "in an unknown state"}.`,
     };
-  }
-  if (!shipmentBarcode(shipment.barcode || shipment.tracking_number)) {
-    return { kind: "conflict", reason: "Force book needs the existing India Post barcode." };
   }
   const owned = bulkMembershipRetryDecision(String(shipment.id), input.bulkArticleResult);
   if (owned) return { kind: "conflict", reason: owned.reason, action: owned.action };
@@ -428,7 +436,9 @@ export async function forceBookUnknownShipment(
     scheduled: true,
     reconciled: false,
     decision: evaluateBookingRetryEligibility({ shipment: { ...shipment, status: "QUEUED" } }),
-    message: "Force book scheduled with the same barcode.",
+    message: barcode
+      ? "Force book scheduled with the same barcode."
+      : "Force book scheduled. A barcode will be allocated on submit.",
   };
 }
 

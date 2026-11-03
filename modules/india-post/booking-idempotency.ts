@@ -3,10 +3,27 @@ import { isIndiaPostDuplicateArticleMessage } from "@/modules/india-post/error-t
 
 export { isIndiaPostDuplicateArticleMessage };
 
-export const BOOKING_CLAIMABLE_STATUSES = ["DRAFT", "VALIDATING", "QUEUED", "FAILED"] as const;
+export const BOOKING_CLAIMABLE_STATUSES = ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED"] as const;
 
 export function shipmentBarcode(value?: string | null) {
   return String(value ?? "").trim().toUpperCase();
+}
+
+/** Blank strings are not barcodes. The booking claim matches SQL null, so blanks must be cleared first. */
+export function blankBookingArtifactPatch(row: {
+  barcode?: string | null;
+  tracking_number?: string | null;
+  trackingNumber?: string | null;
+  provider_ref?: string | null;
+  providerRef?: string | null;
+}) {
+  const patch: { barcode?: null; tracking_number?: null; provider_ref?: null } = {};
+  if (row.barcode != null && !shipmentBarcode(row.barcode)) patch.barcode = null;
+  const tracking = row.tracking_number ?? row.trackingNumber;
+  if (tracking != null && !shipmentBarcode(tracking)) patch.tracking_number = null;
+  const provider = row.provider_ref ?? row.providerRef;
+  if (provider != null && !String(provider).trim()) patch.provider_ref = null;
+  return patch;
 }
 
 /** Authoritative: CEPT already accepted this article. Status FAILED + booked_at still counts. */

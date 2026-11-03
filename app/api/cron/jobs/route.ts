@@ -6,7 +6,7 @@ import { DEFAULT_DRAIN_LIMIT, drainDueJobs, runQueuedJobsNow } from "@/lib/jobs/
 import { parseJobTypes, wooCommerceDrainPlan } from "@/lib/jobs/job-lanes";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
-import { runBookingAutoRecovery } from "@/modules/india-post/booking-recovery";
+import { enqueueSameBarcodeRecovery, runBookingAutoRecovery } from "@/modules/india-post/booking-recovery";
 import { enqueueDueTrackingSyncJobs } from "@/modules/india-post/tracking-sync";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +66,26 @@ export async function POST(request: NextRequest) {
       const { enqueueDueLedgerSyncJobs } = await import("@/modules/ai-accountant/ledger/schedule");
       await enqueueDueLedgerSyncJobs(createAdminClient());
     }
+    let recovery: { enabled: boolean; recovered: number; skipped: number } | { error: string } = {
+      enabled: false,
+      recovered: 0,
+      skipped: 0,
+    };
+    if ((!jobTypes || jobTypes.includes("shipment-booking")) && hasAdminClient()) {
+      try {
+        const admin = createAdminClient();
+        recovery = await runBookingAutoRecovery(admin);
+        await enqueueSameBarcodeRecovery(admin).catch((enqueueError) => {
+          logError("booking.same_barcode_requeue_failed", {
+            message: enqueueError instanceof Error ? enqueueError.message : "enqueue failed",
+          });
+        });
+      } catch (recoveryError) {
+        const message = recoveryError instanceof Error ? recoveryError.message : "Booking recovery failed.";
+        logError("booking.recovery_failed", { message });
+        recovery = { error: message };
+      }
+    }
     const drained = wooPlan.skipPrimary
       ? { claimed: 0, succeeded: 0, failed: 0 }
       : await drainDueJobs(limit, wooPlan.primary);
@@ -81,20 +101,6 @@ export async function POST(request: NextRequest) {
         logError("woocommerce.drain_failed", {
           message: wooError instanceof Error ? wooError.message : "WooCommerce drain failed.",
         });
-      }
-    }
-    let recovery: { enabled: boolean; recovered: number; skipped: number } | { error: string } = {
-      enabled: false,
-      recovered: 0,
-      skipped: 0,
-    };
-    if ((!jobTypes || jobTypes.includes("shipment-booking")) && hasAdminClient()) {
-      try {
-        recovery = await runBookingAutoRecovery(createAdminClient());
-      } catch (recoveryError) {
-        const message = recoveryError instanceof Error ? recoveryError.message : "Booking recovery failed.";
-        logError("booking.recovery_failed", { message });
-        recovery = { error: message };
       }
     }
     return NextResponse.json({ success: true, data: { ...drained, recovery } });

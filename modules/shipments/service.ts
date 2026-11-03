@@ -4,7 +4,11 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
-import { isAuthoritativeIndiaPostBooking, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
+import {
+  blankBookingArtifactPatch,
+  isAuthoritativeIndiaPostBooking,
+  shipmentBarcode,
+} from "@/modules/india-post/booking-idempotency";
 import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { scheduleForceRetryBooking } from "@/modules/india-post/booking-force-retry";
 import { evaluateBookingRetryEligibility, NEVER_SUBMITTED_CODES } from "@/modules/india-post/booking-retry-eligibility";
@@ -398,6 +402,16 @@ export async function createShipmentsForOrders(
         skipped.push(order.id);
         continue;
       }
+      const blanks = blankBookingArtifactPatch(current);
+      if (Object.keys(blanks).length) {
+        await supabase
+          .from("shipments")
+          .update(blanks)
+          .eq("id", current.id)
+          .eq("organization_id", ctx.organizationId)
+          .is("booked_at", null);
+        Object.assign(current, blanks);
+      }
       const collect = shipmentCollectFromOrder(order);
       // A size the merchant chose in PostBus is never replaced by an automatic one.
       // AutoPack boxes are only written together with their evidence record (see modules/autopack).
@@ -426,7 +440,7 @@ export async function createShipmentsForOrders(
         .is("booked_at", null)
         .is("tracking_number", null)
         .is("provider_ref", null)
-        .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED"])
+        .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED"])
         .filter("metadata->>ceptSubmitIntentAt", "is", null);
       const { data: requeued, error: requeueError } = await (keptBarcode
         ? requeue.eq("barcode", keptBarcode).in("last_error_code", [...NEVER_SUBMITTED_CODES])

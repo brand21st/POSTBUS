@@ -126,9 +126,9 @@ describe("evaluateBookingRetryEligibility", () => {
     expect(decision.requiresManualReview).toBe(true);
   });
 
-  it("blocks RECOVERY_REQUIRED even when no barcode was stored", () => {
+  it("requeues RECOVERY_REQUIRED when no barcode was stored so a first article can be allocated", () => {
     expect(evaluateBookingRetryEligibility({ shipment: shipment({ status: "RECOVERY_REQUIRED" }) }, NOW).action).toBe(
-      "BOOKING_OUTCOME_UNKNOWN"
+      "SAFE_TO_REQUEUE"
     );
   });
 
@@ -298,19 +298,19 @@ describe("evaluateBookingRetryEligibility", () => {
     ).toBe("BOOKING_OUTCOME_UNKNOWN");
   });
 
-  it("blocks QUEUED with TEMPORARY_PROVIDER_FAILURE even without a barcode", () => {
+  it("requeues QUEUED with TEMPORARY_PROVIDER_FAILURE when no barcode was stored", () => {
     expect(
       evaluateBookingRetryEligibility(
         { shipment: shipment({ last_error_code: "TEMPORARY_PROVIDER_FAILURE" }) },
         NOW
       ).action
-    ).toBe("BOOKING_OUTCOME_UNKNOWN");
+    ).toBe("SAFE_TO_REQUEUE");
   });
 
-  it("blocks ETIMEDOUT when no barcode was stored", () => {
+  it("requeues ETIMEDOUT when no barcode was stored so a first article can be allocated", () => {
     expect(
       evaluateBookingRetryEligibility({ shipment: shipment({ status: "FAILED", last_error_code: "ETIMEDOUT" }) }, NOW).action
-    ).toBe("BOOKING_OUTCOME_UNKNOWN");
+    ).toBe("SAFE_TO_REQUEUE");
   });
 
   it("blocks a historical shipment that has no submit marker but has a tracking number", () => {
@@ -322,13 +322,13 @@ describe("evaluateBookingRetryEligibility", () => {
     ).toBe("BOOKING_OUTCOME_UNKNOWN");
   });
 
-  it("blocks a historical shipment whose job already ran and whose error was cleared", () => {
+  it("requeues a shipment whose job already ran and whose error was cleared when no article exists", () => {
     expect(
       evaluateBookingRetryEligibility(
         { shipment: shipment(), job: { id: "job-old", status: "FAILED", attempt_count: 2, max_attempts: 5 } },
         NOW
       ).action
-    ).toBe("BOOKING_OUTCOME_UNKNOWN");
+    ).toBe("SAFE_TO_REQUEUE");
   });
 
   it("keeps Force Retry off unless BOOKING_FORCE_RETRY_ENABLED is exactly true", async () => {
