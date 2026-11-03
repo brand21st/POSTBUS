@@ -37,7 +37,12 @@ import {
 import { OrderKpiStrip } from "@/components/dashboard/order-kpi-strip";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
-import { orderStatusBadgeValue, orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
+import {
+  orderStatusBadgeValue,
+  orderStatusRowClass,
+  orderVisibleStatus,
+  StatusBadge,
+} from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -921,7 +926,7 @@ export default function OrdersPage() {
       id: "status",
       header: "Status",
       className: "w-[6.75rem] whitespace-nowrap",
-      cell: (row) => <StatusBadge value={orderStatusBadgeValue(row.status)} />,
+      cell: (row) => <StatusBadge value={orderStatusBadgeValue(orderVisibleStatus(row))} />,
     },
     ...(visibleColumns.dimensions
       ? [
@@ -1358,7 +1363,7 @@ export default function OrdersPage() {
         onRowClick={(row) => router.push(`/dashboard/orders/${row.id}`)}
         onRowHover={(row) => router.prefetch(`/dashboard/orders/${row.id}`)}
         getRowId={(row) => row.id}
-        getRowClassName={(row) => orderStatusRowClass(row.status)}
+        getRowClassName={(row) => orderStatusRowClass(orderVisibleStatus(row))}
         columnWidths={columnWidths}
         onColumnWidthsChange={(widths) => {
           setColumnWidths(widths);
@@ -1373,7 +1378,7 @@ export default function OrdersPage() {
               return (
                 <div
                   key={row.id}
-                  className={cn("flex gap-2.5 px-3 py-2.5", orderStatusRowClass(row.status))}
+                  className={cn("flex gap-2.5 px-3 py-2.5", orderStatusRowClass(orderVisibleStatus(row)))}
                   onClick={() => router.push(`/dashboard/orders/${row.id}`)}
                   onMouseEnter={() => router.prefetch(`/dashboard/orders/${row.id}`)}
                 >
@@ -1395,7 +1400,7 @@ export default function OrdersPage() {
                           <p className="truncate text-xs text-muted">{customerPhone(row)}</p>
                         ) : null}
                       </div>
-                      <StatusBadge value={orderStatusBadgeValue(row.status)} />
+                      <StatusBadge value={orderStatusBadgeValue(orderVisibleStatus(row))} />
                     </div>
                     <div
                       className="flex flex-wrap items-center gap-1.5"

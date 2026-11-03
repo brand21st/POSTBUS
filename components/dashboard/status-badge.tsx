@@ -73,6 +73,20 @@ export function orderStatusBadgeValue(status?: string | null) {
   return status;
 }
 
+/**
+ * Display-only. A booking that already failed stays stored as PROCESSING, but the
+ * table should show Failed. In-flight and unknown outcomes stay Processing.
+ */
+export function orderVisibleStatus(order: {
+  status?: string | null;
+  shipment?: { status?: string | null } | null;
+}) {
+  const orderStatus = (order.status ?? "").toUpperCase();
+  const shipmentStatus = (order.shipment?.status ?? "").toUpperCase();
+  if (orderStatus === "PROCESSING" && shipmentStatus === "FAILED") return "FAILED";
+  return order.status;
+}
+
 /** Soft full-row tint for order status in tables. Unfulfilled is yellow; BOOKED is amber. */
 export function orderStatusRowClass(status?: string | null) {
   switch ((status ?? "").toUpperCase()) {
