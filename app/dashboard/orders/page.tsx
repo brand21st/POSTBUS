@@ -119,6 +119,7 @@ const DEFAULT_COLUMNS = {
   items: true,
   source: true,
   dimensions: true,
+  error: true,
   payment: true,
   created: true,
   service: true,
@@ -130,6 +131,7 @@ const COLUMN_LABELS: Record<OptionalColumn, string> = {
   items: "Items",
   source: "Source",
   dimensions: "Parcel",
+  error: "Error status",
   payment: "Payment",
   created: "Created",
   service: "Service",
@@ -938,20 +940,24 @@ export default function OrdersPage() {
           } satisfies DataTableColumn<OrderRecord>,
         ]
       : []),
-    {
-      id: "error",
-      header: "Error status",
-      className: "w-[16rem] whitespace-normal",
-      cell: (row) => (
-        <BookingErrorCell
-          order={row}
-          checking={checkingIds.includes(row.id)}
-          finalStatus={errorByOrder.get(row.id)}
-          busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
-          onAction={(action) => onErrorAction(row, action)}
-        />
-      ),
-    },
+    ...(visibleColumns.error
+      ? [
+          {
+            id: "error",
+            header: "Error status",
+            className: "w-[16rem] whitespace-normal",
+            cell: (row: OrderRecord) => (
+              <BookingErrorCell
+                order={row}
+                checking={checkingIds.includes(row.id)}
+                finalStatus={errorByOrder.get(row.id)}
+                busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
+                onAction={(action) => onErrorAction(row, action)}
+              />
+            ),
+          } satisfies DataTableColumn<OrderRecord>,
+        ]
+      : []),
     ...(visibleColumns.payment
       ? [
           {
@@ -1408,13 +1414,15 @@ export default function OrdersPage() {
                       onPointerDown={(event) => event.stopPropagation()}
                     >
                       <StatusBadge value={row.source} />
-                      <BookingErrorCell
-                        order={row}
-                        checking={checkingIds.includes(row.id)}
-                        finalStatus={errorByOrder.get(row.id)}
-                        busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
-                        onAction={(action) => onErrorAction(row, action)}
-                      />
+                      {visibleColumns.error ? (
+                        <BookingErrorCell
+                          order={row}
+                          checking={checkingIds.includes(row.id)}
+                          finalStatus={errorByOrder.get(row.id)}
+                          busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
+                          onAction={(action) => onErrorAction(row, action)}
+                        />
+                      ) : null}
                       <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />
                       <ShopifyPaymentConfirm order={row} />
                     </div>
