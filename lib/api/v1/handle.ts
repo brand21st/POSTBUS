@@ -25,7 +25,7 @@ import { handleSupportRoutes } from "@/lib/api/v1/support";
 import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { assertPlanFeature, lockedFeatureForApi } from "@/modules/billing/entitlements";
+import { assertAnyPlanFeature, assertPlanFeature, FEATURE, lockedFeatureForApi } from "@/modules/billing/entitlements";
 import { parseIndiaPostWebhookPath } from "@/modules/india-post/webhook-urls";
 import { parseWatiWebhookPath } from "@/modules/wati/webhook-urls";
 import { parseWooWebhookPath } from "@/modules/woocommerce/webhooks";
@@ -78,6 +78,9 @@ export async function handleV1(request: NextRequest, slugs: string[]) {
   const ctx = await requireTenant(permissionForTenantRoute(method, path, slugs));
   const planFeature = lockedFeatureForApi(method, path, slugs);
   if (planFeature) await assertPlanFeature(supabase, ctx.organizationId, planFeature, { method });
+  else if (method === "POST" && path === "label-template/custom-preview") {
+    await assertAnyPlanFeature(supabase, ctx.organizationId, [FEATURE.packing, FEATURE.multiPrint], { method });
+  }
   return (
     (await handleTariffRoutes(request, supabase, ctx, path)) ??
     (await handleBillingRoutes(request, supabase, ctx, key)) ??

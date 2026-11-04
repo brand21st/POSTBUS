@@ -88,19 +88,28 @@ export function canonicalFeaturesForSlug(slug?: string | null): PlanFeatureName[
   return null;
 }
 
-export function expandPlanFeatures(
-  features: string[] | null | undefined,
-  input?: { trial?: boolean; slug?: string | null }
-): string[] {
-  if (input?.trial) return [...BUSINESS_FEATURES];
-  const canonical = canonicalFeaturesForSlug(input?.slug);
-  if (canonical) return [...canonical];
-  const listed = (features ?? []).map((line) => line.trim()).filter(Boolean);
+const ORDERS_FEATURE = /^up to .+ orders per billing period$/i;
+
+function savedPlanFeatures(features: string[] | null | undefined) {
+  const listed = (features ?? []).map((line) => line.trim()).filter((line) => line && !ORDERS_FEATURE.test(line));
   const allowed = new Set<string>(listed);
   if (listed.includes("Operational analytics")) allowed.add(FEATURE.analytics);
   if (listed.includes(FEATURE.starterBundle)) STARTER_FEATURES.forEach((item) => allowed.add(item));
   if (listed.includes(FEATURE.proBundle)) PRO_FEATURES.forEach((item) => allowed.add(item));
   return [...allowed];
+}
+
+export function expandPlanFeatures(
+  features: string[] | null | undefined,
+  input?: { trial?: boolean; slug?: string | null }
+): string[] {
+  if (input?.trial) return [...BUSINESS_FEATURES];
+  const saved = savedPlanFeatures(features);
+  const canonical = canonicalFeaturesForSlug(input?.slug);
+  const catalog = new Set<string>(PLAN_FEATURE_OPTIONS);
+  const hasCatalogChoice = saved.some((line) => catalog.has(line));
+  if (canonical && !hasCatalogChoice) return [...new Set([...canonical, ...saved])];
+  return saved;
 }
 
 export function hasPlanFeature(features: string[] | null | undefined, feature: string) {
@@ -159,6 +168,9 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
   if (slugs[0] === "manifests" && method !== "GET") return FEATURE.manifests;
   if (path === "label-template/multi-sheet" || (slugs[0] === "label-template" && slugs[1] === "multi-sheet")) {
     return FEATURE.multiPrint;
+  }
+  if (path === "label-template/custom-preview" || (slugs[0] === "label-template" && slugs[1] === "custom-preview")) {
+    return null;
   }
   if (slugs[0] === "label-template" && method !== "GET") return FEATURE.packing;
   if (
@@ -279,6 +291,27 @@ export async function assertPlanFeature(
   if (method === "GET" && hasPlanFeature(entitlements.historyFeatures, feature)) return entitlements;
   throw new AppError(ERROR_CODES.FORBIDDEN, SUBSCRIPTION_REQUIRED_MESSAGE, {
     feature,
+    billing: entitlements.accessState,
+  });
+}
+
+export async function assertAnyPlanFeature(
+  supabase: SupabaseClient,
+  organizationId: string,
+  features: string[],
+  options: { method?: string } = {}
+) {
+  const entitlements = await getOrganizationEntitlements(supabase, organizationId);
+  if (entitlements.entitled) {
+    if (features.some((feature) => hasPlanFeature(entitlements.features, feature))) return entitlements;
+    throw new AppError(ERROR_CODES.FORBIDDEN, UPGRADE_PLAN_MESSAGE, { feature: features[0] ?? null });
+  }
+  const method = (options.method ?? "").toUpperCase();
+  if (method === "GET" && features.some((feature) => hasPlanFeature(entitlements.historyFeatures, feature))) {
+    return entitlements;
+  }
+  throw new AppError(ERROR_CODES.FORBIDDEN, SUBSCRIPTION_REQUIRED_MESSAGE, {
+    feature: features[0] ?? null,
     billing: entitlements.accessState,
   });
 }
