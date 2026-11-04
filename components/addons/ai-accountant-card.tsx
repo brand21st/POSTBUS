@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import posthog from "posthog-js";
+import { trackPurchase } from "@/lib/analytics/posthog";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -84,7 +84,7 @@ export function AiAccountantCard() {
               razorpaySignature: response.razorpay_signature,
             }),
           });
-          posthog.capture("addon_purchase_completed", { addon: "ai-accountant", amount: data.amountPaise / 100 });
+          trackPurchase("addon:ai-accountant", data.amountPaise);
           toast.success("AI Accountant is activating.");
           client.invalidateQueries({ queryKey: ["me"] });
           client.invalidateQueries({ queryKey: ["addons"] });

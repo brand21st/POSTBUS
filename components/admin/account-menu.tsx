@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { initials } from "@/lib/format";
 import { useMe } from "@/lib/hooks/use-me";
+import { resetAnalyticsUser } from "@/lib/analytics/posthog";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,7 @@ export function AdminAccountMenu({ compact = false }: { compact?: boolean }) {
   const email = me.data?.user.email ?? "Super Admin";
 
   async function logOut() {
+    resetAnalyticsUser();
     try {
       const supabase = createClient();
       await supabase.auth.signOut();

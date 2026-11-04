@@ -12,6 +12,7 @@ import { Topbar } from "@/components/dashboard/topbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use-api";
 import { membershipsFromMe, useMe } from "@/lib/hooks/use-me";
+import { useIdentifyAnalyticsUser } from "@/lib/analytics/use-identify-user";
 import { useUserPresenceHeartbeat } from "@/lib/hooks/use-user-presence-heartbeat";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { PlanLock } from "@/components/billing/plan-lock";
@@ -89,6 +90,7 @@ export function DashboardShell({
   const router = useRouter();
   const pathname = usePathname();
   const me = useMe();
+  useIdentifyAnalyticsUser();
   const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
   // No saved choice: small laptops (1024-1279px) start on the icon rail, wider screens expanded.
   const tablet = useSyncExternalStore(subscribeSidebarLayout, () => window.matchMedia(TABLET_QUERY).matches, () => false);

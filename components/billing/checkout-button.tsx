@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import posthog from "posthog-js";
+import { trackPurchase } from "@/lib/analytics/posthog";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/hooks/use-api";
@@ -102,7 +102,7 @@ export function CheckoutButton({
                   razorpaySignature: response.razorpay_signature,
                 }),
               });
-              posthog.capture("purchase_completed", { amount: data.amountPaise / 100 });
+              trackPurchase("plan", data.amountPaise);
               toast.success("Payment received. Your plan is active.");
               window.location.reload();
             } catch (error) {
