@@ -37,6 +37,11 @@ describe("registerAccountSchema", () => {
     expect(parsed.city).toBe("New Delhi");
   });
 
+  it("trims and lowercases the email", () => {
+    const parsed = registerAccountSchema.parse({ ...base, whatsapp: "9876543210", email: " Priya@Example.COM " });
+    expect(parsed.email).toBe("priya@example.com");
+  });
+
   it("rejects invalid PIN codes", () => {
     expect(() => registerAccountSchema.parse({ ...base, whatsapp: "9876543210", pincode: "056001" })).toThrow();
     expect(() => registerAccountSchema.parse({ ...base, whatsapp: "9876543210", pincode: "56001" })).toThrow();

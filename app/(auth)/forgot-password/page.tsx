@@ -12,7 +12,7 @@ import { authCallbackUrl } from "@/lib/auth/urls";
 import { createClient } from "@/lib/supabase/client";
 
 const schema = z.object({
-  email: z.email("Enter a valid email."),
+  email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email.")),
 });
 
 type FormValues = z.infer<typeof schema>;

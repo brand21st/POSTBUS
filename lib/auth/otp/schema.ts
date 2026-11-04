@@ -13,7 +13,7 @@ const phoneSchema = z.string().trim().transform((value, ctx) => {
 const profileSchema = z.object({
   name: z.string().trim().min(2, "Enter your name.").max(80),
   business_name: z.string().trim().min(2, "Enter your business name.").max(120),
-  email: z.email("Enter a valid email.").transform((value) => value.trim().toLowerCase()),
+  email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email.")),
 });
 
 export const otpRequestSchema = z.discriminatedUnion("purpose", [
@@ -26,7 +26,7 @@ export const otpRequestSchema = z.discriminatedUnion("purpose", [
     phone: phoneSchema,
     name: z.string().trim().min(2, "Enter your name.").max(80),
     business_name: z.string().trim().min(2, "Enter your business name.").max(120),
-    email: z.email("Enter a valid email.").transform((value) => value.trim().toLowerCase()),
+    email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email.")),
   }),
 ]);
 

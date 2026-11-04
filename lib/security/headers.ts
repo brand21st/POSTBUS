@@ -32,6 +32,8 @@ export function contentSecurityPolicy() {
     "https://api.razorpay.com",
     "https://lumberjack.razorpay.com",
     "https://api.stripe.com",
+    // PostHog product analytics (instrumentation-client.ts): event ingest, flags and remote config.
+    "https://*.i.posthog.com",
   ].join(" ");
 
   const scriptSrc = [
@@ -46,6 +48,8 @@ export function contentSecurityPolicy() {
     "https://static.cloudflareinsights.com",
     "https://checkout.razorpay.com",
     "https://cdn.jsdelivr.net",
+    // PostHog loads its remote config and lazy extensions (surveys, recorder) from its asset host.
+    "https://*.i.posthog.com",
   ].join(" ");
 
   const styleSrc = [

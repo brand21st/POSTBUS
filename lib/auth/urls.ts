@@ -1,6 +1,7 @@
 import { env } from "@/lib/env";
+import { DEFAULT_AFTER_AUTH, safeAuthNext } from "@/lib/auth/safe-next";
 
-export const DEFAULT_AFTER_AUTH = "/dashboard";
+export { DEFAULT_AFTER_AUTH, safeAuthNext };
 export const PRODUCTION_APP_ORIGIN = "https://www.postbus.in";
 
 function stripSlash(value: string) {
@@ -33,11 +34,6 @@ export function requestPublicOrigin(request: { nextUrl: URL; headers: Headers })
   }
 
   return publicAppOrigin();
-}
-
-export function safeAuthNext(value?: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return DEFAULT_AFTER_AUTH;
-  return value;
 }
 
 export function authCallbackUrl(next = DEFAULT_AFTER_AUTH) {

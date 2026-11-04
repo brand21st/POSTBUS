@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Eye, EyeOff } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { IndiaMobileInput } from "@/components/auth/india-whatsapp-field";
@@ -14,18 +13,29 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { hasPlatformAdminRow } from "@/lib/admin/access";
+import { safeAuthNext } from "@/lib/auth/safe-next";
 import { ApiError, api } from "@/lib/hooks/use-api";
 import { createClient } from "@/lib/supabase/client";
+import {
+  AUTH_INPUT_CLASS,
+  FieldError,
+  FormAlert,
+  PasswordInput,
+  SubmitButton,
+  fieldA11y,
+  friendlyAuthError,
+} from "../auth-ui";
 
 const SAVED_LOGIN_KEY = "postbus.login.saved-email";
 const ADMIN_PROBE_TIMEOUT_MS = 5000;
 
 const schema = z.object({
-  email: z.email("Enter a valid email."),
-  password: z.string().min(1, "Password is required."),
+  email: z.string().trim().toLowerCase().pipe(z.email("Enter a valid email address.")),
+  password: z.string().min(1, "Enter your password."),
 });
 
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
 type OtpSent = {
   status: "sent";
@@ -38,7 +48,7 @@ type OtpVerified = { status: "authenticated" } | { status: "complete_profile"; c
 
 function authQueryError(code: string | null) {
   if (code === "auth_callback_failed") {
-    return "That confirmation link could not be verified. Sign in, or open the latest email we sent.";
+    return "That confirmation link could not be verified. It may have expired or already been used. Sign in, or open the latest email we sent.";
   }
   if (code === "auth_callback_missing") {
     return "The confirmation link was incomplete. Open the latest email we sent.";
@@ -48,6 +58,25 @@ function authQueryError(code: string | null) {
 
 function messageOf(error: unknown, fallback: string) {
   return error instanceof ApiError ? error.message : error instanceof Error ? error.message : fallback;
+}
+
+const noSubscribe = () => () => {};
+
+function readSavedEmail() {
+  try {
+    return window.localStorage.getItem(SAVED_LOGIN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeSavedEmail(email: string | null) {
+  try {
+    if (email) window.localStorage.setItem(SAVED_LOGIN_KEY, email);
+    else window.localStorage.removeItem(SAVED_LOGIN_KEY);
+  } catch {
+    // Private mode / blocked storage: remembering the email is a convenience, not required.
+  }
 }
 
 async function continueAfterSession(next: string) {
@@ -81,19 +110,25 @@ async function continueAfterSession(next: string) {
 function PasswordFields({ next }: { next: string }) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
-  const [savePassword, setSavePassword] = useState(false);
-  const form = useForm<FormValues>({
+  // localStorage only exists in the browser; the server snapshot ("") keeps hydration in sync.
+  const savedEmail = useSyncExternalStore(noSubscribe, readSavedEmail, () => "");
+  const [rememberChoice, setRememberEmail] = useState<boolean | null>(null);
+  const rememberEmail = rememberChoice ?? Boolean(savedEmail);
+  const form = useForm<FormInput, unknown, FormValues>({
     resolver: zodResolver(schema),
+    mode: "onTouched",
     defaultValues: { email: "", password: "" },
   });
+  const errors = form.formState.errors;
+  // isSubmitting drops back to false before router.replace finishes, so keep the button busy
+  // until the next page takes over instead of letting it flash back to "Sign in".
+  const [redirecting, setRedirecting] = useState(false);
 
   useEffect(() => {
-    const savedEmail = window.localStorage.getItem(SAVED_LOGIN_KEY);
-    if (!savedEmail) return;
+    if (!savedEmail || form.getValues("email")) return;
     form.setValue("email", savedEmail);
-    setSavePassword(true);
-  }, [form]);
+    form.setFocus("password");
+  }, [form, savedEmail]);
 
   async function onSubmit(values: FormValues) {
     setFormError(null);
@@ -104,70 +139,67 @@ function PasswordFields({ next }: { next: string }) {
         password: values.password,
       });
       if (error) {
-        setFormError(error.message);
+        setFormError(friendlyAuthError(error.message));
         return;
       }
-      if (savePassword) window.localStorage.setItem(SAVED_LOGIN_KEY, values.email);
-      else window.localStorage.removeItem(SAVED_LOGIN_KEY);
+      writeSavedEmail(rememberEmail ? values.email : null);
+      setRedirecting(true);
       const dest = await continueAfterSession(next);
       if (!dest) return;
       router.replace(dest);
       router.refresh();
     } catch (error) {
-      setFormError(messageOf(error, "Could not sign in."));
+      setRedirecting(false);
+      setFormError(friendlyAuthError(messageOf(error, "Could not sign in. Try again.")));
     }
   }
 
+  const pending = form.formState.isSubmitting || redirecting;
+
   return (
-    <form className="space-y-5" onSubmit={form.handleSubmit(onSubmit)}>
+    <form className="space-y-5" noValidate onSubmit={form.handleSubmit(onSubmit)}>
+      <FormAlert>{formError}</FormAlert>
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
-        <Input id="email" type="email" autoComplete="email" {...form.register("email")} />
-        {form.formState.errors.email ? (
-          <p className="text-sm text-error">{form.formState.errors.email.message}</p>
-        ) : null}
+        <Input
+          id="email"
+          type="email"
+          inputMode="email"
+          autoComplete="username"
+          autoCapitalize="none"
+          spellCheck={false}
+          placeholder="you@business.com"
+          className={AUTH_INPUT_CLASS}
+          {...fieldA11y("email", errors.email?.message)}
+          {...form.register("email")}
+        />
+        <FieldError id="email" message={errors.email?.message} />
       </div>
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <Label htmlFor="password">Password</Label>
-          <Link href="/forgot-password" className="text-sm font-medium text-brand hover:underline">
+          <Link
+            href="/forgot-password"
+            className="rounded text-sm font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+          >
             Forgot password?
           </Link>
         </div>
-        <div className="relative">
-          <Input
-            id="password"
-            type={showPassword ? "text" : "password"}
-            autoComplete={savePassword ? "current-password" : "off"}
-            className="pr-11"
-            {...form.register("password")}
-          />
-          <button
-            type="button"
-            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted hover:text-foreground"
-            aria-label={showPassword ? "Hide password" : "Show password"}
-            aria-pressed={showPassword}
-            onClick={() => setShowPassword((current) => !current)}
-          >
-            {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-          </button>
-        </div>
-        <label className="flex items-center gap-2.5 text-sm text-foreground">
-          <Checkbox
-            checked={savePassword}
-            onCheckedChange={(value) => setSavePassword(value === true)}
-            aria-label="Save password"
-          />
-          Save password
-        </label>
-        {form.formState.errors.password ? (
-          <p className="text-sm text-error">{form.formState.errors.password.message}</p>
-        ) : null}
+        <PasswordInput
+          id="password"
+          autoComplete="current-password"
+          {...fieldA11y("password", errors.password?.message)}
+          {...form.register("password")}
+        />
+        <FieldError id="password" message={errors.password?.message} />
       </div>
-      {formError ? <p className="text-sm text-error">{formError}</p> : null}
-      <Button type="submit" className="w-full" disabled={form.formState.isSubmitting}>
-        {form.formState.isSubmitting ? "Signing in…" : "Sign in"}
-      </Button>
+      <label className="flex w-fit cursor-pointer items-center gap-2.5 py-1 text-sm text-foreground">
+        <Checkbox checked={rememberEmail} onCheckedChange={(value) => setRememberEmail(value === true)} />
+        Remember my email on this device
+      </label>
+      <SubmitButton pending={pending} pendingLabel="Signing in…">
+        Sign in
+      </SubmitButton>
     </form>
   );
 }
@@ -274,28 +306,31 @@ function WhatsappLogin({ next }: { next: string }) {
             void sendCode();
           }}
         >
+          <FormAlert>{error}</FormAlert>
           <div className="space-y-2">
             <Label htmlFor="whatsapp">WhatsApp number</Label>
             <IndiaMobileInput id="whatsapp" value={phone} onChange={setPhone} />
           </div>
-          {error ? <p className="text-sm text-error">{error}</p> : null}
-          <Button type="submit" className="w-full" disabled={busy || phone.length < 10}>
-            {busy ? "Sending code…" : "Send OTP"}
-          </Button>
+          <SubmitButton pending={busy} pendingLabel="Sending code…" disabled={phone.length < 10}>
+            Send OTP
+          </SubmitButton>
         </form>
       ) : null}
 
       {step === "code" ? (
         <div className="space-y-5">
+          <p className="text-sm text-muted">
+            Enter the 6-digit code we sent on WhatsApp to <span className="font-medium text-ink">+91 {phone}</span>.
+          </p>
           <OtpInput value={otp} onChange={setOtp} onComplete={(code) => void verifyCode(code)} disabled={busy} />
-          {error ? <p className="text-sm text-error">{error}</p> : null}
+          <FormAlert>{error}</FormAlert>
           <div className="flex items-center justify-between text-sm">
-            <button type="button" className="text-muted hover:text-foreground" onClick={() => setStep("phone")}>
+            <button type="button" className="min-h-11 text-muted hover:text-foreground" onClick={() => setStep("phone")}>
               Change number
             </button>
             <button
               type="button"
-              className="font-medium text-brand disabled:text-muted"
+              className="min-h-11 font-medium text-brand disabled:text-muted"
               disabled={busy || waitSeconds > 0}
               onClick={() => void sendCode()}
             >
@@ -316,31 +351,33 @@ function WhatsappLogin({ next }: { next: string }) {
           <p className="text-sm text-muted">Tell us about your business to finish signing in.</p>
           <div className="space-y-2">
             <Label htmlFor="otp-name">Name</Label>
-            <Input id="otp-name" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" />
+            <Input id="otp-name" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" className={AUTH_INPUT_CLASS} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="otp-business">Business name</Label>
-            <Input id="otp-business" value={businessName} onChange={(event) => setBusinessName(event.target.value)} />
+            <Input id="otp-business" value={businessName} onChange={(event) => setBusinessName(event.target.value)} autoComplete="organization" className={AUTH_INPUT_CLASS} />
           </div>
           <div className="space-y-2">
             <Label htmlFor="otp-email">Email</Label>
-            <Input id="otp-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" />
+            <Input id="otp-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" className={AUTH_INPUT_CLASS} />
           </div>
-          {error ? <p className="text-sm text-error">{error}</p> : null}
-          <Button type="submit" className="w-full" disabled={busy}>
-            {busy ? "Signing in…" : "Continue"}
-          </Button>
+          <FormAlert>{error}</FormAlert>
+          <SubmitButton pending={busy} pendingLabel="Signing in…">
+            Continue
+          </SubmitButton>
         </form>
       ) : null}
 
       <div className="border-t border-border pt-4">
-        <button
+        <Button
           type="button"
-          className="text-sm font-medium text-brand hover:underline"
+          variant="ghost"
+          className="h-auto px-0 py-1 text-sm font-medium text-brand hover:bg-transparent hover:underline"
+          aria-expanded={passwordOpen}
           onClick={() => setPasswordOpen((open) => !open)}
         >
           Sign in with email and password
-        </button>
+        </Button>
         {passwordOpen ? (
           <div className="mt-4">
             <PasswordFields next={next} />
@@ -351,10 +388,17 @@ function WhatsappLogin({ next }: { next: string }) {
   );
 }
 
-export function LoginForm({ otpEnabled = false }: { otpEnabled?: boolean }) {
-  const searchParams = useSearchParams();
-  const next = searchParams.get("next") || "/dashboard";
-  const queryError = authQueryError(searchParams.get("error"));
+export function LoginForm({
+  otpEnabled = false,
+  next: rawNext = "/dashboard",
+  errorCode = null,
+}: {
+  otpEnabled?: boolean;
+  next?: string;
+  errorCode?: string | null;
+}) {
+  const next = safeAuthNext(rawNext);
+  const queryError = authQueryError(errorCode);
 
   return (
     <div>
@@ -362,7 +406,11 @@ export function LoginForm({ otpEnabled = false }: { otpEnabled?: boolean }) {
       <p className="mt-1.5 text-sm text-muted">
         {otpEnabled ? "Sign in with WhatsApp, or use your email and password." : "Sign in to your PostBus workspace."}
       </p>
-      {queryError ? <p className="mt-4 text-sm text-error">{queryError}</p> : null}
+      {queryError ? (
+        <div className="mt-5">
+          <FormAlert>{queryError}</FormAlert>
+        </div>
+      ) : null}
       <div className="mt-7">
         {otpEnabled ? <WhatsappLogin next={next} /> : <PasswordFields next={next} />}
       </div>

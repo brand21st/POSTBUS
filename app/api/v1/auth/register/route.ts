@@ -41,6 +41,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // With email confirmation on, Supabase hides an existing confirmed account: no error, no
+    // session, and a placeholder user with zero identities. No email goes out, so say so here
+    // instead of telling the merchant to wait for a confirmation that will never arrive.
+    if (data.user && !data.session && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      throw new AppError(
+        ERROR_CODES.CONFLICT,
+        "An account with this email already exists. Sign in or reset your password."
+      );
+    }
+
     if (data.user?.id && !data.session) {
       void import("@/modules/vachat/abandoned-signup")
         .then(({ enqueueAbandonedSignup }) => enqueueAbandonedSignup(data.user!.id))

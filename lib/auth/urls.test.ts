@@ -12,6 +12,9 @@ describe("auth urls", () => {
     expect(safeAuthNext("/onboarding")).toBe("/onboarding");
     expect(safeAuthNext("https://evil.example/phish")).toBe("/dashboard");
     expect(safeAuthNext("//evil.example")).toBe("/dashboard");
+    expect(safeAuthNext("/\\evil.example")).toBe("/dashboard");
+    expect(safeAuthNext("/\tevil")).toBe("/dashboard");
+    expect(safeAuthNext("/orders?tab=open")).toBe("/orders?tab=open");
     expect(safeAuthNext(null)).toBe("/dashboard");
   });
 
