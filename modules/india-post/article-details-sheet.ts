@@ -1,4 +1,6 @@
-import { writeWorkbook, type SheetCell } from "@/lib/xlsx/write";
+import { fillSheetTemplate, type TemplateCellKind } from "@/lib/xlsx/template-clone";
+import type { SheetCell } from "@/lib/xlsx/write";
+import { ARTICLE_DETAILS_TEMPLATE_BASE64 } from "@/modules/india-post/templates/article-details-template.generated";
 import type { DraftArticle } from "@/modules/india-post/article-types";
 import { INDIA_POST_FILE_BOOKING_MAX, INDIA_POST_JSON_BOOKING_MAX } from "@/modules/india-post/spec";
 
@@ -61,41 +63,6 @@ export const ARTICLE_DETAILS_HEADERS = [
   "SENDER ADD LINE 2",
   "SENDER ADD LINE 3",
 ] as const;
-
-/** Allowed-values reference sheet that ships with the India Post template. */
-export const ARTICLE_DETAILS_INFO_ROWS: SheetCell[][] = [
-  [
-    "SHAPE OF ARTICLE",
-    "BOOLEAN",
-    "DELIVERY INSTRUCTION",
-    "DELIVERY INSTRUCTION DESCRIPTION",
-    "DELIVERY SLOT format",
-    "INSTRICTION RTS",
-    "INSTRICTION RTS DESCRIPTION",
-    "CODR/COD",
-    "INSURANCE",
-    "PREPAYMENT",
-    "PREPAYMENT DESCRIPTION",
-  ],
-  ["ROLL", true, "ND", "NORMAL DELIVERY", "02:00-04:00", "RTS", "RETURN TO SENDER ADDRESS", "codr", "DOP", "SS", "SERVICE STAMPS"],
-  ["NROL", false, "OD", "OPEN DELIVERY", "02:00-04:00", "RTA", "RETURN TO ALTERNATE ADDRESS", "cod", null, "FM", "FRANKING MACHINE"],
-  ["DOC", null, "SD", "SCHEDULED DELIVERY", null, null, null, null, null, "PS", "POSTAGE STAMPS"],
-  [null, null, "SPDS", "SMART PARCEL DELIVERY SYSTEM"],
-];
-
-const WIDTHS: Record<string, number> = {
-  "SERIAL NUMBER": 9,
-  "BARCODE NO": 16,
-  "RECEIVER NAME": 24,
-  "RECEIVER ADD LINE 1": 32,
-  "RECEIVER ADD LINE 2": 32,
-  "RECEIVER ADD LINE 3": 20,
-  "SENDER NAME": 20,
-  "SENDER COMPANY NAME": 20,
-  "RECEIVER EMAILID": 24,
-  "SENDER ADD LINE 1": 24,
-  "SENDER ADD LINE 2": 28,
-};
 
 /** Rows per file: India Post's file booking cap (Approach Document: up to 5000 articles). */
 export const EXCEL_BOOKING_LIMIT_MAX = INDIA_POST_FILE_BOOKING_MAX;
@@ -230,14 +197,73 @@ export function renumberArticleDetailsRows(rows: SheetCell[][]) {
   return rows.map((row, index) => [index + 1, ...row.slice(1)]);
 }
 
+/**
+ * Cell kind per column, as the India Post template stores its own sample row: serial and
+ * dimensions are numbers, weight and COD value use the template's "0" number format, flags are
+ * booleans, everything else (PIN codes, mobiles, barcodes, prepayment and insurance values) is text.
+ */
+export const ARTICLE_DETAILS_COLUMN_KINDS: Record<(typeof ARTICLE_DETAILS_HEADERS)[number], TemplateCellKind> = {
+  "SERIAL NUMBER": "number",
+  "BARCODE NO": "text",
+  "PHYSICAL WEIGHT": "styledNumber",
+  REG: "bool",
+  OTP: "bool",
+  "RECEIVER CITY": "text",
+  "RECEIVER PINCODE": "text",
+  "RECEIVER NAME": "text",
+  "RECEIVER ADD LINE 1": "text",
+  "RECEIVER ADD LINE 2": "text",
+  "RECEIVER ADD LINE 3": "text",
+  ACK: "bool",
+  "SENDER MOBILE NO": "text",
+  "RECEIVER MOBILE NO": "text",
+  "PREPAYMENT CODE": "text",
+  "VALUE OF PREPAYMENT": "text",
+  "CODR/COD": "text",
+  "VALUE FOR CODR/COD": "styledNumber",
+  "INSURANCE TYPE": "text",
+  "VALUE OF INSURANCE": "text",
+  "SHAPE OF ARTICLE": "text",
+  "LENGTH ": "number",
+  "BREADTH/DIAMETER": "number",
+  HEIGHT: "number",
+  "PRIORITY FLAG": "bool",
+  "DELIVERY INSTRUCTION": "text",
+  "DELIVERY SLOT": "text",
+  "INSTRUCTION RTS": "text",
+  "SENDER NAME": "text",
+  "SENDER COMPANY NAME": "text",
+  "SENDER CITY": "text",
+  "SENDER STATE/UT": "text",
+  "SENDER PINCODE": "text",
+  "SENDER EMAILID": "text",
+  "SENDER ALT CONTACT": "text",
+  "SENDER KYC": "text",
+  "SENDER TAX": "text",
+  "RECEIVER COMPANY NAME": "text",
+  "RECEIVER STATE/UT": "text",
+  "RECEIVER EMAILID": "text",
+  "RECEIVER ALT CONTACT": "text",
+  "RECEIVER KYC": "text",
+  "RECEIVER TAX REF": "text",
+  "ALT ADDRESS FLAG": "text",
+  "BULK REFERENCE": "text",
+  "SENDER ADD LINE 1": "text",
+  "SENDER ADD LINE 2": "text",
+  "SENDER ADD LINE 3": "text",
+};
+
+/**
+ * The India Post workbook itself (sample rows removed) with these rows filled in. Every other part
+ * of the file - the Information sheet, styles, theme, sheet names and order - is the template's own.
+ */
 export async function articleDetailsWorkbook(rows: SheetCell[][]) {
-  return writeWorkbook([
-    {
-      name: ARTICLE_DETAILS_SHEET,
-      rows: [[...ARTICLE_DETAILS_HEADERS], ...renumberArticleDetailsRows(rows)],
-      widths: ARTICLE_DETAILS_HEADERS.map((header) => WIDTHS[header] ?? Math.max(10, header.trim().length + 2)),
-      freezeHeader: true,
-    },
-    { name: ARTICLE_DETAILS_INFO_SHEET, rows: ARTICLE_DETAILS_INFO_ROWS },
-  ]);
+  return fillSheetTemplate({
+    template: ARTICLE_DETAILS_TEMPLATE_BASE64,
+    sheetPath: "xl/worksheets/sheet1.xml",
+    kinds: ARTICLE_DETAILS_HEADERS.map((header) => ARTICLE_DETAILS_COLUMN_KINDS[header]),
+    rows: renumberArticleDetailsRows(rows),
+    headerRows: 1,
+    numberStyle: 1,
+  });
 }

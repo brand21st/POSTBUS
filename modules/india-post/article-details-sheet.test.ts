@@ -109,7 +109,7 @@ describe("India Post ArticleDetails sheet", () => {
     expect(cells).toEqual(ARTICLE_DETAILS_HEADERS.map((header) => emptyToNull(SAMPLE[header]) ?? cellDefault(header)));
   });
 
-  it("writes ArticleDetails and Information sheets with typed cells", async () => {
+  it("writes ArticleDetails and Information sheets with the template's cell types", async () => {
     const bytes = await articleDetailsWorkbook([
       ARTICLE_DETAILS_HEADERS.map((header) => SAMPLE[header]),
       ARTICLE_DETAILS_HEADERS.map((header) => SAMPLE[header]),
@@ -121,9 +121,11 @@ describe("India Post ArticleDetails sheet", () => {
     const xml = await (await JSZip.loadAsync(bytes)).file("xl/worksheets/sheet1.xml")!.async("string");
     expect(xml).toContain('<c r="D2" t="b"><v>0</v></c>');
     expect(xml).toContain('<c r="Y2" t="b"><v>1</v></c>');
-    expect(xml).toContain('<c r="G2" t="inlineStr"><is><t xml:space="preserve">700162</t></is></c>');
-    expect(xml).toContain('<c r="R2"><v>1199</v></c>');
-    expect(xml).toContain('state="frozen"');
+    // Same cell shapes as the India Post template: text as t="str", formatted numbers with s="1".
+    expect(xml).toContain('<c r="G2" t="str"><v>700162</v></c>');
+    expect(xml).toContain('<c r="R2" s="1"><v>1199</v></c>');
+    expect(xml).toContain('<c r="C2" s="1"><v>100</v></c>');
+    expect(xml).not.toContain("<f>");
   });
 
   it("splits rows into files by the workspace limit", () => {

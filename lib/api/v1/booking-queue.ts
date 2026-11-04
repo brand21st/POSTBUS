@@ -11,6 +11,8 @@ import {
   QUEUE_ACTION_MAX_ITEMS,
   revalidateItems,
 } from "@/modules/booking-queue/actions";
+import { NextResponse } from "next/server";
+import { bookedArticleDetailsExport, bookedArticleDetailsPlan, BOOKED_EXPORT_MAX } from "@/modules/booking-queue/export";
 import { getBookingAutomationSettings, saveBookingAutomationSettings } from "@/modules/booking-queue/settings";
 import {
   ENQUEUE_MAX_ORDERS,
@@ -33,6 +35,15 @@ async function body<T>(request: NextRequest, schema: z.ZodType<T>, message: stri
   if (!parsed.success) throw new AppError(ERROR_CODES.VALIDATION_ERROR, message);
   return parsed.data;
 }
+
+const exportSchema = z.object({
+  shipmentIds: z.array(z.string().uuid()).max(BOOKED_EXPORT_MAX).optional(),
+  q: z.string().max(200).optional(),
+  source: z.string().max(40).optional(),
+  from: z.string().max(40).optional(),
+  to: z.string().max(40).optional(),
+  part: z.number().int().min(1).optional(),
+});
 
 const enqueueSchema = z.object({
   orderIds: z.array(z.string().uuid()).min(1).max(ENQUEUE_MAX_ORDERS),
@@ -66,6 +77,8 @@ function listQuery(request: NextRequest) {
  * POST booking-queue/dispatch   { itemIds, idempotencyKey } book approved orders with India Post
  * GET  booking-queue/settings   automation settings (mode, sources, batch size, maximum wait, paused)
  * PATCH booking-queue/settings  { version, ... } save; owners and admins only
+ * POST booking-queue/export/plan  { shipmentIds? | q, source, from, to } files an export would produce
+ * POST booking-queue/export       { ..., part } one India Post ArticleDetails workbook of booked shipments
  * Off unless the workspace is in BOOKING_QUEUE_ORGS: reads report enabled:false, enqueue is refused.
  */
 export async function handleBookingQueueRoutes(
@@ -104,6 +117,20 @@ export async function handleBookingQueueRoutes(
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, `Send 1 to ${ENQUEUE_MAX_ORDERS} order ids.`);
     }
     return enqueueOrders(supabase, ctx, parsed.data.orderIds, { via: parsed.data.via ?? "ORDERS_PAGE" });
+  }
+  if (method === "POST" && slugs[1] === "export") {
+    const input = await body(request, exportSchema, "Choose the shipments or filters to export.");
+    const query = { shipmentIds: input.shipmentIds, search: input.q, source: input.source, from: input.from, to: input.to };
+    if (slugs[2] === "plan" && slugs.length === 3) return bookedArticleDetailsPlan(supabase, ctx, query);
+    if (slugs.length === 2) {
+      const file = await bookedArticleDetailsExport(supabase, ctx, { ...query, part: input.part });
+      return new NextResponse(Buffer.from(file.bytes), {
+        headers: {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${file.filename}"`,
+        },
+      });
+    }
   }
   if (method === "POST" && slugs.length === 2) {
     const ids = `Send 1 to ${QUEUE_ACTION_MAX_ITEMS} queue item ids.`;

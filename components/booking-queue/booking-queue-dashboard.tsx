@@ -8,6 +8,7 @@ import { FileSpreadsheet } from "lucide-react";
 import { BulkExcelWizard } from "@/components/bookings/bulk-excel-wizard";
 import { AutomationSettingsButton } from "@/components/booking-queue/automation-settings-dialog";
 import { BookingDetailDialog } from "@/components/booking-queue/booking-detail-dialog";
+import { ExportBookedButton } from "@/components/booking-queue/export-booked-dialog";
 import { historyColumns, queueColumns } from "@/components/booking-queue/queue-columns";
 import { ApproveAllWaiting, QueueBulkActions } from "@/components/booking-queue/queue-actions";
 import { QueueKpiStrip } from "@/components/booking-queue/queue-kpi-strip";
@@ -270,6 +271,11 @@ export function BookingQueueDashboard({ summary }: { summary: QueueSummary }) {
 
         <TabsContent value="history" className="mt-4 space-y-3">
           {filters}
+          {history.data?.total ? (
+            <div className="flex justify-end">
+              <ExportBookedButton filters={{ q: url.q, source: url.source, from, to }} />
+            </div>
+          ) : null}
           <DataTable
             columns={historyCols}
             data={(history.data?.items ?? []) as Array<BookingHistoryRow & Record<string, unknown>>}
