@@ -22,6 +22,7 @@ export const FEATURE = {
   invoices: "Invoices",
   trackingPage: "Tracking page",
   analytics: "Analytics",
+  multiPrint: "Multi print",
   proBundle: "Everything in Pro",
   support: "Priority support",
   wati: "WhatsApp (Wati) notifications",
@@ -47,6 +48,7 @@ export const PRO_FEATURES: PlanFeatureName[] = [
   FEATURE.invoices,
   FEATURE.trackingPage,
   FEATURE.analytics,
+  FEATURE.multiPrint,
 ];
 
 export const BUSINESS_FEATURES: PlanFeatureName[] = [
@@ -65,7 +67,7 @@ const NAV_FEATURES: Array<{ href: string; feature: string }> = [
   { href: "/dashboard/manifests", feature: FEATURE.manifests },
   { href: "/dashboard/labels/customize", feature: FEATURE.packing },
   { href: "/dashboard/labels/templates", feature: FEATURE.packing },
-  { href: "/dashboard/labels/multi-print", feature: FEATURE.packing },
+  { href: "/dashboard/labels/multi-print", feature: FEATURE.multiPrint },
   { href: "/dashboard/orders/bulk-excel", feature: FEATURE.bulk },
   { href: "/dashboard/integrations/wati", feature: FEATURE.wati },
   { href: "/dashboard/integrations/india-post", feature: FEATURE.indiaPost },
@@ -155,6 +157,9 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
   if (slugs[0] === "tracking" || slugs[0] === "tracking-pages") return FEATURE.trackingPage;
   if (slugs[0] === "automation" && method !== "GET") return FEATURE.automation;
   if (slugs[0] === "manifests" && method !== "GET") return FEATURE.manifests;
+  if (path === "label-template/multi-sheet" || (slugs[0] === "label-template" && slugs[1] === "multi-sheet")) {
+    return FEATURE.multiPrint;
+  }
   if (slugs[0] === "label-template" && method !== "GET") return FEATURE.packing;
   if (
     path === "labels/bulk-download" ||

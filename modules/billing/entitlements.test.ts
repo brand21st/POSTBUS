@@ -16,7 +16,9 @@ describe("plan entitlements", () => {
     expect(expandPlanFeatures([FEATURE.analytics], { slug: "starter" })).toEqual(STARTER_FEATURES);
     expect(expandPlanFeatures([], { slug: "pro" })).toEqual(PRO_FEATURES);
     expect(PRO_FEATURES).toContain(FEATURE.analytics);
+    expect(PRO_FEATURES).toContain(FEATURE.multiPrint);
     expect(STARTER_FEATURES).not.toContain(FEATURE.analytics);
+    expect(STARTER_FEATURES).not.toContain(FEATURE.multiPrint);
     expect(expandPlanFeatures([], { slug: "business" })).toEqual(BUSINESS_FEATURES);
   });
 
@@ -48,7 +50,7 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForPath("/dashboard/tracking")).toBe(FEATURE.trackingPage);
     expect(lockedFeatureForPath("/dashboard/labels/customize")).toBe(FEATURE.packing);
     expect(lockedFeatureForPath("/dashboard/labels/templates")).toBe(FEATURE.packing);
-    expect(lockedFeatureForPath("/dashboard/labels/multi-print")).toBe(FEATURE.packing);
+    expect(lockedFeatureForPath("/dashboard/labels/multi-print")).toBe(FEATURE.multiPrint);
     expect(lockedFeatureForPath("/dashboard/orders")).toBeNull();
     expect(lockedFeatureForPath("/dashboard/orders/bulk-excel")).toBe(FEATURE.bulk);
     expect(lockedFeatureForPath("/dashboard/integrations")).toBeNull();
@@ -71,8 +73,9 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForApi("PATCH", "automation", ["automation"])).toBe(FEATURE.automation);
     expect(lockedFeatureForApi("POST", "integrations/shopify", ["integrations", "shopify"])).toBe(FEATURE.shopify);
     expect(lockedFeatureForApi("POST", "label-template/multi-sheet", ["label-template", "multi-sheet"])).toBe(
-      FEATURE.packing
+      FEATURE.multiPrint
     );
+    expect(lockedFeatureForApi("PUT", "label-template", ["label-template"])).toBe(FEATURE.packing);
     expect(lockedFeatureForApi("GET", "labels", ["labels"])).toBeNull();
   });
 

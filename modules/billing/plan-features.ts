@@ -10,6 +10,7 @@ export const PLAN_FEATURE_OPTIONS = [
   "Invoices",
   "Tracking page",
   "Analytics",
+  "Multi print",
   "Everything in Pro",
   "Priority support",
   "WhatsApp (Wati) notifications",
