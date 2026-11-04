@@ -4,7 +4,7 @@ export const publicRoutes = [
   { path: "/pricing", changeFrequency: "weekly", priority: 0.8 },
   { path: "/india-post-shipping", changeFrequency: "monthly", priority: 0.8 },
   { path: "/shopify-india-post", changeFrequency: "monthly", priority: 0.8 },
-  { path: "/woocommerce-india-post", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/woocommerce-india-post", changeFrequency: "monthly", priority: 0.8 },
   { path: "/india-post-customer-id", changeFrequency: "monthly", priority: 0.7 },
   { path: "/india-post-shipping-label", changeFrequency: "monthly", priority: 0.7 },
   { path: "/india-post-tracking", changeFrequency: "monthly", priority: 0.7 },

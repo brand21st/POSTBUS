@@ -149,7 +149,12 @@ export function IntentPage({
       <section className="bg-surface py-16 sm:py-20">
         <Container className="max-w-5xl">
           <h2 className="text-3xl font-bold tracking-tight text-ink">Related PostBus guides</h2>
-          <div className="mt-8 grid gap-5 md:grid-cols-3">
+          <div
+            className={cn(
+              "mt-8 grid gap-5 md:grid-cols-2",
+              relatedLinks.length === 4 ? "lg:grid-cols-4" : "md:grid-cols-3",
+            )}
+          >
             {relatedLinks.map((link) => (
               <Link
                 key={link.href}

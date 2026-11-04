@@ -29,8 +29,8 @@ export function TrustedIntegrations() {
             India Post stays the carrier. PostBus is the workspace.
           </h2>
           <p className="mt-4 text-base text-muted sm:text-lg">
-            Connect your existing Customer ID, then add Shopify or manual orders. WooCommerce is on
-            the roadmap — not live yet.
+            Connect your existing Customer ID, then bring in orders from Shopify, WooCommerce or
+            manual entry.
           </p>
         </div>
 
@@ -71,20 +71,15 @@ export function TrustedIntegrations() {
               Optional customer updates through your Wati account on Business plans and during trial.
             </p>
           </li>
-          <li className="rounded-[24px] border border-dashed border-zinc-300 bg-white p-5 text-left sm:p-6 sm:col-span-2 lg:col-span-2">
-            <div className="flex flex-wrap items-center gap-3">
-              <WooCommerceLogo className="h-10" />
-              <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-zinc-600">
-                Coming soon
-              </span>
-            </div>
+          <li className="rounded-[24px] border border-border bg-surface p-5 text-left sm:p-6 sm:col-span-2 lg:col-span-2">
+            <WooCommerceLogo className="h-10" />
             <h3 className="mt-4 text-lg font-semibold text-ink">WooCommerce</h3>
             <p className="mt-2 text-sm leading-relaxed text-muted">
-              A WooCommerce connection is planned. Today you can still ship WooCommerce orders as
-              manual shipments with your India Post Customer ID.
+              Connect your store with WooCommerce REST API keys. Orders import automatically, and
+              the India Post AWB and tracking link are saved back to each WooCommerce order.
             </p>
             <Link href="/woocommerce-india-post" className="mt-4 inline-block text-sm font-semibold text-brand hover:underline">
-              See the current WooCommerce workflow
+              Explore WooCommerce and India Post
             </Link>
           </li>
         </ul>

@@ -79,7 +79,7 @@ export default function IndiaPostCustomerIdPage() {
         },
         {
           title: "Add orders",
-          description: "Sync Shopify or create manual shipments from other channels.",
+          description: "Sync Shopify or WooCommerce, or create manual shipments from other channels.",
         },
         {
           title: "Run the shipping workflow",
@@ -97,6 +97,11 @@ export default function IndiaPostCustomerIdPage() {
           href: "/shopify-india-post",
           label: "Shopify India Post integration",
           description: "Connect store orders to the Customer ID workflow.",
+        },
+        {
+          href: "/woocommerce-india-post",
+          label: "WooCommerce India Post integration",
+          description: "Import WooCommerce orders into the Customer ID workflow.",
         },
         {
           href: "/contact",

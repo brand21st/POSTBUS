@@ -4,7 +4,7 @@ export const siteConfig = {
   tagline: "India Post Shipping Management for Ecommerce",
   seoTitle: "India Post Shipping Software for Ecommerce | PostBus",
   description:
-    "Connect your existing India Post Customer ID and manage orders, shipping labels, tracking and invoices from one dashboard. Built for merchants who already ship with India Post — including Shopify and manual orders.",
+    "Connect your existing India Post Customer ID and manage orders, shipping labels, tracking and invoices from one dashboard. Built for merchants who already ship with India Post — including Shopify, WooCommerce and manual orders.",
   url: "https://www.postbus.in",
   contactEmail: "hello@postbus.in",
   supportWhatsapp: "918848772371",
@@ -22,6 +22,7 @@ export const siteConfig = {
     "India Post Customer ID shipping",
     "India Post Shopify shipping",
     "India Post WooCommerce shipping",
+    "WooCommerce India Post integration",
     "India Post shipping label generator",
     "PostBus",
   ],
@@ -45,7 +46,7 @@ export const footerLinks = {
     { label: "Pricing", href: "/pricing" },
     { label: "India Post shipping", href: "/india-post-shipping" },
     { label: "Shopify integration", href: "/shopify-india-post" },
-    { label: "WooCommerce workflow", href: "/woocommerce-india-post" },
+    { label: "WooCommerce integration", href: "/woocommerce-india-post" },
     { label: "Developers", href: "/developers" },
   ],
   company: [

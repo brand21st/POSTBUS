@@ -28,9 +28,9 @@ export const metadata: Metadata = marketingMetadata({
 const deepFeatures = [
   {
     icon: ShoppingBag,
-    title: "Shopify Order Sync",
+    title: "Shopify & WooCommerce Sync",
     description:
-      "Keep new and updated Shopify orders flowing into a shipping-ready workspace.",
+      "Keep new and updated Shopify and WooCommerce orders flowing into a shipping-ready workspace.",
   },
   {
     icon: PackageCheck,
@@ -86,7 +86,7 @@ export default function FeaturesPage() {
             as="h1"
             eyebrow="Features"
             title="Everything between order and delivery."
-            description="PostBus connects India Post Customer ID bookings to Shopify and manual orders — labels, manifests, tracking and invoices in one workspace."
+            description="PostBus connects India Post Customer ID bookings to Shopify, WooCommerce and manual orders — labels, manifests, tracking and invoices in one workspace."
             className="max-w-3xl"
           />
           <Link

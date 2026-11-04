@@ -99,9 +99,9 @@ export default function ShopifyIndiaPostPage() {
           description: "Learn which existing account details connect to PostBus.",
         },
         {
-          href: "/india-post-tracking",
-          label: "India Post tracking management",
-          description: "Keep AWB status attached to every shipment.",
+          href: "/woocommerce-india-post",
+          label: "WooCommerce India Post integration",
+          description: "Running a WooCommerce store too? Connect it to the same workspace.",
         },
       ]}
     />

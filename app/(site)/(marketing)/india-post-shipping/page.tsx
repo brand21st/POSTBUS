@@ -29,11 +29,11 @@ const faqs = [
   },
   {
     q: "Who is PostBus for?",
-    a: "PostBus is for ecommerce businesses that already ship through India Post, including Shopify merchants and teams that create shipments manually.",
+    a: "PostBus is for ecommerce businesses that already ship through India Post, including Shopify and WooCommerce merchants and teams that create shipments manually.",
   },
   {
     q: "Can PostBus manage manual ecommerce orders?",
-    a: "Yes. Merchants can create manual shipments for phone, WhatsApp, marketplace or other orders that did not originate in Shopify.",
+    a: "Yes. Merchants can create manual shipments for phone, WhatsApp, marketplace or other orders that did not originate in Shopify or WooCommerce.",
   },
 ] as const;
 
@@ -53,7 +53,7 @@ export default function IndiaPostShippingPage() {
           ],
           bullets: [
             "Use the India Post Customer ID you already have",
-            "Prepare Shopify and manual orders in one queue",
+            "Prepare Shopify, WooCommerce and manual orders in one queue",
             "Keep booking and tracking status attached to each shipment",
           ],
         },
@@ -76,7 +76,7 @@ export default function IndiaPostShippingPage() {
         },
         {
           title: "Bring in orders",
-          description: "Sync Shopify orders or create manual shipments for other sales channels.",
+          description: "Sync Shopify or WooCommerce orders, or create manual shipments for other channels.",
         },
         {
           title: "Book and label",
@@ -103,6 +103,11 @@ export default function IndiaPostShippingPage() {
           href: "/shopify-india-post",
           label: "Shopify and India Post",
           description: "Move Shopify orders into an India Post shipping workflow.",
+        },
+        {
+          href: "/woocommerce-india-post",
+          label: "WooCommerce and India Post",
+          description: "Import WooCommerce orders and sync AWB tracking back to the store.",
         },
       ]}
     />

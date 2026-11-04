@@ -44,7 +44,7 @@ export default function AboutPage() {
               <h2 className="text-2xl font-bold text-ink">What PostBus does</h2>
               <p className="mt-4 leading-relaxed text-muted">
                 PostBus connects to the India Post Customer ID a merchant already uses. It
-                organizes Shopify and manual orders, booking, barcode and label workflows,
+                organizes Shopify, WooCommerce and manual orders, booking, barcode and label workflows,
                 manifests, tracking and invoices in one dashboard.
               </p>
             </article>
@@ -53,7 +53,6 @@ export default function AboutPage() {
               <p className="mt-4 leading-relaxed text-muted">
                 PostBus is independent software. It is not India Post and does not issue
                 Customer IDs, operate the carrier network or bill India Post postage.
-                WooCommerce integration is planned and is not currently live.
               </p>
             </article>
           </div>

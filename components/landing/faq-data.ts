@@ -21,7 +21,7 @@ export const faqs = [
   },
   {
     q: "Does PostBus work with WooCommerce?",
-    a: "Not yet. WooCommerce is on the roadmap. Until it ships, you can add those orders as manual shipments and still book them with your India Post Customer ID.",
+    a: "Yes. Connect your WooCommerce store with REST API keys and orders import into PostBus automatically. Book them with your India Post Customer ID, and the AWB and tracking link are saved back to the WooCommerce order.",
   },
   {
     q: "Can I use PostBus for manual orders?",

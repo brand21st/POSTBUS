@@ -72,6 +72,7 @@ export function siteEntityGraph() {
           "Invoices",
           "Shipping analytics",
           "Shopify order sync",
+          "WooCommerce order sync",
           "Manual order entry",
         ],
       },
