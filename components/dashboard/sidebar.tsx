@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ComponentType, type FocusEvent, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronsLeft, Lock } from "lucide-react";
@@ -288,6 +289,7 @@ export function Sidebar({
             label: tutorialsNav.label,
             icon: tutorialsNav.icon,
             active: isNavItemActive(tutorialsNav.href, pathname),
+            iconClassName: "text-[#FF0000]",
           })}
           {navLink({
             href: helpNav.href,
@@ -340,15 +342,18 @@ export function Sidebar({
         ) : null}
       </div>
 
-      {collapsed && tip ? (
-        <span
-          role="tooltip"
-          className="pointer-events-none fixed z-[60] -translate-y-1/2 whitespace-nowrap rounded-md bg-ink px-2 py-1 text-xs font-medium text-background shadow-md"
-          style={{ top: tip.top, left: tip.left }}
-        >
-          {tip.label}
-        </span>
-      ) : null}
+      {collapsed && tip
+        ? createPortal(
+            <span
+              role="tooltip"
+              className="pointer-events-none fixed z-[80] -translate-y-1/2 whitespace-nowrap rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground shadow-lg"
+              style={{ top: tip.top, left: tip.left }}
+            >
+              {tip.label}
+            </span>,
+            document.body
+          )
+        : null}
     </aside>
   );
 }

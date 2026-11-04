@@ -16,9 +16,9 @@ import {
   CreditCard,
   Settings,
   LifeBuoy,
-  Clapperboard,
   Calculator,
 } from "lucide-react";
+import { YoutubeIcon } from "@/components/icons/youtube-icon";
 
 export type NavChildItem = {
   label: string;
@@ -72,7 +72,7 @@ export const aiAccountantNav: NavItem = {
 export const tutorialsNav: NavItem = {
   label: "Tutorials",
   href: "/dashboard/tutorials",
-  icon: Clapperboard,
+  icon: YoutubeIcon,
 };
 
 export const helpNav: NavItem = {

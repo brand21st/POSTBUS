@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { YoutubeIcon } from "@/components/icons/youtube-icon";
 import { breadcrumbs, isNavItemActive, isResourceIdSegment, sidebarNav, tutorialsNav } from "@/lib/dashboard/nav";
 
 describe("Support Center navigation", () => {
@@ -45,6 +46,7 @@ describe("Tutorials navigation", () => {
   it("adds a help-cluster item pointing at the merchant tutorials page", () => {
     expect(tutorialsNav.label).toBe("Tutorials");
     expect(tutorialsNav.href).toBe("/dashboard/tutorials");
+    expect(tutorialsNav.icon).toBe(YoutubeIcon);
     expect(isNavItemActive("/dashboard/tutorials", "/dashboard/tutorials")).toBe(true);
     expect(isNavItemActive("/dashboard/tutorials", "/dashboard/orders")).toBe(false);
   });
