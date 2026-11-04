@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { shopifyPendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
-import { refreshAddressPrebooking } from "@/modules/orders/prebooking-validation";
+import { commerceAddressReviewRequired, refreshAddressPrebooking } from "@/modules/orders/prebooking-validation";
 import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
 import { mapExcelRowToArticle, mapShipmentToArticle } from "@/modules/india-post/article-mapper";
@@ -143,7 +143,8 @@ export async function summarizeBulkBookings(
 export async function validateOrdersForBooking(
   supabase: SupabaseClient,
   ctx: TenantContext,
-  orderIds: string[]
+  orderIds: string[],
+  options?: { forceAi?: boolean }
 ): Promise<BulkBookingResult> {
   const ids = [...new Set(orderIds)];
   if (!ids.length) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Select at least one order.");
@@ -184,6 +185,7 @@ export async function validateOrdersForBooking(
       refreshCursor += 1;
       const address = order.shipping_address as { id?: string | null } | null;
       if (!address?.id) continue;
+      if (!commerceAddressReviewRequired((order as { source?: string | null }).source)) continue;
       refreshedAddresses.set(
         order.id as string,
         await refreshAddressPrebooking(supabase, {
@@ -191,6 +193,7 @@ export async function validateOrdersForBooking(
           address: order.shipping_address as never,
           searchPostOffices: (pin) => provider.searchPostOffices(pin),
           allowAi: true,
+          forceAi: options?.forceAi,
         })
       );
     }
@@ -320,7 +323,9 @@ export async function validateOrdersForBooking(
       });
       continue;
     }
-    const addressBlock = shippingAddressBookingBlock(address);
+    const addressBlock = commerceAddressReviewRequired((order as { source?: string | null }).source)
+      ? shippingAddressBookingBlock(address)
+      : null;
     if (addressBlock) {
       const issue: ValidationIssue = {
         orderId: order.id,

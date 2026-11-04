@@ -25,6 +25,7 @@ import { useMe } from "@/lib/hooks/use-me";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { hasPermission } from "@/lib/permissions/rbac";
 import { isParcelDimensionBookingError } from "@/modules/india-post/article-validator";
+import { merchantProviderError } from "@/modules/orders/error-facts";
 import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-status";
 import { TRACKING_REFRESH_MESSAGES } from "@/modules/india-post/tracking-refresh-messages";
 import { FEATURE } from "@/modules/billing/entitlements";
@@ -192,7 +193,7 @@ export default function ShipmentDetailPage() {
   });
   const article = record.trackingNumber ?? record.tracking_number ?? record.barcode;
   const bookedAt = record.bookedAt ?? record.booked_at;
-  const providerError = record.lastError ?? record.last_error;
+  const providerError = merchantProviderError(record.lastError ?? record.last_error);
   const trackingLookupFailed = /tracking lookup failed/i.test(providerError ?? "");
   const statusValue = indiaPostDisplayShipmentStatus(record);
   const parcelError = isParcelDimensionBookingError(providerError);

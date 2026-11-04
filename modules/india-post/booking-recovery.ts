@@ -1,11 +1,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logError, logInfo } from "@/lib/logger";
 import { enqueueShipmentBookingJob } from "@/modules/jobs/shipment-booking-job";
-import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
+import { readCeptForceResubmitConsumedAt, readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { shipmentBarcode } from "@/modules/india-post/booking-idempotency";
-import { evaluateBookingRetryEligibility } from "@/modules/india-post/booking-retry-eligibility";
+import {
+  evaluateBookingRetryEligibility,
+  shipmentMayAllocateFirstBarcode,
+  shipmentNeedsSameBarcodeRecovery,
+} from "@/modules/india-post/booking-retry-eligibility";
 
 export const BOOKING_RECOVERY_BATCH = 20;
+/** All workspaces: Failed / Recovery Required with no article number, per cron tick. */
+export const FIRST_BARCODE_RECOVERY_BATCH = 100;
 const ORPHAN_MIN_AGE_MS = 2 * 60 * 1000;
 
 let recoveryInFlight: Promise<BookingRecoveryResult> | null = null;
@@ -119,6 +125,116 @@ async function recoverSafeOrphans(supabase: SupabaseClient): Promise<BookingReco
     }
   }
   return { enabled: true, recovered, skipped };
+}
+
+/** Same window as Force book, so an automatic resubmit cannot stack. */
+const SAME_BARCODE_RESUBMIT_COOLDOWN_MS = 10 * 60 * 1000;
+
+type RecoveryRow = {
+  id: string;
+  organization_id: string;
+  status?: string | null;
+  barcode?: string | null;
+  tracking_number?: string | null;
+  provider_ref?: string | null;
+  booked_at?: string | null;
+  last_error?: string | null;
+  last_error_code?: string | null;
+  metadata?: unknown;
+  created_by?: string | null;
+};
+
+/**
+ * Every workspace: Failed / Recovery Required rows with no article number.
+ * The booking run allocates a barcode and submits. Not a second POST of an unknown article.
+ */
+async function enqueueFirstBarcodeRecovery(supabase: SupabaseClient) {
+  const { data, error } = await supabase
+    .from("shipments")
+    .select("id, organization_id, status, barcode, tracking_number, provider_ref, booked_at, last_error, last_error_code, metadata, created_by")
+    .is("booked_at", null)
+    .is("barcode", null)
+    .is("tracking_number", null)
+    .is("provider_ref", null)
+    .in("status", ["FAILED", "RECOVERY_REQUIRED"])
+    .order("updated_at", { ascending: true })
+    .limit(FIRST_BARCODE_RECOVERY_BATCH);
+  if (error) throw new Error(error.message);
+
+  let queued = 0;
+  for (const row of (data ?? []) as RecoveryRow[]) {
+    if (!shipmentMayAllocateFirstBarcode(row)) continue;
+    try {
+      await supabase
+        .from("shipments")
+        .update({ status: "QUEUED", last_error: null, last_error_code: null })
+        .eq("id", row.id)
+        .eq("organization_id", row.organization_id)
+        .in("status", ["FAILED", "RECOVERY_REQUIRED"])
+        .is("booked_at", null)
+        .is("barcode", null)
+        .is("tracking_number", null)
+        .is("provider_ref", null);
+      await enqueueShipmentBookingJob(supabase, {
+        organizationId: row.organization_id,
+        jobType: "shipment-booking",
+        entityType: "shipment",
+        entityId: row.id,
+        userId: row.created_by ?? undefined,
+      });
+      queued += 1;
+      logInfo("booking.first_barcode_requeued", {
+        organizationId: row.organization_id,
+        shipmentId: row.id,
+      });
+    } catch (enqueueError) {
+      logError("booking.first_barcode_requeue_failed", {
+        shipmentId: row.id,
+        message: enqueueError instanceof Error ? enqueueError.message : "enqueue failed",
+      });
+    }
+  }
+  return queued;
+}
+
+/**
+ * Queue booking jobs for unconfirmed barcodes, and for every workspace's
+ * Recovery Required / Failed rows that never stored an article number.
+ */
+export async function enqueueSameBarcodeRecovery(supabase: SupabaseClient) {
+  const firstBarcodeQueued = await enqueueFirstBarcodeRecovery(supabase);
+  const { data, error } = await supabase
+    .from("shipments")
+    .select("id, organization_id, status, barcode, tracking_number, provider_ref, booked_at, last_error, last_error_code, metadata, created_by")
+    .is("booked_at", null)
+    .in("status", ["FAILED", "RECOVERY_REQUIRED", "BOOKING"])
+    .order("updated_at", { ascending: true })
+    .limit(BOOKING_RECOVERY_BATCH);
+  if (error) throw new Error(error.message);
+
+  let queued = firstBarcodeQueued;
+  for (const row of (data ?? []) as RecoveryRow[]) {
+    if (shipmentMayAllocateFirstBarcode(row)) continue;
+    if (!shipmentNeedsSameBarcodeRecovery(row)) continue;
+    const consumed = Date.parse(readCeptForceResubmitConsumedAt(row.metadata) ?? "");
+    if (Number.isFinite(consumed) && Date.now() - consumed < SAME_BARCODE_RESUBMIT_COOLDOWN_MS) continue;
+    try {
+      await enqueueShipmentBookingJob(supabase, {
+        organizationId: row.organization_id,
+        jobType: "shipment-booking",
+        entityType: "shipment",
+        entityId: row.id,
+        userId: row.created_by ?? undefined,
+      });
+      queued += 1;
+    } catch (enqueueError) {
+      logError("booking.same_barcode_requeue_failed", {
+        shipmentId: row.id,
+        message: enqueueError instanceof Error ? enqueueError.message : "enqueue failed",
+      });
+    }
+  }
+  return { queued };
 }
 
 async function shipmentCount(

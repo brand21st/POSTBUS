@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { asPaginated } from "@/lib/dashboard/records";
 import { formatDate } from "@/lib/format";
-import { api, toSearchParams } from "@/lib/hooks/use-api";
+import { api, isUnknownBookingConflict, toSearchParams } from "@/lib/hooks/use-api";
 import { indiaPostVisibleShipmentError, isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { bookingQueueLabel } from "@/modules/india-post/booking-retry-eligibility";
 import { INDIA_POST_SERVICES, indiaPostServiceLabel, SHIPMENT_STATUSES } from "@/types/domain";
@@ -127,6 +127,20 @@ export default function ShipmentsPage() {
                 toast.success(result.message || "Retry scheduled.");
                 queryClient.invalidateQueries({ queryKey: ["shipments"] });
               } catch (error) {
+                if (isUnknownBookingConflict(error)) {
+                  try {
+                    const forced = await api<{ message?: string }>(`/api/v1/shipments/${row.id}/force-book`, {
+                      method: "POST",
+                      body: JSON.stringify({ confirm: true }),
+                    });
+                    toast.success(forced.message || "Force book scheduled with the same barcode.");
+                    queryClient.invalidateQueries({ queryKey: ["shipments"] });
+                    return;
+                  } catch (forceError) {
+                    toast.error(forceError instanceof Error ? forceError.message : "Force book could not be started.");
+                    return;
+                  }
+                }
                 toast.error(error instanceof Error ? error.message : "Shipment could not be retried.");
               }
             }}

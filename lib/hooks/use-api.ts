@@ -30,6 +30,25 @@ export class ApiError extends Error {
   }
 }
 
+export function bookingConflictDetails(error: unknown) {
+  const errors = (error as { errors?: unknown[] } | null)?.errors;
+  const first = errors?.[0];
+  if (!first || typeof first !== "object") return null;
+  const details = (first as { details?: unknown }).details;
+  if (!details || typeof details !== "object") return null;
+  const row = details as { action?: unknown; shipmentId?: unknown; orderId?: unknown };
+  return {
+    action: typeof row.action === "string" ? row.action : undefined,
+    shipmentId: typeof row.shipmentId === "string" ? row.shipmentId : undefined,
+    orderId: typeof row.orderId === "string" ? row.orderId : undefined,
+  };
+}
+
+/** Retry was refused because India Post may already have the article. Force book is the next step. */
+export function isUnknownBookingConflict(error: unknown) {
+  return bookingConflictDetails(error)?.action === "BOOKING_OUTCOME_UNKNOWN";
+}
+
 export function isConfirmedSessionLoss(error: unknown) {
   return error instanceof ApiError && error.status === 401 && error.code === "AUTH_REQUIRED";
 }

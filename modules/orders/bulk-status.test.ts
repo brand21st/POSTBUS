@@ -98,6 +98,6 @@ describe("bulkUpdateOrderStatus", () => {
       { orderIds: ["ready-1"], action: "fulfill" }
     );
     expect(result.updated).toEqual([]);
-    expect(result.skipped[0]?.reason).toContain("already has an active shipment");
+    expect(result.skipped[0]?.reason).toBe("Every selected order already has a shipment.");
   });
 });

@@ -54,6 +54,15 @@ describe("India Post article validation", () => {
     expect(payload.receiver_add_line_2).toBe("");
   });
 
+  it("books a receiver line 1 that is shorter than 3 characters by borrowing the next line", () => {
+    const draft = baseDraft({ receiverLine1: "12", receiverLine2: "Green Park Road", receiverCity: "Virudhunagar" });
+    expect(validateIndiaPostArticle(draft).some((issue) => issue.field === "receiver_add_line_1")).toBe(false);
+    const payload = serializeIndiaPostBookingArticle(assertValidatedArticle(draft));
+    expect(String(payload.receiver_add_line_1).length).toBeGreaterThanOrEqual(3);
+    expect(String(payload.receiver_add_line_1).length).toBeLessThanOrEqual(80);
+    expect(String(payload.receiver_add_line_1)).toMatch(/^12\b/);
+  });
+
   it("wraps a long receiver line 2 onto line 3 instead of failing the 80-character cap", () => {
     const longLine2 =
       "Near the old bus stand opposite State Bank of India, Ward 4, behind the municipal office complex";

@@ -29,7 +29,7 @@ import {
   pipelineStages,
 } from "@/lib/dashboard/records";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/format";
-import { api, toSearchParams } from "@/lib/hooks/use-api";
+import { api, bookingConflictDetails, isUnknownBookingConflict, toSearchParams } from "@/lib/hooks/use-api";
 import { useMe } from "@/lib/hooks/use-me";
 import type { DashboardKpis, DashboardPipeline, OrderRecord, Paginated } from "@/types/api";
 
@@ -118,7 +118,31 @@ export default function DashboardPage() {
       queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] });
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: async (error: Error) => {
+      const details = bookingConflictDetails(error);
+      if (isUnknownBookingConflict(error) && details?.shipmentId) {
+        try {
+          const forced = await api<{ message?: string }>(`/api/v1/shipments/${details.shipmentId}/force-book`, {
+            method: "POST",
+            body: JSON.stringify({ confirm: true }),
+          });
+          toast.success(forced.message || "Force book scheduled with the same barcode.");
+          queryClient.invalidateQueries({ queryKey: ["orders"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+        } catch (forceError) {
+          toast.error(forceError instanceof Error ? forceError.message : "Force book could not be started.");
+        }
+        return;
+      }
+      if (details?.shipmentId) {
+        const shipmentId = details.shipmentId;
+        toast.error(error.message, {
+          action: { label: "Open shipment", onClick: () => router.push(`/dashboard/shipments/${shipmentId}`) },
+        });
+        return;
+      }
+      toast.error(error.message);
+    },
   });
 
   const syncShopify = useMutation({

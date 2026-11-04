@@ -287,7 +287,10 @@ export async function handleCommerceRoutes(
     const { precheckOrders } = await import("@/modules/orders/prebooking-validation");
     const body = await request.json();
     const orderIds: string[] = body.orderIds ?? [];
-    return precheckOrders(supabase, ctx, orderIds, { allowAi: body.allowAi !== false });
+    return precheckOrders(supabase, ctx, orderIds, {
+      allowAi: body.allowAi !== false,
+      forceAi: body.forceAi === true,
+    });
   }
 
   if (key === "POST bookings/validate") {

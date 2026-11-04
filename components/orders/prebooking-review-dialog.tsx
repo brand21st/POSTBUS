@@ -77,13 +77,13 @@ function safeSuggestion(order: PrebookingOrderResult) {
   })?.suggestion;
 }
 
-async function precheckChunks(orderIds: string[], onProgress: (done: number, total: number) => void) {
+async function precheckChunks(orderIds: string[], onProgress: (done: number, total: number) => void, forceAi = false) {
   const orders: PrebookingOrderResult[] = [];
   for (let index = 0; index < orderIds.length; index += CHUNK) {
     const chunk = orderIds.slice(index, index + CHUNK);
     const result = await api<PrebookingCheckResult>("/api/v1/bookings/precheck", {
       method: "POST",
-      body: JSON.stringify({ orderIds: chunk }),
+      body: JSON.stringify({ orderIds: chunk, allowAi: true, forceAi }),
     });
     orders.push(...result.orders);
     onProgress(Math.min(index + chunk.length, orderIds.length), orderIds.length);
@@ -119,13 +119,13 @@ export function PrebookingReviewDialog({
   const [saving, setSaving] = useState(false);
   const [booking, setBooking] = useState(false);
 
-  async function runCheck(ids: string[]) {
+  async function runCheck(ids: string[], forceAi = false) {
     if (!ids.length) return;
     setChecking(true);
     onCheckingChange?.(ids);
     setProgress({ done: 0, total: ids.length });
     try {
-      const next = await precheckChunks(ids, (done, total) => setProgress({ done, total }));
+      const next = await precheckChunks(ids, (done, total) => setProgress({ done, total }), forceAi);
       setResult((current) => {
         const orders = current
           ? current.orders.map((order) => next.orders.find((item) => item.orderId === order.orderId) ?? order)
@@ -145,6 +145,8 @@ export function PrebookingReviewDialog({
         if (focus) setDraft(draftFrom(focus));
         return focus?.orderId ?? null;
       });
+      const corrected = next.orders.filter((order) => order.autoCorrected).length;
+      if (corrected) toast.success(`Corrected ${corrected} address${corrected === 1 ? "" : "es"} for booking.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Address check failed.");
     } finally {
@@ -199,6 +201,7 @@ export function PrebookingReviewDialog({
           phone: draft.phone,
           line1: draft.line1,
           line2: draft.line2,
+          line3: draft.line3,
           city: draft.city,
           state: draft.state,
           pincode: draft.pincode,
@@ -254,6 +257,7 @@ export function PrebookingReviewDialog({
             phone: order.address.phone,
             line1: suggestion.line1 || order.address.line1,
             line2: suggestion.line2 ?? order.address.line2,
+            line3: suggestion.line3 ?? order.address.line3,
             city: suggestion.city || order.address.city,
             state: suggestion.state || order.address.state,
             pincode: order.address.pincode,
@@ -277,7 +281,7 @@ export function PrebookingReviewDialog({
         <DialogHeader>
           <DialogTitle>AI Address Check</DialogTitle>
           <DialogDescription>
-            Correct shipping details here. Booking stays on this orders list.
+            Addresses are corrected automatically for India Post booking. Review anything still flagged.
           </DialogDescription>
         </DialogHeader>
         {checking ? (
@@ -312,11 +316,16 @@ export function PrebookingReviewDialog({
               <div>
                 <p className="text-sm font-medium">Order #{active.orderNumber || active.orderId.slice(0, 8)}</p>
                 <p className="text-xs text-muted-foreground">
-                  {active.customerName || "Customer"} · {statusLabel(active.status)} · {active.issues.length} issue{active.issues.length === 1 ? "" : "s"}
+                  {active.customerName || "Customer"} · {statusLabel(active.status)} · {active.issues.filter((issue) => issue.code !== "address_auto_corrected").length} issue{active.issues.filter((issue) => issue.code !== "address_auto_corrected").length === 1 ? "" : "s"}
                 </p>
               </div>
+              {active.autoCorrected ? (
+                <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs text-emerald-900">
+                  Address lines were corrected and saved for booking.
+                </p>
+              ) : null}
               <div className="space-y-2">
-                {active.issues.map((issue, index) => (
+                {active.issues.filter((issue) => issue.code !== "address_auto_corrected").map((issue, index) => (
                   <div key={`${issue.code}-${index}`} className="rounded-lg border border-border p-2 text-xs">
                     <p className="font-medium">{issue.message}</p>
                     {issue.suggestion?.line1 ? (
@@ -340,6 +349,9 @@ export function PrebookingReviewDialog({
                 </Field>
                 <Field label="Address line 2" problem={problemFields.has("line2")} className="sm:col-span-2">
                   <Input value={draft.line2} onChange={(event) => setDraft({ ...draft, line2: event.target.value })} />
+                </Field>
+                <Field label="Address line 3" problem={problemFields.has("line3")} className="sm:col-span-2">
+                  <Input value={draft.line3} onChange={(event) => setDraft({ ...draft, line3: event.target.value })} />
                 </Field>
                 <Field label="City" problem={problemFields.has("city")}>
                   <Input value={draft.city} onChange={(event) => setDraft({ ...draft, city: event.target.value })} />
@@ -377,6 +389,9 @@ export function PrebookingReviewDialog({
                 <Button type="button" size="sm" disabled={saving} onClick={() => void save(active)}>
                   Save changes
                 </Button>
+                <Button type="button" size="sm" variant="secondary" disabled={checking || saving} onClick={() => void runCheck([active.orderId], true)}>
+                  AI correct address
+                </Button>
                 <Button type="button" size="sm" variant="secondary" disabled={checking || saving} onClick={() => void runCheck([active.orderId])}>
                   Recheck address
                 </Button>
@@ -389,6 +404,9 @@ export function PrebookingReviewDialog({
         <DialogFooter>
           <Button type="button" variant="secondary" disabled={saving || checking} onClick={() => void applySafeAll()}>
             Apply safe suggestions
+          </Button>
+          <Button type="button" variant="secondary" disabled={checking || saving || !orderIds.length} onClick={() => void runCheck(orderIds, true)}>
+            AI correct all
           </Button>
           <Button type="button" variant="secondary" disabled={checking || !orderIds.length} onClick={() => void runCheck(orderIds)}>
             Revalidate

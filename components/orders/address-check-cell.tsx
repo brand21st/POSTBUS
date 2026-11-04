@@ -47,6 +47,7 @@ const ACTION_LABEL: Record<ErrorQuickAction, string> = {
   retry: "Retry booking",
   parcel: "Set parcel",
   review: "Fix address",
+  autocorrect: "Fix address and book",
   open: "Open order",
 };
 
@@ -55,6 +56,7 @@ const ACTION_ICON: Record<ErrorQuickAction, typeof Zap> = {
   retry: RotateCcw,
   parcel: Package,
   review: MapPin,
+  autocorrect: MapPin,
   open: ExternalLink,
 };
 
@@ -155,13 +157,14 @@ export function BookingErrorCell({
               "h-6 gap-1 px-2 text-[11px]",
               action === "force" && "bg-red-600 hover:bg-red-700",
               action === "parcel" && "bg-amber-600 hover:bg-amber-700",
-              action === "retry" && "bg-emerald-600 hover:bg-emerald-700"
+              action === "retry" && "bg-emerald-600 hover:bg-emerald-700",
+              action === "autocorrect" && "h-auto whitespace-normal px-2 py-1 text-left leading-tight"
             )}
             disabled={busy}
             onClick={() => onAction(action)}
           >
             <ActionIcon className={cn("size-3", busy && "animate-spin")} aria-hidden />
-            {busy && action === "retry" ? "Booking…" : ACTION_LABEL[action]}
+            {busy && (action === "retry" || action === "autocorrect") ? "Booking…" : ACTION_LABEL[action]}
           </Button>
           <Button
             type="button"
@@ -202,6 +205,7 @@ export function BookingErrorDialog({
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const error = orderDisplayError(order, finalStatus);
+  const shown = error;
   const unknown = error ? unknownOutcome(order, error) : false;
   const action = error ? errorQuickAction(error, unknown) : "open";
   const barcode = order.shipment?.barcode ?? order.shipment?.trackingNumber ?? order.shipment?.tracking_number;
@@ -226,7 +230,7 @@ export function BookingErrorDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Order {number}
-            {error ? <StatusPill error={error} /> : null}
+            {shown ? <StatusPill error={shown} /> : null}
           </DialogTitle>
           <DialogDescription>{error ? error.summary : "This order has no booking errors now."}</DialogDescription>
         </DialogHeader>
@@ -295,7 +299,13 @@ export function BookingErrorDialog({
                 Set parcel
               </Button>
             ) : null}
-            {error && (action === "review" || error.facts.some((fact) => fact.kind === "address")) ? (
+            {error && action === "autocorrect" ? (
+              <Button type="button" size="sm" disabled={retrying} onClick={() => onAction("autocorrect")}>
+                <MapPin className="size-4" />
+                {retrying ? "Booking…" : "Fix address and book"}
+              </Button>
+            ) : null}
+            {error && action === "review" ? (
               <Button type="button" variant="secondary" size="sm" onClick={() => onAction("review")}>
                 <MapPin className="size-4" />
                 Fix address

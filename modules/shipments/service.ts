@@ -4,7 +4,12 @@ import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { orIlike } from "@/lib/api/filters";
 import type { TenantContext } from "@/lib/api/context";
 import { createBackgroundJob } from "@/modules/jobs/service";
-import { isAuthoritativeIndiaPostBooking, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
+import {
+  blankBookingArtifactPatch,
+  isAuthoritativeIndiaPostBooking,
+  shipmentBarcode,
+} from "@/modules/india-post/booking-idempotency";
+import { existingShipmentConflict } from "@/modules/shipments/existing-shipment-conflict";
 import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { scheduleForceRetryBooking } from "@/modules/india-post/booking-force-retry";
 import { evaluateBookingRetryEligibility, NEVER_SUBMITTED_CODES } from "@/modules/india-post/booking-retry-eligibility";
@@ -29,6 +34,7 @@ import { parcelBoxIssue } from "@/modules/india-post/article-validator";
 import { sameBox } from "@/modules/autopack/decide";
 import { recordMerchantBox } from "@/modules/autopack/history";
 import { DEFAULT_INDIA_POST_SERVICE, INDIA_POST_SERVICES } from "@/types/domain";
+import { commerceAddressReviewRequired } from "@/modules/orders/prebooking-validation";
 import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 
 const OPEN_SHIPMENT_STATUSES = ["DRAFT", "QUEUED", "FAILED"] as const;
@@ -279,6 +285,7 @@ export async function createShipmentsForOrders(
 
   const created = [];
   const skipped = [];
+  const shipmentBlocks: Array<{ orderId: string; shipmentId?: string; action?: string; reason?: string }> = [];
   const addressIds = [
     ...new Set(
       orders
@@ -315,7 +322,7 @@ export async function createShipmentsForOrders(
       skipped.push(order.id);
       continue;
     }
-    if (enqueueBooking) {
+    if (enqueueBooking && commerceAddressReviewRequired(String(order.source ?? ""))) {
       const shipping = order.shipping_address_id ? addressById.get(order.shipping_address_id as string) : null;
       const addressBlock = shippingAddressBookingBlock(shipping ?? null);
       if (addressBlock) {
@@ -349,7 +356,7 @@ export async function createShipmentsForOrders(
       explicitGrams: extras?.weightGrams,
     });
 
-    if (action === "processing" && current && currentStatus !== "FAILED") {
+    if (action === "processing" && current) {
       if (!alreadyBooked) {
         await applyProcessingSideEffects(supabase, ctx, order.id, current.id);
       } else {
@@ -382,14 +389,39 @@ export async function createShipmentsForOrders(
       continue;
     }
 
+    if (current && alreadyBooked && action !== "fulfill") {
+      created.push({ ...current, jobId: null });
+      continue;
+    }
+
     if (enqueueBooking && current && !alreadyBooked) {
       const decision = evaluateBookingRetryEligibility({
         shipment: current,
         job: latestJobByShipment.get(current.id) ?? null,
       });
+      if (decision.action === "BOOKING_IN_PROGRESS" || decision.action === "RETRY_ALREADY_SCHEDULED") {
+        created.push({ ...current, jobId: decision.existingJobId ?? null });
+        continue;
+      }
       if (!decision.eligible) {
+        shipmentBlocks.push({
+          orderId: order.id,
+          shipmentId: current.id,
+          action: decision.action,
+          reason: decision.reason,
+        });
         skipped.push(order.id);
         continue;
+      }
+      const blanks = blankBookingArtifactPatch(current);
+      if (Object.keys(blanks).length) {
+        await supabase
+          .from("shipments")
+          .update(blanks)
+          .eq("id", current.id)
+          .eq("organization_id", ctx.organizationId)
+          .is("booked_at", null);
+        Object.assign(current, blanks);
       }
       const collect = shipmentCollectFromOrder(order);
       // A size the merchant chose in PostBus is never replaced by an automatic one.
@@ -419,7 +451,7 @@ export async function createShipmentsForOrders(
         .is("booked_at", null)
         .is("tracking_number", null)
         .is("provider_ref", null)
-        .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED"])
+        .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED"])
         .filter("metadata->>ceptSubmitIntentAt", "is", null);
       const { data: requeued, error: requeueError } = await (keptBarcode
         ? requeue.eq("barcode", keptBarcode).in("last_error_code", [...NEVER_SUBMITTED_CODES])
@@ -428,6 +460,11 @@ export async function createShipmentsForOrders(
         .select("id")
         .maybeSingle();
       if (requeueError || !requeued) {
+        shipmentBlocks.push({
+          orderId: order.id,
+          shipmentId: current.id,
+          reason: "This shipment could not be retried. Open it and try again.",
+        });
         skipped.push(order.id);
         continue;
       }
@@ -447,11 +484,24 @@ export async function createShipmentsForOrders(
       continue;
     }
 
-    if (current && (alreadyBooked || currentStatus !== "FAILED")) {
+    if (current && currentStatus !== "FAILED") {
+      shipmentBlocks.push({
+        orderId: order.id,
+        shipmentId: current.id,
+        reason: "This order already has a shipment. Open the shipment to retry or cancel it.",
+      });
       skipped.push(order.id);
       continue;
     }
     if (ordersWithLiveBooking.has(String(order.id))) {
+      const holder = (existing ?? []).find(
+        (row) => String(row.order_id) === String(order.id) && shipmentMayHoldIndiaPostBooking(row)
+      );
+      shipmentBlocks.push({
+        orderId: order.id,
+        shipmentId: holder?.id ? String(holder.id) : current?.id,
+        reason: "This order already has a shipment that may be with India Post. Open it to retry or cancel it.",
+      });
       skipped.push(order.id);
       continue;
     }
@@ -534,18 +584,15 @@ export async function createShipmentsForOrders(
   }
 
   if (!created.length && skipped.length) {
-    throw new AppError(
-      ERROR_CODES.CONFLICT,
-      whatsappBlocked.length
-        ? `${whatsappBlocked[0]} cannot be booked until the WhatsApp order is READY.`
-        : shopifyPendingBlocked.length
-          ? `${shopifyPendingBlocked[0]} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`
+    const blockedMessage = whatsappBlocked.length
+      ? `${whatsappBlocked[0]} cannot be booked until the WhatsApp order is READY.`
+      : shopifyPendingBlocked.length
+        ? `${shopifyPendingBlocked[0]} cannot be booked until Shopify payment is confirmed as Prepaid or COD.`
         : addressBlocked.length
           ? `${addressBlocked[0]} cannot be booked until the shipping address is valid and ready.`
-        : skipped.length === 1
-          ? "This order already has a shipment. Open the shipment to retry or cancel it."
-          : "Every selected order already has a shipment."
-    );
+          : null;
+    if (blockedMessage) throw new AppError(ERROR_CODES.CONFLICT, blockedMessage);
+    throw existingShipmentConflict(shipmentBlocks);
   }
 
   await supabase.from("audit_logs").insert({

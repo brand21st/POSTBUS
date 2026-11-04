@@ -402,6 +402,7 @@ export type PrebookingOrderResult = {
     widthCm: number;
     heightCm: number;
   } | null;
+  autoCorrected?: boolean;
 };
 
 export type PrebookingCheckResult = {

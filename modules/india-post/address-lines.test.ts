@@ -11,6 +11,18 @@ describe("wrapIndiaPostAddressLines", () => {
     });
   });
 
+  it("lifts a 1–2 character line 1 with the next street words", () => {
+    const wrapped = wrapIndiaPostAddressLines("12", "Green Park Road");
+    expect(wrapped.line1.length).toBeGreaterThanOrEqual(3);
+    expect(wrapped.line1.length).toBeLessThanOrEqual(INDIA_POST_ADDRESS_LINE_MAX);
+    expect(wrapped.line1).toMatch(/^12\b/);
+    expect(`${wrapped.line1} ${wrapped.line2 ?? ""}`).toContain("Green Park Road");
+  });
+
+  it("uses the city when the street itself is shorter than 3 characters", () => {
+    expect(wrapIndiaPostAddressLines("12", "", "", "Kalpetta").line1).toBe("12 Kalpetta");
+  });
+
   it("drops a 1–2 character extra line by merging it", () => {
     const wrapped = wrapIndiaPostAddressLines("12 Market Road", "ab");
     expect(wrapped.line1).toBe("12 Market Road ab");

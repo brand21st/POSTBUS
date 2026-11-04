@@ -7,7 +7,7 @@ import { parseJobTypes } from "@/lib/jobs/job-lanes";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { enqueueDueTrackingSyncJobs } from "@/modules/india-post/tracking-sync";
-import { runBookingAutoRecovery } from "@/modules/india-post/booking-recovery";
+import { enqueueSameBarcodeRecovery, runBookingAutoRecovery } from "@/modules/india-post/booking-recovery";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -83,7 +83,13 @@ export async function POST(request: NextRequest) {
     };
     if ((!jobTypes || jobTypes.includes("shipment-booking")) && hasAdminClient()) {
       try {
-        recovery = await runBookingAutoRecovery(createAdminClient());
+        const admin = createAdminClient();
+        recovery = await runBookingAutoRecovery(admin);
+        await enqueueSameBarcodeRecovery(admin).catch((enqueueError) => {
+          logError("booking.same_barcode_requeue_failed", {
+            message: enqueueError instanceof Error ? enqueueError.message : "enqueue failed",
+          });
+        });
       } catch (recoveryError) {
         const message = recoveryError instanceof Error ? recoveryError.message : "Booking recovery failed.";
         logError("booking.recovery_failed", { message });

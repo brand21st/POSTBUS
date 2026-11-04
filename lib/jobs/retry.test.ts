@@ -58,6 +58,30 @@ describe("classifyProviderError", () => {
     expect(classifyProviderError({ status: 422, message: "unprocessable" }).retryable).toBe(false);
   });
 
+  it("treats a read-only code TypeError as the original timeout", () => {
+    const crashed = classifyProviderError({
+      name: "TypeError",
+      message: "Cannot set property code of #<DOMException> which has only a getter",
+    });
+    expect(crashed.retryable).toBe(true);
+    expect(crashed.code).toBe("ETIMEDOUT");
+    expect(crashed.message).not.toMatch(/only a getter/);
+
+    const afterPost = classifyProviderError({
+      message: "Cannot set property code of #<DOMException> which has only a getter",
+      bookingPhase: "POST_SUBMIT",
+      submitted: true,
+    });
+    expect(afterPost).toMatchObject({ retryable: false, code: "CEPT_UNKNOWN" });
+
+    const beforePost = classifyProviderError({
+      message: "Cannot set property code of #<DOMException> which has only a getter",
+      bookingPhase: "PRE_POST",
+      submitted: false,
+    });
+    expect(beforePost).toMatchObject({ retryable: true, code: "PRE_POST_TRANSIENT" });
+  });
+
   it("retries Node fetch failures instead of treating them as validation", () => {
     const failed = classifyProviderError({ name: "TypeError", message: "fetch failed" });
     expect(failed.retryable).toBe(true);

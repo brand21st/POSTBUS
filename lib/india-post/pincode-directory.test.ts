@@ -44,7 +44,7 @@ describe("lookupIndiaPostPincodeDirectory", () => {
     const result = await lookupIndiaPostPincodeDirectory("560001", fetchImpl as unknown as typeof fetch);
     expect(fetchImpl).toHaveBeenCalledWith(
       "https://api.postalpincode.in/pincode/560001",
-      expect.objectContaining({ headers: { Accept: "application/json" } })
+      expect.objectContaining({ cache: "no-store", headers: { Accept: "application/json" } })
     );
     expect(result).toEqual({
       pincode: "560001",

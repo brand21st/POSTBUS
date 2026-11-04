@@ -111,10 +111,13 @@ describe("evaluateBookingRetryEligibility", () => {
     expect(decision.requiresManualReview).toBe(true);
   });
 
-  it("blocks RECOVERY_REQUIRED even when no barcode was stored", () => {
-    expect(evaluateBookingRetryEligibility({ shipment: shipment({ status: "RECOVERY_REQUIRED" }) }, NOW).action).toBe(
-      "BOOKING_OUTCOME_UNKNOWN"
+  it("allocates a first barcode for RECOVERY_REQUIRED when nothing was stored", () => {
+    const decision = evaluateBookingRetryEligibility(
+      { shipment: shipment({ status: "RECOVERY_REQUIRED", last_error_code: "BOOKING_REVIEW_REQUIRED" }) },
+      NOW
     );
+    expect(decision.action).toBe("SAFE_TO_REQUEUE");
+    expect(decision.eligible).toBe(true);
   });
 
   it("allows a pre-POST authentication timeout to be retried", () => {
@@ -283,19 +286,19 @@ describe("evaluateBookingRetryEligibility", () => {
     ).toBe("BOOKING_OUTCOME_UNKNOWN");
   });
 
-  it("blocks QUEUED with TEMPORARY_PROVIDER_FAILURE even without a barcode", () => {
+  it("allocates a first barcode after a provider failure with no article number", () => {
     expect(
       evaluateBookingRetryEligibility(
         { shipment: shipment({ last_error_code: "TEMPORARY_PROVIDER_FAILURE" }) },
         NOW
       ).action
-    ).toBe("BOOKING_OUTCOME_UNKNOWN");
+    ).toBe("SAFE_TO_REQUEUE");
   });
 
-  it("blocks ETIMEDOUT when no barcode was stored", () => {
+  it("allocates a first barcode after a timeout with no article number", () => {
     expect(
       evaluateBookingRetryEligibility({ shipment: shipment({ status: "FAILED", last_error_code: "ETIMEDOUT" }) }, NOW).action
-    ).toBe("BOOKING_OUTCOME_UNKNOWN");
+    ).toBe("SAFE_TO_REQUEUE");
   });
 
   it("blocks a historical shipment that has no submit marker but has a tracking number", () => {
@@ -307,13 +310,13 @@ describe("evaluateBookingRetryEligibility", () => {
     ).toBe("BOOKING_OUTCOME_UNKNOWN");
   });
 
-  it("blocks a historical shipment whose job already ran and whose error was cleared", () => {
+  it("retries a historical job that never stored an article number", () => {
     expect(
       evaluateBookingRetryEligibility(
         { shipment: shipment(), job: { id: "job-old", status: "FAILED", attempt_count: 2, max_attempts: 5 } },
         NOW
       ).action
-    ).toBe("BOOKING_OUTCOME_UNKNOWN");
+    ).toBe("SAFE_TO_REQUEUE");
   });
 
   it("keeps Force Retry off unless the flag is explicitly true", async () => {

@@ -78,6 +78,18 @@ export function indiaPostFormatBookingFailure(json: unknown): string {
   return indiaPostJoinMessages([field, articles, message]) || "India Post booking failed.";
 }
 
+const UNKNOWN_PINCODE_SOURCE =
+  "(?:please provide proper data for tariff calculation\\s*-\\s*)?(?:(?:destination|origin|sender|receiver|pickup|drop[\\s-]?off)\\s+)?pin\\s?codes?\\s+(\\d{6})\\s+not found";
+
+/** India Post has no office for this PIN. Merchants see the PIN, not the tariff sentence. */
+export function indiaPostUnknownPincodeCopy(message: string) {
+  return message.replace(new RegExp(UNKNOWN_PINCODE_SOURCE, "gi"), (_, pin: string) => `${pin} is not a valid postal PIN code`);
+}
+
+export function isIndiaPostUnknownPincodeMessage(message: string) {
+  return new RegExp(UNKNOWN_PINCODE_SOURCE, "i").test(message);
+}
+
 export function indiaPostBookingHasArticleOutcomes(json: unknown): boolean {
   if (!json || typeof json !== "object") return false;
   const rec = json as Record<string, unknown>;

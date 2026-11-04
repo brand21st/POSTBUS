@@ -17,6 +17,7 @@ export const addressInput = z.object({
   phone: indiaMobile.optional(),
   line1: z.string().min(3),
   line2: z.string().optional(),
+  line3: z.string().optional(),
   city: z.string().min(2),
   state: z.string().min(2),
   pincode: z.string().regex(/^\d{6}$/),

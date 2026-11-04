@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/hooks/use-api";
+import { api, isUnknownBookingConflict } from "@/lib/hooks/use-api";
 import type { BookingRetryAction } from "@/modules/india-post/booking-retry-eligibility";
 
 type Decision = {
@@ -23,31 +23,6 @@ export function BookingRetryPanel({ shipmentId, canRetry }: { shipmentId: string
     enabled: canRetry && Boolean(shipmentId),
   });
 
-  const retry = useMutation({
-    mutationFn: () =>
-      api<{ message?: string; scheduled?: boolean }>(`/api/v1/shipments/${shipmentId}/retry`, { method: "POST" }),
-    onSuccess: (result) => {
-      toast.success(result.message || "Retry scheduled.");
-      queryClient.invalidateQueries({ queryKey: ["shipment", shipmentId] });
-      queryClient.invalidateQueries({ queryKey: ["booking-retry", shipmentId] });
-      queryClient.invalidateQueries({ queryKey: ["shipments"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const reconcile = useMutation({
-    mutationFn: () =>
-      api<{ message?: string; reconciled?: boolean }>(`/api/v1/shipments/${shipmentId}/reconcile-booking`, {
-        method: "POST",
-      }),
-    onSuccess: (result) => {
-      toast.message(result.message || "Booking check finished.");
-      queryClient.invalidateQueries({ queryKey: ["shipment", shipmentId] });
-      queryClient.invalidateQueries({ queryKey: ["booking-retry", shipmentId] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   const forceBook = useMutation({
     mutationFn: () =>
       api<{ message?: string; scheduled?: boolean; reconciled?: boolean }>(
@@ -62,6 +37,41 @@ export function BookingRetryPanel({ shipmentId, canRetry }: { shipmentId: string
       queryClient.invalidateQueries({ queryKey: ["shipment", shipmentId] });
       queryClient.invalidateQueries({ queryKey: ["booking-retry", shipmentId] });
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const retry = useMutation({
+    mutationFn: () =>
+      api<{ message?: string; scheduled?: boolean }>(`/api/v1/shipments/${shipmentId}/retry`, { method: "POST" }),
+    onSuccess: (result) => {
+      toast.success(result.message || "Retry scheduled.");
+      queryClient.invalidateQueries({ queryKey: ["shipment", shipmentId] });
+      queryClient.invalidateQueries({ queryKey: ["booking-retry", shipmentId] });
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
+    },
+    onError: (error: Error) => {
+      if (isUnknownBookingConflict(error)) {
+        forceBook.mutate();
+        return;
+      }
+      toast.error(error.message);
+    },
+  });
+
+  const reconcile = useMutation({
+    mutationFn: () =>
+      api<{ message?: string; reconciled?: boolean }>(`/api/v1/shipments/${shipmentId}/reconcile-booking`, {
+        method: "POST",
+      }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["shipment", shipmentId] });
+      queryClient.invalidateQueries({ queryKey: ["booking-retry", shipmentId] });
+      if (result.reconciled) {
+        toast.success(result.message || "India Post tracking confirms this shipment is booked.");
+        return;
+      }
+      forceBook.mutate();
     },
     onError: (error: Error) => toast.error(error.message),
   });

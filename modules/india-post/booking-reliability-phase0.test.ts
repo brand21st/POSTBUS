@@ -75,8 +75,8 @@ describe("force book refusals", () => {
     ).toBe("BOOKING_IN_PROGRESS");
   });
 
-  it("needs the existing barcode", () => {
-    expect(forceBookRefusal({ role: "OWNER", shipment: failedShipment({ barcode: null }) }, NOW)?.kind).toBe("conflict");
+  it("allows force book without a barcode so the run can allocate one", () => {
+    expect(forceBookRefusal({ role: "OWNER", shipment: failedShipment({ barcode: null }) }, NOW)).toBeNull();
   });
 
   it("applies a cooldown after a force was used", () => {
@@ -131,8 +131,12 @@ describe("requeue rule", () => {
     ).toBe(false);
     expect(shipmentMayBeRequeuedForBooking({ ...base, tracking_number: BARCODE })).toBe(false);
     expect(shipmentMayBeRequeuedForBooking({ ...base, provider_ref: "batch-1" })).toBe(false);
-    expect(shipmentMayBeRequeuedForBooking({ ...base, status: "RECOVERY_REQUIRED" })).toBe(false);
+    expect(shipmentMayBeRequeuedForBooking({ ...base, status: "RECOVERY_REQUIRED", barcode: BARCODE })).toBe(false);
     expect(shipmentMayBeRequeuedForBooking({ ...base, status: "BOOKING" })).toBe(false);
+  });
+
+  it("requeues Recovery Required when no article number was stored", () => {
+    expect(shipmentMayBeRequeuedForBooking({ ...base, status: "RECOVERY_REQUIRED", barcode: null })).toBe(true);
   });
 });
 

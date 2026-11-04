@@ -29,8 +29,8 @@ function optionalText(value?: string | null) {
   return text.slice(0, INDIA_POST_ADDRESS_LINE_MAX);
 }
 
-function streetFields(party: { line1: string; line2?: string; line3?: string }) {
-  const street = wrapIndiaPostAddressLines(party.line1, party.line2, party.line3);
+function streetFields(party: { line1: string; line2?: string; line3?: string; city?: string }) {
+  const street = wrapIndiaPostAddressLines(party.line1, party.line2, party.line3, party.city);
   return {
     line1: street.line1.slice(0, INDIA_POST_ADDRESS_LINE_MAX),
     line2: optionalText(street.line2),

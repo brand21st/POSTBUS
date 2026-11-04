@@ -25,6 +25,7 @@ const RETRYABLE_CODES = new Set([
   "HTTP_503",
   "HTTP_504",
   "TEMPORARY_PROVIDER_FAILURE",
+  "TRACKING_UNAVAILABLE",
 ]);
 
 const PERMANENT_CODES = new Set([
@@ -45,6 +46,16 @@ export type ClassifiedError = {
   message: string;
   httpStatus?: number;
 };
+
+/** Node threw this when booking wrote `code` onto a DOMException timeout. It is not an India Post reply. */
+export const READ_ONLY_CODE_GETTER = /only a getter/i;
+
+export const GETTER_TIMEOUT_MESSAGE = "India Post timed out. Checking tracking and booking this barcode.";
+
+export function isReadOnlyCodeGetterError(error: unknown) {
+  const message = error instanceof Error ? error.message : String((error as { message?: unknown } | null)?.message ?? "");
+  return READ_ONLY_CODE_GETTER.test(message);
+}
 
 function causeCode(error: unknown): string {
   const cause = (error as { cause?: { code?: string; message?: string } } | null)?.cause;
@@ -82,10 +93,28 @@ export function classifyProviderError(error: unknown): ClassifiedError {
     name?: string;
   };
   const message = anyError?.message || "Provider request failed.";
-  const code = anyError?.code || (anyError?.status ? `HTTP_${anyError.status}` : "PROVIDER_ERROR");
+  // DOMException.code is a number and a getter. Only string codes are booking outcomes.
+  const rawCode = anyError?.code;
+  const code =
+    typeof rawCode === "string" && rawCode.trim()
+      ? rawCode.trim()
+      : anyError?.status
+        ? `HTTP_${anyError.status}`
+        : "PROVIDER_ERROR";
 
   const httpStatus = typeof anyError?.status === "number" ? anyError.status : undefined;
   const bookingPhase = (anyError as { bookingPhase?: string }).bookingPhase;
+  const submitted = (anyError as { submitted?: boolean }).submitted;
+
+  if (READ_ONLY_CODE_GETTER.test(message)) {
+    if (bookingPhase === "POST_SUBMIT" || submitted === true) {
+      return { retryable: false, code: "CEPT_UNKNOWN", message: GETTER_TIMEOUT_MESSAGE, httpStatus };
+    }
+    if (bookingPhase === "PRE_POST" || submitted === false) {
+      return { retryable: true, code: "PRE_POST_TRANSIENT", message: GETTER_TIMEOUT_MESSAGE, httpStatus };
+    }
+    return { retryable: true, code: "ETIMEDOUT", message: GETTER_TIMEOUT_MESSAGE, httpStatus };
+  }
 
   if (bookingPhase === "PRE_POST" || code === "PRE_POST_TRANSIENT") {
     if (PERMANENT_CODES.has(code)) {

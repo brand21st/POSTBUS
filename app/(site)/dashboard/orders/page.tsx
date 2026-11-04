@@ -39,7 +39,12 @@ import {
 import { OrderKpiStrip } from "@/components/dashboard/order-kpi-strip";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
-import { orderStatusBadgeValue, orderStatusRowClass, StatusBadge } from "@/components/dashboard/status-badge";
+import {
+  orderStatusBadgeValue,
+  orderStatusRowClass,
+  orderVisibleStatus,
+  StatusBadge,
+} from "@/components/dashboard/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -90,7 +95,7 @@ import {
 } from "@/lib/dashboard/records";
 import { toggleRowSelection } from "@/lib/dashboard/row-selection";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { ApiError, api, toSearchParams } from "@/lib/hooks/use-api";
+import { ApiError, api, bookingConflictDetails, isUnknownBookingConflict, toSearchParams } from "@/lib/hooks/use-api";
 import {
   parcelServiceCode,
   resolveOrderBookingService,
@@ -116,6 +121,7 @@ const DEFAULT_COLUMNS = {
   items: true,
   source: true,
   dimensions: true,
+  error: true,
   payment: true,
   created: true,
   service: true,
@@ -127,6 +133,7 @@ const COLUMN_LABELS: Record<OptionalColumn, string> = {
   items: "Items",
   source: "Source",
   dimensions: "Parcel",
+  error: "Error status",
   payment: "Payment",
   created: "Created",
   service: "Service",
@@ -580,7 +587,25 @@ export default function OrdersPage() {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      const details = bookingConflictDetails(error);
+      if (isUnknownBookingConflict(error) && details?.shipmentId) {
+        forceBook.mutate(details.shipmentId);
+        return;
+      }
+      if (details?.action === "BOOKING_OUTCOME_UNKNOWN" && details.orderId && list.items.some((row) => row.id === details.orderId)) {
+        setErrorDialog({ orderId: details.orderId, confirmForce: true });
+        return;
+      }
+      if (details?.shipmentId) {
+        const shipmentId = details.shipmentId;
+        toast.error(error.message, {
+          action: { label: "Open shipment", onClick: () => router.push(`/dashboard/shipments/${shipmentId}`) },
+        });
+        return;
+      }
+      toast.error(error.message);
+    },
   });
 
   const forceBook = useMutation({
@@ -617,17 +642,8 @@ export default function OrdersPage() {
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
     },
     onError: (error: Error, row) => {
-      const details =
-        error instanceof ApiError
-          ? (error.errors[0] as { details?: { action?: string } } | undefined)?.details
-          : undefined;
-      // India Post may already have this article. Only a person (owner/admin) may decide to
-      // resubmit it, through the Force book confirmation, which checks tracking first.
-      if (details?.action === "BOOKING_OUTCOME_UNKNOWN") {
-        toast.message("India Post may already have this booking.", {
-          description: "Review it and use Force book if it is not booked. Owners and admins only.",
-        });
-        setErrorDialog({ orderId: row.id, confirmForce: true });
+      if (isUnknownBookingConflict(error) && row.shipment?.id) {
+        forceBook.mutate(row.shipment.id);
         return;
       }
       toast.error(error.message);
@@ -767,9 +783,26 @@ export default function OrdersPage() {
     );
   }
 
+  async function correctAddressAndBook(row: OrderRecord) {
+    try {
+      await api("/api/v1/bookings/precheck", {
+        method: "POST",
+        body: JSON.stringify({ orderIds: [row.id], allowAi: true, forceAi: true }),
+      });
+      toast.message("Fix address and book", {
+        description: "Address lines were corrected. Booking again.",
+      });
+      if (row.shipment?.id) retryBooking.mutate(row);
+      else ship.mutate({ orderIds: [row.id], action: "fulfill" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not correct the address.");
+    }
+  }
+
   function onErrorAction(row: OrderRecord, action: ErrorQuickAction | "details") {
     if (action === "parcel") openParcelEditor(row, Boolean(row.shipment?.id));
     else if (action === "retry") retryBooking.mutate(row);
+    else if (action === "autocorrect") void correctAddressAndBook(row);
     else if (action === "review") setReviewIds([row.id]);
     else if (action === "open") router.push(`/dashboard/orders/${row.id}`);
     else setErrorDialog({ orderId: row.id, confirmForce: action === "force" });
@@ -915,7 +948,7 @@ export default function OrdersPage() {
       id: "status",
       header: "Status",
       className: "w-[6.75rem] whitespace-nowrap",
-      cell: (row) => <StatusBadge value={orderStatusBadgeValue(row.status)} />,
+      cell: (row) => <StatusBadge value={orderStatusBadgeValue(orderVisibleStatus(row))} />,
     },
     ...(visibleColumns.dimensions
       ? [
@@ -927,20 +960,24 @@ export default function OrdersPage() {
           } satisfies DataTableColumn<OrderRecord>,
         ]
       : []),
-    {
-      id: "error",
-      header: "Error status",
-      className: "w-[16rem] whitespace-normal",
-      cell: (row) => (
-        <BookingErrorCell
-          order={row}
-          checking={checkingIds.includes(row.id)}
-          finalStatus={errorByOrder.get(row.id)}
-          busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
-          onAction={(action) => onErrorAction(row, action)}
-        />
-      ),
-    },
+    ...(visibleColumns.error
+      ? [
+          {
+            id: "error",
+            header: "Error status",
+            className: "w-[16rem] whitespace-normal",
+            cell: (row: OrderRecord) => (
+              <BookingErrorCell
+                order={row}
+                checking={checkingIds.includes(row.id)}
+                finalStatus={errorByOrder.get(row.id)}
+                busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
+                onAction={(action) => onErrorAction(row, action)}
+              />
+            ),
+          } satisfies DataTableColumn<OrderRecord>,
+        ]
+      : []),
     ...(visibleColumns.payment
       ? [
           {
@@ -1365,7 +1402,7 @@ export default function OrdersPage() {
         onRowClick={(row) => router.push(`/dashboard/orders/${row.id}`)}
         onRowHover={(row) => router.prefetch(`/dashboard/orders/${row.id}`)}
         getRowId={(row) => row.id}
-        getRowClassName={(row) => orderStatusRowClass(row.status)}
+        getRowClassName={(row) => orderStatusRowClass(orderVisibleStatus(row))}
         columnWidths={columnWidths}
         onColumnWidthsChange={(widths) => {
           setColumnWidths(widths);
@@ -1380,7 +1417,7 @@ export default function OrdersPage() {
               return (
                 <div
                   key={row.id}
-                  className={cn("flex gap-2.5 px-3 py-2.5", orderStatusRowClass(row.status))}
+                  className={cn("flex gap-2.5 px-3 py-2.5", orderStatusRowClass(orderVisibleStatus(row)))}
                   onClick={() => router.push(`/dashboard/orders/${row.id}`)}
                   onMouseEnter={() => router.prefetch(`/dashboard/orders/${row.id}`)}
                 >
@@ -1402,7 +1439,7 @@ export default function OrdersPage() {
                           <p className="truncate text-xs text-muted">{customerPhone(row)}</p>
                         ) : null}
                       </div>
-                      <StatusBadge value={orderStatusBadgeValue(row.status)} />
+                      <StatusBadge value={orderStatusBadgeValue(orderVisibleStatus(row))} />
                     </div>
                     <div
                       className="flex flex-wrap items-center gap-1.5"
@@ -1410,13 +1447,15 @@ export default function OrdersPage() {
                       onPointerDown={(event) => event.stopPropagation()}
                     >
                       <StatusBadge value={row.source} />
-                      <BookingErrorCell
-                        order={row}
-                        checking={checkingIds.includes(row.id)}
-                        finalStatus={errorByOrder.get(row.id)}
-                        busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
-                        onAction={(action) => onErrorAction(row, action)}
-                      />
+                      {visibleColumns.error ? (
+                        <BookingErrorCell
+                          order={row}
+                          checking={checkingIds.includes(row.id)}
+                          finalStatus={errorByOrder.get(row.id)}
+                          busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
+                          onAction={(action) => onErrorAction(row, action)}
+                        />
+                      ) : null}
                       <OrderDimensionBadge order={row} onEdit={() => openParcelEditor(row)} />
                       <ShopifyPaymentConfirm order={row} />
                     </div>

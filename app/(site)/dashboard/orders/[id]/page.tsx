@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Truck } from "lucide-react";
 import { toast } from "sonner";
@@ -12,7 +12,7 @@ import { LineItemThumb } from "@/components/dashboard/line-item-thumb";
 import { TariffEstimateCard } from "@/components/orders/tariff-estimate-card";
 import { ServiceToggle } from "@/components/dashboard/service-toggle";
 import { WhatsAppLogo } from "@/components/brand/whatsapp-logo";
-import { orderStatusBadgeValue, StatusBadge } from "@/components/dashboard/status-badge";
+import { orderStatusBadgeValue, orderVisibleStatus, StatusBadge } from "@/components/dashboard/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,7 +34,7 @@ import { PlanLock } from "@/components/billing/plan-lock";
 import { InvoiceActions } from "@/components/invoices/invoice-actions";
 import { EditShippingAddressDialog } from "@/components/orders/edit-shipping-address-dialog";
 import { AddressReviewPanel } from "@/components/orders/address-review-panel";
-import { api } from "@/lib/hooks/use-api";
+import { api, bookingConflictDetails, isUnknownBookingConflict } from "@/lib/hooks/use-api";
 import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import { usePlanEntitlements } from "@/lib/hooks/use-plan-entitlements";
 import { FEATURE } from "@/modules/billing/entitlements";
@@ -89,6 +89,7 @@ function savedWeightKey(record: OrderRecord | undefined) {
 
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const entitlements = usePlanEntitlements();
   const invoicesLocked = !entitlements.loading && !entitlements.allows(FEATURE.invoices);
@@ -148,7 +149,31 @@ export default function OrderDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: async (error: Error) => {
+      const details = bookingConflictDetails(error);
+      if (isUnknownBookingConflict(error) && details?.shipmentId) {
+        try {
+          const forced = await api<{ message?: string }>(`/api/v1/shipments/${details.shipmentId}/force-book`, {
+            method: "POST",
+            body: JSON.stringify({ confirm: true }),
+          });
+          toast.success(forced.message || "Force book scheduled with the same barcode.");
+          queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+          queryClient.invalidateQueries({ queryKey: ["shipments"] });
+        } catch (forceError) {
+          toast.error(forceError instanceof Error ? forceError.message : "Force book could not be started.");
+        }
+        return;
+      }
+      if (details?.shipmentId) {
+        const shipmentId = details.shipmentId;
+        toast.error(error.message, {
+          action: { label: "Open shipment", onClick: () => router.push(`/dashboard/shipments/${shipmentId}`) },
+        });
+        return;
+      }
+      toast.error(error.message);
+    },
   });
 
   orderRecord.current = order.data;
@@ -281,7 +306,7 @@ export default function OrderDetailPage() {
             <CardTitle>Status</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 p-4 pt-0 text-sm">
-            <Row label="Order" value={<StatusBadge value={orderStatusBadgeValue(record.status)} />} />
+            <Row label="Order" value={<StatusBadge value={orderStatusBadgeValue(orderVisibleStatus(record))} />} />
             <Row
               label="Payment"
               value={

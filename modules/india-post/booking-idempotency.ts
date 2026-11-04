@@ -3,10 +3,27 @@ import { isIndiaPostDuplicateArticleMessage } from "@/modules/india-post/error-t
 
 export { isIndiaPostDuplicateArticleMessage };
 
-export const BOOKING_CLAIMABLE_STATUSES = ["DRAFT", "VALIDATING", "QUEUED", "FAILED"] as const;
+export const BOOKING_CLAIMABLE_STATUSES = ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED"] as const;
 
 export function shipmentBarcode(value?: string | null) {
   return String(value ?? "").trim().toUpperCase();
+}
+
+/** Blank strings are not barcodes. The booking claim matches SQL null, so blanks must be cleared first. */
+export function blankBookingArtifactPatch(row: {
+  barcode?: string | null;
+  tracking_number?: string | null;
+  trackingNumber?: string | null;
+  provider_ref?: string | null;
+  providerRef?: string | null;
+}) {
+  const patch: { barcode?: null; tracking_number?: null; provider_ref?: null } = {};
+  if (row.barcode != null && !shipmentBarcode(row.barcode)) patch.barcode = null;
+  const tracking = row.tracking_number ?? row.trackingNumber;
+  if (tracking != null && !shipmentBarcode(tracking)) patch.tracking_number = null;
+  const provider = row.provider_ref ?? row.providerRef;
+  if (provider != null && !String(provider).trim()) patch.provider_ref = null;
+  return patch;
 }
 
 /** Authoritative: CEPT already accepted this article. Status FAILED + booked_at still counts. */
@@ -46,11 +63,25 @@ export function canRetryCeptPostAfterUnknown(row?: { last_error_code?: string | 
   return false;
 }
 
-/** Always false. A tracking miss must not authorize another booking POST. */
+/** Always false. A tracking miss must not authorize another booking POST by itself. */
 export function trackingConfirmedNotBooked(result: unknown, barcode: string) {
   void result;
   void barcode;
   return false;
+}
+
+/**
+ * Tracking answered and did not contain the article: empty history, or an explicit
+ * "not found" / "not booked". That is the only miss that may resubmit the same barcode.
+ */
+export function trackingAllowsSameBarcodeResubmit(result: unknown) {
+  if (result == null) return true;
+  if (Array.isArray(result)) return result.length === 0;
+  if (typeof result !== "object") return false;
+  const row = result as { data?: unknown; message?: unknown };
+  const message = String(row.message ?? "");
+  if (/not found|not booked/i.test(message)) return true;
+  return Array.isArray(row.data) && row.data.length === 0;
 }
 
 export function barcodeLogRef(barcode?: string | null) {

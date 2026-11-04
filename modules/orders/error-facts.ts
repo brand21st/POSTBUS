@@ -1,3 +1,6 @@
+import { GETTER_TIMEOUT_MESSAGE, READ_ONLY_CODE_GETTER } from "@/lib/jobs/retry";
+import { indiaPostUnknownPincodeCopy, isIndiaPostUnknownPincodeMessage } from "@/modules/india-post/error-text";
+
 export type ErrorFactKind = "provider" | "order" | "payment" | "invoice" | "shipment" | "address" | "parcel";
 
 export type ErrorFact = {
@@ -82,6 +85,13 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** The getter TypeError is a Node crash. Merchants see the booking action instead. */
+export function merchantProviderError(message?: string | null) {
+  const value = text(message);
+  if (READ_ONLY_CODE_GETTER.test(value)) return GETTER_TIMEOUT_MESSAGE;
+  return indiaPostUnknownPincodeCopy(value);
+}
+
 function messages(errors: unknown) {
   if (!Array.isArray(errors)) return [];
   return errors
@@ -96,8 +106,11 @@ export function collectErrorFacts(input: FactSource): ErrorFact[] {
   if (ACCEPTED.has(shipmentStatus)) return [];
 
   const facts: ErrorFact[] = [];
-  const provider = text(shipment?.lastError ?? shipment?.last_error);
-  const code = text(shipment?.lastErrorCode ?? shipment?.last_error_code);
+  const rawProvider = text(shipment?.lastError ?? shipment?.last_error);
+  const provider = merchantProviderError(rawProvider);
+  const storedCode = text(shipment?.lastErrorCode ?? shipment?.last_error_code);
+  const code =
+    provider !== rawProvider && isIndiaPostUnknownPincodeMessage(rawProvider) ? "INVALID_PINCODE" : storedCode;
   if (provider || code) {
     facts.push({
       kind: "provider",
@@ -182,8 +195,10 @@ export function isUnknownBookingError(input: {
   if (text(input.status).toUpperCase() === "RECOVERY_REQUIRED") return true;
   const code = text(input.last_error_code ?? input.lastErrorCode).toUpperCase();
   if (UNKNOWN_CODES.has(code)) return true;
-  const blob = `${text(input.last_error ?? input.lastError)} ${text(input.summary)}`.toUpperCase();
-  return blob.includes("CEPT_UNKNOWN") || blob.includes("OUTCOME IS UNKNOWN");
+  const blob = `${text(input.last_error ?? input.lastError)} ${text(input.summary)}`;
+  if (READ_ONLY_CODE_GETTER.test(blob)) return true;
+  const upper = blob.toUpperCase();
+  return upper.includes("CEPT_UNKNOWN") || upper.includes("OUTCOME IS UNKNOWN");
 }
 
 function statusLabel(top: ErrorFact, facts: ErrorFact[]) {
@@ -247,7 +262,19 @@ export function resolveDisplayError(order: FactSource, server?: ServerErrorStatu
   return { status: rules.status, summary: rules.summary, source: "rules", kind: rules.kind, facts };
 }
 
-export type ErrorQuickAction = "force" | "retry" | "parcel" | "review" | "open";
+export type ErrorQuickAction = "force" | "retry" | "parcel" | "review" | "autocorrect" | "open";
+
+const MANUAL_PIN = /INVALID_PINCODE|not found by india post|pin code was not found|does not belong to the selected state|not serviceable|must be exactly six|pincodes?\s+\d{6}\s+not found|is not a valid postal PIN/i;
+
+/** Address lines and a city that disagrees with a valid PIN can be corrected here. A bad PIN cannot. */
+export function addressCorrectionMode(error: { facts: ErrorFact[] }): "auto" | "pin" | null {
+  const relevant = error.facts.filter(
+    (fact) => fact.kind === "address" || (fact.kind === "provider" && providerErrorTopic(fact) === "address")
+  );
+  if (!relevant.length) return null;
+  const blob = relevant.map((fact) => `${fact.code ?? ""} ${fact.message}`).join("\n");
+  return MANUAL_PIN.test(blob) ? "pin" : "auto";
+}
 
 /** What a provider (booking) failure is about, read from its exact code and message. */
 export type ProviderErrorTopic = "parcel" | "address" | "transient" | "other";
@@ -271,6 +298,8 @@ export function providerErrorTopic(fact: Pick<ErrorFact, "code" | "message">): P
   if (code === "INVALID_WEIGHT" || code === "INVALID_DIMENSIONS") return "parcel";
   if (/\b(?:length|breadth|height|dimension|weight)\b/i.test(message)) return "parcel";
   if (code === "INVALID_PINCODE" || code === "INVALID_ADDRESS") return "address";
+  if (/(?:sender|receiver|pickup|alt)_add(?:ress)?_line_\d/i.test(message)) return "address";
+  if (/must be between 3 and \d+ characters/i.test(message)) return "address";
   if (/\b(?:address|pin ?code|pincode|receiver)\b/i.test(message)) return "address";
   if (TRANSIENT_CODES.has(code)) return "transient";
   if (/try again|temporar|unable to fetch|could not be reached|retry automatically/i.test(message)) return "transient";
@@ -289,9 +318,9 @@ export function errorQuickAction(error: DisplayErrorStatus, unknownBooking: bool
   if (provider) {
     const topic = providerErrorTopic(provider);
     if (topic === "parcel") return parcelMissing ? "parcel" : "retry";
-    if (topic === "address") return "review";
+    if (topic === "address") return addressCorrectionMode(error) === "pin" ? "review" : "autocorrect";
     if (parcelMissing) return "parcel";
-    if (addressIssue) return "review";
+    if (addressIssue) return addressCorrectionMode(error) === "pin" ? "review" : "autocorrect";
     return topic === "transient" ? "retry" : "open";
   }
   switch (error.kind) {
@@ -300,7 +329,7 @@ export function errorQuickAction(error: DisplayErrorStatus, unknownBooking: bool
     case "shipment":
       return parcelMissing ? "parcel" : "retry";
     case "address":
-      return "review";
+      return addressCorrectionMode(error) === "pin" ? "review" : "autocorrect";
     default:
       return "open";
   }
@@ -311,6 +340,9 @@ export function errorActionHint(error: DisplayErrorStatus, action: ErrorQuickAct
   const provider = error.facts.find((fact) => fact.kind === "provider");
   if (action === "retry" && provider && providerErrorTopic(provider) === "parcel") {
     return "Parcel updated after this error. Retry to book.";
+  }
+  if (action === "autocorrect") {
+    return "Address lines are corrected, then the booking is sent again.";
   }
   return null;
 }

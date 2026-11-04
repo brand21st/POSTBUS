@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { bookingFailureShipmentUpdate, shouldApplyBookingFailureUpdate, tagPrePostBookingError } from "@/modules/india-post/booking-failure-state";
+import {
+  bookingFailureShipmentUpdate,
+  shouldApplyBookingFailureUpdate,
+  stampCaughtError,
+  tagPrePostBookingError,
+} from "@/modules/india-post/booking-failure-state";
 import { classifyProviderError } from "@/lib/jobs/retry";
 
 describe("bookingFailureShipmentUpdate", () => {
@@ -52,6 +57,16 @@ describe("bookingFailureShipmentUpdate", () => {
       false
     );
     expect(patch.status).toBe("RECOVERY_REQUIRED");
+  });
+
+  it("stamps a DOMException without writing its read-only code", () => {
+    const abort = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    expect(() => Object.assign(abort, { code: "PRE_POST_TRANSIENT" })).toThrow(/only a getter/);
+    const stamped = stampCaughtError(abort, { code: "PRE_POST_TRANSIENT", bookingPhase: "PRE_POST" });
+    expect(stamped).not.toBe(abort);
+    expect(stamped).toMatchObject({ code: "PRE_POST_TRANSIENT", bookingPhase: "PRE_POST" });
+    expect(stamped.message).toBe("The operation was aborted due to timeout");
+    expect(classifyProviderError(stamped)).toMatchObject({ retryable: true, code: "PRE_POST_TRANSIENT" });
   });
 
   it("keeps a pre-POST timeout retryable as QUEUED", () => {

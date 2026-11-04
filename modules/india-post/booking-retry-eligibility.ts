@@ -1,6 +1,35 @@
+import { isReadOnlyCodeGetterError } from "@/lib/jobs/retry";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
-import { isAuthoritativeIndiaPostBooking, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
+import { isAuthoritativeIndiaPostBooking, isIndiaPostBookingUnknown, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
 import { readCeptForceResubmitAt, readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
+
+const SAME_BARCODE_RECOVERY_CODES = new Set([
+  "CEPT_UNKNOWN",
+  "ETIMEDOUT",
+  "BOOKING_REVIEW_REQUIRED",
+  "TRACKING_UNAVAILABLE",
+]);
+
+/**
+ * A barcode that may already be at India Post. Tracking runs before another POST.
+ * A force-resubmit flag means that check already allowed the same barcode through.
+ */
+export function shipmentNeedsSameBarcodeRecovery(row: {
+  status?: string | null;
+  barcode?: string | null;
+  tracking_number?: string | null;
+  booked_at?: string | null;
+  last_error?: string | null;
+  last_error_code?: string | null;
+  metadata?: unknown;
+}) {
+  if (isAuthoritativeIndiaPostBooking(row) || readCeptForceResubmitAt(row.metadata)) return false;
+  const barcode = shipmentBarcode(row.barcode || row.tracking_number);
+  if (!barcode) return false;
+  if (isIndiaPostBookingUnknown(row) || readCeptSubmitIntentAt(row.metadata)) return true;
+  if (isReadOnlyCodeGetterError({ message: row.last_error })) return true;
+  return SAME_BARCODE_RECOVERY_CODES.has(String(row.last_error_code ?? "").toUpperCase());
+}
 
 /** Matches claim_background_jobs stale RUNNING recovery. */
 export const STALE_BOOKING_LOCK_MS = 15 * 60 * 1000;
@@ -101,7 +130,7 @@ const REASONS: Record<BookingRetryAction, string> = {
   BOOKING_IN_PROGRESS: "Booking in progress.",
   RETRY_ALREADY_SCHEDULED: "Booking retry is scheduled.",
   BOOKING_OUTCOME_UNKNOWN:
-    "Booking outcome could not be confirmed. Please contact support before retrying.",
+    "Booking outcome could not be confirmed. Force book checks tracking, then submits this barcode if India Post does not have it.",
   MANUAL_REVIEW_REQUIRED: "Booking needs review before it can be retried.",
   INVALID_SHIPMENT: "Shipment could not be retried.",
   MAX_ATTEMPTS_EXCEEDED: "Booking has reached the maximum number of attempts.",
@@ -193,9 +222,15 @@ export function existingBarcodeMayBeSubmitted(shipment: BookingRetryShipment) {
  * PostBus recorded it as never sent, or wrote it at creation with a signed proof; the booking run
  * verifies that proof again before posting.
  */
+function statusMayBeRequeued(shipment: BookingRetryShipment) {
+  const status = statusOf(shipment);
+  if (SAFE_STATUSES.has(status)) return true;
+  return status === "RECOVERY_REQUIRED" && shipmentMayAllocateFirstBarcode(shipment);
+}
+
 export function shipmentMayBeRequeuedForBooking(shipment: BookingRetryShipment) {
   if (shipment.bookedAt ?? shipment.booked_at) return false;
-  if (!SAFE_STATUSES.has(statusOf(shipment))) return false;
+  if (!statusMayBeRequeued(shipment)) return false;
   if (readCeptSubmitIntentAt(shipment.metadata)) return false;
   if (shipmentBarcode(shipment.trackingNumber ?? shipment.tracking_number)) return false;
   if (String(shipment.providerRef ?? shipment.provider_ref ?? "").trim()) return false;
@@ -217,6 +252,19 @@ function hasSubmissionArtifact(shipment: BookingRetryShipment) {
 }
 
 /**
+ * Nothing was stored that could already be an India Post article, so the run may
+ * allocate a barcode and POST. Recovery Required without a barcode is this case.
+ */
+export function shipmentMayAllocateFirstBarcode(shipment: BookingRetryShipment) {
+  if (shipment.bookedAt ?? shipment.booked_at) return false;
+  const status = statusOf(shipment);
+  if (status === "BOOKING" || status === "CANCELLED" || status === "LABEL_PENDING" || status === "LABEL_READY") {
+    return false;
+  }
+  return !hasSubmissionArtifact(shipment);
+}
+
+/**
  * True when this row must not be submitted again.
  * A missing ceptSubmitIntentAt is not evidence that CEPT never received the article.
  */
@@ -225,11 +273,12 @@ export function shipmentOutcomeIsUncertain(
   job?: BookingRetryJob
 ) {
   if (readCeptForceResubmitAt(shipment.metadata)) return false;
+  if (!hasSubmissionArtifact(shipment)) return false;
   const status = statusOf(shipment);
   if (status === "RECOVERY_REQUIRED") return true;
   // A barcode alone is not evidence of a POST when PostBus recorded that CEPT was never called.
   // This is the same rule the booking run applies before it reuses a barcode.
-  if (hasSubmissionArtifact(shipment) && !existingBarcodeMayBeSubmitted(shipment)) return true;
+  if (!existingBarcodeMayBeSubmitted(shipment)) return true;
   const code = errorCodeOf(shipment);
   if (AMBIGUOUS_CODES.has(code)) return true;
   if (code && !NEVER_SUBMITTED_CODES.has(code)) return true;
@@ -294,9 +343,8 @@ export function evaluateBookingRetryEligibility(
     }
     if (state === "SUCCEEDED" && !forceResubmit) {
       const recordedPrePostFailure =
-        status === "FAILED" &&
-        !hasSubmissionArtifact(shipment) &&
-        NEVER_SUBMITTED_CODES.has(errorCodeOf(shipment));
+        shipmentMayAllocateFirstBarcode(shipment) &&
+        (status === "FAILED" || status === "RECOVERY_REQUIRED");
       if (!recordedPrePostFailure) {
         return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job.id });
       }
@@ -311,7 +359,7 @@ export function evaluateBookingRetryEligibility(
     return decision("SAFE_TO_REQUEUE", shipmentId, { existingJobId: job?.id ?? undefined });
   }
 
-  if (!SAFE_STATUSES.has(status)) {
+  if (!statusMayBeRequeued(shipment)) {
     return decision("MANUAL_REVIEW_REQUIRED", shipmentId, { existingJobId: job?.id ?? undefined });
   }
 

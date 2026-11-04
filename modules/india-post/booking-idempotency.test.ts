@@ -8,6 +8,7 @@ import {
 } from "@/modules/india-post/booking-idempotency";
 import { isIndiaPostDuplicateArticleMessage } from "@/modules/india-post/error-text";
 import { runIndiaPostBooking } from "@/modules/india-post/booking-run";
+import { resolveIndiaPostOrigin } from "@/modules/india-post/origin";
 import { markShipmentBookingFailed } from "@/modules/india-post/booking-run";
 import { metadataWithFirstBarcodeProof } from "@/modules/india-post/booking-provenance";
 import { formatBarcode } from "@/modules/india-post/barcode";
@@ -386,11 +387,11 @@ describe("runIndiaPostBooking idempotency", () => {
     store[0]!.status = "BOOKING";
     store[0]!.booked_at = null;
     store[0]!.tracking_number = null;
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
   });
 
   it("TEST 6 duplicate CEPT response is not generic FAILED", async () => {
@@ -413,6 +414,30 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(store[0]?.booked_at).toBe("2026-10-06T06:00:00.000Z");
   });
 
+  it("does not turn an origin timeout DOMException into a read-only code error", async () => {
+    vi.mocked(resolveIndiaPostOrigin).mockRejectedValueOnce(
+      new DOMException("The operation was aborted due to timeout", "TimeoutError")
+    );
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([baseShipment()]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "PRE_POST_TRANSIENT" });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(String(store[0]?.last_error ?? "")).not.toMatch(/only a getter/);
+    expect(store[0]?.last_error_code).toBe("PRE_POST_TRANSIENT");
+  });
+
+  it("treats a post-submit DOMException as an unknown booking, not a getter crash", async () => {
+    bookShipmentMock.mockReset().mockRejectedValueOnce(new DOMException("The socket closed.", "NetworkError"));
+    const { supabase, store } = memoryDb([baseShipment()]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN", bookingPhase: "POST_SUBMIT" });
+    expect(store[0]?.status).toBe("BOOKING");
+    expect(store[0]?.booked_at).toBeNull();
+  });
+
   it("TEST 8 timeout after CEPT does not submit again", async () => {
     const timeout = Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
     bookShipmentMock.mockReset().mockRejectedValueOnce(timeout);
@@ -425,11 +450,11 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(store[0]?.booked_at).toBeNull();
     store[0]!.status = "RECOVERY_REQUIRED";
     store[0]!.last_error_code = "ETIMEDOUT";
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
   });
 
   it("TEST 9 pre-CEPT validation failure can retry CEPT later", async () => {
@@ -471,17 +496,15 @@ describe("runIndiaPostBooking idempotency", () => {
     return { supabase, store };
   }
 
-  it("does not POST again after temporary 409 when tracking is empty", async () => {
+  it("POSTs the same barcode after temporary 409 when tracking is empty", async () => {
     const { supabase, store } = await firstTemporary409();
     trackShipmentMock.mockReset().mockResolvedValue({ data: [] });
     bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
-    expect(store[0]?.last_error_code).toBe("CEPT_UNKNOWN");
-    expect(store[0]?.booked_at).toBeNull();
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+    expect(store[0]?.barcode).toBe(BARCODE);
   });
 
   it("does not POST again after temporary 409 when tracking is unavailable", async () => {
@@ -489,9 +512,10 @@ describe("runIndiaPostBooking idempotency", () => {
     trackShipmentMock.mockReset().mockRejectedValueOnce(new Error("tracking unavailable"));
     await expect(
       runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    ).rejects.toMatchObject({ code: "TRACKING_UNAVAILABLE" });
     expect(bookShipmentMock).toHaveBeenCalledTimes(1);
     expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    expect(store[0]?.booked_at).toBeNull();
   });
 
   it("marks BOOKED from tracking after temporary 409 without a second POST", async () => {
@@ -505,29 +529,26 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(store[0]?.status).toBe("BOOKED");
   });
 
-  it("does not POST when tracking says the article was not booked", async () => {
+  it("POSTs the same barcode when tracking says the article was not booked", async () => {
     const { supabase, store } = await firstTemporary409();
     bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
     trackShipmentMock.mockReset().mockResolvedValue({ message: "Article not booked" });
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
-    expect(store[0]?.status).not.toBe("QUEUED");
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+    expect(store[0]?.barcode).toBe(BARCODE);
   });
 
-  it("does not POST on auto or manual retry after temporary 409 + empty tracking", async () => {
+  it("books once from empty tracking and does not POST a third time after that", async () => {
     const { supabase, store } = await firstTemporary409();
     trackShipmentMock.mockReset().mockResolvedValue({ data: [] });
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
   });
 
   it("does not POST when the DB booking lock RPC is unavailable", async () => {
@@ -554,17 +575,17 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(store[0]?.status).toBe("BOOKED");
   });
 
-  it("does not POST when tracking says Article not found", async () => {
-    bookShipmentMock.mockReset();
+  it("POSTs the same barcode when tracking says Article not found", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
     trackShipmentMock.mockReset().mockResolvedValue({ message: "Article not found" });
     const { supabase, store } = memoryDb([
       baseShipment({ status: "RECOVERY_REQUIRED", booked_at: null, last_error_code: "ETIMEDOUT", barcode: BARCODE }),
     ]);
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-    expect(bookShipmentMock).not.toHaveBeenCalled();
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+    expect(store[0]?.barcode).toBe(BARCODE);
   });
 
   it("treats duplicate 409 evidence as booked without retrying CEPT", async () => {
@@ -590,11 +611,11 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(store[0]?.status).toBe("BOOKING");
     expect(store[0]?.booked_at).toBeNull();
     store[0]!.last_error_code = "CEPT_UNKNOWN";
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.barcode).toBe(BARCODE);
   });
 
   it("keeps PIN tariff rejection as FAILED without booked_at", async () => {
@@ -860,11 +881,11 @@ describe("runIndiaPostBooking idempotency", () => {
     await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
     store[0]!.status = "BOOKING";
     store[0]!.booked_at = null;
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.barcode).toBe(BARCODE);
   });
 
   it("marks an HTTP 500 after the booking POST as recovery and does not POST again", async () => {
@@ -884,11 +905,11 @@ describe("runIndiaPostBooking idempotency", () => {
         false
       ).status
     ).toBe("RECOVERY_REQUIRED");
-    await expect(
-      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
-    expect(store[0]?.status).toBe("RECOVERY_REQUIRED");
+    bookShipmentMock.mockResolvedValueOnce(ceptSuccess());
+    const recovered = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(2);
+    expect(recovered.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.barcode).toBe(BARCODE);
   });
 
   it("still books a manual shipment that has no barcode yet", async () => {
@@ -947,6 +968,38 @@ describe("runIndiaPostBooking idempotency", () => {
     expect(bookShipmentMock).not.toHaveBeenCalled();
   });
 
+  it("does not store a read-only code TypeError from a pre-POST timeout", async () => {
+    vi.mocked(resolveIndiaPostOrigin).mockRejectedValueOnce(
+      new TypeError("Cannot set property code of #<DOMException> which has only a getter")
+    );
+    bookShipmentMock.mockReset();
+    const { supabase, store } = memoryDb([baseShipment()]);
+    await expect(
+      runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
+    ).rejects.toMatchObject({ code: "PRE_POST_TRANSIENT" });
+    expect(bookShipmentMock).not.toHaveBeenCalled();
+    expect(String(store[0]?.last_error ?? "")).not.toMatch(/only a getter/);
+    expect(store[0]?.last_error_code).toBe("PRE_POST_TRANSIENT");
+  });
+
+  it("books the same barcode after the getter crash when tracking is empty", async () => {
+    bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
+    trackShipmentMock.mockReset().mockResolvedValue({ data: [] });
+    const { supabase, store } = memoryDb([
+      baseShipment({
+        status: "FAILED",
+        barcode: BARCODE,
+        last_error: "Cannot set property code of #<DOMException> which has only a getter",
+        last_error_code: "PROVIDER_ERROR",
+      }),
+    ]);
+    const outcome = await runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] });
+    expect(bookShipmentMock).toHaveBeenCalledTimes(1);
+    expect(outcome.bookedIds).toEqual(["ship-1"]);
+    expect(store[0]?.status).toBe("BOOKED");
+    expect(store[0]?.barcode).toBe(BARCODE);
+  });
+
   it("reuses a barcode when the stored failure is conclusively pre-POST", async () => {
     bookShipmentMock.mockReset().mockResolvedValueOnce(ceptSuccess());
     const { supabase, store } = memoryDb([
@@ -994,11 +1047,11 @@ describe("booking reliability phase 0", () => {
     await expect(
       runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
     ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
-    // A stale reclaim or retry puts the row back in the queue.
+    // A stale reclaim or retry puts the row back in the queue. The force was just used, so this run only tracks.
     Object.assign(store[0]!, { status: "QUEUED" });
     await expect(
       runIndiaPostBooking(supabase as never, { organizationId: "org-1", shipmentIds: ["ship-1"] })
-    ).rejects.toMatchObject({ code: "CEPT_UNKNOWN" });
+    ).rejects.toMatchObject({ code: "TRACKING_UNAVAILABLE" });
     expect(bookShipmentMock).toHaveBeenCalledTimes(1);
   });
 

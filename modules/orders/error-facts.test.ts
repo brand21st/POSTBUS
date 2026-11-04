@@ -5,6 +5,7 @@ import {
   errorQuickAction,
   finalErrorFromFacts,
   isUnknownBookingError,
+  merchantProviderError,
   resolveDisplayError,
 } from "@/modules/orders/error-facts";
 import { parseErrorStatusContent } from "@/modules/orders/error-status";
@@ -34,6 +35,25 @@ describe("order error status", () => {
     expect(finalStatus?.summary).toContain("Duplicate article barcode");
     expect(finalStatus?.summary).toContain("Payment is UNPAID");
     expect(finalStatus?.summary).toContain("PIN code was not found");
+  });
+
+  it("hides the read-only code crash behind the timeout message", () => {
+    const raw = "Cannot set property code of #<DOMException> which has only a getter";
+    expect(merchantProviderError(raw)).toMatch(/timed out/i);
+    expect(merchantProviderError(raw)).not.toMatch(/only a getter/);
+    const [fact] = collectErrorFacts({
+      shipment: {
+        status: "FAILED",
+        last_error: raw,
+        last_error_code: "PROVIDER_ERROR",
+        length_cm: 10,
+        width_cm: 10,
+        height_cm: 10,
+        weight_grams: 200,
+      },
+    });
+    expect(fact?.message).toMatch(/timed out/i);
+    expect(isUnknownBookingError({ last_error: raw, last_error_code: "PROVIDER_ERROR" })).toBe(true);
   });
 
   it("treats CEPT_UNKNOWN as a force-book error", () => {
@@ -150,9 +170,52 @@ describe("order error status", () => {
       shipment: { status: "FAILED", last_error_code: "INVALID_PINCODE", last_error: "Receiver PIN not serviceable.", ...fullParcel },
     });
     expect(address && errorQuickAction(address, false)).toBe("review");
+    const city = resolveDisplayError({
+      shipment: {
+        status: "FAILED",
+        last_error_code: "INVALID_ADDRESS",
+        last_error: "The city does not match the post offices for the provided PIN code.",
+        ...fullParcel,
+      },
+    });
+    expect(city && errorQuickAction(city, false)).toBe("autocorrect");
     const transient = resolveDisplayError({
       shipment: { status: "FAILED", last_error_code: "VALIDATION_ERROR", last_error: "Unable to fetch India Post offices. Please try again.", ...fullParcel },
     });
     expect(transient && errorQuickAction(transient, false)).toBe("retry");
+  });
+
+  it("shows an unknown destination PIN as an invalid postal PIN and asks for a manual fix", () => {
+    const wrapped = "Please provide proper data for tariff calculation - Destination pincode 560823 not found";
+    expect(merchantProviderError(wrapped)).toBe("560823 is not a valid postal PIN code");
+    expect(merchantProviderError("Origin pincode 110001 not found")).toBe("110001 is not a valid postal PIN code");
+    const error = resolveDisplayError({
+      shipment: {
+        status: "FAILED",
+        last_error_code: "VALIDATION_ERROR",
+        last_error: wrapped,
+        ...fullParcel,
+      },
+    });
+    expect(error?.summary).toContain("560823 is not a valid postal PIN code");
+    expect(error?.facts[0]).toMatchObject({
+      kind: "provider",
+      code: "INVALID_PINCODE",
+      message: "560823 is not a valid postal PIN code",
+    });
+    expect(error && errorQuickAction(error, false)).toBe("review");
+  });
+
+  it("books again after an address line is shorter or longer than India Post allows", () => {
+    const error = resolveDisplayError({
+      shipment: {
+        status: "FAILED",
+        last_error_code: "VALIDATION_ERROR",
+        last_error: "receiver_add_line_1 must be between 3 and 80 characters.",
+        ...fullParcel,
+      },
+    });
+    expect(error && errorQuickAction(error, false)).toBe("autocorrect");
+    expect(error && errorActionHint(error, "autocorrect")).toMatch(/booking is sent again/);
   });
 });

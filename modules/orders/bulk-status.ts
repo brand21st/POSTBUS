@@ -83,7 +83,7 @@ export async function bulkUpdateOrderStatus(
           skipped.push({
             id: order.id,
             orderNumber: number,
-            reason: `Order #${number} cannot be marked Booked / packed because it already has an active shipment.`,
+            reason: error.message,
           });
         }
       } else {
