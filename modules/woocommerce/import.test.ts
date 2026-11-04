@@ -56,8 +56,14 @@ vi.mock("@/modules/jobs/service", async () => {
   };
 });
 
+import { getWooProduct, getWooVariation } from "@/modules/woocommerce/client";
 import { upsertWooCommerceOrder, syncWooCommercePage, type WooConnectionRow } from "@/modules/woocommerce/orders";
-import { enqueueDueWooCommerceSyncJobs, enqueueWooCommerceSync } from "@/modules/woocommerce/sync-job";
+import { createShipmentsForOrders } from "@/modules/shipments/service";
+import {
+  enqueueDueWooCommerceSyncJobs,
+  enqueueWooCommerceSync,
+  listWooCommerceJobsToDrain,
+} from "@/modules/woocommerce/sync-job";
 import { acceptWooWebhook, isWooWebhookPing, processWooWebhookJob, wooDeliveryKey } from "@/modules/woocommerce/webhooks";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -132,6 +138,11 @@ beforeEach(() => {
     return order;
   });
   woo.listWooOrders.mockReset();
+  vi.mocked(getWooProduct).mockReset();
+  vi.mocked(getWooProduct).mockResolvedValue({});
+  vi.mocked(getWooVariation).mockReset();
+  vi.mocked(getWooVariation).mockResolvedValue({});
+  vi.mocked(createShipmentsForOrders).mockClear();
 });
 
 describe("upsertWooCommerceOrder idempotency", () => {
@@ -209,6 +220,66 @@ describe("WooCommerce webhook delivery", () => {
     expect(mem.rows("background_jobs")).toHaveLength(1);
   });
 
+  it("fills an empty parcel from WooCommerce product size and weight", async () => {
+    const mem = db({ weight_unit: "kg", dimension_unit: "cm" });
+    vi.mocked(getWooProduct).mockResolvedValue({
+      weight: "0.5",
+      dimensions: { length: "20", width: "15", height: "8" },
+    });
+    vi.mocked(getWooVariation).mockResolvedValue({});
+    const order = remoteOrder(80, {
+      line_items: [{ name: "Cotton saree", product_id: 9, variation_id: 44, quantity: 2, sku: "SAR-1", total: "550" }],
+    });
+    woo.orders.set("80", order);
+    await deliver(mem, JSON.stringify({ id: 80 }), { delivery: "size-create" });
+    const created = mem.rows("background_jobs")[0] as { progress: Record<string, string> };
+    await processWooWebhookJob(mem.client, {
+      organizationId: ORG,
+      connectionId: CONNECTION,
+      topic: created.progress.topic,
+      orderId: created.progress.orderId,
+      deliveryId: created.progress.deliveryId,
+    });
+
+    expect(mem.rows("order_line_items")[0]).toMatchObject({ weight_grams: 500, quantity: 2 });
+    expect(createShipmentsForOrders).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      [mem.rows("orders")[0].id],
+      expect.objectContaining({ weightGrams: 1000, lengthCm: 20, widthCm: 15, heightCm: 8, enqueueBooking: false })
+    );
+
+    const orderId = mem.rows("orders")[0].id as string;
+    await mem.client.from("shipments").insert({
+      organization_id: ORG,
+      order_id: orderId,
+      status: "DRAFT",
+      length_cm: null,
+      width_cm: null,
+      height_cm: null,
+      weight_grams: null,
+    });
+    vi.mocked(createShipmentsForOrders).mockClear();
+    woo.orders.set("80", { ...order, date_modified: "2026-10-31T12:00:00" });
+    await deliver(mem, JSON.stringify({ id: 80 }), { topic: "order.updated", delivery: "size-fill" });
+    const updated = mem.rows("background_jobs").at(-1) as { progress: Record<string, string> };
+    await processWooWebhookJob(mem.client, {
+      organizationId: ORG,
+      connectionId: CONNECTION,
+      topic: updated.progress.topic,
+      orderId: updated.progress.orderId,
+      deliveryId: updated.progress.deliveryId,
+    });
+
+    expect(createShipmentsForOrders).not.toHaveBeenCalled();
+    expect(mem.rows("shipments")[0]).toMatchObject({
+      length_cm: 20,
+      width_cm: 15,
+      height_cm: 8,
+      weight_grams: 1000,
+    });
+  });
+
   it("imports the order end to end from a queued webhook job", async () => {
     const mem = db();
     woo.orders.set("31", remoteOrder(31));
@@ -272,6 +343,56 @@ describe("WooCommerce polling fallback", () => {
     expect(await enqueueDueWooCommerceSyncJobs(db({ sync_enabled: false }).client, { now })).toEqual({ checked: 0, queued: 0 });
     woo.autoSync = false;
     expect(await enqueueDueWooCommerceSyncJobs(db().client, { now })).toEqual({ checked: 1, queued: 0 });
+  });
+
+  it("does not treat a queued webhook saved on the connection as an in-progress import", async () => {
+    const mem = db();
+    mem.rows("background_jobs").push({
+      id: "job-legacy-webhook",
+      organization_id: ORG,
+      job_type: "woocommerce-sync",
+      entity_type: "woocommerce_connection",
+      status: "QUEUED",
+      progress: { mode: "webhook", orderId: "9" },
+      created_at: "2026-11-01T00:00:00.000Z",
+    });
+    const result = await enqueueWooCommerceSync(mem.client, { organizationId: ORG, force: false });
+    expect(result).toMatchObject({ queued: true, duplicate: false });
+  });
+
+  it("drains the newest store event and still includes a waiting store import", async () => {
+    const mem = db();
+    mem.rows("background_jobs").push(
+      {
+        id: "old-webhook",
+        organization_id: ORG,
+        job_type: "woocommerce-sync",
+        entity_type: "woocommerce_webhook",
+        status: "QUEUED",
+        progress: { mode: "webhook", orderId: "1" },
+        created_at: "2026-11-01T00:00:00.000Z",
+      },
+      {
+        id: "new-webhook",
+        organization_id: ORG,
+        job_type: "woocommerce-sync",
+        entity_type: "woocommerce_connection",
+        status: "QUEUED",
+        progress: { mode: "webhook", orderId: "9" },
+        created_at: "2026-11-02T12:00:00.000Z",
+      },
+      {
+        id: "store-import",
+        organization_id: ORG,
+        job_type: "woocommerce-sync",
+        entity_type: "woocommerce_connection",
+        status: "QUEUED",
+        progress: { mode: "import", page: 1 },
+        created_at: "2026-10-28T00:00:00.000Z",
+      }
+    );
+    const jobs = await listWooCommerceJobsToDrain(mem.client, 1);
+    expect(jobs.map((job) => job.id)).toEqual(["new-webhook", "store-import"]);
   });
 
   it("pulls orders modified since the last successful sync and imports new ones", async () => {

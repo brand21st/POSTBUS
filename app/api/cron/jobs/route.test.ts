@@ -56,4 +56,14 @@ describe("POST /api/cron/jobs types", () => {
     expect(response.status).toBe(200);
     expect(drainDueJobs).toHaveBeenCalledWith(20, ["label-generation"]);
   });
+
+  it("claims tracking without also claiming the WooCommerce backlog on that pass", async () => {
+    const response = await POST(
+      new NextRequest(
+        "http://localhost/api/cron/jobs?types=tracking-sync,shopify-sync,woocommerce-sync,woocommerce-tracking"
+      )
+    );
+    expect(response.status).toBe(200);
+    expect(drainDueJobs).toHaveBeenCalledWith(20, ["tracking-sync", "shopify-sync"]);
+  });
 });

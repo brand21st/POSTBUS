@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { env } from "@/lib/env";
 import { authorizeCron } from "@/lib/jobs/cron-auth";
-import { DEFAULT_DRAIN_LIMIT, drainDueJobs } from "@/lib/jobs/drain";
-import { parseJobTypes } from "@/lib/jobs/job-lanes";
+import { DEFAULT_DRAIN_LIMIT, drainDueJobs, runQueuedJobsNow } from "@/lib/jobs/drain";
+import { parseJobTypes, wooCommerceDrainPlan } from "@/lib/jobs/job-lanes";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { enqueueDueTrackingSyncJobs } from "@/modules/india-post/tracking-sync";
@@ -45,8 +45,10 @@ export async function POST(request: NextRequest) {
     if (shouldEnqueueTracking && hasAdminClient()) {
       await enqueueDueTrackingSyncJobs(createAdminClient());
     }
-    if (hasAdminClient() && (!jobTypes || jobTypes.includes("woocommerce-sync"))) {
+    const wooPlan = wooCommerceDrainPlan(jobTypes);
+    if (hasAdminClient() && (!jobTypes || wooPlan.woo)) {
       // Polling fallback so WooCommerce orders still import when webhooks are missing or dropped.
+      // The other lane (tracking / Shopify) triggers this even when JOB_TYPES omits woocommerce-sync.
       try {
         const { enqueueDueWooCommerceSyncJobs } = await import("@/modules/woocommerce/sync-job");
         await enqueueDueWooCommerceSyncJobs(createAdminClient());
@@ -75,7 +77,6 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-    const drained = await drainDueJobs(limit, jobTypes);
     let recovery: { enabled: boolean; recovered: number; skipped: number } | { error: string } = {
       enabled: false,
       recovered: 0,
@@ -94,6 +95,23 @@ export async function POST(request: NextRequest) {
         const message = recoveryError instanceof Error ? recoveryError.message : "Booking recovery failed.";
         logError("booking.recovery_failed", { message });
         recovery = { error: message };
+      }
+    }
+    const drained = wooPlan.skipPrimary
+      ? { claimed: 0, succeeded: 0, failed: 0 }
+      : await drainDueJobs(limit, wooPlan.primary);
+    if (hasAdminClient() && wooPlan.woo) {
+      try {
+        const { listWooCommerceJobsToDrain } = await import("@/modules/woocommerce/sync-job");
+        const wooJobs = await listWooCommerceJobsToDrain(createAdminClient());
+        const woo = await runQueuedJobsNow(wooJobs);
+        drained.claimed += woo.claimed;
+        drained.succeeded += woo.succeeded;
+        drained.failed += woo.failed;
+      } catch (wooError) {
+        logError("woocommerce.drain_failed", {
+          message: wooError instanceof Error ? wooError.message : "WooCommerce drain failed.",
+        });
       }
     }
     return NextResponse.json({ success: true, data: { ...drained, recovery } });

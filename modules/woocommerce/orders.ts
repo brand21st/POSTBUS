@@ -681,6 +681,9 @@ export async function syncWooCommercePage(
     incremental: Boolean(input.connection.last_successful_sync_at) && !settings.customAfter && !input.force,
   };
   const page = input.page && input.page > 0 ? input.page : 1;
+  // Cursor is the request time, not the time product lookups finish. A slow page must not
+  // move the next incremental window past orders created while this page was importing.
+  const queriedAt = new Date().toISOString();
   const listed = await listWooOrders(input.credentials, wooOrderListQuery(window, page), input.transport);
   const measures = await loadWooProductMeasures(input.credentials, listed.orders, input.transport);
   let imported = 0;
@@ -702,7 +705,7 @@ export async function syncWooCommercePage(
     else skipped += 1;
   }
   const hasMore = wooHasMorePages(page, listed.totalPages);
-  return { imported, updated, skipped, hasMore, nextPage: hasMore ? page + 1 : null };
+  return { imported, updated, skipped, hasMore, nextPage: hasMore ? page + 1 : null, queriedAt };
 }
 
 export function measurementUnitsFromSettings(settings: Array<{ id?: string; value?: string }>) {
