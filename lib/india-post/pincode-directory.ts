@@ -66,6 +66,7 @@ export async function lookupIndiaPostPincodeDirectory(
   const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
   try {
     const response = await fetchImpl(`${DIRECTORY_URL}${pincode}`, {
+      cache: "no-store",
       signal: controller.signal,
       headers: { Accept: "application/json" },
     });

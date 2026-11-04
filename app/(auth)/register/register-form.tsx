@@ -56,6 +56,9 @@ function PasswordRegister() {
     resolver: zodResolver(registerAccountSchema),
     defaultValues: { name: "", email: "", password: "", whatsapp: "", pincode: "", city: "" },
   });
+  const pincodeValue = form.watch("pincode");
+  const cityValue = form.watch("city");
+  const lookingUpCity = /^[1-9][0-9]{5}$/.test(String(pincodeValue ?? "")) && !String(cityValue ?? "").trim();
 
   async function onSubmit(values: RegisterAccountValues) {
     setFormError(null);
@@ -109,7 +112,8 @@ function PasswordRegister() {
               const digits = String(event.target.value ?? "")
                 .replace(/\D/g, "")
                 .slice(0, 6);
-              form.setValue("pincode", digits, { shouldDirty: true, shouldValidate: digits.length === 6 });
+              form.setValue("pincode", digits, { shouldDirty: true, shouldValidate: false });
+              if (digits.length === 6) void form.trigger("pincode");
             },
           })}
         />
@@ -120,7 +124,17 @@ function PasswordRegister() {
       </div>
       <div className="space-y-2">
         <Label htmlFor="city">City</Label>
-        <Input id="city" autoComplete="address-level2" {...form.register("city")} />
+        <Input
+          id="city"
+          autoComplete="address-level2"
+          placeholder={lookingUpCity ? "Looking up…" : "Bengaluru"}
+          aria-busy={lookingUpCity || undefined}
+          {...form.register("city")}
+          value={cityValue}
+          onChange={(event) => {
+            form.setValue("city", event.target.value, { shouldDirty: true, shouldValidate: true });
+          }}
+        />
         {form.formState.errors.city ? (
           <p className="text-sm text-error">{form.formState.errors.city.message}</p>
         ) : null}
