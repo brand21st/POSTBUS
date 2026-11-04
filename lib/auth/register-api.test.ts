@@ -111,4 +111,18 @@ describe("POST /api/v1/auth/register", () => {
     expect(eq).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(enqueueAbandonedSignup).toHaveBeenCalledWith("user-1"));
   });
+
+  it("reports an existing confirmed email instead of promising a confirmation mail", async () => {
+    signUp.mockResolvedValue({
+      data: { user: { id: "obfuscated", identities: [] }, session: null },
+      error: null,
+    });
+
+    const response = await post(validBody);
+    const json = await response.json();
+    expect(response.status).toBe(409);
+    expect(JSON.stringify(json)).toMatch(/already exists/);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(enqueueAbandonedSignup).not.toHaveBeenCalled();
+  });
 });

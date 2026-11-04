@@ -27,14 +27,22 @@ export function RegisterPincodeLookup({
     retry: false,
   });
 
-  const office = lookup.data?.offices?.[0];
+  const city = lookup.data?.offices?.[0]?.city.trim() ?? "";
+
   useEffect(() => {
-    if (!office || filledFor.current === pincode) return;
-    const city = office.city.trim();
-    if (!city) return;
+    if (!ready) {
+      if (filledFor.current) {
+        filledFor.current = "";
+        form.setValue("city", "", { shouldDirty: true, shouldValidate: false });
+        form.clearErrors("city");
+      }
+      return;
+    }
+    if (!city || filledFor.current === pincode) return;
     filledFor.current = pincode;
-    form.setValue("city", city, { shouldDirty: true, shouldValidate: true });
-  }, [form, office, pincode]);
+    form.setValue("city", city, { shouldDirty: true, shouldValidate: true, shouldTouch: false });
+    form.clearErrors("city");
+  }, [city, form, pincode, ready]);
 
   if (!ready) return null;
 

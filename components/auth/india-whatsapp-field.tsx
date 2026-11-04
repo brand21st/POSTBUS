@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertCircle } from "lucide-react";
 import { Controller, type Control, type FieldPath, type FieldValues } from "react-hook-form";
 import { IndiaFlag } from "@/components/ui/india-flag";
 import { Label } from "@/components/ui/label";
@@ -19,6 +20,7 @@ export function IndiaMobileInput({
   placeholder = "10-digit mobile number",
   size = "default",
   autoComplete = "tel-national",
+  describedBy,
 }: {
   id?: string;
   name?: string;
@@ -30,6 +32,7 @@ export function IndiaMobileInput({
   placeholder?: string;
   size?: MobileSize;
   autoComplete?: string;
+  describedBy?: string;
 }) {
   const large = size === "lg";
   const compact = size === "sm";
@@ -63,7 +66,8 @@ export function IndiaMobileInput({
         autoComplete={autoComplete}
         maxLength={10}
         placeholder={placeholder}
-        aria-invalid={Boolean(error)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy}
         className={cn(
           "min-w-0 flex-1 bg-transparent px-3.5 text-foreground outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed dark:placeholder:text-zinc-500",
           large ? "text-base" : "text-sm"
@@ -117,10 +121,16 @@ export function IndiaWhatsappField<T extends FieldValues>({
             error={Boolean(error)}
             placeholder={placeholder}
             size={size}
+            describedBy={!hideError && error ? `${id}-error` : undefined}
           />
         )}
       />
-      {!hideError && error ? <p className="text-sm text-error">{error}</p> : null}
+      {!hideError && error ? (
+        <p id={`${id}-error`} className="flex items-start gap-1.5 text-sm text-error">
+          <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>{error}</span>
+        </p>
+      ) : null}
     </div>
   );
 }
