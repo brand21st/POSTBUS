@@ -10,11 +10,13 @@ import { AdminAccountMenu } from "@/components/admin/account-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, ApiError, isConfirmedSessionLoss, isTransientApiAuthError } from "@/lib/hooks/use-api";
 import { useEffect } from "react";
+import { useIdentifyAnalyticsUser } from "@/lib/analytics/use-identify-user";
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
+  useIdentifyAnalyticsUser();
   const query = useQuery({
     queryKey: ["admin", "session"],
     queryFn: () => api<{ totals?: Record<string, number> }>("/api/admin/overview"),

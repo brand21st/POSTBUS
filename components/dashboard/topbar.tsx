@@ -26,6 +26,7 @@ import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { useNotifications } from "@/lib/hooks/use-notifications";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { hideWorkspaceBookingToggle } from "@/modules/india-post/contracts";
+import { resetAnalyticsUser } from "@/lib/analytics/posthog";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { indiaPostServiceLabel } from "@/types/domain";
@@ -131,6 +132,7 @@ export function Topbar({
   }, []);
 
   async function signOut() {
+    resetAnalyticsUser();
     try {
       const supabase = createClient();
       await supabase.auth.signOut();

@@ -3,11 +3,11 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
-import posthog from "posthog-js";
+import { initAnalytics, isShopifyEmbeddedPath } from "@/lib/analytics/posthog";
 
 // Inside Shopify Admin (the embedded app) never record sessions or send product analytics:
 // pages show customer names and addresses, and the App Store requires that data stays put.
-const isShopifyEmbedded = typeof window !== "undefined" && window.location.pathname.startsWith("/shopify");
+const isShopifyEmbedded = typeof window !== "undefined" && isShopifyEmbeddedPath(window.location.pathname);
 
 Sentry.init({
   dsn: "https://477292c3c3bac25e635eba09818cdb2d@o4512222663737344.ingest.us.sentry.io/4512222669897728",
@@ -34,12 +34,12 @@ Sentry.init({
   },
 });
 
-const posthogToken = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
-if (posthogToken && !isShopifyEmbedded) {
-  posthog.init(posthogToken, {
-    api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
-    defaults: "2026-05-30",
-    person_profiles: "identified_only",
+if (typeof window !== "undefined") {
+  initAnalytics({
+    token: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
+    host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+    pathname: window.location.pathname,
+    hostname: window.location.hostname,
   });
 }
 

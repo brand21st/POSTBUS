@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from "recharts";
 import { api } from "@/lib/hooks/use-api";
+import { resetAnalyticsUser } from "@/lib/analytics/posthog";
 import { createClient } from "@/lib/supabase/client";
 import { formatBasisPoints, formatPaiseInr } from "@/modules/affiliates/policy";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -295,6 +296,7 @@ export function PartnerDashboard() {
           <Button
             variant="secondary"
             onClick={() => {
+              resetAnalyticsUser();
               void createClient().auth.signOut().then(() => {
                 window.location.href = "/partner/login";
               });

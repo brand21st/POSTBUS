@@ -16,6 +16,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import { resetAnalyticsUser } from "@/lib/analytics/posthog";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -87,6 +88,7 @@ export function PartnerShell({
             <Button
               variant="secondary"
               onClick={() => {
+                resetAnalyticsUser();
                 void createClient().auth.signOut().then(() => {
                   window.location.href = "/partner/login";
                 });
