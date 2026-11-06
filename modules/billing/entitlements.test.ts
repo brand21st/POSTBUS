@@ -107,5 +107,9 @@ describe("plan entitlements", () => {
     expect(automationToggleLock("autoShopifyProcessing", (feature) => feature === FEATURE.automation)).toBe(
       FEATURE.shopify
     );
+    expect(automationToggleLock("autoAiAddressCheck", pro)).toBeNull();
+    expect(automationToggleLock("autoAiAddressCheck", (feature) => feature === FEATURE.automation)).toBe(
+      FEATURE.indiaPost
+    );
   });
 });

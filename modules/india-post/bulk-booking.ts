@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { commercePendingBookingBlocked, whatsappShipmentBlocked } from "@/lib/dashboard/records";
+import { isAiAddressCheckEnabled } from "@/modules/automation/service";
 import { commerceAddressReviewRequired, refreshAddressPrebooking } from "@/modules/orders/prebooking-validation";
 import { shippingAddressBookingBlock } from "@/modules/shopify/shipping-contact";
 import { allocateNextBarcode } from "@/modules/india-post/allocate-barcode";
@@ -177,6 +178,7 @@ export async function validateOrdersForBooking(
 
   const sender = organizationLabelSender(store.org, store.pickup, store.shop?.shop_name);
   const provider = indiaPostFromRow(store.connection);
+  const aiAddressCheck = await isAiAddressCheckEnabled(supabase, ctx.organizationId);
   const refreshedAddresses = new Map<string, Awaited<ReturnType<typeof refreshAddressPrebooking>>>();
   const refreshQueue = [...(orders ?? [])];
   let refreshCursor = 0;
@@ -193,8 +195,8 @@ export async function validateOrdersForBooking(
           organizationId: ctx.organizationId,
           address: order.shipping_address as never,
           searchPostOffices: (pin) => provider.searchPostOffices(pin),
-          allowAi: true,
-          forceAi: options?.forceAi,
+          allowAi: aiAddressCheck,
+          forceAi: Boolean(options?.forceAi) && aiAddressCheck,
         })
       );
     }

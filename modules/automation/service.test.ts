@@ -3,6 +3,7 @@ import { AppError } from "@/lib/api/errors";
 import {
   AUTOMATION_DEFAULTS,
   getAutomationSettings,
+  isAiAddressCheckEnabled,
   isAutoShopifySyncEnabled,
   isAutoWatiEventEnabled,
   mapAutomationSettings,
@@ -90,6 +91,8 @@ describe("automation settings", () => {
     expect(mapped.auto_label_printing).toBe(false);
     expect(mapped.autoShopifyProcessing).toBe(false);
     expect(mapped.auto_shopify_processing).toBe(false);
+    expect(mapped.autoAiAddressCheck).toBe(false);
+    expect(mapped.auto_ai_address_check).toBe(false);
   });
 
   it("creates a row with service defaults when none exists", async () => {
@@ -102,6 +105,8 @@ describe("automation settings", () => {
     expect(AUTOMATION_DEFAULTS.auto_label_printing).toBe(false);
     expect(settings.autoShopifyProcessing).toBe(false);
     expect(AUTOMATION_DEFAULTS.auto_shopify_processing).toBe(false);
+    expect(settings.autoAiAddressCheck).toBe(false);
+    expect(AUTOMATION_DEFAULTS.auto_ai_address_check).toBe(false);
   });
 
   it("accepts camelCase and snake_case patches", async () => {
@@ -110,9 +115,13 @@ describe("automation settings", () => {
     await updateAutomationSettings(supabase as never, ctx, { autoBooking: true });
     await updateAutomationSettings(supabase as never, ctx, { auto_shopify_sync: false });
     await updateAutomationSettings(supabase as never, ctx, { autoShopifyProcessing: true });
+    await updateAutomationSettings(supabase as never, ctx, { autoAiAddressCheck: false });
+    await updateAutomationSettings(supabase as never, ctx, { auto_ai_address_check: true });
     expect(captured[0]).toEqual({ auto_booking: true });
     expect(captured[1]).toEqual({ auto_shopify_sync: false });
     expect(captured[2]).toEqual({ auto_shopify_processing: true });
+    expect(captured[3]).toEqual({ auto_ai_address_check: false });
+    expect(captured[4]).toEqual({ auto_ai_address_check: true });
   });
 
   it("rejects patches with no boolean automation flags", async () => {
@@ -142,5 +151,28 @@ describe("automation settings", () => {
     await expect(isAutoWatiEventEnabled(off as never, "org-1", "processing")).resolves.toBe(false);
     await expect(isAutoWatiEventEnabled(on as never, "org-1", "in_transit")).resolves.toBe(true);
     await expect(isAutoWatiEventEnabled(on as never, "org-1", "shipment_delayed")).resolves.toBe(false);
+  });
+
+  it("reads AI address check as off unless the column is explicitly true", async () => {
+    const missing = automationClient({ existing: null });
+    const off = automationClient({
+      existing: { ...row, auto_ai_address_check: false },
+    });
+    const on = automationClient({
+      existing: { ...row, auto_ai_address_check: true },
+    });
+    const failed = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: null, error: { message: "missing column" } }),
+          }),
+        }),
+      }),
+    };
+    await expect(isAiAddressCheckEnabled(missing as never, "org-1")).resolves.toBe(false);
+    await expect(isAiAddressCheckEnabled(off as never, "org-1")).resolves.toBe(false);
+    await expect(isAiAddressCheckEnabled(on as never, "org-1")).resolves.toBe(true);
+    await expect(isAiAddressCheckEnabled(failed as never, "org-1")).resolves.toBe(false);
   });
 });

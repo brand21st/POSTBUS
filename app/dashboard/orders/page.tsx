@@ -82,6 +82,7 @@ import {
 } from "@/lib/dashboard/orders-list-query";
 import {
   asPaginated,
+  boolField,
   customerName,
   customerPhone,
   itemCount,
@@ -110,7 +111,7 @@ import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status"
 import { tariffListState, type TariffListState } from "@/modules/india-post/tariff-list";
 import type { TariffQuote } from "@/modules/india-post/tariff-contract";
 import { ORDER_SOURCE_LABELS, ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS } from "@/types/domain";
-import type { BulkOrderStatusResult, DashboardKpis, IndiaPostConfig, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
+import type { AutomationSettings, BulkOrderStatusResult, DashboardKpis, IndiaPostConfig, IntegrationsResponse, OrderRecord, Paginated } from "@/types/api";
 
 const COLUMN_STORAGE = "postbus.orders.columns";
 const WIDTH_STORAGE = "postbus.orders.column-widths";
@@ -206,6 +207,18 @@ export default function OrdersPage() {
   const [tariffProgress, setTariffProgress] = useState<Record<string, TariffProgress>>({});
   const attemptedTariffs = useRef(new Set<string>());
   const workspaceBookingSeen = useRef<string | null | undefined>(undefined);
+  const automation = useQuery({
+    queryKey: ["automation"],
+    queryFn: () => api<AutomationSettings>("/api/v1/automation"),
+  });
+  const aiAddressCheck = boolField(
+    automation.data as Record<string, unknown> | undefined,
+    "autoAiAddressCheck",
+    "auto_ai_address_check"
+  );
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ["order-error-status"] });
+  }, [aiAddressCheck, queryClient]);
 
   const tableLayout = useQuery({
     queryKey: ["ui-table-layout", "orders"],
@@ -764,6 +777,10 @@ export default function OrdersPage() {
   }
 
   async function correctAddressAndBook(row: OrderRecord) {
+    if (!aiAddressCheck) {
+      setReviewIds([row.id]);
+      return;
+    }
     try {
       toast.message("Fix address and book", {
         description: "Address lines were corrected. Booking again.",
@@ -782,7 +799,10 @@ export default function OrdersPage() {
   function onErrorAction(row: OrderRecord, action: ErrorQuickAction | "details") {
     if (action === "parcel") openParcelEditor(row, Boolean(row.shipment?.id));
     else if (action === "retry") retryBooking.mutate(row);
-    else if (action === "autocorrect") void correctAddressAndBook(row);
+    else if (action === "autocorrect") {
+      if (aiAddressCheck) void correctAddressAndBook(row);
+      else setReviewIds([row.id]);
+    }
     else if (action === "review") setReviewIds([row.id]);
     else if (action === "open") router.push(`/dashboard/orders/${row.id}`);
     else setErrorDialog({ orderId: row.id, confirmForce: action === "force" });
@@ -952,6 +972,7 @@ export default function OrdersPage() {
                 checking={checkingIds.includes(row.id)}
                 finalStatus={errorByOrder.get(row.id)}
                 busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
+                aiAddressCheck={aiAddressCheck}
                 onAction={(action) => onErrorAction(row, action)}
               />
             ),
@@ -1287,6 +1308,7 @@ export default function OrdersPage() {
           if (!next) setReviewIds(null);
         }}
         orderIds={reviewIds ?? []}
+        allowAi={aiAddressCheck}
         onCheckingChange={setCheckingIds}
         onBookReady={(ids) => ship.mutate({ orderIds: ids, action: "fulfill" })}
       />
@@ -1298,6 +1320,7 @@ export default function OrdersPage() {
           confirmForce={errorDialog?.confirmForce}
           forcing={forceBook.isPending}
           retrying={retryBooking.isPending}
+          aiAddressCheck={aiAddressCheck}
           onOpenChange={(next) => {
             if (!next && !forceBook.isPending) setErrorDialog(null);
           }}
@@ -1420,6 +1443,7 @@ export default function OrdersPage() {
                           checking={checkingIds.includes(row.id)}
                           finalStatus={errorByOrder.get(row.id)}
                           busy={retryBooking.isPending && retryBooking.variables?.id === row.id}
+                          aiAddressCheck={aiAddressCheck}
                           onAction={(action) => onErrorAction(row, action)}
                         />
                       ) : null}

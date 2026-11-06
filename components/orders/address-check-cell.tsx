@@ -30,6 +30,7 @@ import {
   errorActionHint,
   errorQuickAction,
   errorTone,
+  finalErrorFromFacts,
   isUnknownBookingError,
   resolveDisplayError,
   type DisplayErrorStatus,
@@ -66,11 +67,33 @@ export function orderDisplayError(order: OrderRecord, finalStatus?: FinalErrorSt
   return resolveDisplayError(order, finalStatus);
 }
 
+/** When AI address check is off, drop AI labels, rewrite, and auto-book copy. */
+function errorForToggle(error: DisplayErrorStatus | null, aiAddressCheck: boolean): DisplayErrorStatus | null {
+  if (!error || aiAddressCheck || error.source !== "ai") return error;
+  const rules = finalErrorFromFacts(error.facts);
+  return {
+    ...error,
+    status: rules?.status ?? error.status,
+    summary: rules?.summary ?? error.summary,
+    source: "rules",
+  };
+}
+
 function unknownOutcome(order: OrderRecord, error: DisplayErrorStatus) {
   return isUnknownBookingError({ ...order.shipment, summary: error.summary });
 }
 
-function StatusPill({ error, label, className }: { error: DisplayErrorStatus; label?: string; className?: string }) {
+function StatusPill({
+  error,
+  label,
+  className,
+  aiAddressCheck = false,
+}: {
+  error: DisplayErrorStatus;
+  label?: string;
+  className?: string;
+  aiAddressCheck?: boolean;
+}) {
   const tone = errorTone(error.kind);
   const Icon = error.kind === "address" ? MapPin : error.kind === "parcel" ? Package : tone === "failure" ? XCircle : AlertTriangle;
   return (
@@ -85,7 +108,7 @@ function StatusPill({ error, label, className }: { error: DisplayErrorStatus; la
     >
       <Icon className="size-3 shrink-0" aria-hidden />
       <span className={label ? "whitespace-normal" : "truncate"}>{label ?? error.status}</span>
-      {error.source === "ai" ? (
+      {aiAddressCheck && error.source === "ai" ? (
         <span className="rounded bg-white/70 px-0.5 text-[9px] font-bold uppercase tracking-wide opacity-80 dark:bg-black/30">
           AI
         </span>
@@ -99,6 +122,7 @@ export function BookingErrorCell({
   checking = false,
   finalStatus,
   busy = false,
+  aiAddressCheck = false,
   onAction,
 }: {
   order: OrderRecord;
@@ -106,6 +130,8 @@ export function BookingErrorCell({
   finalStatus?: FinalErrorStatus | null;
   /** The row's quick action is running (e.g. retry in flight). */
   busy?: boolean;
+  /** When false, "Fix address and book" becomes a manual address review. */
+  aiAddressCheck?: boolean;
   onAction?: (action: ErrorQuickAction | "details") => void;
 }) {
   if (checking) {
@@ -124,12 +150,14 @@ export function BookingErrorCell({
       </span>
     );
   }
-  const error = orderDisplayError(order, finalStatus);
+  const error = errorForToggle(orderDisplayError(order, finalStatus), aiAddressCheck);
   if (!error) return <span className="text-xs text-muted">—</span>;
-  const action = errorQuickAction(error, unknownOutcome(order, error));
-  const autoLabel = addressCorrectionMode(error) === "auto" ? AUTO_CORRECT_LABEL : undefined;
+  const rawAction = errorQuickAction(error, unknownOutcome(order, error));
+  const action = rawAction === "autocorrect" && !aiAddressCheck ? "review" : rawAction;
+  const autoLabel =
+    action === "autocorrect" && addressCorrectionMode(error) === "auto" ? AUTO_CORRECT_LABEL : undefined;
   const ActionIcon = busy ? Loader2 : ACTION_ICON[action];
-  const hint = errorActionHint(error, action);
+  const hint = action === "autocorrect" && aiAddressCheck ? errorActionHint(error, action) : null;
   const exactCode = error.facts.find((fact) => fact.kind === "provider" && fact.code)?.code;
 
   return (
@@ -139,7 +167,7 @@ export function BookingErrorCell({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex max-w-full items-center gap-1">
-        <StatusPill error={error} label={autoLabel} className="min-w-0" />
+        <StatusPill error={error} label={autoLabel} className="min-w-0" aiAddressCheck={aiAddressCheck} />
         {exactCode ? (
           <code className="truncate rounded bg-surface-soft px-1 text-[10px] font-medium text-muted" title="India Post error code">
             {exactCode}
@@ -155,7 +183,7 @@ export function BookingErrorCell({
           <Button
             type="button"
             size="xs"
-            variant={action === "open" ? "secondary" : "primary"}
+            variant={action === "open" || action === "review" ? "secondary" : "primary"}
             className={cn(
               "h-auto min-h-6 gap-1 whitespace-normal px-2 py-1 text-left text-[11px]",
               action === "force" && "bg-red-600 hover:bg-red-700",
@@ -191,6 +219,7 @@ export function BookingErrorDialog({
   confirmForce = false,
   forcing = false,
   retrying = false,
+  aiAddressCheck = false,
   onOpenChange,
   onAction,
   onForce,
@@ -203,12 +232,15 @@ export function BookingErrorDialog({
   onOpenChange: (open: boolean) => void;
   onAction: (action: Exclude<ErrorQuickAction, "force" | "open">) => void;
   retrying?: boolean;
+  /** When false, "Fix address and book" becomes a manual address review. */
+  aiAddressCheck?: boolean;
   onForce: () => void;
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
-  const error = orderDisplayError(order, finalStatus);
+  const error = errorForToggle(orderDisplayError(order, finalStatus), aiAddressCheck);
   const unknown = error ? unknownOutcome(order, error) : false;
-  const action = error ? errorQuickAction(error, unknown) : "open";
+  const rawAction = error ? errorQuickAction(error, unknown) : "open";
+  const action = rawAction === "autocorrect" && !aiAddressCheck ? "review" : rawAction;
   const barcode = order.shipment?.barcode ?? order.shipment?.trackingNumber ?? order.shipment?.tracking_number;
   const number = orderNumber(order);
 
@@ -231,7 +263,13 @@ export function BookingErrorDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Order {number}
-            {error ? <StatusPill error={error} label={addressCorrectionMode(error) === "auto" ? AUTO_CORRECT_LABEL : undefined} /> : null}
+            {error ? (
+              <StatusPill
+                error={error}
+                label={action === "autocorrect" && addressCorrectionMode(error) === "auto" ? AUTO_CORRECT_LABEL : undefined}
+                aiAddressCheck={aiAddressCheck}
+              />
+            ) : null}
           </DialogTitle>
           <DialogDescription>{error ? error.summary : "This order has no booking errors now."}</DialogDescription>
         </DialogHeader>

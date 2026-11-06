@@ -285,11 +285,13 @@ export async function handleCommerceRoutes(
 
   if (key === "POST bookings/precheck") {
     const { precheckOrders } = await import("@/modules/orders/prebooking-validation");
+    const { isAiAddressCheckEnabled } = await import("@/modules/automation/service");
     const body = await request.json();
     const orderIds: string[] = body.orderIds ?? [];
+    const aiAddressCheck = await isAiAddressCheckEnabled(supabase, ctx.organizationId);
     return precheckOrders(supabase, ctx, orderIds, {
-      allowAi: body.allowAi !== false,
-      forceAi: body.forceAi === true,
+      allowAi: body.allowAi !== false && aiAddressCheck,
+      forceAi: body.forceAi === true && aiAddressCheck,
     });
   }
 

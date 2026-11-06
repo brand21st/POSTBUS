@@ -10,6 +10,7 @@ import { serializeIndiaPostBookingArticle } from "@/modules/india-post/booking-p
 import { classifyMultiArticleOutcome, splitIndiaPostBookingResult, type IndiaPostBookingResponse } from "@/modules/india-post/booking-apply";
 import { indiaPostBookingServiceCode, indiaPostMobile } from "@/modules/india-post/endpoints";
 import type { StoredShippingFields } from "@/modules/shopify/shipping-contact";
+import { isAiAddressCheckEnabled } from "@/modules/automation/service";
 import {
   gateAddressForBooking,
   isIndiaPostAddressError,
@@ -534,6 +535,8 @@ async function runIndiaPostBookingAttempt(
     await persistIndiaPostTokens(supabase, connection, session.tokens);
   }
 
+  const aiAddressCheck = await isAiAddressCheckEnabled(supabase, input.organizationId);
+
   const prepared: Array<{
     shipment: (typeof pending)[number];
     barcode: string;
@@ -602,7 +605,7 @@ async function runIndiaPostBookingAttempt(
         organizationId: input.organizationId,
         address: rawAddress,
         searchPostOffices: (pin) => provider.searchPostOffices(pin),
-        allowAi: true,
+        allowAi: aiAddressCheck,
         orderSource: bookingOrder?.source ?? null,
       });
     } catch (error) {
@@ -701,9 +704,9 @@ async function runIndiaPostBookingAttempt(
           organizationId: input.organizationId,
           address,
           searchPostOffices: (pin) => provider.searchPostOffices(pin),
-          allowAi: true,
+          allowAi: aiAddressCheck,
           force: true,
-          forceAi: true,
+          forceAi: aiAddressCheck,
         });
         address.line1 = repaired.line1;
         address.line2 = repaired.line2;

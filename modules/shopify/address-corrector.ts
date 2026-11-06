@@ -11,6 +11,7 @@ import {
   isIndiaPostAddressError,
   refreshAddressPrebooking,
 } from "@/modules/orders/prebooking-validation";
+import { isAiAddressCheckEnabled } from "@/modules/automation/service";
 import type { StoredShippingFields } from "@/modules/shopify/shipping-contact";
 
 const ACTIVE_JOB = ["PENDING", "QUEUED", "RUNNING", "RETRYING"] as const;
@@ -253,11 +254,12 @@ export async function correctShopifyShippingAddress(
     const lookup = await pinLookup(supabase, input.organizationId);
     const beforeCity = collapse(address.city);
     const beforeState = collapse(address.state);
+    const aiAddressCheck = await isAiAddressCheckEnabled(supabase, input.organizationId);
     const refreshed = await refreshAddressPrebooking(supabase, {
       organizationId: input.organizationId,
       address,
       searchPostOffices: lookup.search,
-      allowAi: phase === "ai",
+      allowAi: phase === "ai" && aiAddressCheck,
       force: phase === "ai",
     });
     const pinResult =
@@ -294,7 +296,8 @@ export async function correctShopifyShippingAddress(
     });
 
     const intent = input.bookingIntent ?? { enqueueBooking: false, enrollInQueue: false };
-    const needsAi = phase === "deterministic" && addressLinesNeedAi(refreshed) && (await openRouterEnabled());
+    const needsAi =
+      phase === "deterministic" && aiAddressCheck && addressLinesNeedAi(refreshed) && (await openRouterEnabled());
     if (needsAi) {
       return {
         outcome: changed ? "updated" : "unchanged",

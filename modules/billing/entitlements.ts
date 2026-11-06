@@ -142,7 +142,10 @@ export function automationToggleLock(camel: string, allows: (feature: string) =>
     return FEATURE.woocommerce;
   }
   if (
-    (camel === "autoBooking" || camel === "autoTrackingSync" || camel === "autoLabelGeneration") &&
+    (camel === "autoBooking" ||
+      camel === "autoTrackingSync" ||
+      camel === "autoLabelGeneration" ||
+      camel === "autoAiAddressCheck") &&
     !allows(FEATURE.indiaPost)
   ) {
     return FEATURE.indiaPost;
@@ -169,6 +172,7 @@ export function lockedFeatureForApi(method: string, path: string, slugs: string[
   if (path === "label-template/multi-sheet" || (slugs[0] === "label-template" && slugs[1] === "multi-sheet")) {
     return FEATURE.multiPrint;
   }
+  // Sheet slots render through custom-preview. Multi print or custom packing labels can open it.
   if (path === "label-template/custom-preview" || (slugs[0] === "label-template" && slugs[1] === "custom-preview")) {
     return null;
   }

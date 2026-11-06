@@ -732,6 +732,8 @@ export type AutomationSettings = {
   auto_label_printing?: boolean;
   autoPackageSelection?: boolean;
   auto_package_selection?: boolean;
+  autoAiAddressCheck?: boolean;
+  auto_ai_address_check?: boolean;
 };
 
 export type PrintStation = {

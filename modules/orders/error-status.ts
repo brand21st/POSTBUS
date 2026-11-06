@@ -4,6 +4,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError, logInfo } from "@/lib/logger";
 import { consumeAiCredit, getAiCreditsRemaining } from "@/modules/ai-credits/service";
+import { isAiAddressCheckEnabled } from "@/modules/automation/service";
 import {
   OPENROUTER_API_BASE,
   getPlatformOpenRouterConfig,
@@ -161,6 +162,7 @@ export async function explainOrderErrorStatuses(
     .in("id", ids);
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
 
+  const allowAi = await isAiAddressCheckEnabled(supabase, ctx.organizationId);
   const rows = new Map((data ?? []).map((row) => [String(row.id), row]));
   const pending: Array<{ orderId: string; facts: ErrorFact[]; hash: string }> = [];
   const orders: OrderErrorStatus[] = ids.map((orderId) => {
@@ -181,7 +183,7 @@ export async function explainOrderErrorStatuses(
       : [];
     const fallback = finalErrorFromFacts(facts);
     const hash = factHash(facts);
-    const cached = cache.get(`${ctx.organizationId}:${orderId}:${hash}`);
+    const cached = allowAi ? cache.get(`${ctx.organizationId}:${orderId}:${hash}`) : undefined;
     if (cached && Date.now() - cached.at < CACHE_MS) {
       return { orderId, status: cached.status, summary: cached.summary, source: "ai" as const, kind: fallback?.kind, facts };
     }
@@ -196,7 +198,7 @@ export async function explainOrderErrorStatuses(
     };
   });
 
-  if (!pending.length) return { orders: orders.filter((row) => row.status) };
+  if (!allowAi || !pending.length) return { orders: orders.filter((row) => row.status) };
 
   try {
     const config = await getPlatformOpenRouterConfig();

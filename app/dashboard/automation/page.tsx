@@ -53,6 +53,13 @@ const TOGGLES = [
     description: "Queue India Post booking for automatically created shipments.",
   },
   {
+    camel: "autoAiAddressCheck",
+    snake: "auto_ai_address_check",
+    title: "AI address check",
+    description:
+      "Correct messy Shopify and WooCommerce address lines with AI before India Post booking. Off for every workspace until you turn it on. PIN lookup and manual address edits still run.",
+  },
+  {
     camel: "autoLabelGeneration",
     snake: "auto_label_generation",
     title: "Auto label generation",
@@ -172,6 +179,7 @@ export default function AutomationPage() {
     },
     onSuccess: (data) => {
       queryClient.setQueryData(["automation"], data);
+      void queryClient.invalidateQueries({ queryKey: ["order-error-status"] });
       toast.success("Saved to your workspace.");
     },
     onError: (error: Error, _payload, context) => {

@@ -167,4 +167,23 @@ describe("order error status", () => {
     });
     expect(error && errorQuickAction(error, false)).toBe("autocorrect");
   });
+
+  it("treats an invalid mobile number as an address action that can be autocorrected", () => {
+    const phone =
+      "The booking did not complete because the mobile number provided is not a valid 10-digit Indian number starting with 6, 7, 8, or 9.";
+    const error = resolveDisplayError({
+      shippingAddress: {
+        address_validation_status: "NEEDS_REVIEW",
+        address_validation_errors: [{ message: phone }],
+      },
+      shipment: {
+        status: "FAILED",
+        last_error: phone,
+        last_error_code: "VALIDATION_ERROR",
+        ...fullParcel,
+      },
+    });
+    expect(error?.facts.some((fact) => fact.kind === "address")).toBe(true);
+    expect(error && errorQuickAction(error, false)).toBe("autocorrect");
+  });
 });
