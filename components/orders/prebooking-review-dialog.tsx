@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { IndiaPostPincodeAutofill } from "@/components/address/india-post-pincode-autofill";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/hooks/use-api";
@@ -341,14 +342,37 @@ export function PrebookingReviewDialog({
                 <Field label="Address line 2" problem={problemFields.has("line2")} className="sm:col-span-2">
                   <Input value={draft.line2} onChange={(event) => setDraft({ ...draft, line2: event.target.value })} />
                 </Field>
+                <Field label="PIN code" problem={problemFields.has("pincode")}>
+                  <Input
+                    inputMode="numeric"
+                    maxLength={6}
+                    autoComplete="postal-code"
+                    value={draft.pincode}
+                    onChange={(event) =>
+                      setDraft({ ...draft, pincode: event.target.value.replace(/\D/g, "").slice(0, 6) })
+                    }
+                  />
+                  <IndiaPostPincodeAutofill
+                    pincode={draft.pincode}
+                    fillKey={active.orderId}
+                    onFill={({ city, state }) =>
+                      setDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              ...(city ? { city } : {}),
+                              ...(state ? { state } : {}),
+                            }
+                          : current
+                      )
+                    }
+                  />
+                </Field>
                 <Field label="City" problem={problemFields.has("city")}>
                   <Input value={draft.city} onChange={(event) => setDraft({ ...draft, city: event.target.value })} />
                 </Field>
                 <Field label="State" problem={problemFields.has("state")}>
                   <Input value={draft.state} onChange={(event) => setDraft({ ...draft, state: event.target.value })} />
-                </Field>
-                <Field label="PIN code" problem={problemFields.has("pincode")}>
-                  <Input value={draft.pincode} onChange={(event) => setDraft({ ...draft, pincode: event.target.value })} />
                 </Field>
                 <Field label="Country" problem={problemFields.has("country")}>
                   <Input value={draft.country} onChange={(event) => setDraft({ ...draft, country: event.target.value })} />
