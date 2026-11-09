@@ -308,6 +308,8 @@ export type OrderRecord = {
   cod_amount?: number | string;
   extraCodCharge?: number | string;
   extra_cod_charge?: number | string;
+  codAmountMode?: "auto" | "manual" | string | null;
+  cod_amount_mode?: "auto" | "manual" | string | null;
   currency?: string;
   customer?: CustomerSummary | null;
   customerName?: string | null;

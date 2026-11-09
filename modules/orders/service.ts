@@ -5,10 +5,11 @@ import type { OrderStatus } from "@/types/domain";
 import type { TenantContext } from "@/lib/api/context";
 import type { z } from "zod";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
-import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import type { createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderCodSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import { parcelServiceCode } from "@/modules/india-post/booking-service";
 import { applyManualExtraCodCharge } from "@/modules/orders/extra-cod";
-import { settleOrderPayment, shipmentCollectFromOrder } from "@/modules/orders/payment";
+import { paymentStatusFromManualCod, restoreAutoOrderPayment } from "@/modules/orders/cod-amount";
+import { isManualCodAmount, roundMoney, settleOrderPayment, shipmentCollectFromOrder } from "@/modules/orders/payment";
 import {
   applyShopifyPaymentOverrideStatus,
   mergeShopifyPaymentMetadata,
@@ -552,6 +553,82 @@ export async function updateOrderWeights(
   return getOrder(supabase, ctx, orderId);
 }
 
+export async function updateOrderCodAmount(
+  supabase: SupabaseClient,
+  ctx: TenantContext,
+  orderId: string,
+  input: z.infer<typeof updateOrderCodSchema>
+) {
+  const { data: order, error: orderError } = await supabase
+    .from("orders")
+    .select("id, source, payment_status, total_amount, amount_paid, cod_amount, metadata")
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, orderError.message);
+  if (!order) throw new AppError(ERROR_CODES.RESOURCE_NOT_FOUND, "Order not found.");
+
+  const { data: shipments, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("id, status, booked_at")
+    .eq("organization_id", ctx.organizationId)
+    .eq("order_id", orderId);
+  if (shipmentError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, shipmentError.message);
+  const shipmentRows = (shipments ?? []) as Array<{ id: string; status?: string | null; booked_at?: string | null }>;
+  const locked = shipmentRows.some((row) => !OPEN_WEIGHT_SHIPMENT_STATUSES.has((row.status ?? "").toUpperCase()));
+  if (locked) {
+    throw new AppError(ERROR_CODES.CONFLICT, "Remaining COD is locked after India Post booking.");
+  }
+
+  const paid = roundMoney(Number(order.amount_paid ?? 0) || 0);
+  const settled =
+    input.mode === "manual"
+      ? {
+          paymentStatus: paymentStatusFromManualCod(paid, roundMoney(input.codAmount ?? 0)),
+          amountPaid: paid,
+          codAmount: roundMoney(input.codAmount ?? 0),
+        }
+      : restoreAutoOrderPayment(order);
+
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update({
+      cod_amount_mode: input.mode,
+      payment_status: settled.paymentStatus,
+      amount_paid: settled.amountPaid,
+      cod_amount: settled.codAmount,
+    })
+    .eq("organization_id", ctx.organizationId)
+    .eq("id", orderId);
+  if (updateError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, updateError.message);
+
+  const collect = shipmentCollectFromOrder({
+    payment_status: settled.paymentStatus,
+    total_amount: order.total_amount,
+    amount_paid: settled.amountPaid,
+    cod_amount: settled.codAmount,
+  });
+  const openIds = shipmentRows
+    .filter((row) => OPEN_WEIGHT_SHIPMENT_STATUSES.has((row.status ?? "").toUpperCase()) && !row.booked_at)
+    .map((row) => row.id);
+  if (openIds.length) {
+    const { error } = await supabase
+      .from("shipments")
+      .update({ payment_mode: collect.payment_mode, cod_amount: collect.cod_amount })
+      .eq("organization_id", ctx.organizationId)
+      .in("id", openIds)
+      .is("booked_at", null);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    await resumeSmartAutoRetryAfterCorrection(supabase, {
+      organizationId: ctx.organizationId,
+      shipmentIds: openIds,
+      userId: ctx.userId,
+    });
+  }
+
+  return getOrder(supabase, ctx, orderId);
+}
+
 export async function updateOrderShippingAddress(
   supabase: SupabaseClient,
   ctx: TenantContext,
@@ -876,6 +953,8 @@ function mapOrder(row: Record<string, unknown>) {
     cod_amount: row.cod_amount,
     extraCodCharge: row.extra_cod_charge ?? 0,
     extra_cod_charge: row.extra_cod_charge ?? 0,
+    codAmountMode: isManualCodAmount(row.cod_amount_mode) ? "manual" : "auto",
+    cod_amount_mode: isManualCodAmount(row.cod_amount_mode) ? "manual" : "auto",
     createdAt: row.created_at,
     indiaPostService: row.india_post_service ?? null,
     indiaPostEstimateAmount: row.india_post_estimate_amount ?? null,

@@ -18,7 +18,7 @@ import {
   type ShopifyAddressBookingIntent,
 } from "@/modules/shopify/address-corrector";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
-import { shipmentCollectFromOrder } from "@/modules/orders/payment";
+import { isManualCodAmount, shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { fetchWithShopifyTimeout, shopifyHttpError } from "@/modules/shopify/http";
 import {
   bookedShipmentCollectConflict,
@@ -2339,7 +2339,7 @@ export async function upsertShopifyOrder(
   const { data: existingOrder } = existing?.order_id
     ? await supabase
         .from("orders")
-        .select("status, payment_status, metadata, total_amount, shipping_address_id")
+        .select("status, payment_status, metadata, total_amount, shipping_address_id, cod_amount_mode")
         .eq("id", existing.order_id)
         .eq("organization_id", input.organizationId)
         .maybeSingle()
@@ -2369,6 +2369,9 @@ export async function upsertShopifyOrder(
   const lineSelection = selectActiveShopifyLineItems(remote);
   const bookingLocked = SHOPIFY_WEIGHT_LOCKED_ORDER.has(String(existingOrder?.status ?? "").toUpperCase());
   const freezeOperationalMoney = (lineSelection.skipLineWrite && !currentTotalKnown) || bookingLocked;
+  const manualCod = isManualCodAmount(
+    (existingOrder as { cod_amount_mode?: string | null } | null)?.cod_amount_mode
+  );
   const shipmentCollect = shipmentCollectFromOrder({
     payment_status: collect.paymentStatus,
     total_amount: operationalTotal,
@@ -2383,11 +2386,11 @@ export async function upsertShopifyOrder(
       existing.order_id as string,
       shipmentCollect,
       collect.paymentStatus,
-      !bookingLocked && existingOrder?.payment_status !== collect.paymentStatus
+      !manualCod && !bookingLocked && existingOrder?.payment_status !== collect.paymentStatus
     );
     if (bookingConflict) snapshot = { ...snapshot, bookingConflict };
   }
-  const paymentFields = freezeOperationalMoney
+  const paymentFields = freezeOperationalMoney || manualCod
     ? { metadata: mergeShopifyPaymentMetadata(existingOrder?.metadata, snapshot) }
     : {
         payment_status: collect.paymentStatus,

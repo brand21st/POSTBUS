@@ -73,6 +73,17 @@ function tariffOrderRevision(record: OrderRecord) {
   });
 }
 
+function savedCodKey(record: OrderRecord | undefined) {
+  if (!record) return "";
+  return JSON.stringify({
+    mode: record.codAmountMode ?? record.cod_amount_mode ?? "auto",
+    amount: record.codAmount ?? record.cod_amount ?? null,
+    paid: record.amountPaid ?? record.amount_paid ?? null,
+    extra: record.extraCodCharge ?? record.extra_cod_charge ?? null,
+    total: record.totalAmount ?? record.total_amount ?? null,
+  });
+}
+
 function savedWeightKey(record: OrderRecord | undefined) {
   if (!record) return "";
   return JSON.stringify({
@@ -96,6 +107,8 @@ export default function OrderDetailPage() {
   const [draftWeights, setDraftWeights] = useState<Record<string, string>>({});
   const [manualBox, setManualBox] = useState("");
   const [addressOpen, setAddressOpen] = useState(false);
+  const [codMode, setCodMode] = useState<"auto" | "manual">("auto");
+  const [draftCod, setDraftCod] = useState("");
   const orderRecord = useRef<OrderRecord | undefined>(undefined);
 
   const order = useQuery({
@@ -152,6 +165,7 @@ export default function OrderDetailPage() {
 
   orderRecord.current = order.data;
   const weightKey = savedWeightKey(order.data);
+  const codKey = savedCodKey(order.data);
 
   useEffect(() => {
     const record = orderRecord.current;
@@ -175,6 +189,17 @@ export default function OrderDetailPage() {
     return () => window.clearTimeout(timer);
   }, [weightKey]);
 
+  useEffect(() => {
+    const record = orderRecord.current;
+    if (!record || !codKey) return;
+    const timer = window.setTimeout(() => {
+      const savedMode = record.codAmountMode ?? record.cod_amount_mode;
+      setCodMode(savedMode === "manual" ? "manual" : "auto");
+      setDraftCod(String(savedOrderCodBreakdown(record).finalCodAmount));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [codKey]);
+
   const saveWeights = useMutation({
     mutationFn: (body: {
       parcelWeightMode: "auto" | "manual";
@@ -188,6 +213,21 @@ export default function OrderDetailPage() {
     onSuccess: () => {
       toast.success("Weight saved.");
       queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["shipments"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const saveCod = useMutation({
+    mutationFn: (body: { mode: "auto" | "manual"; codAmount?: number }) =>
+      api(`/api/v1/orders/${params.id}/cod`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      toast.success("Remaining COD saved.");
+      queryClient.invalidateQueries({ queryKey: ["order", params.id] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["shipments"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -346,10 +386,66 @@ export default function OrderDetailPage() {
                 value={formatCurrency(codBreakdown.extraCodCharge, record.currency)}
               />
             ) : null}
-            <Row
-              label={showExtraCod ? "Final COD amount" : "Remaining / COD"}
-              value={formatCurrency(codBreakdown.finalCodAmount, record.currency)}
-            />
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">{showExtraCod ? "Final COD amount" : "Remaining / COD"}</span>
+                <ServiceToggle
+                  label="Remaining COD mode"
+                  value={codMode}
+                  disabled={weightsLocked || saveCod.isPending}
+                  options={[
+                    { value: "auto", label: "Auto", title: "Follow the Shopify or WooCommerce remaining amount" },
+                    { value: "manual", label: "Manual", title: "Type the amount India Post collects on delivery" },
+                  ]}
+                  onChange={(value) => {
+                    const next = value === "manual" ? "manual" : "auto";
+                    setCodMode(next);
+                    if (next === "manual" && !draftCod) {
+                      setDraftCod(String(codBreakdown.finalCodAmount));
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {codMode === "manual" ? (
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    aria-label="Remaining COD amount"
+                    disabled={weightsLocked || saveCod.isPending}
+                    className="h-8 w-28"
+                    value={draftCod}
+                    onChange={(event) => setDraftCod(event.target.value)}
+                  />
+                ) : (
+                  <span>{formatCurrency(codBreakdown.finalCodAmount, record.currency)}</span>
+                )}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={weightsLocked || saveCod.isPending}
+                  onClick={() => {
+                    if (codMode === "manual") {
+                      const amount = Number(draftCod);
+                      if (!Number.isFinite(amount) || amount < 0) {
+                        toast.error("Enter the remaining COD amount.");
+                        return;
+                      }
+                      saveCod.mutate({ mode: "manual", codAmount: amount });
+                      return;
+                    }
+                    saveCod.mutate({ mode: "auto" });
+                  }}
+                >
+                  Save
+                </Button>
+              </div>
+              {weightsLocked ? (
+                <p className="text-right text-xs text-muted">Remaining COD is locked after India Post booking.</p>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
 

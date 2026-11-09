@@ -78,6 +78,7 @@ function query(data: unknown) {
 
 function newOrderClient() {
   return {
+    rpc: async () => ({ data: { ok: true, action: "replaced", count: 0 }, error: null }),
     from: vi.fn((table: string) => {
       if (table === "external_order_references") return query(null);
       if (table === "customers") return query({ id: "cust-1" });
@@ -264,6 +265,43 @@ describe("shopify order mapping", () => {
       amountPaid: 0,
       codAmount: 499,
     });
+  });
+
+  it("does not overwrite a manual remaining COD on Shopify sync", async () => {
+    const updates: Array<{ table: string; payload: unknown }> = [];
+    await upsertShopifyOrder(
+      trackedOrderClient({
+        existingOrderId: "ord-1",
+        orderStatus: "READY",
+        paymentStatus: "COD",
+        codAmountMode: "manual",
+        inserts: [],
+        deletes: [],
+        updates,
+      }) as never,
+      {
+        organizationId: "org-1",
+        shopDomain: "demo.myshopify.com",
+        remote: {
+          ...remoteOrder,
+          financial_status: "partially_paid",
+          payment_gateway_names: ["razorpay"],
+          total_price: "1000.00",
+          total_outstanding: "400.00",
+        },
+      }
+    );
+    const orderUpdate = updates.find((row) => row.table === "orders")?.payload as {
+      payment_status?: string;
+      amount_paid?: number;
+      cod_amount?: number;
+      metadata?: unknown;
+    };
+    expect(orderUpdate?.cod_amount).toBeUndefined();
+    expect(orderUpdate?.amount_paid).toBeUndefined();
+    expect(orderUpdate?.payment_status).toBeUndefined();
+    expect(orderUpdate?.metadata).toBeTruthy();
+    expect(updates.filter((row) => row.table === "shipments")).toEqual([]);
   });
 
   it("builds a stable order number and customer name", () => {
@@ -659,6 +697,7 @@ function trackedOrderClient(options: {
   existingOrderId?: string | null;
   orderStatus?: string;
   paymentStatus?: string;
+  codAmountMode?: string;
   metadata?: unknown;
   shipments?: Array<{ id?: string; status: string; booked_at?: string | null; payment_mode?: string }>;
   lineItems?: unknown;
@@ -667,6 +706,7 @@ function trackedOrderClient(options: {
   updates?: Array<{ table: string; payload: unknown }>;
 }) {
   return {
+    rpc: async () => ({ data: { ok: true, action: "replaced", count: 0 }, error: null }),
     from: vi.fn((table: string) => {
       let data: unknown = {};
       if (table === "external_order_references") {
@@ -676,6 +716,7 @@ function trackedOrderClient(options: {
           id: options.existingOrderId ?? "ord-1",
           status: options.orderStatus ?? "READY",
           payment_status: options.paymentStatus ?? "PENDING",
+          cod_amount_mode: options.codAmountMode ?? "auto",
           metadata: options.metadata ?? {},
         };
       } else if (table === "customers") data = { id: "cust-1" };

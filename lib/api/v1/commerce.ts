@@ -21,7 +21,7 @@ import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-sta
 import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
-import { bulkOrderStatusSchema, confirmShopifyPaymentSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import { bulkOrderStatusSchema, confirmShopifyPaymentSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderCodSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import {
   confirmCustomerOrderLinkSchema,
 } from "@/modules/customer-order-links/schema";
@@ -32,7 +32,7 @@ import {
   listLegacySubmissions,
   listWhatsAppPendingOrders,
 } from "@/modules/customer-order-links/service";
-import { confirmShopifyPayment, createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
+import { confirmShopifyPayment, createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderCodAmount, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { renderCustomShippingLabel } from "@/modules/labels/custom-label-service";
@@ -187,6 +187,11 @@ export async function handleCommerceRoutes(
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "weights") {
     const body = updateOrderWeightsSchema.parse(await request.json());
     return updateOrderWeights(supabase, ctx, slugs[1], body);
+  }
+
+  if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "cod") {
+    const body = updateOrderCodSchema.parse(await request.json());
+    return updateOrderCodAmount(supabase, ctx, slugs[1], body);
   }
 
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address") {

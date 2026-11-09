@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
-import { tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
+import { INDIA_POST_COD_MAX_RUPEES, tryParseExtraCodCharge } from "@/modules/orders/extra-cod";
 import { ORDER_SOURCES, ORDER_STATUSES, PAYMENT_STATUSES } from "@/types/domain";
 
 const indiaMobile = z
@@ -137,6 +137,31 @@ export const updateOrderWeightsSchema = z
         code: "custom",
         path: ["parcelWeightGrams"],
         message: "Enter the box weight in grams.",
+      });
+    }
+  });
+
+export const updateOrderCodSchema = z
+  .object({
+    mode: z.enum(["auto", "manual"]),
+    codAmount: z.coerce.number().min(0).max(INDIA_POST_COD_MAX_RUPEES).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.mode !== "manual") return;
+    if (value.codAmount == null || Number.isNaN(value.codAmount)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["codAmount"],
+        message: "Enter the remaining COD amount.",
+      });
+      return;
+    }
+    const scaled = value.codAmount * 100;
+    if (Math.abs(scaled - Math.round(scaled)) > 0.001) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["codAmount"],
+        message: "Remaining COD supports up to 2 decimal places.",
       });
     }
   });

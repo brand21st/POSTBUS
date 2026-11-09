@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { getAutomationSettings } from "@/modules/automation/service";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
+import { isManualCodAmount } from "@/modules/orders/payment";
 import { createShipmentsForOrders } from "@/modules/shipments/service";
 import {
   getWooProduct,
@@ -181,7 +182,7 @@ export async function upsertWooCommerceOrder(
     const accepted = isIndiaPostAcceptedStatus(shipment?.status);
     const { data: current } = await supabase
       .from("orders")
-      .select("metadata, status")
+      .select("metadata, status, cod_amount_mode")
       .eq("id", orderId)
       .eq("organization_id", input.organizationId)
       .maybeSingle();
@@ -201,6 +202,7 @@ export async function upsertWooCommerceOrder(
         .eq("organization_id", input.organizationId);
       return { created: false, updated: true, skipped: false, orderId };
     }
+    const manualCod = isManualCodAmount((current as { cod_amount_mode?: string | null } | null)?.cod_amount_mode);
     await supabase
       .from("orders")
       .update({
@@ -211,9 +213,13 @@ export async function upsertWooCommerceOrder(
         shipping_amount: mapped.shippingAmount,
         tax_amount: mapped.taxAmount,
         total_amount: mapped.total,
-        payment_status: mapped.payment.paymentStatus,
-        amount_paid: mapped.payment.amountPaid,
-        cod_amount: mapped.payment.codAmount,
+        ...(manualCod
+          ? {}
+          : {
+              payment_status: mapped.payment.paymentStatus,
+              amount_paid: mapped.payment.amountPaid,
+              cod_amount: mapped.payment.codAmount,
+            }),
         metadata,
       })
       .eq("id", orderId)
