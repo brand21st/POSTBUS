@@ -500,6 +500,8 @@ export type ShipmentRecord = {
   last_event_at?: string | null;
   lastTrackedAt?: string | null;
   last_tracked_at?: string | null;
+  updatedAt?: string;
+  updated_at?: string;
   ndrReason?: string | null;
   ndr_reason?: string | null;
   ndrAttemptCount?: number | null;

@@ -51,7 +51,7 @@ const OPEN_WEIGHT_SHIPMENT_STATUSES = new Set(["DRAFT", "QUEUED", "FAILED", "CAN
 
 // Fingerprint stays off this query until the migration is applied. The other address fields already exist.
 const ORDER_LIST_SELECT =
-  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, india_post_estimate_amount, india_post_estimated_at, india_post_estimate_key, parcel_weight_mode, parcel_weight_grams, customers(name, phone), shipping_address:addresses!shipping_address_id(name, phone, line1, line2, line3, city, state, pincode, country, address_validation_status, address_validation_errors), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, weight_grams, length_cm, width_cm, height_cm, service_code, created_at, metadata, last_error, last_error_code)";
+  "id, order_number, source, status, payment_status, total_amount, currency, created_at, india_post_service, india_post_estimate_amount, india_post_estimated_at, india_post_estimate_key, parcel_weight_mode, parcel_weight_grams, customers(name, phone), shipping_address:addresses!shipping_address_id(name, phone, line1, line2, line3, city, state, pincode, country, address_validation_status, address_validation_errors), order_line_items(id, title, quantity, weight_grams, image_url), shipments(id, status, barcode, tracking_number, weight_grams, length_cm, width_cm, height_cm, service_code, created_at, updated_at, metadata, last_error, last_error_code)";
 
 function wantsOrderCounts(query: OrderListQuery) {
   const value = (query.includeCounts ?? "").toLowerCase();

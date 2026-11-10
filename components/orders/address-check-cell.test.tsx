@@ -40,6 +40,65 @@ function html(aiAddressCheck: boolean) {
   );
 }
 
+describe("BookingErrorCell stalled booking", () => {
+  it("keeps Booking… while the attempt is fresh", () => {
+    const markup = renderToStaticMarkup(
+      <BookingErrorCell
+        order={{
+          ...order,
+          shipment: { status: "QUEUED", updated_at: new Date().toISOString() },
+        } as OrderRecord}
+        onAction={() => undefined}
+      />
+    );
+    expect(markup).toContain("Booking…");
+    expect(markup).not.toContain("Retry booking");
+  });
+
+  it("offers Force book when a recovery booking is no longer in flight", () => {
+    const markup = renderToStaticMarkup(
+      <BookingErrorCell
+        order={{
+          ...order,
+          shipment: {
+            status: "RECOVERY_REQUIRED",
+            barcode: "ET214330016IN",
+            last_error: "India Post booking did not finish.",
+            last_error_code: "CEPT_UNKNOWN",
+            updated_at: "2026-10-01T00:00:00.000Z",
+          },
+        } as OrderRecord}
+        onAction={() => undefined}
+      />
+    );
+    expect(markup).toContain("Force book");
+    expect(markup).not.toContain("Booking…");
+  });
+
+  it("offers Retry booking when a queued booking has been stale and was never sent", () => {
+    const markup = renderToStaticMarkup(
+      <BookingErrorCell
+        order={{
+          id: "ord-stale",
+          orderNumber: "9001",
+          shipment: {
+            status: "QUEUED",
+            updated_at: "2026-10-01T00:00:00.000Z",
+            length_cm: 10,
+            width_cm: 10,
+            height_cm: 10,
+            weight_grams: 200,
+          },
+        } as OrderRecord}
+        onAction={() => undefined}
+      />
+    );
+    expect(markup).toContain("Retry booking");
+    expect(markup).toContain("Booking stalled");
+    expect(markup).not.toContain("Booking…");
+  });
+});
+
 describe("BookingErrorCell AI address check", () => {
   it("shows the AI mark and Fix address and book when the workspace toggle is on", () => {
     const markup = html(true);

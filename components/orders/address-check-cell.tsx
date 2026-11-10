@@ -24,7 +24,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
 import {
   ERROR_KIND_LABEL,
   errorActionHint,
@@ -33,9 +32,9 @@ import {
   finalErrorFromFacts,
   isUnknownBookingError,
   resolveDisplayError,
-  type DisplayErrorStatus,
   AUTO_CORRECT_LABEL,
   addressCorrectionMode,
+  type DisplayErrorStatus,
   type ErrorQuickAction,
   type ServerErrorStatus,
 } from "@/modules/orders/error-facts";
@@ -117,6 +116,35 @@ function StatusPill({
   );
 }
 
+const LIVE_BOOKING = new Set(["VALIDATING", "QUEUED", "BOOKING"]);
+const BOOKING_STUCK_MS = 2 * 60 * 1000;
+
+function bookingAttemptIsLive(order: OrderRecord, busy: boolean) {
+  const status = String(order.shipment?.status ?? "").toUpperCase();
+  if (!LIVE_BOOKING.has(status)) return false;
+  if (busy) return true;
+  const stamp = order.shipment?.updated_at ?? order.shipment?.updatedAt;
+  if (!stamp) return true;
+  const age = Date.now() - Date.parse(stamp);
+  return !Number.isFinite(age) || age < BOOKING_STUCK_MS;
+}
+
+function stalledBooking(order: OrderRecord): DisplayErrorStatus | null {
+  const status = String(order.shipment?.status ?? "").toUpperCase();
+  if (!LIVE_BOOKING.has(status)) return null;
+  const article = order.shipment?.barcode || order.shipment?.tracking_number || order.shipment?.trackingNumber;
+  const message = article
+    ? "India Post booking did not finish. The outcome is unknown."
+    : "Booking stalled before India Post received it.";
+  return {
+    status: article ? "RECOVERY_REQUIRED" : "FAILED",
+    summary: message,
+    source: "rules",
+    kind: article ? "provider" : "shipment",
+    facts: [{ kind: article ? "provider" : "shipment", message, ...(article ? { code: "CEPT_UNKNOWN" } : {}) }],
+  };
+}
+
 export function BookingErrorCell({
   order,
   checking = false,
@@ -142,7 +170,7 @@ export function BookingErrorCell({
       </span>
     );
   }
-  if (isIndiaPostBookingInFlight(order.shipment?.status)) {
+  if (bookingAttemptIsLive(order, busy)) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-800">
         <Loader2 className="size-3 animate-spin" aria-hidden />
@@ -150,7 +178,7 @@ export function BookingErrorCell({
       </span>
     );
   }
-  const error = errorForToggle(orderDisplayError(order, finalStatus), aiAddressCheck);
+  const error = errorForToggle(orderDisplayError(order, finalStatus) ?? stalledBooking(order), aiAddressCheck);
   if (!error) return <span className="text-xs text-muted">—</span>;
   const rawAction = errorQuickAction(error, unknownOutcome(order, error));
   const action = rawAction === "autocorrect" && !aiAddressCheck ? "review" : rawAction;

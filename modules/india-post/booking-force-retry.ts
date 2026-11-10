@@ -310,7 +310,10 @@ export function forceBookRefusal(
   const shipment = input.shipment;
   if (!shipment?.id) return { kind: "conflict", reason: "Shipment not found.", action: "INVALID_SHIPMENT" };
   const status = String(shipment.status ?? "").toUpperCase();
-  if (!(FORCE_BOOK_FROM as readonly string[]).includes(status)) {
+  const job = input.job;
+  const parked = isParkedHistoricalBookingJob(job);
+  const stalledBooking = status === "QUEUED" || status === "BOOKING" || status === "VALIDATING";
+  if (!(FORCE_BOOK_FROM as readonly string[]).includes(status) && !(stalledBooking && parked)) {
     return {
       kind: "conflict",
       reason: `Force book is only for failed or unconfirmed bookings. This shipment is ${status || "in an unknown state"}.`,
@@ -318,9 +321,8 @@ export function forceBookRefusal(
   }
   const owned = bulkMembershipRetryDecision(String(shipment.id), input.bulkArticleResult);
   if (owned) return { kind: "conflict", reason: owned.reason, action: owned.action };
-  const job = input.job;
   const jobState = String(job?.status ?? "").toUpperCase();
-  if (job?.id && (jobState === "QUEUED" || jobState === "PENDING" || jobState === "RETRYING")) {
+  if (job?.id && (jobState === "QUEUED" || jobState === "PENDING" || jobState === "RETRYING") && !parked) {
     return { kind: "conflict", reason: "A booking retry is already scheduled.", action: "RETRY_ALREADY_SCHEDULED" };
   }
   if (job?.id && jobState === "RUNNING") {
