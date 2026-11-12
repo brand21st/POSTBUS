@@ -285,7 +285,7 @@ export default function AdminGoogleSheetsCrmPage() {
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-muted">
           <p>1. Create the CRM spreadsheet, then open Extensions → Apps Script from that sheet and paste the copied script. The copy already includes the connection key.</p>
-          <p>2. Deploy as a Web App, execute as you, and allow anyone to access it. Paste that URL above, enable synchronization, and save.</p>
+          <p>2. Deploy → New deployment → Web app. Execute as: Me. Who has access: Anyone (not Only myself). Copy the /exec URL, paste it above, enable synchronization, and save. Then Test connection.</p>
           <p>The script creates All Signups, Workspaces, Abandoned Clients, Active Clients, and Sync Logs. It upserts by customer and workspace id.</p>
         </CardContent>
       </Card>

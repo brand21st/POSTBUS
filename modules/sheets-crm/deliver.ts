@@ -2,7 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { RETRY_DELAYS_MS } from "@/lib/jobs/retry";
 import { classifyCustomer, primaryWorkspace } from "@/modules/sheets-crm/abandonment";
 import { loadSheetsCrmConfig, sheetsCrmReady, type SheetsCrmConfig } from "@/modules/sheets-crm/config";
-import { assertSheetsWebAppUrl, deliveryDecision, type AppsScriptResponse } from "@/modules/sheets-crm/deliver-decision";
+import {
+  appsScriptTestFailure,
+  assertSheetsWebAppUrl,
+  deliveryDecision,
+  type AppsScriptResponse,
+} from "@/modules/sheets-crm/deliver-decision";
 import { SHEETS_CRM_BATCH_LIMIT, closedDedupeKey, openDedupeKey, type SheetsCrmLifecycle } from "@/modules/sheets-crm/events";
 import { loadCrmSnapshot, loadStoredProjection } from "@/modules/sheets-crm/projection";
 import { buildSheetPayload, projectionHash, redactCrmError, type SheetsCrmSheetPayload } from "@/modules/sheets-crm/rows";
@@ -89,9 +94,8 @@ export async function testSheetsCrmConnection(config: SheetsCrmConfig, fetchImpl
     throw new Error("Save the Web App URL and secret before testing.");
   }
   const { httpStatus, parsed } = await postJson(fetchImpl, config.webAppUrl, { secret: config.secret, test: true });
-  if (httpStatus >= 300 || parsed?.ok !== true) {
-    throw new Error(parsed?.code === "unauthorized" ? "Apps Script rejected the secret." : "Apps Script did not accept the test.");
-  }
+  const failure = appsScriptTestFailure(httpStatus, parsed);
+  if (failure) throw new Error(failure);
   return { ok: true as const };
 }
 

@@ -10,8 +10,7 @@ import {
 } from "@/modules/sheets-crm/abandonment";
 import { mapSheetsCrmConfig, publicSheetsCrmSettings } from "@/modules/sheets-crm/config";
 import { renderSheetsCrmScript, sheetsCrmScriptSource } from "@/modules/sheets-crm/script";
-import { deliveryDecision } from "@/modules/sheets-crm/deliver-decision";
-import { assertSheetsWebAppUrl } from "@/modules/sheets-crm/deliver-decision";
+import { appsScriptTestFailure, assertSheetsWebAppUrl, deliveryDecision } from "@/modules/sheets-crm/deliver-decision";
 import { activitySyncDue, openDedupeKey, type SheetsCrmSnapshot } from "@/modules/sheets-crm/events";
 import { enqueueSheetsCrmEvent } from "@/modules/sheets-crm/enqueue";
 import { testSheetsCrmConnection } from "@/modules/sheets-crm/deliver";
@@ -139,6 +138,11 @@ describe("Google Sheets CRM delivery", () => {
 
   it("does not retry a rejected secret", () => {
     expect(deliveryDecision(1, 5, 200, { ok: false, code: "unauthorized" }, "evt_1").status).toBe("DEAD");
+  });
+
+  it("treats Google Access denied as a permanent Web App access problem", () => {
+    expect(deliveryDecision(1, 5, 403, null, "evt_1")).toMatchObject({ status: "DEAD" });
+    expect(appsScriptTestFailure(403, null)).toMatch(/Who has access to Anyone/);
   });
 
   it("rejects non-Google Web App URLs", () => {

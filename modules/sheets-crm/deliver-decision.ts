@@ -20,6 +20,19 @@ export function assertSheetsWebAppUrl(value: string) {
   return url.toString();
 }
 
+export function appsScriptAccessDeniedMessage() {
+  return "Google returned Access denied. In Apps Script open Deploy → Manage deployments → the Web app → Edit, set Who has access to Anyone (not Only myself), then Update. If the URL changes, paste the new /exec URL and save.";
+}
+
+export function appsScriptTestFailure(httpStatus: number, parsed: AppsScriptResponse | null) {
+  if (parsed?.ok === true) return null;
+  if (parsed?.code === "unauthorized") {
+    return "Apps Script rejected the connection key. Click Copy Apps Script, paste it into the spreadsheet script, then deploy a new Web App.";
+  }
+  if (httpStatus === 403) return appsScriptAccessDeniedMessage();
+  return "Apps Script did not accept the test.";
+}
+
 export type AppsScriptError = { eventId?: string; message?: string; code?: string };
 export type AppsScriptResponse = {
   ok?: boolean;
@@ -41,6 +54,9 @@ export function deliveryDecision(
   body: AppsScriptResponse | null,
   eventId: string
 ): DeliveryDecision {
+  if (httpStatus === 403) {
+    return { status: "DEAD", error: appsScriptAccessDeniedMessage() };
+  }
   if (httpStatus === 401 || body?.code === "unauthorized" || body?.code === "malformed") {
     const message = body?.code === "malformed" ? "Apps Script rejected the payload." : "Apps Script rejected the secret.";
     return { status: "DEAD", error: message };
