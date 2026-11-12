@@ -6,6 +6,7 @@ import { fail, ok } from "@/lib/api/response";
 import { logError } from "@/lib/logger";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { scheduleSheetsCrmEvent } from "@/modules/sheets-crm/enqueue";
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,6 +52,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (data.user?.id) {
+      scheduleSheetsCrmEvent({ eventType: "customer.signup.completed", customerId: data.user.id });
+    }
     if (data.user?.id && !data.session) {
       void import("@/modules/vachat/abandoned-signup")
         .then(({ enqueueAbandonedSignup }) => enqueueAbandonedSignup(data.user!.id))

@@ -86,6 +86,8 @@ export async function runBillingSweep(supabase: SupabaseClient) {
         });
       }
       expired += 1;
+      const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+      scheduleSheetsCrmEvent({ eventType: "subscription.updated", organizationId: row.organization_id });
     } catch (error) {
       failures += 1;
       logError("billing.expire_failed", {

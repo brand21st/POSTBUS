@@ -33,6 +33,14 @@ export async function POST(request: NextRequest) {
         message: reconcileError instanceof Error ? reconcileError.message : "unknown",
       });
     }
+    try {
+      const { sweepSheetsCrmAbandonment } = await import("@/modules/sheets-crm/abandonment-sweep");
+      await sweepSheetsCrmAbandonment(createAdminClient());
+    } catch (sheetsError) {
+      logError("sheets_crm.abandon_sweep_failed", {
+        message: sheetsError instanceof Error ? sheetsError.message : "abandonment sweep failed",
+      });
+    }
     logInfo("billing.cron_http_ok", {
       durationMs: Date.now() - started,
       expired: result.expired,

@@ -12,6 +12,7 @@ import {
   Clapperboard,
   ScrollText,
   Settings,
+  Sheet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +34,7 @@ export const adminNav: AdminNavItem[] = [
   { label: "Razorpay", href: "/admin/razorpay", icon: Landmark },
   { label: "Trial Settings", href: "/admin/trial", icon: Timer },
   { label: "Tutorials", href: "/admin/tutorials", icon: Clapperboard },
+  { label: "Integrations", href: "/admin/integrations/google-sheets", icon: Sheet },
   { label: "Audit Logs", href: "/admin/audit", icon: ScrollText },
   { label: "System Settings", href: "/admin/settings", icon: Settings },
 ];

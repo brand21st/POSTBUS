@@ -103,7 +103,18 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-    return NextResponse.json({ success: true, data: { ...drained, recovery } });
+    let sheetsCrm: { processed: number; skipped?: boolean; failed?: number } = { processed: 0, skipped: true };
+    if (hasAdminClient()) {
+      try {
+        const { drainSheetsCrmOutbox } = await import("@/modules/sheets-crm/deliver");
+        sheetsCrm = await drainSheetsCrmOutbox(createAdminClient());
+      } catch (sheetsError) {
+        logError("sheets_crm.drain_failed", {
+          message: sheetsError instanceof Error ? sheetsError.message : "Google Sheets CRM drain failed.",
+        });
+      }
+    }
+    return NextResponse.json({ success: true, data: { ...drained, recovery, sheetsCrm } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not drain background jobs.";
     logError("jobs.drain_error", { message });

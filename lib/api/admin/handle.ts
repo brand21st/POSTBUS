@@ -98,6 +98,10 @@ export async function handleAdminRoutes(
   if (key === "GET settings/vachat/logs") return loadPlatformVachatLogs(request, supabase);
   if (key === "GET settings/vachat/unassigned") return loadSupportUnassigned(supabase);
   if (key === "POST settings/vachat/unassigned/assign") return assignSupportUnassigned(request, supabase, ctx);
+  if (slugs[0] === "settings" && slugs[1] === "sheets-crm") {
+    const { handleSheetsCrmAdmin } = await import("@/modules/sheets-crm/admin");
+    return handleSheetsCrmAdmin(request, supabase, ctx, slugs.slice(2), method);
+  }
   if (key === "GET trial-settings" || (key === "GET settings" && slugs[0] === "trial-settings")) {
     const { data } = await supabase
       .from("platform_settings")

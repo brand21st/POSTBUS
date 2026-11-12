@@ -640,6 +640,12 @@ export async function handleIntegrationRoutes(
           message: syncError instanceof Error ? syncError.message : "sync failed",
         });
       });
+      const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+      scheduleSheetsCrmEvent({
+        eventType: "store.connected",
+        customerId: ctx.userId,
+        organizationId: ctx.organizationId,
+      });
       const response = NextResponse.redirect(`${env.appUrl}/dashboard/integrations/shopify`);
       response.cookies.delete(SHOPIFY_OAUTH_STATE_COOKIE);
       return response;
@@ -1161,6 +1167,12 @@ export async function handleIntegrationRoutes(
       entity_type: "india_post_connection",
       entity_id: data.id,
     });
+    const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+    scheduleSheetsCrmEvent({
+      eventType: "india_post.connected",
+      customerId: ctx.userId,
+      organizationId: ctx.organizationId,
+    });
     return { saved: true, status, lastError };
   }
 
@@ -1218,6 +1230,12 @@ export async function handleIntegrationRoutes(
         last_error: null,
       })
       .eq("organization_id", ctx.organizationId);
+    const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+    scheduleSheetsCrmEvent({
+      eventType: "india_post.connected",
+      customerId: ctx.userId,
+      organizationId: ctx.organizationId,
+    });
     return { verified: true };
   }
 

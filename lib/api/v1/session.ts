@@ -109,6 +109,8 @@ export async function handleSessionRoutes(
     if (error) {
       throw new AppError(ERROR_CODES.PROFILE_UNAVAILABLE, "Could not record activity.");
     }
+    const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+    scheduleSheetsCrmEvent({ eventType: "customer.activity.updated", customerId: user.id });
     return { ok: true as const, lastActiveAt };
   }
 

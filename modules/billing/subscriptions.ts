@@ -803,6 +803,11 @@ export async function adminAssignPlan(
     ip: input.ip,
     metadata: { planId: plan.id, billingCycle: cycle },
   });
+  const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+  scheduleSheetsCrmEvent({
+    eventType: "subscription.updated",
+    organizationId: input.organizationId,
+  });
   return { ok: true, plan: mapPlan(plan), billingCycle: cycle };
 }
 
