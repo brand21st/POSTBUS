@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decryptSecret, encryptSecret } from "@/lib/security/crypto";
 import {
@@ -79,12 +80,27 @@ export function encryptSheetsCrmSecret(secret: string) {
   return encryptSecret(secret);
 }
 
+export function generateSheetsCrmSecret() {
+  return randomBytes(32).toString("base64url");
+}
+
+export async function ensureSheetsCrmSecret(supabase: SupabaseClient) {
+  const config = await loadSheetsCrmConfig(supabase);
+  if (config.secret) return config.secret;
+  const secret = generateSheetsCrmSecret();
+  const { error } = await supabase
+    .from("platform_settings")
+    .update({ encrypted_sheets_crm_secret: encryptSheetsCrmSecret(secret) })
+    .eq("id", 1);
+  if (error) throw new Error(error.message);
+  return secret;
+}
+
 export function publicSheetsCrmSettings(config: SheetsCrmConfig) {
   return {
     enabled: config.enabled,
     webAppUrl: config.webAppUrl,
     secretConfigured: Boolean(config.secret),
-    secretMasked: config.secret ? "••••••••" : "",
     lastSuccessAt: config.lastSuccessAt,
     lastError: config.lastError,
     syncedCount: config.syncedCount,

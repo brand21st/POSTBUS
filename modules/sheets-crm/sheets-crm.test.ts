@@ -9,6 +9,7 @@ import {
   lifecycleChanged,
 } from "@/modules/sheets-crm/abandonment";
 import { mapSheetsCrmConfig, publicSheetsCrmSettings } from "@/modules/sheets-crm/config";
+import { renderSheetsCrmScript, sheetsCrmScriptSource } from "@/modules/sheets-crm/script";
 import { deliveryDecision } from "@/modules/sheets-crm/deliver-decision";
 import { assertSheetsWebAppUrl } from "@/modules/sheets-crm/deliver-decision";
 import { activitySyncDue, openDedupeKey, type SheetsCrmSnapshot } from "@/modules/sheets-crm/events";
@@ -162,6 +163,14 @@ describe("Google Sheets CRM delivery", () => {
     expect(JSON.stringify(pub)).not.toContain(secret);
     expect(pub.secretConfigured).toBe(true);
     expect("secret" in pub).toBe(false);
+    expect("secretMasked" in pub).toBe(false);
+  });
+
+  it("embeds the connection key in the copied Apps Script without exposing it on the dashboard", () => {
+    const secret = "crm-secret-value-123";
+    const rendered = renderSheetsCrmScript(sheetsCrmScriptSource(), secret);
+    expect(rendered).toContain(JSON.stringify(secret));
+    expect(sheetsCrmScriptSource()).not.toContain(JSON.stringify(secret));
   });
 
   it("follows an Apps Script redirect only when it stays on Google", async () => {
@@ -239,6 +248,8 @@ describe("Google Apps Script CRM receiver", () => {
     expect(source).toContain("e.postData.contents");
     expect(source).toContain("LockService.getScriptLock");
     expect(source).toContain("function safeCell_");
+    expect(source).toContain("EMBEDDED_CRM_SECRET");
+    expect(source).toContain("SpreadsheetApp.getActiveSpreadsheet");
     expect(source).not.toContain("e.headers");
     expect(source).toContain("All Signups");
     expect(source).toContain("Abandoned Clients");

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
@@ -8,14 +6,19 @@ import type { AdminContext } from "@/lib/api/admin-context";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { writeBillingAudit } from "@/modules/billing/audit";
 import { assertSheetsWebAppUrl } from "@/modules/sheets-crm/deliver-decision";
-import { encryptSheetsCrmSecret, loadSheetsCrmConfig, publicSheetsCrmSettings, sheetsCrmReady } from "@/modules/sheets-crm/config";
+import {
+  ensureSheetsCrmSecret,
+  loadSheetsCrmConfig,
+  publicSheetsCrmSettings,
+  sheetsCrmReady,
+} from "@/modules/sheets-crm/config";
 import { testSheetsCrmConnection } from "@/modules/sheets-crm/deliver";
 import { enqueueSheetsCrmEvent } from "@/modules/sheets-crm/enqueue";
+import { renderSheetsCrmScript, sheetsCrmScriptSource } from "@/modules/sheets-crm/script";
 
 const saveSchema = z.object({
   enabled: z.boolean().optional(),
   webAppUrl: z.string().max(500).optional(),
-  secret: z.string().max(200).optional(),
   noWorkspaceHours: z.number().int().min(1).max(720).optional(),
   indiaPostHours: z.number().int().min(1).max(720).optional(),
   onboardingHours: z.number().int().min(1).max(720).optional(),
@@ -30,10 +33,6 @@ async function countExact(query: PromiseLike<{ count: number | null; error: { me
   const { count, error } = await query;
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
   return count ?? 0;
-}
-
-export function sheetsCrmScriptSource() {
-  return readFileSync(path.join(process.cwd(), "modules", "sheets-crm", "apps-script", "Code.gs"), "utf8");
 }
 
 async function loadDashboard(supabase: SupabaseClient) {
@@ -75,7 +74,10 @@ export async function handleSheetsCrmAdmin(
 ) {
   const key = `${method} ${slugs.join("/")}`;
   if (key === "GET ") return loadDashboard(supabase);
-  if (key === "GET script") return { source: sheetsCrmScriptSource() };
+  if (key === "GET script") {
+    const secret = await ensureSheetsCrmSecret(supabase);
+    return { source: renderSheetsCrmScript(sheetsCrmScriptSource(), secret) };
+  }
   if (key === "GET logs") {
     const { data, error } = await supabase
       .from("sheets_crm_sync_logs")
@@ -99,12 +101,6 @@ async function saveSettings(request: NextRequest, supabase: SupabaseClient, ctx:
   if (body.webAppUrl !== undefined) {
     patch.sheets_crm_webapp_url = body.webAppUrl.trim() ? assertSheetsWebAppUrl(body.webAppUrl) : null;
   }
-  if (body.secret?.trim()) {
-    if (body.secret.trim().length < 16) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "The integration secret must be at least 16 characters.");
-    }
-    patch.encrypted_sheets_crm_secret = encryptSheetsCrmSecret(body.secret.trim());
-  }
   if (body.noWorkspaceHours !== undefined) patch.sheets_crm_no_workspace_hours = body.noWorkspaceHours;
   if (body.indiaPostHours !== undefined) patch.sheets_crm_india_post_hours = body.indiaPostHours;
   if (body.onboardingHours !== undefined) patch.sheets_crm_onboarding_hours = body.onboardingHours;
@@ -112,6 +108,7 @@ async function saveSettings(request: NextRequest, supabase: SupabaseClient, ctx:
   if (!Object.keys(patch).length) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "No settings were provided.");
   const { error } = await supabase.from("platform_settings").update(patch).eq("id", 1);
   if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+  await ensureSheetsCrmSecret(supabase);
   await writeBillingAudit(supabase, {
     actorId: ctx.userId,
     actorType: "SUPER_ADMIN",
@@ -119,7 +116,6 @@ async function saveSettings(request: NextRequest, supabase: SupabaseClient, ctx:
     ip: clientIp(request),
     metadata: {
       enabled: body.enabled ?? null,
-      secretRotated: Boolean(body.secret?.trim()),
       thresholds: {
         noWorkspaceHours: body.noWorkspaceHours ?? null,
         indiaPostHours: body.indiaPostHours ?? null,
@@ -134,7 +130,7 @@ async function saveSettings(request: NextRequest, supabase: SupabaseClient, ctx:
 async function requireReady(supabase: SupabaseClient) {
   const config = await loadSheetsCrmConfig(supabase);
   if (!sheetsCrmReady(config)) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enable the integration and save the Web App URL and secret first.");
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Enable the integration and save the Web App URL first.");
   }
   return config;
 }

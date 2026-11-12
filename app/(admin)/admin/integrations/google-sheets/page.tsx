@@ -15,8 +15,6 @@ import { api } from "@/lib/hooks/use-api";
 type SheetsCrmDashboard = {
   enabled: boolean;
   webAppUrl: string;
-  secretConfigured: boolean;
-  secretMasked: string;
   lastSuccessAt: string | null;
   lastError: string | null;
   syncedCount: number;
@@ -79,7 +77,6 @@ export default function AdminGoogleSheetsCrmPage() {
   const data = settings.data;
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [webAppUrl, setWebAppUrl] = useState<string | null>(null);
-  const [secret, setSecret] = useState("");
   const [noWorkspaceHours, setNoWorkspaceHours] = useState("");
   const [indiaPostHours, setIndiaPostHours] = useState("");
   const [onboardingHours, setOnboardingHours] = useState("");
@@ -92,7 +89,6 @@ export default function AdminGoogleSheetsCrmPage() {
         body: JSON.stringify({
           enabled: enabled ?? data?.enabled ?? false,
           webAppUrl: webAppUrl ?? data?.webAppUrl ?? "",
-          secret: secret.trim() || undefined,
           noWorkspaceHours: Number(noWorkspaceHours || data?.thresholds.noWorkspaceHours || 24),
           indiaPostHours: Number(indiaPostHours || data?.thresholds.indiaPostHours || 24),
           onboardingHours: Number(onboardingHours || data?.thresholds.onboardingHours || 48),
@@ -100,7 +96,6 @@ export default function AdminGoogleSheetsCrmPage() {
         }),
       }),
     onSuccess: () => {
-      setSecret("");
       toast.success("Google Sheets CRM settings saved.");
       client.invalidateQueries({ queryKey: ["admin", "sheets-crm"] });
     },
@@ -200,7 +195,7 @@ export default function AdminGoogleSheetsCrmPage() {
               onCheckedChange={setEnabled}
             />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 lg:col-span-2">
             <Label htmlFor="sheets-crm-url">Apps Script Web App URL</Label>
             <Input
               id="sheets-crm-url"
@@ -209,18 +204,6 @@ export default function AdminGoogleSheetsCrmPage() {
               onChange={(event) => setWebAppUrl(event.target.value)}
               autoComplete="off"
             />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sheets-crm-secret">Integration secret</Label>
-            <Input
-              id="sheets-crm-secret"
-              type="password"
-              value={secret}
-              placeholder={data?.secretConfigured ? "Saved. Enter a new secret to replace it." : "At least 16 characters"}
-              onChange={(event) => setSecret(event.target.value)}
-              autoComplete="new-password"
-            />
-            <p className="text-sm text-muted">{data?.secretMasked ? `Current secret: ${data.secretMasked}` : "No secret saved."}</p>
           </div>
           <div className="flex flex-wrap gap-2 lg:col-span-2">
             <Button onClick={() => save.mutate()} disabled={save.isPending || settings.isLoading}>
@@ -301,9 +284,8 @@ export default function AdminGoogleSheetsCrmPage() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-muted">
-          <p>1. Create the CRM spreadsheet, then open Extensions → Apps Script and paste the copied script.</p>
-          <p>2. Set script properties POSTBUS_CRM_SECRET and SPREADSHEET_ID. Use the same secret you save here.</p>
-          <p>3. Deploy as a Web App, execute as you, and allow anyone to access it. Paste that URL above.</p>
+          <p>1. Create the CRM spreadsheet, then open Extensions → Apps Script from that sheet and paste the copied script. The copy already includes the connection key.</p>
+          <p>2. Deploy as a Web App, execute as you, and allow anyone to access it. Paste that URL above, enable synchronization, and save.</p>
           <p>The script creates All Signups, Workspaces, Abandoned Clients, Active Clients, and Sync Logs. It upserts by customer and workspace id.</p>
         </CardContent>
       </Card>

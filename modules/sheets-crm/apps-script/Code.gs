@@ -1,21 +1,20 @@
 /**
  * PostBus Super Admin CRM receiver.
  *
- * Deploy:
- * 1. Create a Google Sheet for the CRM.
- * 2. Extensions → Apps Script, paste this file, and save.
- * 3. Project Settings → Script properties:
- *    POSTBUS_CRM_SECRET = the same secret saved in PostBus Super Admin
- *    SPREADSHEET_ID = the spreadsheet id from its URL
- * 4. Deploy → New deployment → Web app.
+ * Deploy from Super Admin → Integrations → Google Sheets CRM:
+ * 1. Open the CRM spreadsheet, then Extensions → Apps Script, and paste this file.
+ * 2. Deploy → New deployment → Web app.
  *    Execute as: Me
  *    Who has access: Anyone
- * 5. Copy the Web App URL into Super Admin → Integrations → Google Sheets CRM.
- *    Do not put the URL or secret in merchant-facing pages.
+ * 3. Paste that Web App URL into Super Admin and enable synchronization.
+ *
+ * Super Admin copies this file with EMBEDDED_CRM_SECRET already filled in.
+ * Do not put the URL or this script in merchant-facing pages.
  *
  * doPost reads JSON from e.postData.contents. The shared secret is in that
  * body because Web App requests do not reliably expose custom HTTP headers.
  */
+var EMBEDDED_CRM_SECRET = ""; // POSTBUS_EMBEDDED_SECRET
 var SHEET_NAMES_ = ["All Signups", "Workspaces", "Abandoned Clients", "Active Clients", "Sync Logs"];
 
 var SIGNUP_HEADERS_ = [
@@ -52,7 +51,7 @@ function doPost(e) {
     return json_({ ok: false, code: "malformed" });
   }
   if (!body || typeof body !== "object") return json_({ ok: false, code: "malformed" });
-  var expected = PropertiesService.getScriptProperties().getProperty("POSTBUS_CRM_SECRET") || "";
+  var expected = PropertiesService.getScriptProperties().getProperty("POSTBUS_CRM_SECRET") || EMBEDDED_CRM_SECRET;
   if (!expected || !secretsMatch_(String(body.secret || ""), expected)) {
     return json_({ ok: false, code: "unauthorized" });
   }
@@ -105,6 +104,8 @@ function doPost(e) {
 }
 
 function openSpreadsheet_() {
+  var active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
   var id = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID");
   if (!id) throw new Error("missing spreadsheet");
   return SpreadsheetApp.openById(id);
