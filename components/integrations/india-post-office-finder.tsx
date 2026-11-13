@@ -76,7 +76,7 @@ export function IndiaPostOfficeFinder({
   return (
     <div className="min-w-0 space-y-1.5">
       <Label htmlFor={inputId}>{label}</Label>
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         <Input
           id={inputId}
           className="w-[8.5rem] font-mono tabular-nums"
@@ -98,6 +98,7 @@ export function IndiaPostOfficeFinder({
         <Button
           type="button"
           variant="secondary"
+          size="sm"
           className="shrink-0"
           disabled={!canSearch || !pinValid || search.isPending}
           onClick={() => search.mutate()}

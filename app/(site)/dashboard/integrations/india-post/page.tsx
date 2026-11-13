@@ -47,7 +47,7 @@ const CARD = "flex h-full flex-col";
 const CARD_HEADER = "gap-1.5 p-5 pb-4 sm:p-6 sm:pb-4";
 const CARD_CONTENT = "flex-1 px-5 pb-5 sm:px-6 sm:pb-6";
 const CARD_FOOTER =
-  "mt-auto flex flex-wrap items-center gap-2 rounded-b-2xl border-t border-border bg-surface-soft/40 px-5 py-3 sm:px-6";
+  "mt-auto flex flex-wrap items-center gap-2 rounded-b-2xl border-t border-border bg-surface-soft/40 px-5 py-2.5 sm:px-6";
 const PREFIX_FIELD = "col-span-2 max-w-[6rem] sm:col-span-1 sm:max-w-none";
 const SUB_PANEL = "space-y-3 rounded-xl border border-border p-4";
 
@@ -834,6 +834,7 @@ export default function IndiaPostPage() {
             <StatusBadge value={config?.status ?? "NOT_CONNECTED"} />
             <Button
               type="button"
+              size="sm"
               variant={dirty ? "primary" : "secondary"}
               disabled={!dirty || save.isPending}
               onClick={() => save.mutate(form)}
@@ -912,6 +913,7 @@ export default function IndiaPostPage() {
         <CardFooter className={CARD_FOOTER}>
           <Button
             type="button"
+            size="sm"
             variant={loggedIn && !replaceSecrets ? "secondary" : "primary"}
             onClick={() => login.mutate(form)}
             disabled={
@@ -925,6 +927,7 @@ export default function IndiaPostPage() {
           </Button>
           <Button
             type="button"
+            size="sm"
             variant="ghost"
             className="ml-auto text-error hover:bg-error/5"
             disabled={!loggedIn || logout.isPending}
@@ -1024,6 +1027,7 @@ export default function IndiaPostPage() {
         <CardFooter className={CARD_FOOTER}>
           <Button
             type="button"
+            size="sm"
             variant="secondary"
             onClick={() =>
               persistPickupOffice(
@@ -1044,6 +1048,7 @@ export default function IndiaPostPage() {
           </Button>
           <Button
             type="button"
+            size="sm"
             variant="ghost"
             onClick={() => {
               setForm((current) => ({
@@ -1134,6 +1139,7 @@ export default function IndiaPostPage() {
           <CardFooter className={CARD_FOOTER}>
             <Button
               type="button"
+              size="sm"
               variant="secondary"
               onClick={() =>
                 persistOfficeId(form.pickupDropoffOfficeId, {
@@ -1148,6 +1154,7 @@ export default function IndiaPostPage() {
             </Button>
             <Button
               type="button"
+              size="sm"
               variant="ghost"
               onClick={() => {
                 setForm((current) => ({
@@ -1202,8 +1209,7 @@ export default function IndiaPostPage() {
                       type="button"
                       variant="secondary"
                       size="xs"
-                      className="min-h-11 min-w-11 sm:min-h-8 sm:h-8"
-                      onClick={() => persistSeries(draft, { force: true })}
+                                            onClick={() => persistSeries(draft, { force: true })}
                       disabled={saveRange.isPending || !payload}
                     >
                       {saveRange.isPending ? "Saving…" : "Save"}
@@ -1212,8 +1218,7 @@ export default function IndiaPostPage() {
                       type="button"
                       variant="ghost"
                       size="xs"
-                      className="min-h-11 min-w-11 sm:min-h-8 sm:h-8"
-                      onClick={() => clearSeries(service.code)}
+                                            onClick={() => clearSeries(service.code)}
                       disabled={
                         saveRange.isPending ||
                         (!hasSaved && !draft.prefix && !draft.startNumber && !draft.endNumber)
@@ -1314,8 +1319,7 @@ export default function IndiaPostPage() {
                         type="button"
                         variant="secondary"
                         size="xs"
-                        className="min-h-11 min-w-11 sm:min-h-8 sm:h-8"
-                        onClick={() => persistSeries(draft, { force: true })}
+                                                onClick={() => persistSeries(draft, { force: true })}
                         disabled={saveRange.isPending || !payload}
                       >
                         {saveRange.isPending ? "Saving…" : "Save"}
@@ -1324,8 +1328,7 @@ export default function IndiaPostPage() {
                         type="button"
                         variant="ghost"
                         size="xs"
-                        className="min-h-11 min-w-11 sm:min-h-8 sm:h-8"
-                        onClick={() => clearSeries(INDIA_POST_COD_RANGE_CODE)}
+                                                onClick={() => clearSeries(INDIA_POST_COD_RANGE_CODE)}
                         disabled={saveRange.isPending || (!hasSaved && !draft.startNumber && !draft.endNumber)}
                       >
                         Clear
@@ -1446,7 +1449,7 @@ export default function IndiaPostPage() {
                     </p>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Input
                     id={inputId}
                     value={value}
@@ -1459,6 +1462,7 @@ export default function IndiaPostPage() {
                   {!isDefault ? (
                     <Button
                       type="button"
+                      size="sm"
                       variant="secondary"
                       className="shrink-0"
                       title={`Set ${service.label} as the India Post default`}
@@ -1470,6 +1474,7 @@ export default function IndiaPostPage() {
                   ) : null}
                   <Button
                     type="button"
+                    size="sm"
                     variant="ghost"
                     className="shrink-0"
                     disabled={!value.trim() || saveContract.isPending}
@@ -1508,7 +1513,7 @@ function CopyField({
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
       {hint ? <p className="text-xs text-muted">{hint}</p> : null}
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         <Input
           id={id}
           readOnly
@@ -1519,8 +1524,9 @@ function CopyField({
         />
         <Button
           type="button"
+          size="sm"
           variant="secondary"
-          className="h-11 shrink-0"
+          className="shrink-0"
           disabled={!value}
           onClick={async () => {
             await navigator.clipboard.writeText(value);
