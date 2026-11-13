@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { IndiaPostLogo } from "@/components/brand/india-post-logo";
@@ -15,6 +15,8 @@ import { Label } from "@/components/ui/label";
 import { formatDate, formatNumber } from "@/lib/format";
 import {
   BARCODE_ALLOTMENT_DIGITS,
+  INDIA_POST_COD_PREFIX,
+  INDIA_POST_COD_RANGE_CODE,
   barcodePrefixAllowedForService,
   barcodePrefixServiceMessage,
   barcodeStockForService,
@@ -26,7 +28,7 @@ import {
 import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { cn } from "@/lib/utils";
-import { Copy, Eye, EyeOff } from "lucide-react";
+import { AlertTriangle, Check, Copy, Eye, EyeOff, MapPin } from "lucide-react";
 import { IndiaPostOfficeFinder, type IndiaPostOfficeRow } from "@/components/integrations/india-post-office-finder";
 import { notifyIndiaPostSaved } from "@/components/integrations/india-post-saved-toast";
 import { indiaPostOfficeWritePayload, indiaPostPickupOfficeWritePayload } from "@/modules/india-post/office-patch";
@@ -37,6 +39,17 @@ import {
   indiaPostServiceLabel,
 } from "@/types/domain";
 import type { IndiaPostConfig } from "@/types/api";
+
+// Shared spacing so every setup card lines up: paired cards stretch to equal
+// height and their action footers sit on the same baseline.
+const SECTION_GRID = "grid items-stretch gap-5 xl:grid-cols-2";
+const CARD = "flex h-full flex-col";
+const CARD_HEADER = "gap-1.5 p-5 pb-4 sm:p-6 sm:pb-4";
+const CARD_CONTENT = "flex-1 px-5 pb-5 sm:px-6 sm:pb-6";
+const CARD_FOOTER =
+  "mt-auto flex flex-wrap items-center gap-2 rounded-b-2xl border-t border-border bg-surface-soft/40 px-5 py-3 sm:px-6";
+const PREFIX_FIELD = "col-span-2 max-w-[6rem] sm:col-span-1 sm:max-w-none";
+const SUB_PANEL = "space-y-3 rounded-xl border border-border p-4";
 
 type ContractRow = { serviceCode: string; contractId: string };
 
@@ -73,20 +86,29 @@ function withReadableWebhookId(url: string, customerId: string) {
 }
 
 function emptySeries(serviceCode: string): SeriesDraft {
-  return { serviceCode, prefix: "", suffix: "IN", startNumber: "", endNumber: "" };
+  return {
+    serviceCode,
+    prefix: serviceCode === INDIA_POST_COD_RANGE_CODE ? INDIA_POST_COD_PREFIX : "",
+    suffix: "IN",
+    startNumber: "",
+    endNumber: "",
+  };
 }
 
 function seriesDraftsFromConfig(
   config?: Pick<IndiaPostConfig, "barcodeRanges" | "barcodeRange"> | null
 ): SeriesDraft[] {
-  return INDIA_POST_SERVICES.map((service) => {
+  const codes = [...INDIA_POST_SERVICES.map((service) => service.code), INDIA_POST_COD_RANGE_CODE];
+  return codes.map((serviceCode) => {
     const saved =
-      config?.barcodeRanges?.find((range) => range.serviceCode === service.code) ??
-      (config?.barcodeRange?.serviceCode === service.code ? config.barcodeRange : undefined);
-    if (!saved) return emptySeries(service.code);
+      config?.barcodeRanges?.find((range) => range.serviceCode === serviceCode) ??
+      (serviceCode !== INDIA_POST_COD_RANGE_CODE && config?.barcodeRange?.serviceCode === serviceCode
+        ? config.barcodeRange
+        : undefined);
+    if (!saved) return emptySeries(serviceCode);
     return {
-      serviceCode: service.code,
-      prefix: String(saved.prefix ?? ""),
+      serviceCode,
+      prefix: serviceCode === INDIA_POST_COD_RANGE_CODE ? INDIA_POST_COD_PREFIX : String(saved.prefix ?? ""),
       suffix: "IN",
       startNumber:
         saved.startNumber != null ? formatStoredSerial(Number(saved.startNumber)) : "",
@@ -96,9 +118,11 @@ function seriesDraftsFromConfig(
 }
 
 function barcodeRangeWritePayload(draft: SeriesDraft) {
-  const prefix = draft.prefix.trim();
+  const cod = draft.serviceCode === INDIA_POST_COD_RANGE_CODE;
+  const prefix = cod ? INDIA_POST_COD_PREFIX : draft.prefix.trim();
   const startNumber = draft.startNumber.trim();
   const endNumber = draft.endNumber.trim();
+  if (cod && !startNumber && !endNumber) return null;
   if (!prefix && !startNumber && !endNumber) return null;
   if (!prefix || !startNumber || !endNumber) return undefined;
   return {
@@ -125,7 +149,7 @@ const EMPTY: FormState = {
   pickupOfficeState: "",
   contracts: [],
   defaultServiceCode: DEFAULT_INDIA_POST_SERVICE,
-  ranges: INDIA_POST_SERVICES.map((service) => emptySeries(service.code)),
+  ranges: [...INDIA_POST_SERVICES.map((service) => emptySeries(service.code)), emptySeries(INDIA_POST_COD_RANGE_CODE)],
 };
 
 export default function IndiaPostPage() {
@@ -133,6 +157,7 @@ export default function IndiaPostPage() {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [replaceSecrets, setReplaceSecrets] = useState(false);
   const [highlightConnection, setHighlightConnection] = useState(false);
+  const [prefixErrors, setPrefixErrors] = useState<Record<string, string>>({});
 
   const query = useIndiaPost();
 
@@ -731,7 +756,7 @@ export default function IndiaPostPage() {
           : current
       );
       queryClient.invalidateQueries({ queryKey: INDIA_POST_QUERY_KEY });
-      const label = indiaPostServiceLabel(variables.serviceCode);
+      const label = variables.serviceCode === INDIA_POST_COD_RANGE_CODE ? "COD" : indiaPostServiceLabel(variables.serviceCode);
       toast.success(variables.barcodeRange ? `${label} barcode range saved.` : `${label} barcode range cleared.`);
     },
     onError: (error: Error) => toast.error(error.message),
@@ -799,7 +824,7 @@ export default function IndiaPostPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <PageHeader
         title={<IndiaPostLogo className="h-12 max-w-[12rem]" />}
         description="Sign in with your India Post customer ID and password, then add your post office and barcode series."
@@ -821,19 +846,25 @@ export default function IndiaPostPage() {
 
       <IndiaPostGuideBanner selectedService={form.defaultServiceCode} />
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className={SECTION_GRID}>
       <Card
         id="india-post-connection"
-        className={cn(highlightConnection && "ring-2 ring-brand ring-offset-2 ring-offset-background")}
+        className={cn(
+          CARD,
+          "scroll-mt-24",
+          highlightConnection && "ring-2 ring-brand ring-offset-2 ring-offset-background"
+        )}
       >
-        <CardHeader className="p-5 pb-3">
-          <CardTitle>Connection</CardTitle>
+        <CardHeader className={CARD_HEADER}>
+          <StepTitle step={1}>Connection</StepTitle>
           <CardDescription>
             Use the customer ID and password from your India Post booking account. Your password is saved securely.
-            {lastVerified ? ` Last checked ${formatDate(lastVerified, true)}.` : ""}
           </CardDescription>
+          {lastVerified ? (
+            <p className="text-xs text-muted">Last checked {formatDate(lastVerified, true)}</p>
+          ) : null}
         </CardHeader>
-        <CardContent className="grid gap-3 px-5 pb-5 sm:grid-cols-2">
+        <CardContent className={cn(CARD_CONTENT, "grid content-start gap-4 sm:grid-cols-2")}>
           <Field
             label="Customer ID"
             value={form.customerId}
@@ -865,20 +896,23 @@ export default function IndiaPostPage() {
             />
           )}
           {productionBlocked ? (
-            <p className="text-sm text-muted sm:col-span-2">
+            <p className="rounded-xl border border-border bg-surface-soft px-3 py-2 text-sm text-muted sm:col-span-2">
               Live booking is not ready yet.
             </p>
           ) : null}
           {lastError ? (
-            <p className="rounded-xl border border-error/20 bg-error/5 px-3 py-2 text-sm text-error sm:col-span-2">
+            <p
+              role="alert"
+              className="rounded-xl border border-error/20 bg-error/5 px-3 py-2 text-sm text-error sm:col-span-2"
+            >
               {lastError}
             </p>
           ) : null}
         </CardContent>
-        <CardFooter className="flex flex-wrap gap-2 border-t border-border px-5 py-3">
+        <CardFooter className={CARD_FOOTER}>
           <Button
             type="button"
-            variant="secondary"
+            variant={loggedIn && !replaceSecrets ? "secondary" : "primary"}
             onClick={() => login.mutate(form)}
             disabled={
               login.isPending ||
@@ -887,11 +921,12 @@ export default function IndiaPostPage() {
               !(hasSecrets || form.password.trim())
             }
           >
-            {login.isPending ? "Logging in…" : "Login"}
+            {login.isPending ? "Logging in…" : loggedIn && !replaceSecrets ? "Check login" : "Login"}
           </Button>
           <Button
             type="button"
-            variant="secondary"
+            variant="ghost"
+            className="ml-auto text-error hover:bg-error/5"
             disabled={!loggedIn || logout.isPending}
             onClick={() => {
               if (
@@ -909,9 +944,9 @@ export default function IndiaPostPage() {
         </CardFooter>
       </Card>
 
-      <Card>
-        <CardHeader className="p-5 pb-3">
-          <CardTitle>Webhook URL</CardTitle>
+      <Card className={CARD}>
+        <CardHeader className={CARD_HEADER}>
+          <StepTitle step={2}>Webhook URLs</StepTitle>
           <CardDescription>
             Copy these links into your India Post portal. PostBus uses them to receive booking confirmations and
             Shipment Tracking updates for this workspace.
@@ -920,7 +955,7 @@ export default function IndiaPostPage() {
               : " Log in to India Post above to generate the links."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 px-5 pb-5">
+        <CardContent className={cn(CARD_CONTENT, "grid gap-5")}>
           <CopyField
             id="india-post-booking-webhook"
             label="Booking"
@@ -939,20 +974,28 @@ export default function IndiaPostPage() {
       </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-      <Card>
-        <CardHeader className="p-5 pb-3">
-          <CardTitle>Pickup Location</CardTitle>
-          <CardDescription className="mt-1">
-            The India Post office used when a booking is pickup. Search the 6-digit office pincode and select the office
-            so pickup bookings use that pin as the origin.
-            {savedPickupOfficeId && !savedPickupOfficePincode
-              ? " This pickup office is missing its pincode — search and select it again."
-              : ""}
+      <div className={SECTION_GRID}>
+      <Card className={CARD}>
+        <CardHeader className={CARD_HEADER}>
+          <StepTitle step={3}>Pickup location</StepTitle>
+          <CardDescription>
+            Search the 6-digit pincode and select the office used as the pickup origin.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 px-5 pb-5 sm:grid-cols-[9rem_minmax(0,1fr)]">
+        <CardContent className={cn(CARD_CONTENT, "flex flex-wrap items-start gap-x-4 gap-y-3")}>
+          {savedPickupOfficeId && !savedPickupOfficePincode ? (
+            <InlineWarning>This pickup office is missing its pincode. Search and select it again.</InlineWarning>
+          ) : null}
+          <IndiaPostOfficeFinder
+            key={pickupFinderEpoch}
+            idPrefix="pickup-office"
+            label="Pickup pincode"
+            officeId={form.pickupOfficeId}
+            onSelect={applyPickupOffice}
+            canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
+          />
           <Field
+            className="w-[9.5rem]"
             label="Office ID"
             value={form.pickupOfficeId}
             placeholder="21360043"
@@ -970,28 +1013,15 @@ export default function IndiaPostPage() {
             }}
             onBlur={(value) => persistPickupOffice({ officeId: value })}
           />
-          <IndiaPostOfficeFinder
-            key={pickupFinderEpoch}
-            idPrefix="pickup-office"
-            label="Pickup pincode"
-            officeId={form.pickupOfficeId}
-            onSelect={applyPickupOffice}
-            canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
-          />
           {form.pickupOfficeName ? (
-            <p className="text-sm font-medium text-foreground sm:col-span-2">
-              {[
-                form.pickupOfficeName,
-                [form.pickupOfficePincode, form.pickupOfficeCity, form.pickupOfficeState]
-                  .filter(Boolean)
-                  .join(" · "),
-              ]
-                .filter(Boolean)
-                .join(" — ")}
-            </p>
+            <SelectedOffice
+              name={form.pickupOfficeName}
+              officeId={form.pickupOfficeId}
+              meta={[form.pickupOfficePincode, form.pickupOfficeCity, form.pickupOfficeState]}
+            />
           ) : null}
         </CardContent>
-        <CardFooter className="flex flex-wrap gap-2 border-t border-border px-5 py-3">
+        <CardFooter className={CARD_FOOTER}>
           <Button
             type="button"
             variant="secondary"
@@ -1045,35 +1075,17 @@ export default function IndiaPostPage() {
         </CardFooter>
       </Card>
 
-        <Card>
-          <CardHeader className="p-5 pb-3">
-            <CardTitle>Drop-off office</CardTitle>
-            <CardDescription className="mt-1">
-              The post office where you hand over parcels. Search the 6-digit office pincode and select the office so
-              every merchant booking uses that pin as the India Post origin.
-              {savedOfficeId && !savedOfficePincode
-                ? " This office is missing its pincode — search and select it again."
-                : ""}
+        <Card className={CARD}>
+          <CardHeader className={CARD_HEADER}>
+            <StepTitle step={4}>Drop-off office</StepTitle>
+            <CardDescription>
+              Search the 6-digit pincode and select the office used as the booking origin.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 px-5 pb-5 sm:grid-cols-[9rem_minmax(0,1fr)]">
-            <Field
-              label="Office ID"
-              value={form.pickupDropoffOfficeId}
-              placeholder="22660454"
-              onChange={(value) => {
-                const next = value.replace(/\D/g, "").slice(0, 8);
-                setForm((current) => ({
-                  ...current,
-                  pickupDropoffOfficeId: next,
-                  pickupDropoffOfficeName:
-                    next === savedOfficeId ? current.pickupDropoffOfficeName : "",
-                  pickupDropoffOfficePincode:
-                    next === savedOfficeId ? current.pickupDropoffOfficePincode : "",
-                }));
-              }}
-              onBlur={(value) => persistOfficeId(value)}
-            />
+          <CardContent className={cn(CARD_CONTENT, "flex flex-wrap items-start gap-x-4 gap-y-3")}>
+            {savedOfficeId && !savedOfficePincode ? (
+              <InlineWarning>This office is missing its pincode. Search and select it again.</InlineWarning>
+            ) : null}
             <IndiaPostOfficeFinder
               key={finderEpoch}
               idPrefix="drop-office"
@@ -1093,11 +1105,33 @@ export default function IndiaPostPage() {
               }}
               canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
             />
+            <Field
+              className="w-[9.5rem]"
+              label="Office ID"
+              value={form.pickupDropoffOfficeId}
+              placeholder="22660454"
+              onChange={(value) => {
+                const next = value.replace(/\D/g, "").slice(0, 8);
+                setForm((current) => ({
+                  ...current,
+                  pickupDropoffOfficeId: next,
+                  pickupDropoffOfficeName:
+                    next === savedOfficeId ? current.pickupDropoffOfficeName : "",
+                  pickupDropoffOfficePincode:
+                    next === savedOfficeId ? current.pickupDropoffOfficePincode : "",
+                }));
+              }}
+              onBlur={(value) => persistOfficeId(value)}
+            />
             {form.pickupDropoffOfficeName ? (
-              <p className="text-sm font-medium text-foreground sm:col-span-2">{form.pickupDropoffOfficeName}</p>
+              <SelectedOffice
+                name={form.pickupDropoffOfficeName}
+                officeId={form.pickupDropoffOfficeId}
+                meta={[form.pickupDropoffOfficePincode]}
+              />
             ) : null}
           </CardContent>
-          <CardFooter className="flex flex-wrap gap-2 border-t border-border px-5 py-3">
+          <CardFooter className={CARD_FOOTER}>
             <Button
               type="button"
               variant="secondary"
@@ -1133,20 +1167,16 @@ export default function IndiaPostPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader className="p-5 pb-3">
-            <CardTitle>Barcode range</CardTitle>
-            <CardDescription className="mt-1 space-y-1">
-              <span className="block">
-                Get the barcode series from your nearest post office. Enter the prefix and the start and end numbers they allotted you.
-              </span>
-              <span className="block">
-                Paste the 8-digit serial, or the 9-digit number that includes the check digit.
-              </span>
+      <div className={SECTION_GRID}>
+        <Card className={CARD}>
+          <CardHeader className={CARD_HEADER}>
+            <StepTitle step={5}>Barcode range</StepTitle>
+            <CardDescription>
+              Get the barcode series from your nearest post office. Enter the prefix and the start and end numbers
+              they allotted you. Paste the 8-digit serial, or the 9-digit number that includes the check digit.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4 px-5 pb-5">
+          <CardContent className={cn(CARD_CONTENT, "space-y-3")}>
             {INDIA_POST_SERVICES.map((service) => {
               const draft =
                 form.ranges.find((row) => row.serviceCode === service.code) ?? emptySeries(service.code);
@@ -1156,9 +1186,9 @@ export default function IndiaPostPage() {
               return (
                 <div
                   key={service.code}
-                  className="space-y-3 border-t border-border pt-4 first:border-t-0 first:pt-0"
+                  className={SUB_PANEL}
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">{service.label}</p>
                     <p className="text-xs text-muted">
@@ -1167,20 +1197,22 @@ export default function IndiaPostPage() {
                         : "Books as SP Inland Parcel. Prefix EY or EL."}
                     </p>
                   </div>
-                  <div className="flex shrink-0 gap-1.5">
+                  <div className="flex shrink-0 gap-2">
                     <Button
                       type="button"
                       variant="secondary"
-                      size="sm"
+                      size="xs"
+                      className="min-h-11 min-w-11 sm:min-h-8 sm:h-8"
                       onClick={() => persistSeries(draft, { force: true })}
                       disabled={saveRange.isPending || !payload}
                     >
-                      {saveRange.isPending ? "Saving…" : "Save range"}
+                      {saveRange.isPending ? "Saving…" : "Save"}
                     </Button>
                     <Button
                       type="button"
                       variant="ghost"
-                      size="sm"
+                      size="xs"
+                      className="min-h-11 min-w-11 sm:min-h-8 sm:h-8"
                       onClick={() => clearSeries(service.code)}
                       disabled={
                         saveRange.isPending ||
@@ -1191,20 +1223,29 @@ export default function IndiaPostPage() {
                     </Button>
                   </div>
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-[4.5rem_minmax(0,1fr)_minmax(0,1fr)]">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-[4.5rem_minmax(0,1fr)_minmax(0,1fr)]">
                     <Field
+                      className={PREFIX_FIELD}
                       label="Prefix"
                       value={draft.prefix}
                       placeholder={service.code === "BUSINESS_PARCEL" ? "CL" : "EY"}
                       maxLength={2}
+                      error={prefixErrors[service.code] || undefined}
                       onChange={(value) => {
-                        updateSeries(service.code, {
-                          prefix: value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2),
-                        });
+                        const prefix = value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+                        setPrefixErrors((current) => ({
+                          ...current,
+                          [service.code]:
+                            prefix === INDIA_POST_COD_PREFIX
+                              ? "EZ belongs in the COD series below."
+                              : "",
+                        }));
+                        updateSeries(service.code, { prefix });
                       }}
                       onBlur={(value) => {
                         const prefix = value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
                         updateSeries(service.code, { prefix });
+                        if (prefix === INDIA_POST_COD_PREFIX) return;
                         persistSeries({ ...draft, prefix, suffix: "IN" });
                       }}
                     />
@@ -1244,58 +1285,193 @@ export default function IndiaPostPage() {
                 </div>
               );
             })}
+            {(() => {
+              const draft =
+                form.ranges.find((row) => row.serviceCode === INDIA_POST_COD_RANGE_CODE) ??
+                emptySeries(INDIA_POST_COD_RANGE_CODE);
+              const saved = savedSeries(INDIA_POST_COD_RANGE_CODE);
+              const hasSaved = Boolean(saved.startNumber || saved.endNumber);
+              const payload = barcodeRangeWritePayload(draft);
+              const stock = barcodeStockForService(config?.barcodeRanges ?? [], INDIA_POST_COD_RANGE_CODE);
+              const left = barcodesLeft(stock);
+              return (
+                <div className={SUB_PANEL}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-foreground">COD</p>
+                        <span className="rounded-md border border-border px-1.5 py-0.5 text-xs font-medium text-foreground">
+                          Optional
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted">
+                        Cash on delivery only. Prefix EZ. Leave blank to book COD on the Speed Post or Business
+                        Parcel series.
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="xs"
+                        className="min-h-11 min-w-11 sm:min-h-8 sm:h-8"
+                        onClick={() => persistSeries(draft, { force: true })}
+                        disabled={saveRange.isPending || !payload}
+                      >
+                        {saveRange.isPending ? "Saving…" : "Save"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        className="min-h-11 min-w-11 sm:min-h-8 sm:h-8"
+                        onClick={() => clearSeries(INDIA_POST_COD_RANGE_CODE)}
+                        disabled={saveRange.isPending || (!hasSaved && !draft.startNumber && !draft.endNumber)}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-[4.5rem_minmax(0,1fr)_minmax(0,1fr)]">
+                    <Field
+                      className={PREFIX_FIELD}
+                      label="Prefix"
+                      value={INDIA_POST_COD_PREFIX}
+                      readOnly
+                      onChange={() => undefined}
+                    />
+                    <Field
+                      label="Start number"
+                      value={draft.startNumber}
+                      placeholder="7536320"
+                      maxLength={BARCODE_ALLOTMENT_DIGITS}
+                      inputMode="numeric"
+                      onChange={(value) =>
+                        updateSeries(INDIA_POST_COD_RANGE_CODE, {
+                          prefix: INDIA_POST_COD_PREFIX,
+                          startNumber: sanitizeBarcodeAllotmentField(value),
+                        })
+                      }
+                      onBlur={(value) =>
+                        persistSeries({
+                          ...draft,
+                          prefix: INDIA_POST_COD_PREFIX,
+                          startNumber: sanitizeBarcodeAllotmentField(value),
+                        })
+                      }
+                    />
+                    <Field
+                      label="End number"
+                      value={draft.endNumber}
+                      placeholder="7537319"
+                      maxLength={BARCODE_ALLOTMENT_DIGITS}
+                      inputMode="numeric"
+                      onChange={(value) =>
+                        updateSeries(INDIA_POST_COD_RANGE_CODE, {
+                          prefix: INDIA_POST_COD_PREFIX,
+                          endNumber: sanitizeBarcodeAllotmentField(value),
+                        })
+                      }
+                      onBlur={(value) =>
+                        persistSeries({
+                          ...draft,
+                          prefix: INDIA_POST_COD_PREFIX,
+                          endNumber: sanitizeBarcodeAllotmentField(value),
+                        })
+                      }
+                    />
+                  </div>
+                  {left != null && stock ? (
+                    <p
+                      role="status"
+                      className={
+                        left <= LOW_BARCODE_THRESHOLD ? "text-xs font-medium text-warning" : "text-xs text-muted"
+                      }
+                    >
+                      {formatNumber(left)} barcodes left · EZ series
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
 
-      <Card>
-        <CardHeader className="p-5 pb-3">
-          <CardTitle>Service contracts</CardTitle>
+      <Card className={CARD}>
+        <CardHeader className={CARD_HEADER}>
+          <StepTitle step={6}>Service contracts</StepTitle>
           <CardDescription>
             One contract number per service you ship. Leave unused rows blank. New shipments use the default.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
-          <div className="divide-y divide-border border-t border-border">
-            {INDIA_POST_SERVICES.map((service) => {
-              const row = form.contracts.find((item) => item.serviceCode === service.code);
-              const value = row?.contractId ?? "";
-              const isDefault = form.defaultServiceCode === service.code;
-              const stock = value.trim()
-                ? barcodeStockForService(config?.barcodeRanges ?? [], service.code)
-                : null;
-              const left = barcodesLeft(stock);
-              return (
-                <div
-                  key={service.code}
-                  className="grid gap-x-3 gap-y-2 px-5 py-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] sm:items-center"
-                >
+        <CardContent className={cn(CARD_CONTENT, "space-y-3")}>
+          {INDIA_POST_SERVICES.map((service) => {
+            const row = form.contracts.find((item) => item.serviceCode === service.code);
+            const value = row?.contractId ?? "";
+            const isDefault = form.defaultServiceCode === service.code;
+            const stock = value.trim()
+              ? barcodeStockForService(config?.barcodeRanges ?? [], service.code)
+              : null;
+            const left = barcodesLeft(stock);
+            const inputId = `india-post-contract-${service.code}`;
+            return (
+              <div
+                key={service.code}
+                className={cn(SUB_PANEL, isDefault && "border-brand/40 bg-brand/[0.03]")}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">{service.label}</p>
-                    <p className="truncate text-xs text-muted">{service.description}</p>
-                    {left != null && stock ? (
-                      <p
-                        className={cn(
-                          "text-xs",
-                          left <= LOW_BARCODE_THRESHOLD ? "font-medium text-warning" : "text-muted"
-                        )}
-                      >
-                        {formatNumber(left)} barcodes left
-                        {stock.prefix ? ` · ${stock.prefix} series` : ""}
-                      </p>
-                    ) : null}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Label htmlFor={inputId} className="text-sm font-medium text-foreground">
+                        {service.label}
+                      </Label>
+                      {isDefault ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-brand px-2 py-0.5 text-[11px] font-semibold text-white">
+                          <Check className="size-3" aria-hidden="true" />
+                          Default
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="text-xs text-muted">{service.description}</p>
                   </div>
+                  {left != null && stock ? (
+                    <p
+                      className={cn(
+                        "shrink-0 text-xs tabular-nums",
+                        left <= LOW_BARCODE_THRESHOLD ? "font-medium text-warning" : "text-muted"
+                      )}
+                    >
+                      {formatNumber(left)} barcodes left
+                      {stock.prefix ? ` · ${stock.prefix}` : ""}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
                   <Input
+                    id={inputId}
                     value={value}
                     placeholder="Contract ID"
                     inputMode="numeric"
+                    className="min-w-[10rem] flex-1 font-mono tabular-nums"
                     onChange={(event) => setContract(service.code, event.target.value.replace(/\D/g, "").slice(0, 20))}
                     onBlur={(event) => persistContract(service.code, event.target.value)}
                   />
+                  {!isDefault ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="shrink-0"
+                      title={`Set ${service.label} as the India Post default`}
+                      disabled={!value.trim() || setDefault.isPending}
+                      onClick={() => setDefault.mutate(service.code)}
+                    >
+                      Set default
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="h-11"
+                    variant="ghost"
+                    className="shrink-0"
                     disabled={!value.trim() || saveContract.isPending}
                     onClick={() => {
                       setContract(service.code, "");
@@ -1304,30 +1480,10 @@ export default function IndiaPostPage() {
                   >
                     Clear
                   </Button>
-                  <button
-                    type="button"
-                    title={
-                      isDefault
-                        ? `Default booking service (${service.label})`
-                        : `Set ${service.label} as the India Post default`
-                    }
-                    aria-pressed={isDefault}
-                    disabled={!value.trim() || setDefault.isPending}
-                    onClick={() => {
-                      if (!isDefault) setDefault.mutate(service.code);
-                    }}
-                    className={cn(
-                      "h-7 rounded-md px-2 text-xs font-semibold transition-colors",
-                      isDefault ? "bg-brand text-white" : "text-muted hover:text-foreground",
-                      (!value.trim() || setDefault.isPending) && "cursor-not-allowed opacity-60"
-                    )}
-                  >
-                    {isDefault ? "Default" : "Set default"}
-                  </button>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
       </div>
@@ -1388,8 +1544,11 @@ function Field({
   autoComplete,
   placeholder,
   hint,
+  error,
   maxLength,
   inputMode,
+  readOnly,
+  className,
 }: {
   label: string;
   value: string;
@@ -1399,15 +1558,19 @@ function Field({
   autoComplete?: string;
   placeholder?: string;
   hint?: string;
+  error?: string;
   maxLength?: number;
   inputMode?: "numeric" | "text" | "tel";
+  readOnly?: boolean;
+  className?: string;
 }) {
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = type === "password";
   const inputId = useId();
+  const errorId = error ? `${inputId}-error` : undefined;
 
   return (
-    <div className="min-w-0 space-y-2">
+    <div className={cn("min-w-0 space-y-1.5", className)}>
       <Label htmlFor={inputId}>{label}</Label>
       <div className={isPassword ? "relative" : undefined}>
         <Input
@@ -1418,7 +1581,11 @@ function Field({
           autoComplete={autoComplete}
           maxLength={maxLength}
           inputMode={inputMode}
-          className={isPassword ? "pr-11" : undefined}
+          readOnly={readOnly}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={errorId}
+          aria-readonly={readOnly || undefined}
+          className={isPassword ? "pr-11" : readOnly ? "bg-muted/40" : undefined}
           onChange={(event) => onChange(event.target.value)}
           onBlur={onBlur ? (event) => onBlur(event.target.value) : undefined}
         />
@@ -1434,7 +1601,64 @@ function Field({
           </button>
         ) : null}
       </div>
+      {error ? (
+        <p id={errorId} className="text-sm text-warning">
+          {error}
+        </p>
+      ) : null}
       {hint ? <p className="text-sm font-medium text-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+function StepTitle({ step, children }: { step: number; children: ReactNode }) {
+  return (
+    <CardTitle as="h2" className="flex items-center gap-2.5">
+      <span
+        aria-hidden="true"
+        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand/10 text-xs font-semibold tabular-nums text-brand"
+      >
+        {step}
+      </span>
+      {children}
+    </CardTitle>
+  );
+}
+
+function InlineWarning({ children }: { children: ReactNode }) {
+  return (
+    <p
+      role="alert"
+      className="flex basis-full items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
+    >
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
+function SelectedOffice({
+  name,
+  officeId,
+  meta,
+}: {
+  name: string;
+  officeId: string;
+  meta: string[];
+}) {
+  const details = meta.filter(Boolean).join(" · ");
+  return (
+    <div className="flex basis-full items-start gap-3 rounded-xl border border-border bg-surface-soft/60 px-3 py-2.5">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+        <MapPin className="size-4" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{name}</p>
+        {details ? <p className="truncate text-xs text-muted">{details}</p> : null}
+      </div>
+      {officeId ? (
+        <span className="shrink-0 self-center font-mono text-xs tabular-nums text-muted">{officeId}</span>
+      ) : null}
     </div>
   );
 }

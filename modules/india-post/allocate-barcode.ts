@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { barcodePrefixAllowedForService, formatBarcode, isCeptUatTestSeries } from "@/modules/india-post/barcode";
+import {
+  INDIA_POST_COD_RANGE_CODE,
+  formatBarcode,
+  isCeptUatTestSeries,
+  isCodPaymentMode,
+  selectBarcodeRangeForBooking,
+} from "@/modules/india-post/barcode";
 import { indiaPostServiceLabel } from "@/types/domain";
 
 export async function allocateNextBarcode(
@@ -8,23 +14,32 @@ export async function allocateNextBarcode(
     organizationId: string;
     serviceCode: string;
     environment?: string | null;
+    paymentMode?: string | null;
   }
 ) {
+  const clauses = [`service_code.eq.${input.serviceCode}`, "service_code.is.null"];
+  if (isCodPaymentMode(input.paymentMode)) clauses.push(`service_code.eq.${INDIA_POST_COD_RANGE_CODE}`);
   const { data: ranges, error } = await supabase
     .from("barcode_ranges")
     .select("*")
     .eq("organization_id", input.organizationId)
     .eq("is_active", true)
-    .or(`service_code.eq.${input.serviceCode},service_code.is.null`);
+    .or(clauses.join(","));
   if (error) {
     throw Object.assign(new Error(error.message), { code: "INVALID_BARCODE" });
   }
-  const usable = (ranges ?? []).filter((item) =>
-    barcodePrefixAllowedForService(String(item.prefix ?? ""), input.serviceCode)
-  );
-  const range =
-    usable.find((item) => item.service_code === input.serviceCode) ??
-    usable.find((item) => item.service_code === null);
+  const picked = selectBarcodeRangeForBooking(ranges ?? [], input);
+  const range = picked.range;
+  if (picked.exhausted && range) {
+    throw Object.assign(
+      new Error(
+        picked.codSeriesRequired
+          ? `The COD barcode range is used up (ended at ${range.end_number}). Add a new EZ series.`
+          : `The barcode range for ${indiaPostServiceLabel(input.serviceCode)} is used up (ended at ${range.end_number}). Add a new series.`
+      ),
+      { code: "INVALID_BARCODE" }
+    );
+  }
   if (!range) {
     throw Object.assign(
       new Error(
@@ -67,7 +82,9 @@ export async function allocateNextBarcode(
     if (current.next_number > current.end_number) {
       throw Object.assign(
         new Error(
-          `The barcode range for ${indiaPostServiceLabel(input.serviceCode)} is used up (ended at ${current.end_number}). Add a new series.`
+          picked.codSeriesRequired
+            ? `The COD barcode range is used up (ended at ${current.end_number}). Add a new EZ series.`
+            : `The barcode range for ${indiaPostServiceLabel(input.serviceCode)} is used up (ended at ${current.end_number}). Add a new series.`
         ),
         { code: "INVALID_BARCODE" }
       );

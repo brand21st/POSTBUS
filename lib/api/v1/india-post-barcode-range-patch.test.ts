@@ -439,6 +439,92 @@ describe("PATCH integrations/india-post/barcode-range", () => {
     });
   });
 
+  it("saves an optional EZ series without retiring Speed Post or Business Parcel", async () => {
+    const db = rangesDb({
+      connected: true,
+      ranges: [
+        {
+          prefix: "EY",
+          suffix: "IN",
+          start_number: 59288875,
+          end_number: 59289874,
+          next_number: 59288875,
+          service_code: "SP_INLAND_PARCEL",
+          is_active: true,
+        },
+        {
+          prefix: "CX",
+          suffix: "IN",
+          start_number: 7525051,
+          end_number: 7526050,
+          next_number: 7525051,
+          service_code: "BUSINESS_PARCEL",
+          is_active: true,
+        },
+      ],
+    });
+    const result = await handleIntegrationRoutes(
+      patch({
+        barcodeRange: {
+          prefix: "EZ",
+          suffix: "IN",
+          startNumber: 88000001,
+          endNumber: 88000100,
+          serviceCode: "COD_EZ",
+        },
+        serviceCode: "COD_EZ",
+      }),
+      db.client as never,
+      ctx,
+      "PATCH integrations/india-post/barcode-range"
+    );
+    expect(db.inserts[0]).toMatchObject({ prefix: "EZ", service_code: "COD_EZ" });
+    expect(db.active().map((row) => row.prefix).sort()).toEqual(["CX", "EY", "EZ"]);
+    expect(result).toMatchObject({
+      barcodeRange: { prefix: "EY", serviceCode: "SP_INLAND_PARCEL" },
+    });
+    expect(
+      (result as { barcodeRanges: Array<{ prefix: string }> }).barcodeRanges.map((row) => row.prefix).sort()
+    ).toEqual(["CX", "EY", "EZ"]);
+  });
+
+  it("clears the EZ series without retiring the product series", async () => {
+    const db = rangesDb({
+      connected: true,
+      ranges: [
+        {
+          prefix: "EY",
+          suffix: "IN",
+          start_number: 59288875,
+          end_number: 59289874,
+          next_number: 59288875,
+          service_code: "SP_INLAND_PARCEL",
+          is_active: true,
+        },
+        {
+          prefix: "EZ",
+          suffix: "IN",
+          start_number: 88000001,
+          end_number: 88000100,
+          next_number: 88000001,
+          service_code: "COD_EZ",
+          is_active: true,
+        },
+      ],
+    });
+    const result = await handleIntegrationRoutes(
+      patch({ barcodeRange: null, serviceCode: "COD_EZ", prefix: "EZ" }),
+      db.client as never,
+      ctx,
+      "PATCH integrations/india-post/barcode-range"
+    );
+    expect(db.active().map((row) => row.service_code)).toEqual(["SP_INLAND_PARCEL"]);
+    expect(result).toMatchObject({
+      barcodeRange: { prefix: "EY", serviceCode: "SP_INLAND_PARCEL" },
+      barcodeRanges: [{ prefix: "EY", serviceCode: "SP_INLAND_PARCEL" }],
+    });
+  });
+
   it("requires a saved India Post login", async () => {
     const db = rangeDb({ connected: false, range: null });
     await expect(

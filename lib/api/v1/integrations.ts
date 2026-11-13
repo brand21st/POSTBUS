@@ -10,6 +10,7 @@ import { indiaPostOfficeToApiRow, indiaPostOfficesForSelection } from "@/modules
 import { indiaPostFromRow } from "@/modules/india-post/provider";
 import { indiaPostWebhookUrls } from "@/modules/india-post/webhook-urls";
 import {
+  INDIA_POST_COD_RANGE_CODE,
   isCeptUatTestSeries,
   nextSerialForSavedRange,
   parseBarcodeRange,
@@ -128,6 +129,12 @@ function barcodeRangeApiPayload(row: {
     nextNumber: row.next_number,
     serviceCode: row.service_code ?? null,
   };
+}
+
+function barcodeClearServiceCode(value: unknown) {
+  const code = String(value ?? "").trim();
+  if (code === INDIA_POST_COD_RANGE_CODE) return INDIA_POST_COD_RANGE_CODE;
+  return parcelServiceCode(code);
 }
 
 async function listActiveBarcodeRanges(supabase: SupabaseClient, organizationId: string) {
@@ -980,7 +987,7 @@ export async function handleIntegrationRoutes(
       rangeInput,
       rangeInput == null
         ? {
-            serviceCode: parcelServiceCode(String(body.serviceCode ?? body.service_code ?? "")) || null,
+            serviceCode: barcodeClearServiceCode(body.serviceCode ?? body.service_code),
             prefix: String(body.prefix ?? body.clearPrefix ?? ""),
           }
         : undefined
@@ -1109,8 +1116,7 @@ export async function handleIntegrationRoutes(
         rangeInput,
         rangeInput == null
           ? {
-              serviceCode:
-                parcelServiceCode(String(body.rangeServiceCode ?? body.serviceCode ?? "")) || null,
+              serviceCode: barcodeClearServiceCode(body.rangeServiceCode ?? body.serviceCode),
               prefix: String(body.barcodePrefix ?? body.prefix ?? ""),
             }
           : undefined

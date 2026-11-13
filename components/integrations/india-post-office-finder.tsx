@@ -62,16 +62,31 @@ export function IndiaPostOfficeFinder({
   const pinDigits = pincode.replace(/\D/g, "").slice(0, 6);
   const pinValid = /^\d{6}$/.test(pinDigits);
   const inputId = `${idPrefix}-pincode`;
+  const hintId = `${idPrefix}-hint`;
+  const helper = !canSearch
+    ? "Save your customer ID and password first, then search."
+    : pinDigits && !pinValid
+      ? "Enter a valid 6-digit pincode."
+      : search.isPending
+        ? "Searching India Post offices..."
+        : search.isSuccess && offices.length === 0
+          ? "No eligible India Post offices found for this pincode."
+          : null;
 
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-1.5">
       <Label htmlFor={inputId}>{label}</Label>
       <div className="flex gap-2">
         <Input
           id={inputId}
+          className="w-[8.5rem] font-mono tabular-nums"
           inputMode="numeric"
+          autoComplete="postal-code"
+          maxLength={6}
           placeholder="682311"
           value={pincode}
+          aria-invalid={pinDigits && !pinValid ? true : undefined}
+          aria-describedby={helper ? hintId : undefined}
           onChange={(event) => setPincode(event.target.value.replace(/\D/g, "").slice(0, 6))}
           onKeyDown={(event) => {
             if (event.key === "Enter" && canSearch && pinValid && !search.isPending) {
@@ -80,19 +95,6 @@ export function IndiaPostOfficeFinder({
             }
           }}
         />
-        {pincode ? (
-          <Button
-            type="button"
-            variant="ghost"
-            className="shrink-0 px-3"
-            onClick={() => {
-              setPincode("");
-              search.reset();
-            }}
-          >
-            Clear
-          </Button>
-        ) : null}
         <Button
           type="button"
           variant="secondary"
@@ -100,19 +102,15 @@ export function IndiaPostOfficeFinder({
           disabled={!canSearch || !pinValid || search.isPending}
           onClick={() => search.mutate()}
         >
-          <Search className="size-4" />
+          <Search className="size-4" aria-hidden="true" />
           {search.isPending ? "Searching" : "Find"}
         </Button>
       </div>
-      <p className="text-xs text-muted">
-        {canSearch
-          ? pinDigits && !pinValid
-            ? "Enter a valid 6-digit pincode."
-            : search.isPending
-              ? "Searching India Post offices..."
-              : "Search India Post offices by the 6-digit pincode."
-          : "Save your customer ID and password first, then search."}
-      </p>
+      {helper ? (
+        <p id={hintId} className="max-w-[20rem] text-xs text-muted" aria-live="polite">
+          {helper}
+        </p>
+      ) : null}
 
       {offices.length > 0 ? (
         <ul className="max-h-48 overflow-y-auto rounded-xl border border-border text-sm">
@@ -149,8 +147,6 @@ export function IndiaPostOfficeFinder({
             );
           })}
         </ul>
-      ) : search.isSuccess ? (
-        <p className="text-xs text-muted">No eligible India Post offices found for this pincode.</p>
       ) : null}
     </div>
   );

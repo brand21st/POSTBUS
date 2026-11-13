@@ -4,7 +4,11 @@ import { INDIA_POST_SERVICES, type IndiaPostServiceCode } from "@/types/domain";
 /**
  * Allotted prefixes pick the booked product.
  * EY and EL are Speed Post Parcel Domestic. CX and CL are India Post Parcel Contractual.
+ * EZ is an optional COD series, stored separately so it does not replace either product.
  */
+export const INDIA_POST_COD_RANGE_CODE = "COD_EZ";
+export const INDIA_POST_COD_PREFIX = "EZ";
+
 const PREFIX_SERVICE: Record<string, IndiaPostServiceCode> = {
   EY: "SP_INLAND_PARCEL",
   EL: "SP_INLAND_PARCEL",
@@ -13,6 +17,8 @@ const PREFIX_SERVICE: Record<string, IndiaPostServiceCode> = {
 };
 
 export function barcodePrefixServiceMessage(prefix: string) {
+  const letters = prefix.trim().toUpperCase().slice(0, 2);
+  if (letters === INDIA_POST_COD_PREFIX) return "EZ belongs in the COD series below.";
   const mapped = indiaPostServiceForBarcodePrefix(prefix);
   if (mapped === "SP_INLAND_PARCEL") return "EY and EL book Speed Post Parcel Domestic only.";
   if (mapped === "BUSINESS_PARCEL") return "CX and CL book India Post Parcel Contractual only.";
@@ -24,10 +30,22 @@ export function indiaPostServiceForBarcodePrefix(prefix: string): IndiaPostServi
 }
 
 export function barcodePrefixAllowedForService(prefix: string, serviceCode: string) {
-  const mapped = indiaPostServiceForBarcodePrefix(prefix);
-  if (!mapped) return true;
+  const letters = prefix.trim().toUpperCase().slice(0, 2);
   const code = serviceCode.trim().toUpperCase();
+  if (letters === INDIA_POST_COD_PREFIX || code === INDIA_POST_COD_RANGE_CODE) {
+    return letters === INDIA_POST_COD_PREFIX && code === INDIA_POST_COD_RANGE_CODE;
+  }
+  const mapped = indiaPostServiceForBarcodePrefix(letters);
+  if (!mapped) return true;
   return mapped === (code === "BP" ? "BUSINESS_PARCEL" : code);
+}
+
+export function isCodPaymentMode(mode?: string | null) {
+  const value = String(mode ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+  return value === "COD" || value === "CASH_ON_DELIVERY" || value === "CODR";
 }
 
 /** Keep a stored article only when its prefix belongs to the service just chosen. */
@@ -178,6 +196,20 @@ export function parseBarcodeRange(input: BarcodeRangeInput): BarcodeRange {
     );
   }
 
+  const requested = (input.serviceCode ?? "").trim().toUpperCase();
+  if (prefix === INDIA_POST_COD_PREFIX) {
+    if (requested && requested !== INDIA_POST_COD_RANGE_CODE) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        "EZ belongs in the COD series. It cannot be saved on Speed Post or Business Parcel."
+      );
+    }
+    return { prefix, suffix, startNumber, endNumber, serviceCode: INDIA_POST_COD_RANGE_CODE };
+  }
+  if (requested === INDIA_POST_COD_RANGE_CODE) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "The COD series uses prefix EZ only.");
+  }
+
   return {
     prefix,
     suffix,
@@ -279,11 +311,62 @@ export function barcodeStockForService(
   serviceCode: string
 ) {
   const list = ranges ?? [];
+  if (serviceCode === INDIA_POST_COD_RANGE_CODE) {
+    return list.find((range) => range.serviceCode === INDIA_POST_COD_RANGE_CODE) ?? null;
+  }
   return (
     list.find((range) => range.serviceCode === serviceCode) ??
     list.find((range) => !range.serviceCode) ??
     null
   );
+}
+
+export type BookingBarcodeRange = {
+  prefix?: string | null;
+  service_code?: string | null;
+  next_number?: number | null;
+  end_number?: number | null;
+  is_active?: boolean | null;
+};
+
+export function barcodeRangeExhausted(
+  range: Pick<BookingBarcodeRange, "next_number" | "end_number"> | null | undefined
+) {
+  if (!range) return false;
+  const next = Number(range.next_number);
+  const end = Number(range.end_number);
+  return Number.isInteger(next) && Number.isInteger(end) && next > end;
+}
+
+/** COD uses the EZ series only after one is saved. Prepaid bookings never take it. */
+export function selectBarcodeRangeForBooking<T extends BookingBarcodeRange>(
+  ranges: readonly T[],
+  input: { serviceCode: string; paymentMode?: string | null }
+): { range: T | null; codSeriesRequired: boolean; exhausted: boolean } {
+  const active = ranges.filter((item) => item.is_active !== false);
+  const product =
+    active.find(
+      (item) =>
+        item.service_code === input.serviceCode &&
+        barcodePrefixAllowedForService(String(item.prefix ?? ""), input.serviceCode)
+    ) ??
+    active.find(
+      (item) =>
+        (item.service_code ?? null) == null &&
+        barcodePrefixAllowedForService(String(item.prefix ?? ""), input.serviceCode)
+    ) ??
+    null;
+  if (!isCodPaymentMode(input.paymentMode)) {
+    return { range: product, codSeriesRequired: false, exhausted: barcodeRangeExhausted(product) };
+  }
+  const ez =
+    active.find(
+      (item) =>
+        item.service_code === INDIA_POST_COD_RANGE_CODE &&
+        String(item.prefix ?? "").trim().toUpperCase() === INDIA_POST_COD_PREFIX
+    ) ?? null;
+  if (!ez) return { range: product, codSeriesRequired: false, exhausted: barcodeRangeExhausted(product) };
+  return { range: ez, codSeriesRequired: true, exhausted: barcodeRangeExhausted(ez) };
 }
 
 /** Serials from the CEPT UAT document. Prefix ET or CL still must not be used on production. */
@@ -328,13 +411,22 @@ export function indiaPostAcceptedArticleId(
   return fromBooking || normalizeIndiaPostArticleId(fallback) || fallback;
 }
 
-/** Prefer the Any-service series; if none, show the first remaining active series. */
+function rangeServiceCode(item: { service_code?: string | null; serviceCode?: string | null }) {
+  return item.service_code ?? item.serviceCode ?? null;
+}
+
+/** Prefer the Any-service series, then a product series. The optional COD series is never primary. */
 export function primaryActiveBarcodeRange<
   T extends { service_code?: string | null; serviceCode?: string | null },
 >(ranges: T[]): T | null {
   if (!ranges.length) return null;
   return (
-    ranges.find((item) => (item.service_code ?? item.serviceCode ?? null) == null) ?? ranges[0] ?? null
+    ranges.find((item) => rangeServiceCode(item) == null) ??
+    ranges.find((item) => {
+      const code = rangeServiceCode(item);
+      return code != null && code !== INDIA_POST_COD_RANGE_CODE;
+    }) ??
+    null
   );
 }
 

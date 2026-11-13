@@ -16,6 +16,7 @@ import {
   parseBarcodeRange,
   primaryActiveBarcodeRange,
   sanitizeBarcodeAllotmentField,
+  selectBarcodeRangeForBooking,
   isValidIndiaPostS10,
 } from "@/modules/india-post/barcode";
 
@@ -105,6 +106,13 @@ describe("primaryActiveBarcodeRange", () => {
     const any = { prefix: "EY", serviceCode: null };
     const cx = { prefix: "CX", serviceCode: "BUSINESS_PARCEL" };
     expect(primaryActiveBarcodeRange([cx, any])?.prefix).toBe("EY");
+  });
+
+  it("keeps a product series primary when an optional COD series is saved", () => {
+    const ez = { prefix: "EZ", service_code: "COD_EZ" };
+    const speed = { prefix: "EY", service_code: "SP_INLAND_PARCEL" };
+    expect(primaryActiveBarcodeRange([ez, speed])?.prefix).toBe("EY");
+    expect(primaryActiveBarcodeRange([ez])).toBeNull();
   });
 });
 
@@ -208,6 +216,69 @@ describe("parseBarcodeRange", () => {
     });
     expect(formatBarcode("CX", 7525051, "IN")).toBe("CX075250510IN");
     expect(formatAllotmentNumber(7525051)).toBe("075250510");
+  });
+
+  it("binds EZ allotments to the optional COD series only", () => {
+    expect(barcodePrefixAllowedForService("EZ", "COD_EZ")).toBe(true);
+    expect(barcodePrefixAllowedForService("EZ", "SP_INLAND_PARCEL")).toBe(false);
+    expect(barcodePrefixAllowedForService("EY", "COD_EZ")).toBe(false);
+    expect(
+      parseBarcodeRange({
+        prefix: "ez",
+        suffix: "IN",
+        startNumber: 10000001,
+        endNumber: 10000100,
+        serviceCode: "COD_EZ",
+      }).serviceCode
+    ).toBe("COD_EZ");
+    expect(() =>
+      parseBarcodeRange({
+        prefix: "EZ",
+        suffix: "IN",
+        startNumber: 10000001,
+        endNumber: 10000100,
+        serviceCode: "SP_INLAND_PARCEL",
+      })
+    ).toThrow(/COD series/);
+    expect(() =>
+      parseBarcodeRange({
+        prefix: "EY",
+        suffix: "IN",
+        startNumber: 10000001,
+        endNumber: 10000100,
+        serviceCode: "COD_EZ",
+      })
+    ).toThrow(/prefix EZ only/);
+  });
+
+  it("uses the EZ series for COD only after it is saved", () => {
+    const speed = {
+      prefix: "EY",
+      service_code: "SP_INLAND_PARCEL",
+      next_number: 10,
+      end_number: 20,
+      is_active: true,
+    };
+    const ez = {
+      prefix: "EZ",
+      service_code: "COD_EZ",
+      next_number: 30,
+      end_number: 40,
+      is_active: true,
+    };
+    const usedUp = { ...ez, next_number: 41 };
+    expect(selectBarcodeRangeForBooking([speed, ez], { serviceCode: "SP_INLAND_PARCEL", paymentMode: "PREPAID" }).range?.prefix).toBe("EY");
+    expect(selectBarcodeRangeForBooking([speed], { serviceCode: "SP_INLAND_PARCEL", paymentMode: "COD" }).range?.prefix).toBe("EY");
+    expect(selectBarcodeRangeForBooking([speed, ez], { serviceCode: "SP_INLAND_PARCEL", paymentMode: "COD" })).toMatchObject({
+      codSeriesRequired: true,
+      exhausted: false,
+      range: { prefix: "EZ" },
+    });
+    expect(selectBarcodeRangeForBooking([speed, usedUp], { serviceCode: "BUSINESS_PARCEL", paymentMode: "COD" })).toMatchObject({
+      codSeriesRequired: true,
+      exhausted: true,
+      range: { prefix: "EZ" },
+    });
   });
 
   it("rejects letters and numbers longer than nine digits", () => {
