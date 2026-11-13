@@ -1266,7 +1266,10 @@ export default function IndiaPostPage() {
                   className="grid gap-x-3 gap-y-2 px-5 py-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] sm:items-center"
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">{service.label}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-medium text-foreground">{service.label}</p>
+                      {isDefault ? <StatusBadge value="ACTIVE" /> : null}
+                    </div>
                     <p className="truncate text-xs text-muted">{service.description}</p>
                     {left != null && stock ? (
                       <p
