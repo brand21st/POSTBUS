@@ -940,15 +940,23 @@ export default function IndiaPostPage() {
         <CardHeader className="p-5 pb-3">
           <CardTitle>Pickup Location</CardTitle>
           <CardDescription className="mt-1">
-            The India Post office used when a booking is pickup. Search the 6-digit office pincode and select the office
-            so pickup bookings use that pin as the origin.
+            Search the 6-digit pincode and select the office used as the pickup origin.
             {savedPickupOfficeId && !savedPickupOfficePincode
               ? " This pickup office is missing its pincode — search and select it again."
               : ""}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 px-5 pb-5 sm:grid-cols-[9rem_minmax(0,1fr)]">
+        <CardContent className="flex flex-wrap items-start gap-x-4 gap-y-2 px-5 pb-4">
+          <IndiaPostOfficeFinder
+            key={pickupFinderEpoch}
+            idPrefix="pickup-office"
+            label="Pickup pincode"
+            officeId={form.pickupOfficeId}
+            onSelect={applyPickupOffice}
+            canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
+          />
           <Field
+            className="w-[9.5rem]"
             label="Office ID"
             value={form.pickupOfficeId}
             placeholder="21360043"
@@ -966,16 +974,8 @@ export default function IndiaPostPage() {
             }}
             onBlur={(value) => persistPickupOffice({ officeId: value })}
           />
-          <IndiaPostOfficeFinder
-            key={pickupFinderEpoch}
-            idPrefix="pickup-office"
-            label="Pickup pincode"
-            officeId={form.pickupOfficeId}
-            onSelect={applyPickupOffice}
-            canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
-          />
           {form.pickupOfficeName ? (
-            <p className="text-sm font-medium text-foreground sm:col-span-2">
+            <p className="basis-full text-sm font-medium text-foreground">
               {[
                 form.pickupOfficeName,
                 [form.pickupOfficePincode, form.pickupOfficeCity, form.pickupOfficeState]
@@ -1045,31 +1045,13 @@ export default function IndiaPostPage() {
           <CardHeader className="p-5 pb-3">
             <CardTitle>Drop-off office</CardTitle>
             <CardDescription className="mt-1">
-              The post office where you hand over parcels. Search the 6-digit office pincode and select the office so
-              every merchant booking uses that pin as the India Post origin.
+              Search the 6-digit pincode and select the office used as the booking origin.
               {savedOfficeId && !savedOfficePincode
                 ? " This office is missing its pincode — search and select it again."
                 : ""}
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 px-5 pb-5 sm:grid-cols-[9rem_minmax(0,1fr)]">
-            <Field
-              label="Office ID"
-              value={form.pickupDropoffOfficeId}
-              placeholder="22660454"
-              onChange={(value) => {
-                const next = value.replace(/\D/g, "").slice(0, 8);
-                setForm((current) => ({
-                  ...current,
-                  pickupDropoffOfficeId: next,
-                  pickupDropoffOfficeName:
-                    next === savedOfficeId ? current.pickupDropoffOfficeName : "",
-                  pickupDropoffOfficePincode:
-                    next === savedOfficeId ? current.pickupDropoffOfficePincode : "",
-                }));
-              }}
-              onBlur={(value) => persistOfficeId(value)}
-            />
+          <CardContent className="flex flex-wrap items-start gap-x-4 gap-y-2 px-5 pb-4">
             <IndiaPostOfficeFinder
               key={finderEpoch}
               idPrefix="drop-office"
@@ -1089,8 +1071,26 @@ export default function IndiaPostPage() {
               }}
               canSearch={Boolean(form.customerId && (hasSecrets || form.password))}
             />
+            <Field
+              className="w-[9.5rem]"
+              label="Office ID"
+              value={form.pickupDropoffOfficeId}
+              placeholder="22660454"
+              onChange={(value) => {
+                const next = value.replace(/\D/g, "").slice(0, 8);
+                setForm((current) => ({
+                  ...current,
+                  pickupDropoffOfficeId: next,
+                  pickupDropoffOfficeName:
+                    next === savedOfficeId ? current.pickupDropoffOfficeName : "",
+                  pickupDropoffOfficePincode:
+                    next === savedOfficeId ? current.pickupDropoffOfficePincode : "",
+                }));
+              }}
+              onBlur={(value) => persistOfficeId(value)}
+            />
             {form.pickupDropoffOfficeName ? (
-              <p className="text-sm font-medium text-foreground sm:col-span-2">{form.pickupDropoffOfficeName}</p>
+              <p className="basis-full text-sm font-medium text-foreground">{form.pickupDropoffOfficeName}</p>
             ) : null}
           </CardContent>
           <CardFooter className="flex flex-wrap gap-2 border-t border-border px-5 py-3">
@@ -1389,6 +1389,7 @@ function Field({
   hint,
   maxLength,
   inputMode,
+  className,
 }: {
   label: string;
   value: string;
@@ -1400,13 +1401,14 @@ function Field({
   hint?: string;
   maxLength?: number;
   inputMode?: "numeric" | "text" | "tel";
+  className?: string;
 }) {
   const [showPassword, setShowPassword] = useState(false);
   const isPassword = type === "password";
   const inputId = useId();
 
   return (
-    <div className="min-w-0 space-y-2">
+    <div className={cn("min-w-0 space-y-1.5", className)}>
       <Label htmlFor={inputId}>{label}</Label>
       <div className={isPassword ? "relative" : undefined}>
         <Input
