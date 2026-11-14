@@ -14,6 +14,7 @@ import {
 } from "@/modules/manifests/schema";
 import { getAutomationSettings } from "@/modules/automation/service";
 import { createBackgroundJob } from "@/modules/jobs/service";
+import { organizationLabelSender } from "@/modules/organizations/label-sender";
 import { indiaPostServiceLabel } from "@/types/domain";
 
 export type ManifestRow = {
@@ -60,7 +61,17 @@ export type ManifestLine = {
   orderNumber: string | null;
   consignee: string | null;
   city: string | null;
+  state: string | null;
   pincode: string | null;
+  company: string | null;
+  line1: string | null;
+  line2: string | null;
+  line3: string | null;
+  phone: string | null;
+  email: string | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
   serviceCode: string | null;
   serviceLabel: string;
   weightGrams: number;
@@ -91,6 +102,10 @@ export type ManifestDetail = ManifestSummary & {
 export type ManifestSender = {
   name: string;
   customerId: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  phone: string | null;
 };
 
 type Office = { id: string | null; name: string | null };
@@ -125,6 +140,11 @@ function text(value: unknown) {
 function num(value: unknown) {
   const out = Number(value);
   return Number.isFinite(out) ? out : 0;
+}
+
+function dim(value: unknown) {
+  const out = Number(value);
+  return Number.isFinite(out) && out > 0 ? out : null;
 }
 
 function one<T>(value: T | T[] | null | undefined): T | null {
@@ -469,11 +489,36 @@ type LineRow = {
         payment_mode: string | null;
         cod_amount: number | string | null;
         tariff_amount: number | string | null;
+        length_cm: number | string | null;
+        width_cm: number | string | null;
+        height_cm: number | string | null;
         orders?: { order_number?: string | null } | Array<{ order_number?: string | null }> | null;
         customers?: { name?: string | null } | Array<{ name?: string | null }> | null;
         addresses?:
-          | { name?: string | null; city?: string | null; pincode?: string | null }
-          | Array<{ name?: string | null; city?: string | null; pincode?: string | null }>
+          | {
+              name?: string | null;
+              company_name?: string | null;
+              line1?: string | null;
+              line2?: string | null;
+              line3?: string | null;
+              city?: string | null;
+              state?: string | null;
+              pincode?: string | null;
+              phone?: string | null;
+              email?: string | null;
+            }
+          | Array<{
+              name?: string | null;
+              company_name?: string | null;
+              line1?: string | null;
+              line2?: string | null;
+              line3?: string | null;
+              city?: string | null;
+              state?: string | null;
+              pincode?: string | null;
+              phone?: string | null;
+              email?: string | null;
+            }>
           | null;
       }
     | null;
@@ -518,7 +563,7 @@ export async function getManifest(supabase: SupabaseClient, organizationId: stri
   const { data, error } = await supabase
     .from("manifest_shipments")
     .select(
-      "added_at, shipments(id, barcode, tracking_number, status, service_code, weight_grams, payment_mode, cod_amount, tariff_amount, orders(order_number), customers(name), addresses!shipping_address_id(name, city, pincode))"
+      "added_at, shipments(id, barcode, tracking_number, status, service_code, weight_grams, length_cm, width_cm, height_cm, payment_mode, cod_amount, tariff_amount, orders(order_number), customers(name), addresses!shipping_address_id(name, company_name, line1, line2, line3, city, state, pincode, phone, email))"
     )
     .eq("organization_id", organizationId)
     .eq("manifest_id", id)
@@ -542,7 +587,17 @@ export async function getManifest(supabase: SupabaseClient, organizationId: stri
       orderNumber: one(shipment.orders)?.order_number ?? null,
       consignee: text(address?.name) ?? text(one(shipment.customers)?.name),
       city: address?.city ?? null,
+      state: address?.state ?? null,
       pincode: address?.pincode ?? null,
+      company: text(address?.company_name),
+      line1: text(address?.line1),
+      line2: text(address?.line2),
+      line3: text(address?.line3),
+      phone: text(address?.phone),
+      email: text(address?.email),
+      lengthCm: dim(shipment.length_cm),
+      widthCm: dim(shipment.width_cm),
+      heightCm: dim(shipment.height_cm),
       serviceCode: shipment.service_code,
       serviceLabel: indiaPostServiceLabel(shipment.service_code),
       weightGrams: num(shipment.weight_grams),
@@ -564,13 +619,29 @@ export async function getManifest(supabase: SupabaseClient, organizationId: stri
 }
 
 export async function getManifestSender(supabase: SupabaseClient, organizationId: string): Promise<ManifestSender> {
-  const [{ data: org }, connection] = await Promise.all([
-    supabase.from("organizations").select("name").eq("id", organizationId).maybeSingle(),
+  const [{ data: org }, { data: pickup }, connection] = await Promise.all([
+    supabase
+      .from("organizations")
+      .select("name, phone, line1, line2, city, state, pincode")
+      .eq("id", organizationId)
+      .maybeSingle(),
+    supabase
+      .from("pickup_locations")
+      .select("name, contact_name, phone, line1, line2, city, state, pincode")
+      .eq("organization_id", organizationId)
+      .order("is_default", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
     loadConnection(supabase, organizationId),
   ]);
+  const label = organizationLabelSender(org, pickup);
   return {
-    name: text(org?.name) ?? "PostBus merchant",
+    name: text(org?.name) ?? label.name,
     customerId: text(connection?.bulk_customer_id),
+    city: label.city,
+    state: label.state,
+    pincode: label.pincode,
+    phone: label.phone,
   };
 }
 

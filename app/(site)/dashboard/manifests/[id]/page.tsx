@@ -49,6 +49,7 @@ export default function ManifestDetailPage() {
   const me = useMe();
   const canWrite = hasPermission((me.data?.role ?? "VIEWER") as MemberRole, "manifests.write");
   const [dialog, setDialog] = useState<Dialogs>(null);
+  const [indiaPostExporting, setIndiaPostExporting] = useState(false);
 
   const manifest = useQuery({
     queryKey: ["manifest", id],
@@ -115,6 +116,7 @@ export default function ManifestDetailPage() {
           <span className="tabular-nums">
             {row.pincode ?? "—"}
             {row.city ? <span className="text-muted"> · {row.city}</span> : null}
+            {row.state ? <span className="text-muted"> · {row.state}</span> : null}
           </span>
         ),
       },
@@ -185,6 +187,29 @@ export default function ManifestDetailPage() {
   }
 
   const exportHref = (format: string) => `/api/v1/manifests/${id}/export?format=${format}`;
+  async function downloadIndiaPostExcel() {
+    if (indiaPostExporting) return;
+    setIndiaPostExporting(true);
+    try {
+      const response = await fetch(`/api/v1/manifests/${id}/india-post-excel`, { credentials: "same-origin" });
+      if (!response.ok) {
+        const failure = (await response.json().catch(() => null)) as { message?: string } | null;
+        toast.error(failure?.message || "Could not export the India Post Excel.");
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+      anchor.href = url;
+      anchor.download = match?.[1] || "manifest_india_post.xlsx";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success("India Post Excel downloaded.");
+    } finally {
+      setIndiaPostExporting(false);
+    }
+  }
   const totals = data.totals;
 
   return (
@@ -201,14 +226,17 @@ export default function ManifestDetailPage() {
             <StatusBadge value={data.status} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="secondary">
+                <Button type="button" variant="secondary" disabled={indiaPostExporting}>
                   <Download className="size-4" />
-                  Export
+                  {indiaPostExporting ? "Exporting…" : "Export"}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem disabled={indiaPostExporting} onSelect={() => void downloadIndiaPostExcel()}>
+                  {indiaPostExporting ? "Exporting India Post Excel…" : "Export India Post Excel"}
+                </DropdownMenuItem>
                 <DropdownMenuItem asChild>
-                  <a href={exportHref("xlsx")}>Excel (.xlsx)</a>
+                  <a href={exportHref("xlsx")}>Handover list (.xlsx)</a>
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <a href={exportHref("csv")}>CSV</a>

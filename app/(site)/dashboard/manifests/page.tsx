@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -77,57 +77,72 @@ export default function ManifestsPage() {
     },
   ];
 
-  const columns: DataTableColumn<ManifestRecord>[] = [
-    {
-      id: "number",
-      header: "Manifest",
-      cell: (row) => (
-        <Link href={`/dashboard/manifests/${row.id}`} className="font-medium text-brand hover:underline">
-          {row.number ?? "Draft"}
-        </Link>
-      ),
-    },
-    { id: "date", header: "Date", cell: (row) => formatDate(row.date) },
-    { id: "office", header: "Booking office", cell: (row) => manifestOfficeLabel(row), fill: true },
-    {
-      id: "count",
-      header: "Shipments",
-      cell: (row) => <span className="tabular-nums">{row.shipmentCount}</span>,
-    },
-    {
-      id: "status",
-      header: "Status",
-      cell: (row) => <StatusBadge value={row.status} />,
-    },
-    {
-      id: "handover",
-      header: "Handover",
-      cell: (row) =>
-        row.handedOverAt ? (
-          <span className="text-sm">
-            {formatDate(row.handedOverAt, true)}
-            {row.handedOverTo ? <span className="text-muted"> · {row.handedOverTo}</span> : null}
-          </span>
-        ) : (
-          <span className="text-muted">—</span>
+  const items = query.data?.items ?? [];
+  const showOffice = useMemo(() => {
+    const offices = new Set(items.map((row) => row.officeId ?? row.officeName ?? ""));
+    return offices.size > 1;
+  }, [items]);
+
+  const columns = useMemo<DataTableColumn<ManifestRecord>[]>(() => {
+    const cols: DataTableColumn<ManifestRecord>[] = [
+      {
+        id: "number",
+        header: "Manifest",
+        cell: (row) => (
+          <Link href={`/dashboard/manifests/${row.id}`} className="font-medium text-brand hover:underline">
+            {row.number ?? "Draft"}
+          </Link>
         ),
-    },
-    {
-      id: "export",
-      header: "",
-      hug: true,
-      cell: (row) => (
-        <a
-          href={`/api/v1/manifests/${row.id}/export?format=xlsx`}
-          className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <Download className="size-3.5" />
-          Excel
-        </a>
-      ),
-    },
-  ];
+      },
+      { id: "date", header: "Date", cell: (row) => formatDate(row.date), fill: !showOffice },
+    ];
+    if (showOffice) {
+      cols.push({
+        id: "office",
+        header: "Booking office",
+        cell: (row) => manifestOfficeLabel(row),
+        fill: true,
+      });
+    }
+    cols.push(
+      {
+        id: "count",
+        header: "Shipments",
+        cell: (row) => <span className="tabular-nums">{row.shipmentCount}</span>,
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: (row) => (
+          <div className="space-y-0.5">
+            <StatusBadge value={row.status} />
+            {row.handedOverAt ? (
+              <p className="text-xs text-muted">
+                {formatDate(row.handedOverAt, true)}
+                {row.handedOverTo ? ` · ${row.handedOverTo}` : ""}
+              </p>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        id: "export",
+        header: "",
+        hug: true,
+        cell: (row) => (
+          <a
+            href={`/api/v1/manifests/${row.id}/export?format=xlsx`}
+            className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Download className="size-3.5" />
+            Handover
+          </a>
+        ),
+      }
+    );
+    return cols;
+  }, [showOffice]);
 
   return (
     <div className="space-y-6">
@@ -191,7 +206,7 @@ export default function ManifestsPage() {
 
       <DataTable
         columns={columns}
-        data={query.data?.items ?? []}
+        data={items}
         loading={query.isLoading}
         error={query.error instanceof Error ? query.error : null}
         emptyTitle={status ? `No ${MANIFEST_STATUS_LABEL[status]?.toLowerCase()} manifests` : "No manifests yet"}

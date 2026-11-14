@@ -28,7 +28,17 @@ function line(overrides: Partial<ManifestLine> = {}): ManifestLine {
     orderNumber: "PB-1001",
     consignee: "Asha Menon",
     city: "Kochi",
+    state: "Kerala",
     pincode: "682311",
+    company: "Asha Stores",
+    line1: "12 MG Road",
+    line2: "Near the post office",
+    line3: null,
+    phone: "9876543210",
+    email: "asha@example.com",
+    lengthCm: 20,
+    widthCm: 15,
+    heightCm: 2,
     serviceCode: "SP_INLAND_PARCEL",
     serviceLabel: "Speed Post Parcel",
     weightGrams: 500,
@@ -173,16 +183,22 @@ describe("manifest totals and scan state", () => {
 });
 
 describe("manifest exports", () => {
+  const sender = { name: "KL TRENDS SP", customerId: "1000012345", city: "TIRUR", state: "KERALA", pincode: "676102", phone: "8089117541" };
+
   it("writes CSV with BOM, CRLF, quoting and formula neutralising", () => {
-    const csv = manifestCsv(detail([line({ consignee: 'Menon, "Asha"', orderNumber: "=HYPERLINK(1)" })]));
+    const csv = manifestCsv(detail([line({ consignee: 'Menon, "Asha"', orderNumber: "=HYPERLINK(1)" })]), sender);
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     const rows = csv.slice(1).split("\r\n");
-    expect(rows[0]).toBe("S.No,Barcode,Order,Consignee,City,Pincode,Service,Weight (g),Payment,COD amount,Tariff");
-    expect(rows[1]).toBe(`1,EL123456789IN,'=HYPERLINK(1),"Menon, ""Asha""",Kochi,682311,Speed Post Parcel,500,PREPAID,0,61`);
+    expect(rows[0]).toBe(
+      "S.No,Barcode,Order,Consignee,City,State,Pincode,Service,Weight (g),Payment,COD amount,Tariff,Receiver company,Address line 1,Address line 2,Address line 3,Mobile,Email,Length (cm),Breadth (cm),Height (cm),Sender city,Sender state,Sender PIN,Sender mobile,Office id"
+    );
+    expect(rows[1]).toBe(
+      `1,EL123456789IN,'=HYPERLINK(1),"Menon, ""Asha""",Kochi,Kerala,682311,Speed Post Parcel,500,PREPAID,0,61,Asha Stores,12 MG Road,Near the post office,,9876543210,asha@example.com,20,15,2,TIRUR,KERALA,676102,8089117541,22660454`
+    );
   });
 
   it("round-trips XLSX rows and a summary sheet", async () => {
-    const bytes = await manifestXlsx(detail([line(), line({ barcode: "EL000000002IN", consignee: "ആശ" })]));
+    const bytes = await manifestXlsx(detail([line(), line({ barcode: "EL000000002IN", consignee: "ആശ" })]), sender);
     const sheets = await readWorkbook(bytes);
     expect(sheets.map((sheet) => sheet.name)).toEqual(["Manifest", "Summary"]);
     expect(sheets[0].rows[2].slice(0, 4)).toEqual(["2", "EL000000002IN", "PB-1001", "ആശ"]);

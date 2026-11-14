@@ -125,6 +125,9 @@ describe("permissionForTenantRoute", () => {
     );
     expect(permissionForTenantRoute("POST", "manifests", ["manifests"])).toBe("manifests.write");
     expect(permissionForTenantRoute("GET", "manifests/abc/export", ["manifests", "abc", "export"])).toBe("manifests.read");
+    expect(permissionForTenantRoute("GET", "manifests/abc/india-post-excel", ["manifests", "abc", "india-post-excel"])).toBe(
+      "manifests.read"
+    );
     expect(permissionForTenantRoute("POST", "manifests/abc/close", ["manifests", "abc", "close"])).toBe("manifests.write");
     expect(
       permissionForTenantRoute("DELETE", "manifests/abc/shipments/def", ["manifests", "abc", "shipments", "def"])

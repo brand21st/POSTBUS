@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { manifestCsv, manifestFileBase, manifestXlsx } from "@/modules/manifests/export";
+import { exportManifestIndiaPostExcel } from "@/modules/manifests/india-post-excel";
 import { renderManifestPdf } from "@/modules/manifests/pdf";
 import {
   manifestAddBody,
@@ -86,13 +87,24 @@ export async function handleManifestRoutes(
     return NextResponse.redirect(await manifestProofUrl(supabase, org, id));
   }
 
+  if (action === "india-post-excel" && method === "GET") {
+    const file = await exportManifestIndiaPostExcel(supabase, org, id);
+    return new NextResponse(new Uint8Array(file.bytes), {
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="${file.filename}"`,
+      },
+    });
+  }
+
   if (action === "export" && method === "GET") {
     const parsed = manifestExportFormat.safeParse(request.nextUrl.searchParams.get("format") ?? undefined);
     if (!parsed.success) throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Choose xlsx, csv or pdf.");
     const manifest = await getManifest(supabase, org, id);
+    const sender = await getManifestSender(supabase, org);
     const base = manifestFileBase(manifest);
     if (parsed.data === "csv") {
-      return new NextResponse(manifestCsv(manifest), {
+      return new NextResponse(manifestCsv(manifest, sender), {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
           "Content-Disposition": `attachment; filename="${base}.csv"`,
@@ -100,7 +112,7 @@ export async function handleManifestRoutes(
       });
     }
     if (parsed.data === "pdf") {
-      const bytes = await renderManifestPdf(manifest, await getManifestSender(supabase, org));
+      const bytes = await renderManifestPdf(manifest, sender);
       return new NextResponse(new Uint8Array(bytes), {
         headers: {
           "Content-Type": "application/pdf",
@@ -108,7 +120,7 @@ export async function handleManifestRoutes(
         },
       });
     }
-    return new NextResponse(new Uint8Array(await manifestXlsx(manifest)), {
+    return new NextResponse(new Uint8Array(await manifestXlsx(manifest, sender)), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${base}.xlsx"`,
