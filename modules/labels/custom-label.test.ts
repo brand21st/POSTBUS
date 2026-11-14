@@ -10,7 +10,8 @@ import { articleContractLine, amountInIndianRupees, blockPreviewLines, bookedBlo
 import { indiaPostVolumetricWeightGrams } from "@/modules/india-post/endpoints";
 import { layoutLabel } from "@/modules/labels/layout/layout";
 import { customBlockVisibility, renderMerchantLabelPdf } from "@/modules/labels/packing-pdf";
-import { printMediaForPage, sizeChoiceForPage } from "@/modules/labels/page-presets";
+import { committedPageMm, printMediaForPage, sizeChoiceForPage } from "@/modules/labels/page-presets";
+import { entersPrinterMargin } from "@/modules/labels/collision";
 import {
   applyPaperSize,
   defaultLabelTemplate,
@@ -820,6 +821,54 @@ describe("india post barcode block", () => {
     expect(size.height).toBeCloseTo(page.heightPt, 1);
     expect(unscaled.elements.shipTo.width).toBeGreaterThan(page.widthPt);
     expect(fitted.shipTo.width).toBeLessThanOrEqual(page.widthPt + 0.75);
+  });
+
+  it("keeps a merchant-placed barcode when rendering a custom page that already fits", async () => {
+    const source = indiaPostLabelTemplate();
+    const page = {
+      paperSize: "custom" as const,
+      widthMm: 200,
+      heightMm: 100,
+      widthPt: (200 * 72) / 25.4,
+      heightPt: (100 * 72) / 25.4,
+    };
+    const fitted = fitTemplateToCustomPage(source.elements, page, source.page);
+    const moved = {
+      ...fitted,
+      indiaPostBarcode: { ...fitted.indiaPostBarcode, x: 40, y: 18, width: 80, height: 24 },
+    };
+    const again = fitTemplateToCustomPage(moved, page);
+    expect(again.indiaPostBarcode.x).toBeCloseTo(40, 5);
+    expect(again.indiaPostBarcode.y).toBeCloseTo(18, 5);
+    expect(again.indiaPostBarcode.width).toBeCloseTo(80, 5);
+
+    const pdf = await PDFDocument.load(await renderMerchantLabelPdf({ ...source, page, elements: moved }, SAMPLE_PACKING_DATA));
+    const size = pdf.getPages()[0].getSize();
+    expect(size.width).toBeCloseTo(page.widthPt, 1);
+    expect(size.height).toBeCloseTo(page.heightPt, 1);
+  });
+
+  it("keeps India Post blocks inside the printer margin on a short custom page", () => {
+    const source = indiaPostLabelTemplate();
+    const page = {
+      paperSize: "custom" as const,
+      widthMm: 200,
+      heightMm: 100,
+      widthPt: (200 * 72) / 25.4,
+      heightPt: (100 * 72) / 25.4,
+    };
+    const fitted = fitTemplateToCustomPage(source.elements, page, source.page);
+    expect(
+      entersPrinterMargin(fitted.indiaPostBarcode, page.widthPt, page.heightPt)
+    ).toBe(false);
+  });
+
+  it("commits custom millimetres only after a complete value of at least 50", () => {
+    expect(committedPageMm("")).toBeNull();
+    expect(committedPageMm("8")).toBeNull();
+    expect(committedPageMm("80")).toBe(80);
+    expect(committedPageMm("49")).toBeNull();
+    expect(committedPageMm("200")).toBe(200);
   });
 
   it("keeps custom text and laid-out blocks inside a custom page below 100 mm", () => {

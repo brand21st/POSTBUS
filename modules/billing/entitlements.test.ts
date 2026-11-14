@@ -88,9 +88,7 @@ describe("plan entitlements", () => {
       FEATURE.multiPrint
     );
     expect(lockedFeatureForApi("POST", "label-template/custom-preview", ["label-template", "custom-preview"])).toBeNull();
-    expect(lockedFeatureForApi("POST", "label-template/custom-download", ["label-template", "custom-download"])).toBe(
-      FEATURE.packing
-    );
+    expect(lockedFeatureForApi("POST", "label-template/custom-download", ["label-template", "custom-download"])).toBeNull();
     expect(lockedFeatureForApi("PUT", "label-template", ["label-template"])).toBe(FEATURE.packing);
     expect(lockedFeatureForApi("GET", "labels", ["labels"])).toBeNull();
   });

@@ -14,6 +14,7 @@ export type DownloadPdfHost = {
   createObjectURL: (blob: Blob) => string;
   revokeObjectURL: (href: string) => void;
   setTimeout: (fn: () => void, ms: number) => unknown;
+  open?: (url: string, target?: string, features?: string) => Window | null;
 };
 
 function defaultHost(): DownloadPdfHost {
@@ -28,12 +29,18 @@ function defaultHost(): DownloadPdfHost {
     createObjectURL: (blob) => URL.createObjectURL(blob),
     revokeObjectURL: (href) => URL.revokeObjectURL(href),
     setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+    open: (url, target, features) => window.open(url, target, features),
   };
 }
 
 export function pdfDownloadFilename(name: string) {
   const trimmed = name.trim() || "download.pdf";
   return /\.pdf$/i.test(trimmed) ? trimmed : `${trimmed}.pdf`;
+}
+
+export function pdfFilenameFromDisposition(header: string | null | undefined, fallback: string) {
+  const named = /filename="([^"]+)"/.exec(header ?? "");
+  return pdfDownloadFilename(named?.[1] || fallback);
 }
 
 export function pdfDownloadBlob(source: Blob) {
@@ -53,4 +60,17 @@ export function downloadPdfFile(source: Blob, filename: string, host: DownloadPd
   host.remove(link);
   host.setTimeout(() => host.revokeObjectURL(href), PDF_DOWNLOAD_REVOKE_MS);
   return { href, blob, filename: file };
+}
+
+export function presentPdfFile(
+  source: Blob,
+  filename: string,
+  mode: "preview" | "download",
+  host: DownloadPdfHost = defaultHost()
+) {
+  if (mode === "download") return downloadPdfFile(source, filename, host);
+  const href = host.createObjectURL(source);
+  host.open?.(href, "_blank", "noopener,noreferrer");
+  host.setTimeout(() => host.revokeObjectURL(href), PDF_DOWNLOAD_REVOKE_MS);
+  return { href, filename: pdfDownloadFilename(filename) };
 }

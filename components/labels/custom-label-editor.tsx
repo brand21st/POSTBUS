@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { beginClientPrint, endClientPrint } from "@/lib/print/client-guard";
+import { pdfFilenameFromDisposition, presentPdfFile } from "@/lib/print/download-pdf";
 import { api } from "@/lib/hooks/use-api";
 import { cn } from "@/lib/utils";
 import { ADDRESS_FIELD_OPTIONS, normalizeAddressLayout, type AddressFieldConfig, type AddressLayout } from "@/modules/labels/address-layout";
@@ -32,7 +33,14 @@ import { packingForEditor } from "@/modules/labels/layout/editor-data";
 import { layoutLabel, WATERMARK_ID } from "@/modules/labels/layout/layout";
 import { mmFromPt, ptFromMm, storedFromTopLeft, topLeftFromStored } from "@/modules/labels/layout/units";
 import { validateLabel } from "@/modules/labels/layout/validate";
-import { PAGE_PRESETS, isPaperSizeId, pagePreset, sizeChoiceForPage } from "@/modules/labels/page-presets";
+import {
+  MIN_CUSTOM_PAGE_MM,
+  PAGE_PRESETS,
+  committedPageMm,
+  isPaperSizeId,
+  pagePreset,
+  sizeChoiceForPage,
+} from "@/modules/labels/page-presets";
 import {
   applyPaperSize,
   elementBoxFromMm,
@@ -486,6 +494,8 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
   const [orderId, setOrderId] = useState("");
   const [shipmentId, setShipmentId] = useState<string | null>(null);
   const [paymentPreview, setPaymentPreview] = useState<"COD" | "PREPAID">("PREPAID");
+  const [customWidthDraft, setCustomWidthDraft] = useState("");
+  const [customHeightDraft, setCustomHeightDraft] = useState("");
   const [preview, setPreview] = useState<CustomLabelPreview | null>(null);
   const [zoom, setZoom] = useState(1);
   const [logoPx, setLogoPx] = useState<{ width: number; height: number } | null>(null);
@@ -768,8 +778,8 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
 
   const openPdf = async (path: "custom-preview" | "custom-download" | "custom-print") => {
     const lookupOrder = preview?.orderNumber || orderId.trim();
-    if (path !== "custom-preview" && !preview?.shipmentId && !lookupOrder && !shipmentId) {
-      toast.error("Load an order before previewing the label.");
+    if (path === "custom-print" && !preview?.shipmentId && !lookupOrder && !shipmentId) {
+      toast.error("Load an order before printing the label.");
       return;
     }
     const draft = draftTemplate();
@@ -819,7 +829,11 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
       return;
     }
     const blob = await response.blob();
-    window.open(URL.createObjectURL(blob), "postbus-custom-label-pdf", "noopener,noreferrer");
+    const filename = pdfFilenameFromDisposition(
+      response.headers.get("Content-Disposition"),
+      path === "custom-download" ? "shipping-label.pdf" : "shipping-label-preview.pdf"
+    );
+    presentPdfFile(blob, filename, path === "custom-download" ? "download" : "preview");
   };
 
   const groups = ["Layout", "Header", "Content"] as const;
@@ -879,6 +893,8 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
                   widthMm,
                   heightMm,
                 };
+                setCustomWidthDraft(String(Math.round(widthMm)));
+                setCustomHeightDraft(String(Math.round(heightMm)));
                 setPage(nextPage);
                 setElements(fitTemplateToCustomPage(elements, nextPage, page));
                 return;
@@ -912,14 +928,19 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
               <span className="text-muted">Width mm</span>
               <Input
                 type="number"
-                min={50}
-                value={Math.round(page.widthMm ?? mmFromPt(page.widthPt))}
+                min={MIN_CUSTOM_PAGE_MM}
+                value={customWidthDraft || String(Math.round(page.widthMm ?? mmFromPt(page.widthPt)))}
                 onChange={(event) => {
-                  const widthMm = Number(event.target.value);
-                  if (!Number.isFinite(widthMm) || widthMm < 50) return;
+                  const raw = event.target.value;
+                  setCustomWidthDraft(raw);
+                  const widthMm = committedPageMm(raw);
+                  if (widthMm == null) return;
                   const nextPage = { ...page, paperSize: "custom" as const, widthMm, widthPt: ptFromMm(widthMm) };
                   setPage(nextPage);
                   setElements(fitTemplateToCustomPage(elements, nextPage, page));
+                }}
+                onBlur={() => {
+                  setCustomWidthDraft(String(Math.round(page.widthMm ?? mmFromPt(page.widthPt))));
                 }}
               />
             </label>
@@ -927,14 +948,19 @@ export function CustomLabelEditor({ templateId }: { templateId: string }) {
               <span className="text-muted">Height mm</span>
               <Input
                 type="number"
-                min={50}
-                value={Math.round(page.heightMm ?? mmFromPt(page.heightPt))}
+                min={MIN_CUSTOM_PAGE_MM}
+                value={customHeightDraft || String(Math.round(page.heightMm ?? mmFromPt(page.heightPt)))}
                 onChange={(event) => {
-                  const heightMm = Number(event.target.value);
-                  if (!Number.isFinite(heightMm) || heightMm < 50) return;
+                  const raw = event.target.value;
+                  setCustomHeightDraft(raw);
+                  const heightMm = committedPageMm(raw);
+                  if (heightMm == null) return;
                   const nextPage = { ...page, paperSize: "custom" as const, heightMm, heightPt: ptFromMm(heightMm) };
                   setPage(nextPage);
                   setElements(fitTemplateToCustomPage(elements, nextPage, page));
+                }}
+                onBlur={() => {
+                  setCustomHeightDraft(String(Math.round(page.heightMm ?? mmFromPt(page.heightPt))));
                 }}
               />
             </label>

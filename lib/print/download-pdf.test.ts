@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { downloadPdfFile, PDF_DOWNLOAD_REVOKE_MS, pdfDownloadBlob, pdfDownloadFilename } from "@/lib/print/download-pdf";
+import {
+  downloadPdfFile,
+  PDF_DOWNLOAD_REVOKE_MS,
+  pdfDownloadBlob,
+  pdfDownloadFilename,
+  pdfFilenameFromDisposition,
+  presentPdfFile,
+} from "@/lib/print/download-pdf";
 
 function downloadHost() {
   const link = {
@@ -57,5 +64,27 @@ describe("downloadPdfFile", () => {
     expect(host.revokeObjectURL).toHaveBeenCalledWith("blob:download-pdf");
     expect(open).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+
+  it("reads a Content-Disposition filename", () => {
+    expect(pdfFilenameFromDisposition('attachment; filename="shipping-label-preview.pdf"', "label.pdf")).toBe(
+      "shipping-label-preview.pdf"
+    );
+    expect(pdfFilenameFromDisposition(null, "label")).toBe("label.pdf");
+  });
+
+  it("opens a preview tab and downloads instead of opening for save", () => {
+    const { created, host, link } = downloadHost();
+    const open = vi.fn();
+    const previewHost = { ...host, open };
+    const source = new Blob(["%PDF-1.4"], { type: "application/pdf" });
+
+    presentPdfFile(source, "shipping-label-preview.pdf", "preview", previewHost);
+    expect(open).toHaveBeenCalledWith("blob:download-pdf", "_blank", "noopener,noreferrer");
+    expect(link.click).not.toHaveBeenCalled();
+
+    presentPdfFile(source, "shipping-label-preview.pdf", "download", previewHost);
+    expect(link.click).toHaveBeenCalledTimes(1);
+    expect(created[1]?.type).toBe("application/octet-stream");
   });
 });
