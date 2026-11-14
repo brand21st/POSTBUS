@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { breadcrumbs, isResourceIdSegment } from "@/lib/dashboard/nav";
 import { formatRelative, initials } from "@/lib/format";
-import { labelTemplateName, orderNumber, salesInvoiceNumber, shipmentNumber } from "@/lib/dashboard/records";
+import { labelTemplateName, manifestNumber, orderNumber, salesInvoiceNumber, shipmentNumber } from "@/lib/dashboard/records";
 import { api } from "@/lib/hooks/use-api";
 import { INDIA_POST_QUERY_KEY, useIndiaPost } from "@/lib/hooks/use-india-post";
 import { useNotifications } from "@/lib/hooks/use-notifications";
@@ -30,7 +30,7 @@ import { resetAnalyticsUser } from "@/lib/analytics/posthog";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { indiaPostServiceLabel } from "@/types/domain";
-import type { IndiaPostConfig, MeResponse, OrderRecord, ShipmentRecord } from "@/types/api";
+import type { IndiaPostConfig, ManifestRecord, MeResponse, OrderRecord, ShipmentRecord } from "@/types/api";
 
 export function Topbar({
   me,
@@ -47,6 +47,7 @@ export function Topbar({
   const shipmentCrumbId = crumbs.find((crumb) => crumb.resourceId && crumb.href.startsWith("/dashboard/shipments/"))?.label;
   const invoiceCrumbId = crumbs.find((crumb) => crumb.resourceId && crumb.href.startsWith("/dashboard/invoices/"))?.label;
   const templateCrumbId = crumbs.find((crumb) => crumb.resourceId && crumb.href.startsWith("/dashboard/labels/templates/"))?.label;
+  const manifestCrumbId = crumbs.find((crumb) => crumb.resourceId && crumb.href.startsWith("/dashboard/manifests/"))?.label;
   const order = useQuery({
     queryKey: ["order", orderCrumbId],
     queryFn: () => api<OrderRecord>(`/api/v1/orders/${orderCrumbId}`),
@@ -76,6 +77,13 @@ export function Topbar({
     staleTime: 30_000,
   });
   const templateCrumbLabel = labelTemplates.data ? labelTemplateName(labelTemplates.data.template, templateCrumbId ?? "") : null;
+  const manifest = useQuery({
+    queryKey: ["manifest", manifestCrumbId],
+    queryFn: () => api<ManifestRecord>(`/api/v1/manifests/${manifestCrumbId}`),
+    enabled: Boolean(manifestCrumbId && isResourceIdSegment(manifestCrumbId)),
+    staleTime: 30_000,
+  });
+  const manifestCrumbLabel = manifest.data ? manifestNumber(manifest.data) : null;
   const indiaPost = useIndiaPost();
   const defaultServiceLabel = indiaPostServiceLabel(
     indiaPost.data?.defaultServiceCode ?? "SP_INLAND_PARCEL"
@@ -164,6 +172,7 @@ export function Topbar({
           if (last.href.startsWith("/dashboard/orders/")) return orderCrumbLabel ?? "Order";
           if (last.href.startsWith("/dashboard/shipments/")) return shipmentCrumbLabel ?? "Shipment";
           if (last.href.startsWith("/dashboard/invoices/")) return invoiceCrumbLabel ?? "Invoice";
+          if (last.href.startsWith("/dashboard/manifests/")) return manifestCrumbLabel ?? "Manifest";
           return templateCrumbLabel ?? "Template";
         })()}
       </p>
@@ -190,7 +199,9 @@ export function Topbar({
                     ? invoiceCrumbLabel ?? "…"
                     : crumb.resourceId && crumb.href.startsWith("/dashboard/labels/templates/")
                       ? templateCrumbLabel ?? "…"
-                      : crumb.label}
+                      : crumb.resourceId && crumb.href.startsWith("/dashboard/manifests/")
+                        ? manifestCrumbLabel ?? "…"
+                        : crumb.label}
             </Link>
           </span>
         ))}

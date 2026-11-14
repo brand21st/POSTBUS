@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   customerPhone,
   labelTemplateName,
+  manifestNumber,
   salesInvoiceNumber,
   canFulfillOrder,
   canFulfillOrderAction,
@@ -35,6 +36,14 @@ describe("labelTemplateName", () => {
       )
     ).toBe("India Post");
     expect(labelTemplateName({ library: [] }, "a9151c2f-0207-41ee-ad36-b94377af158a")).toBe("Template");
+  });
+});
+
+describe("manifestNumber", () => {
+  it("uses the closed manifest number and Draft while it is still open", () => {
+    expect(manifestNumber({ number: "MF-20261114-TVM-01" })).toBe("MF-20261114-TVM-01");
+    expect(manifestNumber({ manifest_number: "MF-20261114-TVM-01", number: null })).toBe("MF-20261114-TVM-01");
+    expect(manifestNumber({ number: null })).toBe("Draft");
   });
 });
 

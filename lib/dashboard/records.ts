@@ -89,6 +89,13 @@ export function salesInvoiceNumber(invoice: {
   );
 }
 
+export function manifestNumber(manifest: {
+  number?: string | null;
+  manifest_number?: string | null;
+}) {
+  return pickString(manifest.number, manifest.manifest_number) || "Draft";
+}
+
 export function createdAt(record: { createdAt?: string; created_at?: string }) {
   return record.createdAt ?? record.created_at ?? null;
 }
