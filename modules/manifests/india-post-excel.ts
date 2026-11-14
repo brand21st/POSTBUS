@@ -4,6 +4,7 @@ import { BOOKED_EXPORT_MAX, bookedShipmentRow } from "@/modules/booking-queue/ex
 import { mapShipmentToArticle } from "@/modules/india-post/article-mapper";
 import { isValidIndiaPostBarcode, validateIndiaPostArticle } from "@/modules/india-post/article-validator";
 import { articleDetailsWorkbook } from "@/modules/india-post/article-details-sheet";
+import type { SheetCell } from "@/lib/xlsx/write";
 import { indiaPostBookingServiceCode, indiaPostMobile } from "@/modules/india-post/endpoints";
 import { indiaPostRequiresOtp } from "@/modules/india-post/spec";
 import { manifestFileBase } from "@/modules/manifests/export";
@@ -249,7 +250,7 @@ export async function exportManifestIndiaPostExcel(supabase: SupabaseClient, org
   const byId = new Map(((data ?? []) as unknown as LoadedShipment[]).map((row) => [row.id, row]));
 
   const failures: string[] = [];
-  const rows = [];
+  const rows: SheetCell[][] = [];
   ids.forEach((id, index) => {
     const loaded = byId.get(id);
     if (!loaded) {
