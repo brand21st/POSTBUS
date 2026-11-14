@@ -5,6 +5,7 @@ import { readCeptForceResubmitConsumedAt, readCeptSubmitIntentAt } from "@/modul
 import { shipmentBarcode } from "@/modules/india-post/booking-idempotency";
 import {
   evaluateBookingRetryEligibility,
+  PARKED_RETRY_MS,
   shipmentMayAllocateFirstBarcode,
   shipmentNeedsSameBarcodeRecovery,
 } from "@/modules/india-post/booking-retry-eligibility";
@@ -201,6 +202,83 @@ async function enqueueFirstBarcodeRecovery(supabase: SupabaseClient) {
  * Queue booking jobs for unconfirmed barcodes, and for every workspace's
  * Recovery Required / Failed rows that never stored an article number.
  */
+const PARKED_FORCE_MESSAGE =
+  "India Post booking did not finish. Force book checks tracking, then submits this barcode again.";
+
+/**
+ * A job dated far ahead never runs, and a QUEUED shipment under it shows Booking… forever.
+ * An article number becomes Recovery Required so Force book is the next step. A row that was
+ * never sent is made due again.
+ */
+export async function releaseParkedBookingShipments(supabase: SupabaseClient) {
+  const parkedAfter = new Date(Date.now() + PARKED_RETRY_MS).toISOString();
+  const { data, error } = await supabase
+    .from("background_jobs")
+    .select("id, entity_id, organization_id, last_error")
+    .eq("job_type", "shipment-booking")
+    .eq("entity_type", "shipment")
+    .in("status", ["RETRYING", "QUEUED", "PENDING"])
+    .gt("next_attempt_at", parkedAfter)
+    .limit(100);
+  if (error) throw new Error(error.message);
+  const jobs = (data ?? []) as Array<{ id: string; entity_id: string | null; organization_id: string; last_error?: string | null }>;
+  const shipmentIds = jobs.map((job) => job.entity_id).filter((id): id is string => Boolean(id));
+  if (!shipmentIds.length) return { released: 0, forceReady: 0 };
+
+  const { data: shipments, error: shipmentError } = await supabase
+    .from("shipments")
+    .select("id, organization_id, status, barcode, tracking_number, provider_ref, booked_at, metadata, last_error, last_error_code")
+    .in("id", shipmentIds)
+    .in("status", ["QUEUED", "BOOKING", "VALIDATING"])
+    .is("booked_at", null);
+  if (shipmentError) throw new Error(shipmentError.message);
+  const byId = new Map(((shipments ?? []) as RecoveryRow[]).map((row) => [row.id, row]));
+
+  let released = 0;
+  let forceReady = 0;
+  for (const job of jobs) {
+    const row = job.entity_id ? byId.get(job.entity_id) : undefined;
+    if (!row) continue;
+    const sent = Boolean(
+      shipmentBarcode(row.barcode) ||
+        shipmentBarcode(row.tracking_number) ||
+        row.provider_ref ||
+        readCeptSubmitIntentAt(row.metadata)
+    );
+    if (sent) {
+      const { error: shipError } = await supabase
+        .from("shipments")
+        .update({
+          status: "RECOVERY_REQUIRED",
+          last_error: row.last_error || job.last_error || PARKED_FORCE_MESSAGE,
+          last_error_code: row.last_error_code || "CEPT_UNKNOWN",
+        })
+        .eq("id", row.id)
+        .eq("organization_id", row.organization_id)
+        .in("status", ["QUEUED", "BOOKING", "VALIDATING"])
+        .is("booked_at", null);
+      if (shipError) continue;
+      await supabase
+        .from("background_jobs")
+        .update({ status: "FAILED", next_attempt_at: null })
+        .eq("id", job.id)
+        .in("status", ["RETRYING", "QUEUED", "PENDING"]);
+      forceReady += 1;
+      continue;
+    }
+    const { error: jobError } = await supabase
+      .from("background_jobs")
+      .update({ status: "QUEUED", next_attempt_at: null, locked_at: null })
+      .eq("id", job.id)
+      .in("status", ["RETRYING", "QUEUED", "PENDING"]);
+    if (!jobError) released += 1;
+  }
+  if (released || forceReady) {
+    logInfo("booking.parked_released", { released, forceReady });
+  }
+  return { released, forceReady };
+}
+
 export async function enqueueSameBarcodeRecovery(supabase: SupabaseClient) {
   const firstBarcodeQueued = await enqueueFirstBarcodeRecovery(supabase);
   const { data, error } = await supabase

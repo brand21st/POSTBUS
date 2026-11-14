@@ -24,12 +24,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { isIndiaPostBookingInFlight } from "@/modules/india-post/booking-status";
+import { bookingAttemptIsLive, isIndiaPostBookingActive } from "@/modules/india-post/booking-status";
 import {
   ERROR_KIND_LABEL,
   errorActionHint,
   errorQuickAction,
   errorTone,
+  finalErrorFromFacts,
   isUnknownBookingError,
   resolveDisplayError,
   type DisplayErrorStatus,
@@ -60,15 +61,56 @@ const ACTION_ICON: Record<ErrorQuickAction, typeof Zap> = {
   open: ExternalLink,
 };
 
+const STALLED_BOOKING: DisplayErrorStatus = {
+  status: "Booking stalled",
+  summary: "Direct book did not finish. Retry booking.",
+  source: "rules",
+  kind: "shipment",
+  facts: [{ kind: "shipment", message: "Direct book did not finish. Retry booking." }],
+};
+
+const STALLED_UNKNOWN: DisplayErrorStatus = {
+  status: "Booking stalled",
+  summary: "India Post booking outcome is unknown. Force book checks tracking, then submits this barcode again.",
+  source: "rules",
+  kind: "shipment",
+  facts: [{ kind: "shipment", message: "India Post booking outcome is unknown. Force book checks tracking, then submits this barcode again." }],
+};
+
+function stalledBooking(order: OrderRecord): DisplayErrorStatus {
+  const barcode = order.shipment?.barcode ?? order.shipment?.trackingNumber ?? order.shipment?.tracking_number;
+  return barcode ? STALLED_UNKNOWN : STALLED_BOOKING;
+}
+
 export function orderDisplayError(order: OrderRecord, finalStatus?: FinalErrorStatus | null) {
   return resolveDisplayError(order, finalStatus);
+}
+
+/** When AI address check is off, drop AI labels, rewrite, and auto-book copy. */
+function errorForToggle(error: DisplayErrorStatus | null, aiAddressCheck: boolean): DisplayErrorStatus | null {
+  if (!error || aiAddressCheck || error.source !== "ai") return error;
+  const rules = finalErrorFromFacts(error.facts);
+  return {
+    ...error,
+    status: rules?.status ?? error.status,
+    summary: rules?.summary ?? error.summary,
+    source: "rules",
+  };
 }
 
 function unknownOutcome(order: OrderRecord, error: DisplayErrorStatus) {
   return isUnknownBookingError({ ...order.shipment, summary: error.summary });
 }
 
-function StatusPill({ error, className }: { error: DisplayErrorStatus; className?: string }) {
+function StatusPill({
+  error,
+  className,
+  aiAddressCheck = false,
+}: {
+  error: DisplayErrorStatus;
+  className?: string;
+  aiAddressCheck?: boolean;
+}) {
   const tone = errorTone(error.kind);
   const Icon = error.kind === "address" ? MapPin : error.kind === "parcel" ? Package : tone === "failure" ? XCircle : AlertTriangle;
   return (
@@ -83,7 +125,7 @@ function StatusPill({ error, className }: { error: DisplayErrorStatus; className
     >
       <Icon className="size-3 shrink-0" aria-hidden />
       <span className="truncate">{error.status}</span>
-      {error.source === "ai" ? (
+      {aiAddressCheck && error.source === "ai" ? (
         <span className="rounded bg-white/70 px-0.5 text-[9px] font-bold uppercase tracking-wide opacity-80 dark:bg-black/30">
           AI
         </span>
@@ -97,6 +139,7 @@ export function BookingErrorCell({
   checking = false,
   finalStatus,
   busy = false,
+  aiAddressCheck = false,
   onAction,
 }: {
   order: OrderRecord;
@@ -104,6 +147,8 @@ export function BookingErrorCell({
   finalStatus?: FinalErrorStatus | null;
   /** The row's quick action is running (e.g. retry in flight). */
   busy?: boolean;
+  /** When false, "Fix address and book" becomes a manual address review. */
+  aiAddressCheck?: boolean;
   onAction?: (action: ErrorQuickAction | "details") => void;
 }) {
   if (checking) {
@@ -114,7 +159,8 @@ export function BookingErrorCell({
       </span>
     );
   }
-  if (isIndiaPostBookingInFlight(order.shipment?.status)) {
+  const bookingActive = isIndiaPostBookingActive(order.shipment?.status);
+  if (bookingActive && (busy || bookingAttemptIsLive(order.shipment))) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-800">
         <Loader2 className="size-3 animate-spin" aria-hidden />
@@ -122,11 +168,12 @@ export function BookingErrorCell({
       </span>
     );
   }
-  const error = orderDisplayError(order, finalStatus);
+  const error = errorForToggle(orderDisplayError(order, finalStatus), aiAddressCheck) ?? (bookingActive ? stalledBooking(order) : null);
   if (!error) return <span className="text-xs text-muted">—</span>;
-  const action = errorQuickAction(error, unknownOutcome(order, error));
+  const rawAction = errorQuickAction(error, unknownOutcome(order, error));
+  const action = rawAction === "autocorrect" && !aiAddressCheck ? "review" : rawAction;
   const ActionIcon = busy ? Loader2 : ACTION_ICON[action];
-  const hint = errorActionHint(error, action);
+  const hint = action === "autocorrect" && aiAddressCheck ? errorActionHint(error, action) : null;
   const exactCode = error.facts.find((fact) => fact.kind === "provider" && fact.code)?.code;
 
   return (
@@ -136,7 +183,7 @@ export function BookingErrorCell({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex max-w-full items-center gap-1">
-        <StatusPill error={error} className="min-w-0" />
+        <StatusPill error={error} className="min-w-0" aiAddressCheck={aiAddressCheck} />
         {exactCode ? (
           <code className="truncate rounded bg-surface-soft px-1 text-[10px] font-medium text-muted" title="India Post error code">
             {exactCode}
@@ -152,7 +199,7 @@ export function BookingErrorCell({
           <Button
             type="button"
             size="xs"
-            variant={action === "open" ? "secondary" : "primary"}
+            variant={action === "open" || action === "review" ? "secondary" : "primary"}
             className={cn(
               "h-6 gap-1 px-2 text-[11px]",
               action === "force" && "bg-red-600 hover:bg-red-700",
@@ -164,7 +211,7 @@ export function BookingErrorCell({
             onClick={() => onAction(action)}
           >
             <ActionIcon className={cn("size-3", busy && "animate-spin")} aria-hidden />
-            {busy && (action === "retry" || action === "autocorrect") ? "Booking…" : ACTION_LABEL[action]}
+            {busy && (action === "retry" || action === "autocorrect" || action === "force") ? "Booking…" : ACTION_LABEL[action]}
           </Button>
           <Button
             type="button"
@@ -189,6 +236,7 @@ export function BookingErrorDialog({
   confirmForce = false,
   forcing = false,
   retrying = false,
+  aiAddressCheck = false,
   onOpenChange,
   onAction,
   onForce,
@@ -201,13 +249,16 @@ export function BookingErrorDialog({
   onOpenChange: (open: boolean) => void;
   onAction: (action: Exclude<ErrorQuickAction, "force" | "open">) => void;
   retrying?: boolean;
+  /** When false, "Fix address and book" becomes a manual address review. */
+  aiAddressCheck?: boolean;
   onForce: () => void;
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
-  const error = orderDisplayError(order, finalStatus);
+  const error = errorForToggle(orderDisplayError(order, finalStatus), aiAddressCheck);
   const shown = error;
   const unknown = error ? unknownOutcome(order, error) : false;
-  const action = error ? errorQuickAction(error, unknown) : "open";
+  const rawAction = error ? errorQuickAction(error, unknown) : "open";
+  const action = rawAction === "autocorrect" && !aiAddressCheck ? "review" : rawAction;
   const barcode = order.shipment?.barcode ?? order.shipment?.trackingNumber ?? order.shipment?.tracking_number;
   const number = orderNumber(order);
 
@@ -230,7 +281,7 @@ export function BookingErrorDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Order {number}
-            {shown ? <StatusPill error={shown} /> : null}
+            {shown ? <StatusPill error={shown} aiAddressCheck={aiAddressCheck} /> : null}
           </DialogTitle>
           <DialogDescription>{error ? error.summary : "This order has no booking errors now."}</DialogDescription>
         </DialogHeader>

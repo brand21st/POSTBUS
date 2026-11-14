@@ -13,6 +13,7 @@ import {
 import { blankBookingArtifactPatch, shipmentBarcode } from "@/modules/india-post/booking-idempotency";
 import {
   bulkMembershipRetryDecision,
+  bookingJobIsParked,
   bulkRetryBucket,
   evaluateBookingRetryEligibility,
   NEVER_SUBMITTED_CODES,
@@ -23,7 +24,7 @@ import {
 } from "@/modules/india-post/booking-retry-eligibility";
 import { bookingForceRetryEnabled } from "@/modules/india-post/booking-recovery";
 
-const REQUEUEABLE = ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED"] as const;
+const REQUEUEABLE = ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED", "BOOKING"] as const;
 
 type RetryExtras = {
   lengthCm?: number;
@@ -252,8 +253,9 @@ export async function scheduleForceRetryBooking(
 export const FORCE_BOOK_ROLES = new Set(["OWNER", "ADMIN"]);
 /** A second force within this window is refused, so repeated clicks cannot stack POSTs. */
 export const FORCE_BOOK_COOLDOWN_MS = 10 * 60 * 1000;
-/** Only a booking that failed or could not be confirmed may be forced. Never one in flight. */
+/** Only a booking that failed, could not be confirmed, or is parked may be forced. Never one in flight. */
 const FORCE_BOOK_FROM = ["FAILED", "RECOVERY_REQUIRED"] as const;
+const STALLED_FORCE_FROM = ["QUEUED", "BOOKING", "VALIDATING"] as const;
 
 export type ForceBookRefusal = {
   kind: "forbidden" | "conflict";
@@ -283,7 +285,10 @@ export function forceBookRefusal(
   const shipment = input.shipment;
   if (!shipment?.id) return { kind: "conflict", reason: "Shipment not found.", action: "INVALID_SHIPMENT" };
   const status = String(shipment.status ?? "").toUpperCase();
-  if (!(FORCE_BOOK_FROM as readonly string[]).includes(status)) {
+  const job = input.job;
+  const parked = bookingJobIsParked(job, now);
+  const stalled = (STALLED_FORCE_FROM as readonly string[]).includes(status) && parked;
+  if (!(FORCE_BOOK_FROM as readonly string[]).includes(status) && !stalled) {
     return {
       kind: "conflict",
       reason: `Force book is only for failed or unconfirmed bookings. This shipment is ${status || "in an unknown state"}.`,
@@ -291,9 +296,8 @@ export function forceBookRefusal(
   }
   const owned = bulkMembershipRetryDecision(String(shipment.id), input.bulkArticleResult);
   if (owned) return { kind: "conflict", reason: owned.reason, action: owned.action };
-  const job = input.job;
   const jobState = String(job?.status ?? "").toUpperCase();
-  if (job?.id && (jobState === "QUEUED" || jobState === "PENDING" || jobState === "RETRYING")) {
+  if (job?.id && !parked && (jobState === "QUEUED" || jobState === "PENDING" || jobState === "RETRYING")) {
     return { kind: "conflict", reason: "A booking retry is already scheduled.", action: "RETRY_ALREADY_SCHEDULED" };
   }
   if (job?.id && jobState === "RUNNING") {

@@ -568,5 +568,13 @@ export async function processRazorpayEvent(
     metadata: { eventId, event },
   });
 
+  if (subscription?.organization_id) {
+    const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+    scheduleSheetsCrmEvent({
+      eventType: "subscription.updated",
+      organizationId: subscription.organization_id,
+    });
+  }
+
   return { processed: true };
 }

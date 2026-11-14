@@ -33,6 +33,11 @@ export function shipmentNeedsSameBarcodeRecovery(row: {
 
 /** Matches claim_background_jobs stale RUNNING recovery. */
 export const STALE_BOOKING_LOCK_MS = 15 * 60 * 1000;
+/**
+ * A retry scheduled further out than this is parked, not waiting. The orders page must offer
+ * Force book instead of showing Booking… until that date.
+ */
+export const PARKED_RETRY_MS = 24 * 60 * 60 * 1000;
 
 export const BOOKING_RETRY_ACTIONS = [
   "SAFE_TO_REQUEUE",
@@ -199,6 +204,15 @@ function nextAttemptMs(job: NonNullable<BookingRetryJob>) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/** True when the next attempt is so far ahead that the worker will not pick the job up. */
+export function bookingJobIsParked(job: BookingRetryJob, now = Date.now()) {
+  if (!job?.id) return false;
+  const state = jobStatus(job);
+  if (state !== "RETRYING" && state !== "QUEUED" && state !== "PENDING") return false;
+  const due = nextAttemptMs(job);
+  return due != null && due - now >= PARKED_RETRY_MS;
+}
+
 /**
  * An existing barcode may be submitted only when this process has already recorded
  * that the previous failure happened before CEPT was called.
@@ -328,11 +342,11 @@ export function evaluateBookingRetryEligibility(
     }
     if (state === "RUNNING") {
       const stale = lockAgeMs(job, now) >= STALE_BOOKING_LOCK_MS;
-      if (!stale || status === "BOOKING") {
+      if (!stale) {
         return decision("BOOKING_IN_PROGRESS", shipmentId, { existingJobId: job.id });
       }
     }
-    if (state === "RETRYING") {
+    if (state === "RETRYING" && !bookingJobIsParked(job, now)) {
       const due = nextAttemptMs(job);
       if (due != null && due > now) {
         return decision("RETRY_ALREADY_SCHEDULED", shipmentId, {
@@ -352,7 +366,12 @@ export function evaluateBookingRetryEligibility(
   }
 
   if (status === "BOOKING") {
-    return decision("BOOKING_IN_PROGRESS", shipmentId, { existingJobId: job?.id ?? undefined });
+    // A live RUNNING lock already returned above. A dead BOOKING row that never stored an
+    // article can be booked again. Anything that might already be at India Post stays unknown.
+    if (hasSubmissionArtifact(shipment) && !existingBarcodeMayBeSubmitted(shipment)) {
+      return decision("BOOKING_OUTCOME_UNKNOWN", shipmentId, { existingJobId: job?.id ?? undefined });
+    }
+    return decision("SAFE_TO_REQUEUE", shipmentId, { existingJobId: job?.id ?? undefined });
   }
 
   if (forceResubmit && (SAFE_STATUSES.has(status) || status === "RECOVERY_REQUIRED")) {
@@ -367,6 +386,26 @@ export function evaluateBookingRetryEligibility(
 }
 
 export type BulkRetryBucket = "eligible" | "alreadyProcessing" | "needsReview" | "failedValidation";
+
+/**
+ * A Direct Book click may start this job now. It does not allocate a barcode or POST again;
+ * the booking run still claims the shipment. A future retry and a fresh RUNNING lock are left alone.
+ */
+export function directBookJobToRun<T extends { id?: string | null; status?: string | null; next_attempt_at?: string | null; nextAttemptAt?: string | null }>(
+  decision: Pick<BookingRetryDecision, "action">,
+  job: T | null | undefined,
+  now = Date.now()
+): T | null {
+  if (decision.action !== "BOOKING_IN_PROGRESS" && decision.action !== "RETRY_ALREADY_SCHEDULED") return null;
+  if (!job?.id) return null;
+  const state = String(job.status ?? "").toUpperCase();
+  if (state === "QUEUED" || state === "PENDING") return job;
+  if (state !== "RETRYING") return null;
+  const raw = job.nextAttemptAt ?? job.next_attempt_at;
+  const due = raw ? Date.parse(String(raw)) : Number.NaN;
+  if (Number.isFinite(due) && due > now) return null;
+  return job;
+}
 
 export function bulkRetryBucket(action: BookingRetryAction): BulkRetryBucket {
   if (action === "SAFE_TO_REQUEUE") return "eligible";

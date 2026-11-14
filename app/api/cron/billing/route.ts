@@ -22,6 +22,14 @@ export async function POST(request: NextRequest) {
     // Affiliate work is independent: failure never changes the billing sweep outcome.
     try { await runAffiliateSweep(createAdminClient()); }
     catch { logError("affiliate.sweep_failed", { category: "retry_required" }); }
+    try {
+      const { sweepSheetsCrmAbandonment } = await import("@/modules/sheets-crm/abandonment-sweep");
+      await sweepSheetsCrmAbandonment(createAdminClient());
+    } catch (sheetsError) {
+      logError("sheets_crm.abandon_sweep_failed", {
+        message: sheetsError instanceof Error ? sheetsError.message : "abandonment sweep failed",
+      });
+    }
     return NextResponse.json({ success: true, data: { ...result, addons } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Billing sweep failed.";

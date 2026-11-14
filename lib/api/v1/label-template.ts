@@ -104,9 +104,6 @@ export async function handleLabelTemplateRoutes(
   if (key === "POST label-template/custom-preview" || key === "POST label-template/custom-download") {
     const body = await readCustomLabelBody(request);
     const hasTarget = Boolean(body.shipmentId?.trim() || body.orderId?.trim());
-    if (!hasTarget && key.endsWith("custom-download")) {
-      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "Load an order to download the shipping label.");
-    }
     const rendered = hasTarget
       ? await renderCustomShippingLabel(supabase, ctx.organizationId, body)
       : await renderSampleCustomShippingLabel(supabase, ctx.organizationId, body);

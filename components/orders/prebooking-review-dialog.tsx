@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,10 +12,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { IndiaPostPincodeAutofill } from "@/components/address/india-post-pincode-autofill";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/hooks/use-api";
-import type { PrebookingCheckResult, PrebookingOrderResult, PrebookingUiStatus } from "@/types/api";
+import type { AutomationSettings, PrebookingCheckResult, PrebookingOrderResult, PrebookingUiStatus } from "@/types/api";
 
 const CHUNK = 25;
 
@@ -22,7 +24,7 @@ export function addressCheckLabel(status?: string | null, checking = false) {
   if (checking) return "Checking";
   switch (String(status ?? "").toUpperCase()) {
     case "READY":
-      return "AI Checked";
+      return "Checked";
     case "INVALID":
       return "Address error";
     case "NEEDS_REVIEW":
@@ -77,13 +79,19 @@ function safeSuggestion(order: PrebookingOrderResult) {
   })?.suggestion;
 }
 
-async function precheckChunks(orderIds: string[], onProgress: (done: number, total: number) => void, forceAi = false) {
+async function precheckChunks(
+  orderIds: string[],
+  onProgress: (done: number, total: number) => void,
+  options: { allowAi: boolean; forceAi?: boolean } = { allowAi: true }
+) {
   const orders: PrebookingOrderResult[] = [];
+  const allowAi = options.allowAi;
+  const forceAi = allowAi && Boolean(options.forceAi);
   for (let index = 0; index < orderIds.length; index += CHUNK) {
     const chunk = orderIds.slice(index, index + CHUNK);
     const result = await api<PrebookingCheckResult>("/api/v1/bookings/precheck", {
       method: "POST",
-      body: JSON.stringify({ orderIds: chunk, allowAi: true, forceAi }),
+      body: JSON.stringify({ orderIds: chunk, allowAi, forceAi }),
     });
     orders.push(...result.orders);
     onProgress(Math.min(index + chunk.length, orderIds.length), orderIds.length);
@@ -104,13 +112,24 @@ export function PrebookingReviewDialog({
   orderIds,
   onBookReady,
   onCheckingChange,
+  allowAi: allowAiProp,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orderIds: string[];
   onBookReady: (orderIds: string[]) => void;
   onCheckingChange?: (orderIds: string[]) => void;
+  allowAi?: boolean;
 }) {
+  const automation = useQuery({
+    queryKey: ["automation"],
+    queryFn: () => api<AutomationSettings>("/api/v1/automation"),
+  });
+  const allowAi =
+    allowAiProp ??
+    automation.data?.autoAiAddressCheck ??
+    automation.data?.auto_ai_address_check ??
+    false;
   const [result, setResult] = useState<PrebookingCheckResult | null>(null);
   const [checking, setChecking] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -125,7 +144,10 @@ export function PrebookingReviewDialog({
     onCheckingChange?.(ids);
     setProgress({ done: 0, total: ids.length });
     try {
-      const next = await precheckChunks(ids, (done, total) => setProgress({ done, total }), forceAi);
+      const next = await precheckChunks(ids, (done, total) => setProgress({ done, total }), {
+        allowAi,
+        forceAi,
+      });
       setResult((current) => {
         const orders = current
           ? current.orders.map((order) => next.orders.find((item) => item.orderId === order.orderId) ?? order)
@@ -279,9 +301,11 @@ export function PrebookingReviewDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>AI Address Check</DialogTitle>
+          <DialogTitle>{allowAi ? "AI Address Check" : "Address check"}</DialogTitle>
           <DialogDescription>
-            Addresses are corrected automatically for India Post booking. Review anything still flagged.
+            {allowAi
+              ? "Addresses are corrected automatically for India Post booking. Review anything still flagged."
+              : "Review the flagged address. PIN lookup and manual edits still run. AI correction is off."}
           </DialogDescription>
         </DialogHeader>
         {checking ? (
@@ -353,14 +377,37 @@ export function PrebookingReviewDialog({
                 <Field label="Address line 3" problem={problemFields.has("line3")} className="sm:col-span-2">
                   <Input value={draft.line3} onChange={(event) => setDraft({ ...draft, line3: event.target.value })} />
                 </Field>
+                <Field label="PIN code" problem={problemFields.has("pincode")}>
+                  <Input
+                    inputMode="numeric"
+                    maxLength={6}
+                    autoComplete="postal-code"
+                    value={draft.pincode}
+                    onChange={(event) =>
+                      setDraft({ ...draft, pincode: event.target.value.replace(/\D/g, "").slice(0, 6) })
+                    }
+                  />
+                  <IndiaPostPincodeAutofill
+                    pincode={draft.pincode}
+                    fillKey={active.orderId}
+                    onFill={({ city, state }) =>
+                      setDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              ...(city ? { city } : {}),
+                              ...(state ? { state } : {}),
+                            }
+                          : current
+                      )
+                    }
+                  />
+                </Field>
                 <Field label="City" problem={problemFields.has("city")}>
                   <Input value={draft.city} onChange={(event) => setDraft({ ...draft, city: event.target.value })} />
                 </Field>
                 <Field label="State" problem={problemFields.has("state")}>
                   <Input value={draft.state} onChange={(event) => setDraft({ ...draft, state: event.target.value })} />
-                </Field>
-                <Field label="PIN code" problem={problemFields.has("pincode")}>
-                  <Input value={draft.pincode} onChange={(event) => setDraft({ ...draft, pincode: event.target.value })} />
                 </Field>
                 <Field label="Country" problem={problemFields.has("country")}>
                   <Input value={draft.country} onChange={(event) => setDraft({ ...draft, country: event.target.value })} />
@@ -389,9 +436,11 @@ export function PrebookingReviewDialog({
                 <Button type="button" size="sm" disabled={saving} onClick={() => void save(active)}>
                   Save changes
                 </Button>
-                <Button type="button" size="sm" variant="secondary" disabled={checking || saving} onClick={() => void runCheck([active.orderId], true)}>
-                  AI correct address
-                </Button>
+                {allowAi ? (
+                  <Button type="button" size="sm" variant="secondary" disabled={checking || saving} onClick={() => void runCheck([active.orderId], true)}>
+                    AI correct address
+                  </Button>
+                ) : null}
                 <Button type="button" size="sm" variant="secondary" disabled={checking || saving} onClick={() => void runCheck([active.orderId])}>
                   Recheck address
                 </Button>
@@ -405,9 +454,11 @@ export function PrebookingReviewDialog({
           <Button type="button" variant="secondary" disabled={saving || checking} onClick={() => void applySafeAll()}>
             Apply safe suggestions
           </Button>
-          <Button type="button" variant="secondary" disabled={checking || saving || !orderIds.length} onClick={() => void runCheck(orderIds, true)}>
-            AI correct all
-          </Button>
+          {allowAi ? (
+            <Button type="button" variant="secondary" disabled={checking || saving || !orderIds.length} onClick={() => void runCheck(orderIds, true)}>
+              AI correct all
+            </Button>
+          ) : null}
           <Button type="button" variant="secondary" disabled={checking || !orderIds.length} onClick={() => void runCheck(orderIds)}>
             Revalidate
           </Button>

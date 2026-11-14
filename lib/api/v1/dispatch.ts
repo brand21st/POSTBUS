@@ -24,7 +24,7 @@ import { handleUiRoutes } from "@/lib/api/v1/ui";
 import { handleWorkspaceRoutes } from "@/lib/api/v1/workspace";
 import { permissionForTenantRoute } from "@/lib/api/v1-permissions";
 import { hasPermission } from "@/lib/permissions/rbac";
-import { assertPlanFeature, lockedFeatureForApi } from "@/modules/billing/entitlements";
+import { assertAnyPlanFeature, assertPlanFeature, FEATURE, lockedFeatureForApi } from "@/modules/billing/entitlements";
 
 export type TenantRoute = { key: string; path: string; method: string; slugs: string[] };
 
@@ -46,6 +46,9 @@ export async function dispatchTenantRoutes(
   }
   const planFeature = lockedFeatureForApi(method, path, slugs);
   if (planFeature) await assertPlanFeature(supabase, ctx.organizationId, planFeature);
+  else if (method === "POST" && path === "label-template/custom-preview") {
+    await assertAnyPlanFeature(supabase, ctx.organizationId, [FEATURE.packing, FEATURE.multiPrint]);
+  }
   return (
     (await handleTariffRoutes(request, supabase, ctx, path)) ??
     (await handleBillingRoutes(request, supabase, ctx, key)) ??

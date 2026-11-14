@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { bindSignupReferral } from "@/modules/affiliates/service";
+import { scheduleSheetsCrmEvent } from "@/modules/sheets-crm/enqueue";
 import { registerAccountSchema } from "@/lib/auth/register-schema";
 import { authCallbackUrl } from "@/lib/auth/urls";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
@@ -52,7 +53,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (data.user?.id) await bindSignupReferral(data.user.id);
+    if (data.user?.id) {
+      await bindSignupReferral(data.user.id);
+      scheduleSheetsCrmEvent({ eventType: "customer.signup.completed", customerId: data.user.id });
+    }
     if (data.user?.id && !data.session) {
       void import("@/modules/vachat/abandoned-signup")
         .then(({ enqueueAbandonedSignup }) => enqueueAbandonedSignup(data.user!.id))

@@ -8,8 +8,10 @@ import type { MemberRole } from "@/types/domain";
 
 const assertPlanFeature = vi.fn(async () => undefined);
 vi.mock("@/modules/billing/entitlements", () => ({
+  FEATURE: { packing: "Custom packing labels", multiPrint: "Multi print" },
   lockedFeatureForApi: (_method: string, path: string) => (path === "bookings/queue" ? "bulk" : null),
   assertPlanFeature: (...args: unknown[]) => assertPlanFeature(...(args as [])),
+  assertAnyPlanFeature: async () => undefined,
 }));
 
 const { dispatchTenantRoutes } = await import("@/lib/api/v1/dispatch");

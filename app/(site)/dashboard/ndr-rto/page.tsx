@@ -196,7 +196,10 @@ export default function NdrRtoPage() {
   const autoSynced = useRef<string>("");
 
   const syncVisible = useMutation({
-    mutationFn: (shipmentIds: string[]) =>
+    // `manual` is true only for the "Sync India Post tracking" button. The
+    // background sync on page load must not raise error toasts: a Customer ID
+    // that CEPT denies tracking access would otherwise show an error on every visit.
+    mutationFn: ({ shipmentIds }: { shipmentIds: string[]; manual: boolean }) =>
       api<{ tracked: number; matched: number }>("/api/v1/ndr-rto/sync-visible", {
         method: "POST",
         body: JSON.stringify({ shipmentIds }),
@@ -209,10 +212,15 @@ export default function NdrRtoPage() {
           ? `Updated India Post tracking for ${matched} of ${tracked} shipment${tracked === 1 ? "" : "s"}.`
           : `India Post responded for ${tracked} shipment${tracked === 1 ? "" : "s"}, with no new scan events.`
       );
+    },
+    onError: (error: Error, { manual }) => {
+      if (manual) toast.error(error.message);
+    },
+    onSettled: () => {
+      // A failed sync can still have saved some scan updates server-side.
       queryClient.invalidateQueries({ queryKey: ["ndr-rto"] });
       queryClient.invalidateQueries({ queryKey: ["ndr-rto-summary"] });
     },
-    onError: (error: Error) => toast.error(error.message),
   });
 
   const visibleKey = visibleIds.join(",");
@@ -221,7 +229,7 @@ export default function NdrRtoPage() {
     if (!canSync || list.isLoading || list.isError || !visibleIds.length) return;
     if (autoSynced.current === visibleKey) return;
     autoSynced.current = visibleKey;
-    syncVisible.mutate(visibleIds);
+    syncVisible.mutate({ shipmentIds: visibleIds, manual: false });
     // Mutation identity is not a load trigger — only the visible AWB set is.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid CEPT loops from mutation object identity
   }, [canSync, list.isError, list.isLoading, visibleKey]);
@@ -407,7 +415,7 @@ export default function NdrRtoPage() {
                     return;
                   }
                   autoSynced.current = visibleIds.join(",");
-                  syncVisible.mutate(visibleIds);
+                  syncVisible.mutate({ shipmentIds: visibleIds, manual: true });
                 }}
                 disabled={syncVisible.isPending || !visibleIds.length}
               >

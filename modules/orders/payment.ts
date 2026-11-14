@@ -94,3 +94,7 @@ export function shipmentCollectFromOrder(order: {
 
   return { payment_mode: "PREPAID" as const, cod_amount: 0 };
 }
+
+export function isManualCodAmount(mode: unknown) {
+  return String(mode ?? "").trim().toLowerCase() === "manual";
+}

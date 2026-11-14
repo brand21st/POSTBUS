@@ -113,6 +113,12 @@ export async function handleWorkspaceRoutes(
       .select()
       .single();
     if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+    scheduleSheetsCrmEvent({
+      eventType: "workspace.updated",
+      customerId: ctx.userId,
+      organizationId: ctx.organizationId,
+    });
     return mapOrganizationSettings(data as OrganizationIdentityRow);
   }
 

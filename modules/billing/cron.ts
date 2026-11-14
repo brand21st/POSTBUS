@@ -34,6 +34,8 @@ export async function runBillingSweep(supabase: SupabaseClient) {
       actor: "SYSTEM",
     });
     expired += 1;
+    const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+    scheduleSheetsCrmEvent({ eventType: "subscription.updated", organizationId: row.organization_id });
   }
 
   const soon = new Date(Date.now() + 3 * 86400000).toISOString();

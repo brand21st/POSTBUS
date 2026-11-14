@@ -157,6 +157,26 @@ describe("upsertWooCommerceOrder idempotency", () => {
     expect(mem.rows("orders")[0]).toMatchObject({ total_amount: 640 });
   });
 
+  it("does not overwrite a manual remaining COD on WooCommerce sync", async () => {
+    const mem = db();
+    const first = await upsert(mem.client, remoteOrder(502));
+    expect(first.created).toBe(true);
+    await mem.client
+      .from("orders")
+      .update({ cod_amount_mode: "manual", payment_status: "COD", amount_paid: 0, cod_amount: 309 })
+      .eq("id", first.orderId)
+      .eq("organization_id", ORG);
+    const second = await upsert(mem.client, remoteOrder(502, { total: "640.00" }));
+    expect(second).toMatchObject({ created: false, updated: true, orderId: first.orderId });
+    expect(mem.rows("orders")[0]).toMatchObject({
+      total_amount: 640,
+      cod_amount_mode: "manual",
+      payment_status: "COD",
+      amount_paid: 0,
+      cod_amount: 309,
+    });
+  });
+
   it("keeps one order when order.created and order.updated import concurrently", async () => {
     const mem = db();
     const results = await Promise.all([upsert(mem.client, remoteOrder(777)), upsert(mem.client, remoteOrder(777))]);

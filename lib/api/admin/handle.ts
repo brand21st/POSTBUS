@@ -2,7 +2,7 @@ import { z } from "zod";
 import { handleAffiliateAdmin } from "@/modules/affiliates/api";
 import { handleTaxPolicyAdmin } from "@/modules/billing/tax-policy-admin";
 import { handleAdminTaxInvoices } from "@/modules/billing/subscription-invoice-access";
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { AdminContext } from "@/lib/api/admin-context";
 import { assertAdminActionPin } from "@/lib/admin/action-pin";
@@ -42,6 +42,16 @@ import {
   listPageRange,
   parseAdminAccountListParams,
 } from "@/lib/admin/account-list";
+import {
+  abandonedExportRows,
+  accountExportDate,
+  accountExportFilename,
+  parseAccountExportTab,
+  workspaceExportRows,
+  type AbandonedExportSource,
+  type WorkspaceExportSource,
+} from "@/lib/admin/account-export";
+import { writeWorkbook } from "@/lib/xlsx/write";
 
 const planSchema = z.object({
   slug: z.string().min(2).optional(),
@@ -108,6 +118,10 @@ export async function handleAdminRoutes(
   if (key === "GET settings/vachat/logs") return loadPlatformVachatLogs(request, supabase);
   if (key === "GET settings/vachat/unassigned") return loadSupportUnassigned(supabase);
   if (key === "POST settings/vachat/unassigned/assign") return assignSupportUnassigned(request, supabase, ctx);
+  if (slugs[0] === "settings" && slugs[1] === "sheets-crm") {
+    const { handleSheetsCrmAdmin } = await import("@/modules/sheets-crm/admin");
+    return handleSheetsCrmAdmin(request, supabase, ctx, slugs.slice(2), method);
+  }
   if (key === "GET trial-settings" || (key === "GET settings" && slugs[0] === "trial-settings")) {
     const { data } = await supabase
       .from("platform_settings")
@@ -500,6 +514,172 @@ async function listAbandonedSignups(
   };
 }
 
+const ACCOUNT_EXPORT_CHUNK = 1000;
+const ACCOUNT_EXPORT_MAX_ROWS = 200_000;
+
+function exportPlanName(plans: unknown) {
+  const plan = Array.isArray(plans) ? plans[0] : plans;
+  if (!plan || typeof plan !== "object" || !("name" in plan)) return null;
+  const name = (plan as { name?: unknown }).name;
+  return typeof name === "string" ? name : null;
+}
+
+function xlsxAttachment(bytes: Uint8Array, filename: string) {
+  return new NextResponse(Buffer.from(bytes), {
+    headers: {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
+
+async function attachWorkspaceExportFields(
+  supabase: AdminClient,
+  orgs: Array<{
+    id: string;
+    name: string | null;
+    slug: string | null;
+    account_status: string | null;
+    created_at: string | null;
+  }>
+): Promise<WorkspaceExportSource[]> {
+  const ids = orgs.map((org) => org.id);
+  const { data: subs, error: subsError } = await supabase
+    .from("subscriptions")
+    .select("organization_id, status, billing_cycle, amount_paise, plans!plan_id(name)")
+    .in("organization_id", ids)
+    .in("status", ["TRIAL", "ACTIVE", "PAST_DUE", "PAUSED", "PAYMENT_FAILED"]);
+  if (subsError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, subsError.message);
+  const { data: members, error: membersError } = await supabase
+    .from("organization_members")
+    .select("organization_id, user_id, role, created_at")
+    .in("organization_id", ids);
+  if (membersError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, membersError.message);
+  const userIds = [...new Set((members ?? []).map((row) => row.user_id))];
+  const { data: profiles, error: profilesError } = userIds.length
+    ? await supabase.from("profiles").select("id, full_name, email, whatsapp_number, last_active_at").in("id", userIds)
+    : { data: [] as { id: string; full_name: string | null; email: string | null; whatsapp_number: string | null; last_active_at: string | null }[], error: null };
+  if (profilesError) throw new AppError(ERROR_CODES.VALIDATION_ERROR, profilesError.message);
+
+  const profileById = new Map((profiles ?? []).map((row) => [row.id, row]));
+  const subByOrg = new Map((subs ?? []).map((row) => [row.organization_id, row]));
+  const membersByOrg = new Map<string, typeof members>();
+  for (const row of members ?? []) {
+    const list = membersByOrg.get(row.organization_id) ?? [];
+    list.push(row);
+    membersByOrg.set(row.organization_id, list);
+  }
+
+  return orgs.map((org) => {
+    const orgMembers = membersByOrg.get(org.id) ?? [];
+    const owner = [...orgMembers]
+      .filter((row) => row.role === "OWNER")
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
+    const ownerProfile = owner ? profileById.get(owner.user_id) : undefined;
+    const subscription = subByOrg.get(org.id);
+    const lastActiveAt = latestLastActiveAt(
+      orgMembers.map((row) => profileById.get(row.user_id)?.last_active_at ?? null)
+    );
+    return {
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      account_status: org.account_status,
+      created_at: org.created_at,
+      lastActiveAt,
+      planName: exportPlanName(subscription?.plans),
+      subscriptionStatus: subscription?.status ?? null,
+      billingCycle: subscription?.billing_cycle ?? null,
+      amountPaise: subscription?.amount_paise == null ? null : Number(subscription.amount_paise),
+      ownerName: ownerProfile?.full_name ?? null,
+      ownerEmail: ownerProfile?.email ?? null,
+      ownerWhatsapp: ownerProfile?.whatsapp_number ?? null,
+    };
+  });
+}
+
+async function listWorkspacesForExport(supabase: AdminClient, q: string, status: string) {
+  const sources: WorkspaceExportSource[] = [];
+  let from = 0;
+  for (;;) {
+    let query = applyOrgSearch(
+      supabase
+        .from("organizations")
+        .select("id, name, slug, account_status, created_at")
+        .order("created_at", { ascending: false }),
+      q
+    );
+    if (status) query = query.eq("account_status", status);
+    const { data, error } = await query.range(from, from + ACCOUNT_EXPORT_CHUNK - 1);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    const page = data ?? [];
+    if (page.length) sources.push(...(await attachWorkspaceExportFields(supabase, page)));
+    if (page.length < ACCOUNT_EXPORT_CHUNK) break;
+    from += ACCOUNT_EXPORT_CHUNK;
+    if (from >= ACCOUNT_EXPORT_MAX_ROWS) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This export is larger than 200000 rows.");
+    }
+  }
+  return sources;
+}
+
+async function listAbandonedForExport(supabase: AdminClient, q: string) {
+  const sources: AbandonedExportSource[] = [];
+  let from = 0;
+  for (;;) {
+    let query = supabase
+      .from("admin_abandoned_signups")
+      .select("id, email, full_name, whatsapp_number, pincode, city, created_at")
+      .order("created_at", { ascending: false });
+    const filter = signupSearchFilter(q);
+    if (filter) query = query.or(filter);
+    const { data, error } = await query.range(from, from + ACCOUNT_EXPORT_CHUNK - 1);
+    if (error) throw new AppError(ERROR_CODES.VALIDATION_ERROR, error.message);
+    const page = data ?? [];
+    sources.push(
+      ...page.map((row) => ({
+        id: row.id,
+        full_name: row.full_name ?? null,
+        email: row.email ?? null,
+        whatsapp_number: row.whatsapp_number ?? null,
+        pincode: row.pincode ?? null,
+        city: row.city ?? null,
+        created_at: row.created_at,
+      }))
+    );
+    if (page.length < ACCOUNT_EXPORT_CHUNK) break;
+    from += ACCOUNT_EXPORT_CHUNK;
+    if (from >= ACCOUNT_EXPORT_MAX_ROWS) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, "This export is larger than 200000 rows.");
+    }
+  }
+  return sources;
+}
+
+async function exportAdminAccounts(request: NextRequest, supabase: AdminClient) {
+  const url = new URL(request.url);
+  let tab: ReturnType<typeof parseAccountExportTab>;
+  try {
+    tab = parseAccountExportTab(url.searchParams.get("tab"));
+  } catch (error) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      error instanceof Error ? error.message : "Export is available for workspaces and abandoned signups only."
+    );
+  }
+  const q = url.searchParams.get("q")?.trim() ?? "";
+  const { status } = parseAdminAccountListParams(url.searchParams);
+  const date = accountExportDate();
+  if (tab === "abandoned") {
+    const rows = abandonedExportRows(await listAbandonedForExport(supabase, q));
+    const bytes = await writeWorkbook([{ name: "Abandoned", rows, freezeHeader: true }]);
+    return xlsxAttachment(bytes, accountExportFilename("abandoned", date));
+  }
+  const rows = workspaceExportRows(await listWorkspacesForExport(supabase, q, status));
+  const bytes = await writeWorkbook([{ name: "Workspaces", rows, freezeHeader: true }]);
+  return xlsxAttachment(bytes, accountExportFilename("workspaces", date));
+}
+
 async function handleAccounts(
   request: NextRequest,
   supabase: ReturnType<typeof createAdminClient>,
@@ -589,6 +769,10 @@ async function handleAccounts(
       pageSize,
       tab,
     };
+  }
+
+  if (method === "GET" && slugs[1] === "export" && slugs.length === 2) {
+    return exportAdminAccounts(request, supabase);
   }
 
   const orgId = slugs[1];

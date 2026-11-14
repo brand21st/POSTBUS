@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { addressContentHeight, defaultAddressLayout, type AddressParts } from "@/modules/labels/address-layout";
-import { clampRect } from "@/modules/labels/collision";
+import { clampRect, snapToSafeMargin } from "@/modules/labels/collision";
 import { mmFromPt, ptFromMm } from "@/modules/labels/layout/units";
 import { PAGE_PRESETS, officialDrawRect, pagePreset, type PagePreset, type PaperSizeId } from "@/modules/labels/page-presets";
 
@@ -873,15 +873,41 @@ function clampAllElementsToPage(
   return fitLabelBorderToPage(next, page);
 }
 
+function snapElementsToSafeMargin(
+  elements: LabelTemplate["elements"],
+  page: TemplatePageBox
+): LabelTemplate["elements"] {
+  const next: LabelTemplate["elements"] = {};
+  for (const [id, element] of Object.entries(elements)) {
+    if (id === "labelBorder") {
+      next[id] = element;
+      continue;
+    }
+    next[id] = { ...element, ...snapToSafeMargin(element, page.widthPt, page.heightPt) };
+  }
+  return next;
+}
+
+function pageSizeChanged(fromPage: TemplatePageBox, toPage: TemplatePageBox) {
+  return Math.abs(fromPage.widthPt - toPage.widthPt) > 0.5 || Math.abs(fromPage.heightPt - toPage.heightPt) > 0.5;
+}
+
 export function fitTemplateToCustomPage(
   elements: LabelTemplate["elements"],
   page: TemplatePageBox,
   fromPage?: TemplatePageBox
 ): LabelTemplate["elements"] {
-  const source = fromPage ?? (elementsOverflowPage(elements, page) ? a6DesignPage() : null);
-  let next = source ? scaleElementsToPage(elements, source, page) : elements;
+  const overflow = elementsOverflowPage(elements, page);
+  if (fromPage && !pageSizeChanged(fromPage, page) && !overflow) {
+    return clampAllElementsToPage(elements, page);
+  }
+  if (!fromPage && !overflow) {
+    return clampAllElementsToPage(elements, page);
+  }
+  const source = fromPage ?? a6DesignPage();
+  let next = scaleElementsToPage(elements, source, page);
   if (hasIndiaPostBlocks(next)) {
-    next = scaleIndiaPostFonts(arrangeIndiaPostBands(next, page), page);
+    next = snapElementsToSafeMargin(scaleIndiaPostFonts(arrangeIndiaPostBands(next, page), page), page);
   }
   return clampAllElementsToPage(next, page);
 }

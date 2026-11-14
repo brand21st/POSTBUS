@@ -15,6 +15,7 @@ import {
   sendWindowStart,
 } from "@/lib/auth/otp/policy";
 import type { OtpStore } from "@/lib/auth/otp/store";
+import { scheduleSheetsCrmEvent } from "@/modules/sheets-crm/enqueue";
 
 export type PhoneIdentity =
   | { kind: "unique"; userId: string; email: string }
@@ -284,6 +285,7 @@ async function establish(
     ipHash: input.ipHash,
     outcome: "ok",
   });
+  scheduleSheetsCrmEvent({ eventType: "customer.signup.completed", customerId: created.userId });
 
   return openSession(deps, {
     ...input,

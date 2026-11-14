@@ -4,9 +4,12 @@ import { metadataWithCeptSubmitIntent } from "@/modules/india-post/booking-inten
 import { assertShipmentsClassified } from "@/modules/india-post/booking-run";
 import { bookingAutoRecoveryEnabled, runBookingAutoRecovery } from "@/modules/india-post/booking-recovery";
 import {
+  bookingJobIsParked,
   bulkRetryBucket,
+  directBookJobToRun,
   evaluateBookingRetryEligibility,
   existingBarcodeMayBeSubmitted,
+  PARKED_RETRY_MS,
   STALE_BOOKING_LOCK_MS,
   type BookingRetryAction,
 } from "@/modules/india-post/booking-retry-eligibility";
@@ -40,6 +43,22 @@ describe("evaluateBookingRetryEligibility", () => {
     );
     expect(decision.action).toBe("SAFE_TO_REQUEUE");
     expect(decision.existingJobId).toBe("job-1");
+  });
+
+  it("does not treat a parked retry as a real schedule", () => {
+    const job = {
+      id: "job-1",
+      status: "RETRYING",
+      next_attempt_at: new Date(NOW + PARKED_RETRY_MS + 60_000).toISOString(),
+      attempt_count: 1,
+      max_attempts: 5,
+    };
+    expect(bookingJobIsParked(job, NOW)).toBe(true);
+    const decision = evaluateBookingRetryEligibility(
+      { shipment: shipment({ last_error_code: "PRE_POST_TRANSIENT" }), job },
+      NOW
+    );
+    expect(decision.action).toBe("SAFE_TO_REQUEUE");
   });
 
   it("reports a future RETRYING job as already scheduled", () => {
@@ -85,6 +104,68 @@ describe("evaluateBookingRetryEligibility", () => {
     );
     expect(decision.action).toBe("SAFE_TO_REQUEUE");
     expect(decision.existingJobId).toBe("job-1");
+  });
+
+  it("requeues a BOOKING row that never stored an article once the lock is dead", () => {
+    const fresh = evaluateBookingRetryEligibility(
+      {
+        shipment: shipment({ status: "BOOKING" }),
+        job: { id: "job-1", status: "RUNNING", locked_at: new Date(NOW - 60_000).toISOString() },
+      },
+      NOW
+    );
+    expect(fresh.action).toBe("BOOKING_IN_PROGRESS");
+
+    const stale = evaluateBookingRetryEligibility(
+      {
+        shipment: shipment({ status: "BOOKING" }),
+        job: {
+          id: "job-1",
+          status: "RUNNING",
+          locked_at: new Date(NOW - STALE_BOOKING_LOCK_MS - 1_000).toISOString(),
+        },
+      },
+      NOW
+    );
+    expect(stale.action).toBe("SAFE_TO_REQUEUE");
+    expect(evaluateBookingRetryEligibility({ shipment: shipment({ status: "BOOKING" }) }, NOW).action).toBe("SAFE_TO_REQUEUE");
+  });
+
+  it("keeps a BOOKING row that may already be at India Post on Force book", () => {
+    const decision = evaluateBookingRetryEligibility(
+      {
+        shipment: shipment({
+          status: "BOOKING",
+          barcode: "ET214330016IN",
+          metadata: metadataWithCeptSubmitIntent({}, "2026-10-31T02:00:00.000Z"),
+        }),
+      },
+      NOW
+    );
+    expect(decision.action).toBe("BOOKING_OUTCOME_UNKNOWN");
+    expect(decision.eligible).toBe(false);
+  });
+
+  it("starts a sitting queued job on Direct Book and leaves a future retry alone", () => {
+    const queued = directBookJobToRun(
+      { action: "BOOKING_IN_PROGRESS" },
+      { id: "job-1", status: "QUEUED" },
+      NOW
+    );
+    expect(queued?.id).toBe("job-1");
+    const future = directBookJobToRun(
+      { action: "RETRY_ALREADY_SCHEDULED" },
+      { id: "job-2", status: "RETRYING", next_attempt_at: new Date(NOW + 60_000).toISOString() },
+      NOW
+    );
+    expect(future).toBeNull();
+    const due = directBookJobToRun(
+      { action: "RETRY_ALREADY_SCHEDULED" },
+      { id: "job-3", status: "RETRYING", next_attempt_at: new Date(NOW - 1_000).toISOString() },
+      NOW
+    );
+    expect(due?.id).toBe("job-3");
+    expect(directBookJobToRun({ action: "SAFE_TO_REQUEUE" }, { id: "job-4", status: "QUEUED" }, NOW)).toBeNull();
   });
 
   it("blocks a booked shipment", () => {

@@ -5,6 +5,7 @@ import type { TenantContext } from "@/lib/api/context";
 import { logError, logInfo } from "@/lib/logger";
 import { extractIndiaMobileDigits } from "@/lib/phone/india-whatsapp";
 import { consumeAiCredit } from "@/modules/ai-credits/service";
+import { isAiAddressCheckEnabled } from "@/modules/automation/service";
 import { canonicalStateName } from "@/modules/ai-accountant/gst";
 import { wrapIndiaPostAddressLines } from "@/modules/india-post/address-lines";
 import { isIndiaPostAcceptedStatus } from "@/modules/india-post/booking-status";
@@ -863,12 +864,15 @@ export async function precheckOrders(
   }
   const rows = await loadPrebookingOrders(supabase, ctx.organizationId, ids);
   const byId = new Map(rows.map((row) => [row.id, row]));
+  const aiAddressCheck = await isAiAddressCheckEnabled(supabase, ctx.organizationId);
+  const allowAi = (options?.allowAi ?? true) && aiAddressCheck;
+  const forceAi = Boolean(options?.forceAi) && aiAddressCheck;
 
   let booking: { rows: Array<{ orderId?: string; valid: boolean; issues: Array<{ orderId?: string; field: string; error: string }> }>; issues: Array<{ orderId?: string; field: string; error: string }> } | null = null;
   let disconnected = false;
   try {
     const { validateOrdersForBooking } = await import("@/modules/india-post/bulk-booking");
-    booking = await validateOrdersForBooking(supabase, ctx, ids, { forceAi: options?.forceAi });
+    booking = await validateOrdersForBooking(supabase, ctx, ids, { forceAi });
   } catch (error) {
     if (error instanceof AppError && error.code === ERROR_CODES.INTEGRATION_NOT_CONNECTED) disconnected = true;
     else throw error;
@@ -886,8 +890,8 @@ export async function precheckOrders(
         searchPostOffices: async () => {
           throw new Error("India Post is not connected.");
         },
-        allowAi: options?.allowAi ?? true,
-        forceAi: options?.forceAi,
+        allowAi,
+        forceAi,
       });
     });
   } else {

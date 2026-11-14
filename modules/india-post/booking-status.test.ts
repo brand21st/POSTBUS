@@ -3,6 +3,7 @@ import {
   indiaPostDisplayShipmentStatus,
   indiaPostVisibleShipmentError,
   isIndiaPostAcceptedStatus,
+  isIndiaPostBookingActive,
   isIndiaPostBookingInFlight,
 } from "@/modules/india-post/booking-status";
 
@@ -21,6 +22,15 @@ describe("India Post booking statuses", () => {
     expect(isIndiaPostBookingInFlight("LABEL_PENDING")).toBe(true);
     expect(isIndiaPostBookingInFlight("LABEL_READY")).toBe(false);
     expect(isIndiaPostBookingInFlight("BOOKED")).toBe(false);
+    expect(isIndiaPostBookingInFlight("RECOVERY_REQUIRED")).toBe(false);
+  });
+
+  it("treats only live booking as active so unknown outcomes can show Force book", () => {
+    expect(isIndiaPostBookingActive("QUEUED")).toBe(true);
+    expect(isIndiaPostBookingActive("BOOKING")).toBe(true);
+    expect(isIndiaPostBookingActive("VALIDATING")).toBe(true);
+    expect(isIndiaPostBookingActive("LABEL_PENDING")).toBe(false);
+    expect(isIndiaPostBookingActive("RECOVERY_REQUIRED")).toBe(false);
   });
 
   it("hides leftover tracking lookup errors after the article is booked", () => {

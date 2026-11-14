@@ -387,6 +387,12 @@ async function finishConnect(
     userId,
     force: true,
   }).catch(() => undefined);
+  const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+  scheduleSheetsCrmEvent({
+    eventType: "store.connected",
+    customerId: userId,
+    organizationId: row.organization_id,
+  });
 }
 
 export async function completeWooAuthorization(

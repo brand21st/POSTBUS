@@ -12,7 +12,7 @@ import {
 import { existingShipmentConflict } from "@/modules/shipments/existing-shipment-conflict";
 import { readCeptSubmitIntentAt } from "@/modules/india-post/booking-intent";
 import { scheduleForceRetryBooking } from "@/modules/india-post/booking-force-retry";
-import { evaluateBookingRetryEligibility, NEVER_SUBMITTED_CODES } from "@/modules/india-post/booking-retry-eligibility";
+import { directBookJobToRun, evaluateBookingRetryEligibility, NEVER_SUBMITTED_CODES } from "@/modules/india-post/booking-retry-eligibility";
 import { resolveOrderBookingService, shipmentServiceLocked } from "@/modules/india-post/booking-service";
 import {
   indiaPostDisplayShipmentStatus,
@@ -194,6 +194,7 @@ export async function createShipmentsForOrders(
     entity_id?: string | null;
     created_by?: string | null;
     attempt_count?: number | null;
+    created_at?: string | null;
     progress?: { shipmentIds?: string[] } | null;
   }> = [];
   if (enqueueBooking) {
@@ -400,7 +401,28 @@ export async function createShipmentsForOrders(
         job: latestJobByShipment.get(current.id) ?? null,
       });
       if (decision.action === "BOOKING_IN_PROGRESS" || decision.action === "RETRY_ALREADY_SCHEDULED") {
-        created.push({ ...current, jobId: decision.existingJobId ?? null });
+        const sitting = runBookingNow
+          ? directBookJobToRun(decision, latestJobByShipment.get(current.id) as {
+              id?: string;
+              status?: string | null;
+              next_attempt_at?: string | null;
+              attempt_count?: number | null;
+              created_at?: string | null;
+            })
+          : null;
+        if (sitting?.id) {
+          bookingJobs.push({
+            id: sitting.id,
+            organization_id: ctx.organizationId,
+            job_type: "shipment-booking",
+            entity_type: "shipment",
+            entity_id: current.id,
+            created_by: ctx.userId,
+            attempt_count: sitting.attempt_count ?? 0,
+            created_at: sitting.created_at ?? null,
+          });
+        }
+        created.push({ ...current, jobId: decision.existingJobId ?? sitting?.id ?? null });
         continue;
       }
       if (!decision.eligible) {
@@ -451,7 +473,7 @@ export async function createShipmentsForOrders(
         .is("booked_at", null)
         .is("tracking_number", null)
         .is("provider_ref", null)
-        .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED"])
+        .in("status", ["DRAFT", "VALIDATING", "QUEUED", "FAILED", "RECOVERY_REQUIRED", "BOOKING"])
         .filter("metadata->>ceptSubmitIntentAt", "is", null);
       const { data: requeued, error: requeueError } = await (keptBarcode
         ? requeue.eq("barcode", keptBarcode).in("last_error_code", [...NEVER_SUBMITTED_CODES])

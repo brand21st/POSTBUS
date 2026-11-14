@@ -11,11 +11,18 @@ export const INDIA_POST_ACCEPTED_STATUSES = new Set([
   "RTO",
 ]);
 
-export const INDIA_POST_IN_FLIGHT_STATUSES = new Set([
+/** Booking request is still being sent. Unknown outcomes and label generation are not this. */
+export const INDIA_POST_ACTIVE_BOOKING_STATUSES = new Set([
   "VALIDATING",
   "QUEUED",
   "BOOKING",
-  "RECOVERY_REQUIRED",
+]);
+
+/** Direct Book past this age is no longer "in progress" — the row can be retried. */
+export const DIRECT_BOOK_STUCK_MS = 2 * 60 * 1000;
+
+export const INDIA_POST_IN_FLIGHT_STATUSES = new Set([
+  ...INDIA_POST_ACTIVE_BOOKING_STATUSES,
   "LABEL_PENDING",
 ]);
 
@@ -25,6 +32,26 @@ export function indiaPostStatusOf(value?: string | null) {
 
 export function isIndiaPostAcceptedStatus(value?: string | null) {
   return INDIA_POST_ACCEPTED_STATUSES.has(indiaPostStatusOf(value));
+}
+
+export function isIndiaPostBookingActive(value?: string | null) {
+  return INDIA_POST_ACTIVE_BOOKING_STATUSES.has(indiaPostStatusOf(value));
+}
+
+/** True while a click's booking is still young enough to wait on. A missing timestamp stays live. */
+export function bookingAttemptIsLive(
+  shipment?: {
+    status?: string | null;
+    updatedAt?: string | null;
+    updated_at?: string | null;
+  } | null,
+  now = Date.now()
+) {
+  if (!isIndiaPostBookingActive(shipment?.status)) return false;
+  const stamp = shipment?.updatedAt ?? shipment?.updated_at;
+  const ms = stamp ? Date.parse(stamp) : Number.NaN;
+  if (!Number.isFinite(ms)) return true;
+  return now - ms < DIRECT_BOOK_STUCK_MS;
 }
 
 export function isIndiaPostBookingInFlight(value?: string | null) {

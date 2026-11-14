@@ -7,7 +7,7 @@ import { parseJobTypes, wooCommerceDrainPlan } from "@/lib/jobs/job-lanes";
 import { logError } from "@/lib/logger";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
 import { enqueueDueTrackingSyncJobs } from "@/modules/india-post/tracking-sync";
-import { enqueueSameBarcodeRecovery, runBookingAutoRecovery } from "@/modules/india-post/booking-recovery";
+import { enqueueSameBarcodeRecovery, releaseParkedBookingShipments, runBookingAutoRecovery } from "@/modules/india-post/booking-recovery";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -86,6 +86,11 @@ export async function POST(request: NextRequest) {
       try {
         const admin = createAdminClient();
         recovery = await runBookingAutoRecovery(admin);
+        await releaseParkedBookingShipments(admin).catch((parkError) => {
+          logError("booking.parked_release_failed", {
+            message: parkError instanceof Error ? parkError.message : "parked release failed",
+          });
+        });
         await enqueueSameBarcodeRecovery(admin).catch((enqueueError) => {
           logError("booking.same_barcode_requeue_failed", {
             message: enqueueError instanceof Error ? enqueueError.message : "enqueue failed",
@@ -114,7 +119,18 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-    return NextResponse.json({ success: true, data: { ...drained, recovery } });
+    let sheetsCrm: { processed: number; skipped?: boolean; failed?: number } = { processed: 0, skipped: true };
+    if (hasAdminClient()) {
+      try {
+        const { drainSheetsCrmOutbox } = await import("@/modules/sheets-crm/deliver");
+        sheetsCrm = await drainSheetsCrmOutbox(createAdminClient());
+      } catch (sheetsError) {
+        logError("sheets_crm.drain_failed", {
+          message: sheetsError instanceof Error ? sheetsError.message : "Google Sheets CRM drain failed.",
+        });
+      }
+    }
+    return NextResponse.json({ success: true, data: { ...drained, recovery, sheetsCrm } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not drain background jobs.";
     logError("jobs.drain_error", { message });

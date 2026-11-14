@@ -148,6 +148,9 @@ export async function drainDueJobs(limit = DEFAULT_DRAIN_LIMIT, jobTypes?: strin
   return { claimed: jobs.length, ...processed };
 }
 
+const BOOKING_RUNNER_MISSING =
+  "SUPABASE_SERVICE_ROLE_KEY is not set, so this booking cannot run. Jobs bypass RLS and need the service role.";
+
 async function claimQueuedJob(job: ClaimedJob): Promise<ClaimedJob | null> {
   if (!hasAdminClient()) return null;
   const supabase = createAdminClient();
@@ -158,21 +161,24 @@ async function claimQueuedJob(job: ClaimedJob): Promise<ClaimedJob | null> {
       status: "RUNNING",
       locked_at: lockedAt,
       started_at: lockedAt,
+      next_attempt_at: null,
     })
     .eq("id", job.id)
-    .in("status", ["PENDING", "QUEUED"])
+    .in("status", ["PENDING", "QUEUED", "RETRYING"])
     .select("id, organization_id, job_type, entity_type, entity_id, created_by, attempt_count, created_at, locked_at, progress")
     .maybeSingle();
   if (error || !data) return null;
   return claimedJobFromRow(data);
 }
 
-/** Run just-queued jobs without marking the whole bulk RUNNING first. */
+/**
+ * Run just-queued jobs in this process. Direct Book uses this even when BullMQ owns the cron
+ * drain, so a click does not sit on QUEUED until a worker happens to be up.
+ */
 export async function runQueuedJobsNow(jobs: ClaimedJob[]): Promise<DrainResult> {
   const unique = [...new Map(jobs.map((job) => [job.id, job])).values()];
-  if (!unique.length || !usesDatabaseJobRunner() || !hasAdminClient()) {
-    return { claimed: 0, succeeded: 0, failed: 0 };
-  }
+  if (!unique.length) return { claimed: 0, succeeded: 0, failed: 0 };
+  if (!hasAdminClient()) throw new Error(BOOKING_RUNNER_MISSING);
   const result: DrainResult = { claimed: 0, succeeded: 0, failed: 0 };
   const bookings = unique.filter((job) => job.job_type === "shipment-booking");
   const rest = unique.filter((job) => job.job_type !== "shipment-booking");
@@ -210,6 +216,7 @@ export async function runQueuedJobsNow(jobs: ClaimedJob[]): Promise<DrainResult>
 /** 1–4 bookings wait in the click. Larger bulks queue and run after the response so the page cannot time out. */
 export async function startQueuedBookingJobs(jobs: ClaimedJob[]): Promise<DrainResult> {
   if (!jobs.length) return { claimed: 0, succeeded: 0, failed: 0 };
+  if (!hasAdminClient()) throw new Error(BOOKING_RUNNER_MISSING);
   if (shouldWaitForQueuedBookings(jobs.length)) {
     return runQueuedJobsNow(jobs);
   }

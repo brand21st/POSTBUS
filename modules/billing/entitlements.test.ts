@@ -13,13 +13,27 @@ import {
 
 describe("plan entitlements", () => {
   it("uses catalog floors for starter, pro, and business slugs", () => {
-    expect(expandPlanFeatures([FEATURE.analytics], { slug: "starter" })).toEqual(STARTER_FEATURES);
+    expect(expandPlanFeatures([], { slug: "starter" })).toEqual(STARTER_FEATURES);
     expect(expandPlanFeatures([], { slug: "pro" })).toEqual(PRO_FEATURES);
     expect(PRO_FEATURES).toContain(FEATURE.analytics);
     expect(PRO_FEATURES).toContain(FEATURE.multiPrint);
     expect(STARTER_FEATURES).not.toContain(FEATURE.analytics);
     expect(STARTER_FEATURES).not.toContain(FEATURE.multiPrint);
     expect(expandPlanFeatures([], { slug: "business" })).toEqual(BUSINESS_FEATURES);
+  });
+
+  it("grants features saved on the plan, including Multi print", () => {
+    const starter = expandPlanFeatures([FEATURE.shopify, FEATURE.multiPrint], { slug: "starter" });
+    expect(starter).toContain(FEATURE.multiPrint);
+    expect(starter).toContain(FEATURE.shopify);
+    expect(starter).not.toContain(FEATURE.analytics);
+    const pro = expandPlanFeatures(
+      [FEATURE.multiPrint, FEATURE.wati, FEATURE.packing, FEATURE.support],
+      { slug: "pro" }
+    );
+    expect(pro).toEqual(expect.arrayContaining([FEATURE.multiPrint, FEATURE.wati, FEATURE.packing, FEATURE.support]));
+    expect(expandPlanFeatures([FEATURE.shopify], { slug: "pro" })).not.toContain(FEATURE.multiPrint);
+    expect(expandPlanFeatures(["Up to 3,000 orders per billing period"], { slug: "pro" })).toEqual(PRO_FEATURES);
   });
 
   it("unlocks every catalog feature during trial", () => {
@@ -75,6 +89,8 @@ describe("plan entitlements", () => {
     expect(lockedFeatureForApi("POST", "label-template/multi-sheet", ["label-template", "multi-sheet"])).toBe(
       FEATURE.multiPrint
     );
+    expect(lockedFeatureForApi("POST", "label-template/custom-preview", ["label-template", "custom-preview"])).toBeNull();
+    expect(lockedFeatureForApi("POST", "label-template/custom-download", ["label-template", "custom-download"])).toBeNull();
     expect(lockedFeatureForApi("PUT", "label-template", ["label-template"])).toBe(FEATURE.packing);
     expect(lockedFeatureForApi("GET", "labels", ["labels"])).toBeNull();
   });
@@ -90,6 +106,10 @@ describe("plan entitlements", () => {
     expect(automationToggleLock("autoShopifyProcessing", pro)).toBeNull();
     expect(automationToggleLock("autoShopifyProcessing", (feature) => feature === FEATURE.automation)).toBe(
       FEATURE.shopify
+    );
+    expect(automationToggleLock("autoAiAddressCheck", pro)).toBeNull();
+    expect(automationToggleLock("autoAiAddressCheck", (feature) => feature === FEATURE.automation)).toBe(
+      FEATURE.indiaPost
     );
   });
 });

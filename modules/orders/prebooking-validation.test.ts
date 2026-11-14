@@ -6,7 +6,7 @@ vi.mock("@/modules/india-post/bulk-booking", () => ({
 }));
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TenantContext } from "@/lib/api/context";
-import { AppError } from "@/lib/api/errors";
+import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import type { IndiaPostOffice } from "@/modules/india-post/endpoints";
 import {
   addressValidationFingerprint,
@@ -532,6 +532,60 @@ describe("pre-booking address checks", () => {
     expect(result.orders.find((order) => order.orderId === "ready-1")?.status).toBe("ready");
     expect(result.orders.find((order) => order.orderId === "booked-1")?.status).toBe("fix_required");
     expect(result.orders.find((order) => order.orderId === "ready-1")?.source).toBe("SHOPIFY");
+  });
+
+  it("does not call AI on precheck when the workspace flag is off", async () => {
+    const { requestAiAddressSuggestion } = await import("@/modules/shopify/address-ai");
+    validateOrdersForBooking.mockRejectedValue(
+      new AppError(ERROR_CODES.INTEGRATION_NOT_CONNECTED, "India Post is not connected.")
+    );
+    const shipping = address({
+      line1: "House 12, Temple Road, Near Market, Opposite School, Behind Bank, Cross 4, Stage 2, Layout West",
+    });
+    const rows = [
+      {
+        id: "shop-ai",
+        order_number: "200",
+        source: "SHOPIFY",
+        customers: { name: "Asha" },
+        shipments: [],
+        shipping_address: shipping,
+      },
+    ];
+    const supabase = {
+      from(table: string) {
+        if (table === "automation_settings") {
+          return {
+            select() {
+              return this;
+            },
+            eq() {
+              return this;
+            },
+            maybeSingle: async () => ({ data: { auto_ai_address_check: false }, error: null }),
+          };
+        }
+        return {
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          update() {
+            return this;
+          },
+          in() {
+            return Promise.resolve({ data: rows, error: null });
+          },
+          then(resolve: (value: unknown) => unknown) {
+            return Promise.resolve({ data: null, error: null }).then(resolve);
+          },
+        };
+      },
+    } as unknown as SupabaseClient;
+    await precheckOrders(supabase, ctx, ["shop-ai"], { allowAi: true, forceAi: true });
+    expect(requestAiAddressSuggestion).not.toHaveBeenCalled();
   });
 
   it("blocks booking when PIN verification is down and does not require a barcode", async () => {

@@ -244,11 +244,13 @@ export async function processJob(queue: string, payload: JobPayload) {
     const retryable =
       classified.retryable && !postSubmitUncertain && attempt < (job?.max_attempts ?? MAX_ATTEMPTS);
     const retryAfterMs = Number((error as { retryAfterMs?: number })?.retryAfterMs);
-    const retryDelayMs = retryable
+    const uncappedDelayMs = retryable
       ? Number.isFinite(retryAfterMs) && retryAfterMs >= 0
         ? retryAfterMs
         : delayForAttempt(attempt)
       : 0;
+    // A far-future date never runs, and the shipment would sit on Booking… until then.
+    const retryDelayMs = Math.min(uncappedDelayMs, 24 * 60 * 60 * 1000);
     logInfo("job.retry_decision", {
       ...timing,
       attempt,

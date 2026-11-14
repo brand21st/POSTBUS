@@ -139,6 +139,13 @@ export async function ensureOfflineToken(
       installationId: installation.id,
       mode: needsRefresh ? "refresh" : "exchange",
     });
+    if (needsExchange && installation.organization_id) {
+      const { scheduleSheetsCrmEvent } = await import("@/modules/sheets-crm/enqueue");
+      scheduleSheetsCrmEvent({
+        eventType: "store.connected",
+        organizationId: installation.organization_id,
+      });
+    }
   });
 }
 

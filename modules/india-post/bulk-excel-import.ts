@@ -843,6 +843,7 @@ export async function materializeRow(
       organizationId: ctx.organizationId,
       serviceCode,
       environment: connection?.environment,
+      paymentMode,
     });
   }
   const { data: existingBarcode, error: existingBarcodeError } = await supabase

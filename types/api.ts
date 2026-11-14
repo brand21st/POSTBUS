@@ -305,6 +305,8 @@ export type OrderRecord = {
   cod_amount?: number | string;
   extraCodCharge?: number | string;
   extra_cod_charge?: number | string;
+  codAmountMode?: "auto" | "manual" | string | null;
+  cod_amount_mode?: "auto" | "manual" | string | null;
   currency?: string;
   customer?: CustomerSummary | null;
   customerName?: string | null;
@@ -470,6 +472,8 @@ export type ShipmentRecord = {
   customer?: CustomerSummary | null;
   createdAt?: string;
   created_at?: string;
+  updatedAt?: string | null;
+  updated_at?: string | null;
   bookedAt?: string | null;
   booked_at?: string | null;
   invoice?: InvoiceSummary | null;
@@ -725,6 +729,8 @@ export type AutomationSettings = {
   auto_label_printing?: boolean;
   autoPackageSelection?: boolean;
   auto_package_selection?: boolean;
+  autoAiAddressCheck?: boolean;
+  auto_ai_address_check?: boolean;
 };
 
 export type PrintStation = {

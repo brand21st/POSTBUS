@@ -20,7 +20,8 @@ type Column =
   | "auto_wati_in_transit"
   | "auto_wati_delivered"
   | "auto_label_printing"
-  | "auto_package_selection";
+  | "auto_package_selection"
+  | "auto_ai_address_check";
 
 const CAMEL_TO_COLUMN: Record<string, Column> = {
   autoShopifySync: "auto_shopify_sync",
@@ -57,6 +58,8 @@ const CAMEL_TO_COLUMN: Record<string, Column> = {
   auto_label_printing: "auto_label_printing",
   autoPackageSelection: "auto_package_selection",
   auto_package_selection: "auto_package_selection",
+  autoAiAddressCheck: "auto_ai_address_check",
+  auto_ai_address_check: "auto_ai_address_check",
 };
 
 export type AutomationRow = {
@@ -79,6 +82,7 @@ export type AutomationRow = {
   auto_label_printing?: boolean;
   /** Not in AUTOMATION_DEFAULTS: the column default (false) applies, so inserts work before the migration. */
   auto_package_selection?: boolean;
+  auto_ai_address_check?: boolean;
 };
 
 export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
@@ -98,6 +102,7 @@ export const AUTOMATION_DEFAULTS: Omit<AutomationRow, "organization_id"> = {
   auto_wati_in_transit: true,
   auto_wati_delivered: true,
   auto_label_printing: false,
+  auto_ai_address_check: false,
 };
 
 export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
@@ -137,7 +142,25 @@ export function mapAutomationSettings(row: AutomationRow): AutomationSettings {
     auto_label_printing: row.auto_label_printing ?? false,
     autoPackageSelection: row.auto_package_selection ?? false,
     auto_package_selection: row.auto_package_selection ?? false,
+    autoAiAddressCheck: row.auto_ai_address_check ?? false,
+    auto_ai_address_check: row.auto_ai_address_check ?? false,
   };
+}
+
+/** Missing row, column, or read error stays off. Workspaces turn this on in Automation. */
+export async function isAiAddressCheckEnabled(supabase: SupabaseClient, organizationId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from("automation_settings")
+      .select("auto_ai_address_check")
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (error || !data) return false;
+    const value = (data as { auto_ai_address_check?: boolean }).auto_ai_address_check;
+    return value === true;
+  } catch {
+    return false;
+  }
 }
 
 const WATI_EVENT_FLAG: Record<string, keyof AutomationSettings> = {

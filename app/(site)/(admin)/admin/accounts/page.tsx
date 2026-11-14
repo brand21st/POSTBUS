@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, ChevronLeft, ChevronRight, MailWarning, Search, UserPlus } from "lucide-react";
+import { Building2, ChevronLeft, ChevronRight, Download, MailWarning, Search, UserPlus } from "lucide-react";
+import { toast } from "sonner";
 import { AccountAdminActions } from "@/components/admin/account-actions";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { StatusBadge } from "@/components/dashboard/status-badge";
@@ -151,6 +152,7 @@ export default function AdminAccountsPage() {
   const [signupPage, setSignupPage] = useState(1);
   const [abandonedPage, setAbandonedPage] = useState(1);
   const [now, setNow] = useState(() => Date.now());
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(q.trim()), 300);
@@ -218,6 +220,35 @@ export default function AdminAccountsPage() {
 
   const visibleFilters = STATUS_FILTERS.filter((filter) => filter.id === "all" || statusCounts[filter.id] > 0);
 
+  async function downloadExcel() {
+    if (tab !== "workspaces" && tab !== "abandoned") return;
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ tab, q: debounced });
+      if (tab === "workspaces" && status !== "all") params.set("status", status);
+      const response = await fetch(`/api/admin/accounts/export?${params.toString()}`, {
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { message?: string } | null;
+        toast.error(body?.message || "Could not download the workbook.");
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const match = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+      anchor.href = url;
+      anchor.download = match?.[1] || (tab === "abandoned" ? "postbus-abandoned.xlsx" : "postbus-workspaces.xlsx");
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Could not download the workbook.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -282,36 +313,44 @@ export default function AdminAccountsPage() {
             })}
           </div>
 
-          {tab === "workspaces" ? (
-            <div className="flex flex-wrap items-center gap-1">
-              {visibleFilters.map((filter) => {
-                const active = status === filter.id;
-                return (
-                  <button
-                    key={filter.id}
-                    type="button"
-                    onClick={() => {
-                      setStatus(filter.id);
-                      setWorkspacePage(1);
-                    }}
-                    className={cn(
-                      "rounded-full px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
-                      active ? "bg-ink text-white" : "bg-surface-soft text-muted hover:text-ink"
-                    )}
-                  >
-                    {filter.label}
-                    <span className="ml-1 opacity-70">{formatNumber(statusCounts[filter.id])}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="hidden text-xs text-muted sm:block">
-              {tab === "abandoned"
-                ? "Started signup and have not confirmed email yet."
-                : "People who registered, with or without a workspace."}
-            </p>
-          )}
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            {tab === "workspaces" ? (
+              <div className="flex flex-wrap items-center gap-1">
+                {visibleFilters.map((filter) => {
+                  const active = status === filter.id;
+                  return (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      onClick={() => {
+                        setStatus(filter.id);
+                        setWorkspacePage(1);
+                      }}
+                      className={cn(
+                        "rounded-full px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
+                        active ? "bg-ink text-white" : "bg-surface-soft text-muted hover:text-ink"
+                      )}
+                    >
+                      {filter.label}
+                      <span className="ml-1 opacity-70">{formatNumber(statusCounts[filter.id])}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="hidden text-xs text-muted sm:block">
+                {tab === "abandoned"
+                  ? "Started signup and have not confirmed email yet."
+                  : "People who registered, with or without a workspace."}
+              </p>
+            )}
+            {tab === "workspaces" || tab === "abandoned" ? (
+              <Button type="button" variant="secondary" size="sm" disabled={exporting} onClick={() => void downloadExcel()}>
+                <Download className="size-4" />
+                {exporting ? "Downloading" : "Download Excel"}
+              </Button>
+            ) : null}
+          </div>
         </div>
 
         {query.isLoading ? (

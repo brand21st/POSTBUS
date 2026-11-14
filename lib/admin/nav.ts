@@ -16,6 +16,7 @@ import {
   Settings,
   Radio,
   Truck,
+  Sheet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -42,6 +43,7 @@ export const adminNav: AdminNavItem[] = [
   { label: "Trial Settings", href: "/admin/trial", icon: Timer },
   { label: "Tutorials", href: "/admin/tutorials", icon: Clapperboard },
   { label: "India Post webhooks", href: "/admin/india-post-webhooks", icon: Radio },
+  { label: "Integrations", href: "/admin/integrations/google-sheets", icon: Sheet },
   { label: "Booking queue", href: "/admin/booking-queue", icon: Truck },
   { label: "Audit Logs", href: "/admin/audit", icon: ScrollText },
   { label: "System Settings", href: "/admin/settings", icon: Settings },

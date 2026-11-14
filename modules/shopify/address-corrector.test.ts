@@ -62,6 +62,7 @@ function supabaseFor(options: {
   shipments?: Array<Record<string, unknown>>;
   connection?: Record<string, unknown> | null;
   activeJob?: { id: string } | null;
+  aiAddressCheck?: boolean;
 }) {
   const updates: Array<{ table: string; payload: Record<string, unknown> }> = [];
   const addressRow = options.address === undefined ? address() : options.address;
@@ -86,6 +87,12 @@ function supabaseFor(options: {
         if (table === "addresses") return { data: addressRow, error: null };
         if (table === "india_post_connections") return { data: connection, error: null };
         if (table === "background_jobs") return { data: options.activeJob ?? null, error: null };
+        if (table === "automation_settings") {
+          return {
+            data: options.aiAddressCheck === undefined ? null : { auto_ai_address_check: options.aiAddressCheck },
+            error: null,
+          };
+        }
         return { data: null, error: null };
       };
       api.then = (resolve: (value: unknown) => unknown) =>
@@ -139,7 +146,7 @@ describe("shopify address corrector", () => {
     const messy = address({
       line1: "House 12, Temple Road, Near Market, Opposite School, Behind Bank, Cross 4, Stage 2, Layout West",
     });
-    const { client } = supabaseFor({ address: messy });
+    const { client } = supabaseFor({ address: messy, aiAddressCheck: true });
     const result = await correctShopifyShippingAddress(client as never, {
       organizationId: "org-1",
       orderId: "ord-1",
@@ -153,12 +160,37 @@ describe("shopify address corrector", () => {
     expect(enqueueShipmentBookingJob).not.toHaveBeenCalled();
   });
 
+  it("skips AI when the workspace address check is off", async () => {
+    openRouterEnabled.mockResolvedValue({ enabled: true, apiKey: "k", model: "m" });
+    const messy = address({
+      line1: "House 12, Temple Road, Near Market, Opposite School, Behind Bank, Cross 4, Stage 2, Layout West",
+    });
+    const { client } = supabaseFor({ address: messy, aiAddressCheck: false });
+    const deferred = await correctShopifyShippingAddress(client as never, {
+      organizationId: "org-1",
+      orderId: "ord-1",
+      addressId: "addr-1",
+      sourceUpdatedAt: "2026-11-02T10:00:00Z",
+      bookingIntent: { enqueueBooking: true, enrollInQueue: false },
+    });
+    const forced = await correctShopifyShippingAddress(client as never, {
+      organizationId: "org-1",
+      orderId: "ord-1",
+      addressId: "addr-1",
+      sourceUpdatedAt: "2026-11-02T10:00:00Z",
+      phase: "ai",
+    });
+    expect(deferred.deferBooking).toBe(false);
+    expect(forced.outcome).not.toBe("failed");
+    expect(requestAiAddressSuggestion).not.toHaveBeenCalled();
+  });
+
   it("keeps the deterministic address when AI times out", async () => {
     requestAiAddressSuggestion.mockRejectedValue(Object.assign(new Error("timeout"), { name: "TimeoutError" }));
     const messy = address({
       line1: "House 12, Temple Road, Near Market, Opposite School, Behind Bank, Cross 4, Stage 2, Layout West",
     });
-    const { client, updates } = supabaseFor({ address: messy });
+    const { client, updates } = supabaseFor({ address: messy, aiAddressCheck: true });
     const result = await correctShopifyShippingAddress(client as never, {
       organizationId: "org-1",
       orderId: "ord-1",
@@ -335,7 +367,7 @@ describe("shopify address corrector", () => {
 
   it("enqueues the first booking only after the AI job runs", async () => {
     requestAiAddressSuggestion.mockResolvedValue(null);
-    const { client } = supabaseFor({ shipments: [{ id: "shp-1", status: "DRAFT" }] });
+    const { client } = supabaseFor({ shipments: [{ id: "shp-1", status: "DRAFT" }], aiAddressCheck: true });
     await runShopifyAddressCorrectionJob(client as never, {
       organizationId: "org-1",
       addressId: "addr-1",

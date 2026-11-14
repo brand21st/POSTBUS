@@ -48,3 +48,8 @@ export const INDIAN_STATE_OPTIONS = [
 ];
 
 export const DEFAULT_INDIAN_STATE = "Kerala";
+
+export function listedIndianState(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return INDIAN_STATES.find((state) => state.toLowerCase() === normalized) ?? value.trim();
+}

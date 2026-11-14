@@ -21,7 +21,7 @@ import { indiaPostDisplayShipmentStatus } from "@/modules/india-post/booking-sta
 import { getAnalytics } from "@/modules/dashboard/analytics";
 import { getKpis, getPipeline } from "@/modules/dashboard/service";
 import { bulkUpdateOrderStatus } from "@/modules/orders/bulk-status";
-import { bulkOrderStatusSchema, confirmShopifyPaymentSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
+import { bulkOrderStatusSchema, confirmShopifyPaymentSchema, createOrderSchema, orderListQuery, updateOrderAddressSchema, updateOrderCodSchema, updateOrderWeightsSchema } from "@/modules/orders/schema";
 import {
   confirmCustomerOrderLinkSchema,
 } from "@/modules/customer-order-links/schema";
@@ -32,7 +32,7 @@ import {
   listLegacySubmissions,
   listWhatsAppPendingOrders,
 } from "@/modules/customer-order-links/service";
-import { confirmShopifyPayment, createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
+import { confirmShopifyPayment, createManualOrder, exportOrdersCsv, getOrder, listOrders, setOrderBookingService, updateOrderCodAmount, updateOrderShippingAddress, updateOrderWeights } from "@/modules/orders/service";
 import { labelPdfFileResponse, labelPdfViewerResponse, wantsBrowserPdfPreview } from "@/lib/labels/pdf-response";
 import { loadLabelPdfBytes } from "@/modules/labels/load";
 import { renderCustomShippingLabel } from "@/modules/labels/custom-label-service";
@@ -189,6 +189,11 @@ export async function handleCommerceRoutes(
     return updateOrderWeights(supabase, ctx, slugs[1], body);
   }
 
+  if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "cod") {
+    const body = updateOrderCodSchema.parse(await request.json());
+    return updateOrderCodAmount(supabase, ctx, slugs[1], body);
+  }
+
   if (method === "PATCH" && slugs[0] === "orders" && slugs[1] && slugs[2] === "address") {
     const body = updateOrderAddressSchema.parse(await request.json());
     return updateOrderShippingAddress(supabase, ctx, slugs[1], body);
@@ -285,11 +290,13 @@ export async function handleCommerceRoutes(
 
   if (key === "POST bookings/precheck") {
     const { precheckOrders } = await import("@/modules/orders/prebooking-validation");
+    const { isAiAddressCheckEnabled } = await import("@/modules/automation/service");
     const body = await request.json();
     const orderIds: string[] = body.orderIds ?? [];
+    const aiAddressCheck = await isAiAddressCheckEnabled(supabase, ctx.organizationId);
     return precheckOrders(supabase, ctx, orderIds, {
-      allowAi: body.allowAi !== false,
-      forceAi: body.forceAi === true,
+      allowAi: body.allowAi !== false && aiAddressCheck,
+      forceAi: body.forceAi === true && aiAddressCheck,
     });
   }
 

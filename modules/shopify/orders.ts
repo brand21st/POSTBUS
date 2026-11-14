@@ -18,7 +18,7 @@ import {
   type ShopifyAddressBookingIntent,
 } from "@/modules/shopify/address-corrector";
 import { createAdminClient, hasAdminClient } from "@/lib/supabase/admin";
-import { shipmentCollectFromOrder } from "@/modules/orders/payment";
+import { isManualCodAmount, shipmentCollectFromOrder } from "@/modules/orders/payment";
 import { fetchWithShopifyTimeout, shopifyHttpError } from "@/modules/shopify/http";
 import {
   isAppInstallationConnection,
@@ -2646,7 +2646,7 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
   const { data: existingOrder } = existing?.order_id
     ? await supabase
         .from("orders")
-        .select("status, payment_status, metadata, total_amount, shipping_address_id, customer_id")
+        .select("status, payment_status, metadata, total_amount, shipping_address_id, customer_id, cod_amount_mode")
         .eq("id", existing.order_id)
         .eq("organization_id", input.organizationId)
         .maybeSingle()
@@ -2686,6 +2686,9 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
       )
     : false;
   const freezeOperationalMoney = deferIncompleteEditedMoney || bookingLocked;
+  const manualCod = isManualCodAmount(
+    (existingOrder as { cod_amount_mode?: string | null } | null)?.cod_amount_mode
+  );
   const shipmentCollect = shipmentCollectFromOrder({
     payment_status: collect.paymentStatus,
     total_amount: operationalTotal,
@@ -2700,7 +2703,7 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
       existing.order_id as string,
       shipmentCollect,
       collect.paymentStatus,
-      !bookingLocked && existingOrder?.payment_status !== collect.paymentStatus
+      !manualCod && !bookingLocked && existingOrder?.payment_status !== collect.paymentStatus
     );
     if (bookingConflict) snapshot = { ...snapshot, bookingConflict };
   }
@@ -2723,12 +2726,14 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
           payment_status: collect.paymentStatus,
           metadata: auditMetadata,
         }
-      : {
-          payment_status: collect.paymentStatus,
-          amount_paid: collect.amountPaid,
-          cod_amount: collect.codAmount,
-          metadata: auditMetadata,
-        };
+      : manualCod
+        ? { metadata: auditMetadata }
+        : {
+            payment_status: collect.paymentStatus,
+            amount_paid: collect.amountPaid,
+            cod_amount: collect.codAmount,
+            metadata: auditMetadata,
+          };
   const totals = {
     currency: remote.currency || "INR",
     fulfillment_status: fulfillmentStatus,
@@ -2775,7 +2780,7 @@ async function upsertShopifyOrderRecord(supabase: SupabaseClient, input: UpsertS
         after: snapshot.bookingConflict,
       });
     }
-    if (!stalePayment && collect.paymentStatus === "PAID" && existingOrder?.payment_status !== "PAID") {
+    if (!manualCod && !stalePayment && collect.paymentStatus === "PAID" && existingOrder?.payment_status !== "PAID") {
       await enqueueSalesInvoiceQuietly(supabase, input.organizationId, existing.order_id as string, "PAYMENT_CONFIRMED", input.userId);
     }
     if (lineSelection.skipLineWrite) {

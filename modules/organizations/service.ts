@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError, ERROR_CODES } from "@/lib/api/errors";
 import { logError, logInfo } from "@/lib/logger";
 import { provisionTrackingPage } from "@/modules/tracking-pages/service";
+import { scheduleSheetsCrmEvent } from "@/modules/sheets-crm/enqueue";
 
 type MembershipRow = {
   role: string;
@@ -90,6 +91,11 @@ export async function createOrganization(
   }
 
   logInfo("organization.created", { organizationId: org.id, userId });
+  scheduleSheetsCrmEvent({
+    eventType: "workspace.created",
+    customerId: userId,
+    organizationId: org.id,
+  });
   await ensureTrackingPage(supabase, userId, { id: org.id, name: org.name ?? name });
   return org;
 }

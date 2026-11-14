@@ -59,6 +59,22 @@ describe("force book refusals", () => {
     }
   });
 
+  it("lets an owner force a parked queue row that will not run on its own", () => {
+    const decision = forceBookRefusal(
+      {
+        role: "OWNER",
+        shipment: failedShipment({ status: "QUEUED" }),
+        job: {
+          id: "job-1",
+          status: "RETRYING",
+          next_attempt_at: "2099-01-01T00:00:00.000Z",
+        },
+      },
+      NOW
+    );
+    expect(decision).toBeNull();
+  });
+
   it("refuses while a booking job is scheduled or running", () => {
     expect(
       forceBookRefusal({ role: "OWNER", shipment: failedShipment(), job: { id: "job-1", status: "QUEUED" } }, NOW)?.action
