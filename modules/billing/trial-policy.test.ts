@@ -93,4 +93,15 @@ describe("trialBannerCopy", () => {
     expect(copy?.message).toBe("Your free trial has ended. Upgrade now to continue using PostBus.");
     expect(copy?.ctaLabel).toBe("Upgrade Now");
   });
+
+  it("does not show the ended trial banner when a paid plan is active", () => {
+    const copy = trialBannerCopy({
+      trial: false,
+      coverageEnded: false,
+      trialEnd: LEGACY_TRIAL_END_UTC,
+      status: "ACTIVE",
+      now: Date.parse("2026-11-14T06:00:00.000Z"),
+    });
+    expect(copy).toBeNull();
+  });
 });

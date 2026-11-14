@@ -69,14 +69,20 @@ export function formatTrialEndLong(trialEnd: Date | string, timeZone = BILLING_A
   }).format(date);
 }
 
+const PAID_PLAN_STATUSES = new Set(["ACTIVE", "PAST_DUE", "PAUSED"]);
+
 export function trialBannerCopy(input: {
   trial: boolean;
   coverageEnded: boolean;
   trialEnd?: string | null;
   cohort?: string | null;
   now?: number;
+  status?: string | null;
 }) {
   const now = input.now ?? Date.now();
+  if (PAID_PLAN_STATUSES.has((input.status ?? "").toUpperCase())) {
+    return null;
+  }
   if (input.coverageEnded || (!input.trial && (input.trialEnd ? new Date(input.trialEnd).getTime() <= now : false))) {
     return {
       title: "Business Plan Free Trial",

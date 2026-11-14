@@ -133,6 +133,7 @@ export function DashboardShell({
     coverageEnded: trialExpired,
     trialEnd: subscription?.trialEnd,
     cohort: subscription?.trialCohort,
+    status: subscription?.status,
   });
 
   useEffect(() => {
