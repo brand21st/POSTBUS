@@ -286,7 +286,7 @@ export function forceBookRefusal(
   if (!shipment?.id) return { kind: "conflict", reason: "Shipment not found.", action: "INVALID_SHIPMENT" };
   const status = String(shipment.status ?? "").toUpperCase();
   const job = input.job;
-  const parked = bookingJobIsParked(job, now);
+  const parked = job ? bookingJobIsParked(job, now) : false;
   const stalled = (STALLED_FORCE_FROM as readonly string[]).includes(status) && parked;
   if (!(FORCE_BOOK_FROM as readonly string[]).includes(status) && !stalled) {
     return {

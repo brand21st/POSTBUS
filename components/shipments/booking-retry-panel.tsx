@@ -97,7 +97,8 @@ export function BookingRetryPanel({ shipmentId, canRetry }: { shipmentId: string
           </Button>
           <Button
             type="button"
-            variant="destructive"
+            variant="ghost"
+            className="text-error hover:bg-error/5"
             onClick={() => forceBook.mutate()}
             disabled={forceBook.isPending}
           >

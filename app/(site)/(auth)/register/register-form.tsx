@@ -100,7 +100,7 @@ function CheckInbox({ email, onEdit }: { email: string; onEdit: () => void }) {
       </div>
       {notice ? <FormAlert tone={notice.tone}>{notice.text}</FormAlert> : null}
       <div className="flex flex-col gap-2.5">
-        <Button type="button" variant="outline" className="h-11 w-full" disabled={busy || wait > 0} onClick={() => void resend()}>
+        <Button type="button" variant="secondary" className="h-11 w-full" disabled={busy || wait > 0} onClick={() => void resend()}>
           {wait > 0 ? `Resend email in ${wait}s` : busy ? "Sending…" : "Resend email"}
         </Button>
         <button type="button" className="min-h-11 text-sm font-medium text-muted hover:text-foreground" onClick={onEdit}>
