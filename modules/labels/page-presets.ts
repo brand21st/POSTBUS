@@ -114,6 +114,15 @@ export function sheetPreset(id: SheetSizeId): SheetPreset {
 
 export type SizeChoice = PaperSizeId | "custom";
 
+export const MIN_CUSTOM_PAGE_MM = 50;
+
+export function committedPageMm(raw: string, min = MIN_CUSTOM_PAGE_MM) {
+  if (raw.trim() === "") return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min) return null;
+  return value;
+}
+
 export function sizeChoiceForPage(page: {
   widthPt: number;
   heightPt: number;
